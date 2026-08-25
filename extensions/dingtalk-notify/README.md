@@ -119,5 +119,6 @@ in the application layer.
 `REDIS_URL`、`ENCRYPTION_KEY`、`SECRET_STORE_REF`、`DEPLOY_ENV`，并填写
 `DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_CORP_ID`、
 `DINGTALK_OAUTH_REDIRECT_URI`、`DINGTALK_AGENT_ID`、`DINGTALK_ROBOT_CODE`、
-`DINGTALK_API_BASE_URL`、`DINGTALK_OAUTH_AUTH_URL`、`DINGTALK_OAUTH_TOKEN_URL`、
-`DINGTALK_OAUTH_USER_URL`。Client Secret 和加密密钥只应通过本机 `.env` 或密钥管理器注入。
+`DINGTALK_API_BASE_URL`、`DINGTALK_OAUTH_AUTH_URL`。OAuth token 和用户信息接口
+使用代码内置的钉钉官方默认地址，无需配置环境变量；只有未来需要接入代理或特殊网关时，
+才应在代码层显式覆盖。Client Secret 和加密密钥只应通过本机 `.env` 或密钥管理器注入。

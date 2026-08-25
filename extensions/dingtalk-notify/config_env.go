@@ -29,8 +29,6 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		DingTalkRobotCode:     getenv("DINGTALK_ROBOT_CODE"),
 		DingTalkAPIBaseURL:    getenv("DINGTALK_API_BASE_URL"),
 		DingTalkOAuthAuthURL:  getenv("DINGTALK_OAUTH_AUTH_URL"),
-		DingTalkOAuthTokenURL: getenv("DINGTALK_OAUTH_TOKEN_URL"),
-		DingTalkOAuthUserURL:  getenv("DINGTALK_OAUTH_USER_URL"),
 		WorkerInterval:        envDuration(getenv("DINGTALK_NOTIFY_WORKER_INTERVAL")),
 		MaxAttempts:           envInt(getenv("DINGTALK_NOTIFY_MAX_ATTEMPTS")),
 	}

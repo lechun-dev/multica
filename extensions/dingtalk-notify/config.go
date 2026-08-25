@@ -26,8 +26,6 @@ type Config struct {
 	DingTalkRobotCode     string
 	DingTalkAPIBaseURL    string
 	DingTalkOAuthAuthURL  string
-	DingTalkOAuthTokenURL string
-	DingTalkOAuthUserURL  string
 	WorkerInterval        time.Duration
 	MaxAttempts           int
 }
