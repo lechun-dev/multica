@@ -27,6 +27,12 @@ then call `BuildMessages` and enqueue the returned messages through `Store`.
 small interface with PostgreSQL. No comment, Inbox, Agent, or database package
 is imported by this module.
 
+`EventAdapter` is the feature-flagged host boundary. Disabled mode returns
+`ErrDisabled` without publishing; enabled mode only validates and forwards the
+normalized event, so the existing comment path remains unchanged until the
+host explicitly wires it. The isolated SQL proposal is in
+`migrations/001_dingtalk_notify.sql`; it is not applied automatically.
+
 Routing is intentionally explicit:
 
 - A member target is sent to the active DingTalk user binding as a P2P message.
@@ -51,3 +57,7 @@ Routing is intentionally explicit:
 - `MemberBinding.Groups` is optional. Without an explicit group intent a
   member always receives a P2P message; with intent, configured groups are
   selected and deduplicated. Agent targets remain Bot-only.
+
+The server/database values in `.env.example` intentionally remain
+`CHANGE_ME` placeholders until staging is provisioned. This module never opens
+a production connection or sends a real DingTalk message by itself.
