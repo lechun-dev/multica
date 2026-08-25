@@ -36,6 +36,10 @@ type MemberBinding struct {
 	MemberID    string
 	DingUserID  string
 	Active      bool
+	// Groups are optional member-owned group targets. An empty list keeps the
+	// default P2P behaviour; a group-intent message uses matching groups (or
+	// all groups when the intent is generic).
+	Groups []AgentChannel
 }
 
 type AgentChannel struct {
@@ -58,6 +62,7 @@ type Message struct {
 	TargetKind  string
 	ChannelID   string
 	DingUserID  string
+	ChannelType string // p2p or group
 	Text        string
 }
 
@@ -78,7 +83,7 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 	if event.EventID == "" || event.WorkspaceID == "" {
 		return nil, nil, errors.New("event_id and workspace_id are required")
 	}
-	groupIntent := strings.Contains(event.Text, "发群") || strings.Contains(event.Text, "群里") || strings.Contains(event.Text, "群消息")
+	groupIntent := genericGroupIntent(event.Text)
 	var messages []Message
 	var failures []Delivery
 	for _, target := range event.Targets {
@@ -92,19 +97,41 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 				failures = append(failures, failed(event, target, "member is not bound to DingTalk"))
 				continue
 			}
-			messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, DingUserID: binding.DingUserID, Text: FormatText(event)})
+			if groupIntent && len(binding.Groups) > 0 {
+				matched := 0
+				for _, group := range binding.Groups {
+					if !group.Active || (!genericGroupIntent(event.Text) && !strings.Contains(event.Text, group.ChannelName)) {
+						continue
+					}
+					matched++
+					messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: group.ChannelID, ChannelType: "group", Text: FormatText(event)})
+				}
+				if matched == 0 {
+					failures = append(failures, failed(event, target, "member has no matching active DingTalk group"))
+				}
+				continue
+			}
+			messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, DingUserID: binding.DingUserID, ChannelType: "p2p", Text: FormatText(event)})
 		case "agent":
 			channels, err := resolver.AgentChannels(ctx, event.WorkspaceID, target.ID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("resolve agent %s: %w", target.ID, err)
 			}
 			matched := 0
+			seen := map[string]struct{}{}
 			for _, channel := range channels {
 				if !channel.Active || (!groupIntent && !strings.Contains(event.Text, channel.ChannelName)) {
 					continue
 				}
+				if channel.ChannelID == "" {
+					continue
+				}
+				if _, ok := seen[channel.ChannelID]; ok {
+					continue
+				}
+				seen[channel.ChannelID] = struct{}{}
 				matched++
-				messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: channel.ChannelID, Text: FormatText(event)})
+				messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: channel.ChannelID, ChannelType: "group", Text: FormatText(event)})
 			}
 			if matched == 0 {
 				failures = append(failures, failed(event, target, "agent has no matching active DingTalk channel"))
@@ -114,6 +141,10 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 		}
 	}
 	return messages, failures, nil
+}
+
+func genericGroupIntent(text string) bool {
+	return strings.Contains(text, "发群") || strings.Contains(text, "群里") || strings.Contains(text, "群消息")
 }
 
 func failed(event MentionCreated, target MentionTarget, reason string) Delivery {

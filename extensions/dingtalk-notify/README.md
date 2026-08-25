@@ -22,9 +22,10 @@ them before enabling delivery.
 
 `event.schema.json` is the only event shape the future Multica adapter needs to
 publish. The adapter should map `comment:created` mention data into this shape,
-then call `BuildMessages` and persist returned failed deliveries in its own
-audit/outbox store. No comment, Inbox, Agent, or database package is imported
-by this module.
+then call `BuildMessages` and enqueue the returned messages through `Store`.
+`MemoryStore` is provided for local/mock; production can implement the same
+small interface with PostgreSQL. No comment, Inbox, Agent, or database package
+is imported by this module.
 
 Routing is intentionally explicit:
 
@@ -35,3 +36,18 @@ Routing is intentionally explicit:
   text are selected.
 - Unbound, disabled, or unmatched targets become `failed` deliveries and do
   not trigger another DingTalk notification.
+
+## Reliability and identity contracts
+
+- `EnqueueMessages` derives a stable SHA-256 idempotency key from the source
+  event and destination, so duplicate event delivery does not duplicate a
+  DingTalk message.
+- `Worker.RunOnce` claims due outbox rows, sends each independently, retries
+  only `RetryableError` values with exponential backoff, and marks permanent
+  failures for audit. It never runs in the comment HTTP request.
+- `OAuthService` binds the DingTalk identity to the already authenticated
+  `(workspace_id, member_id)` using a single-use, expiring state. It does not
+  infer a Multica member from a DingTalk nickname or callback query.
+- `MemberBinding.Groups` is optional. Without an explicit group intent a
+  member always receives a P2P message; with intent, configured groups are
+  selected and deduplicated. Agent targets remain Bot-only.
