@@ -82,12 +82,40 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 	}
 	var user struct {
 		DingUserID string `json:"userid"`
+		UserID     string `json:"userId"`
 		UnionID    string `json:"unionId"`
 		OpenID     string `json:"openId"`
 		Name       string `json:"nick"`
+		Data       *struct {
+			DingUserID string `json:"userid"`
+			UserID     string `json:"userId"`
+			UnionID    string `json:"unionId"`
+			OpenID     string `json:"openId"`
+			Name       string `json:"nick"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &user); err != nil {
 		return OAuthUser{}, err
+	}
+	if user.Data != nil {
+		if user.DingUserID == "" {
+			user.DingUserID = user.Data.DingUserID
+		}
+		if user.UserID == "" {
+			user.UserID = user.Data.UserID
+		}
+		if user.UnionID == "" {
+			user.UnionID = user.Data.UnionID
+		}
+		if user.OpenID == "" {
+			user.OpenID = user.Data.OpenID
+		}
+		if user.Name == "" {
+			user.Name = user.Data.Name
+		}
+	}
+	if user.DingUserID == "" {
+		user.DingUserID = user.UserID
 	}
 	if user.DingUserID == "" && user.UnionID == "" && user.OpenID == "" {
 		return OAuthUser{}, errors.New("DingTalk OAuth user response has no stable identity")
