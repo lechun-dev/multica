@@ -14,11 +14,9 @@ The mock provider records messages in memory and never sends to DingTalk.
 cd extensions/dingtalk-notify && go test ./...
 ```
 
-配置见本目录的 `.env.example`。实际使用时只需保留运行开关和四个钉钉变量：
-`DINGTALK_NOTIFY_MODE`、`DINGTALK_NOTIFY_ENABLED`、`DINGTALK_CLIENT_ID`、
-`DINGTALK_CLIENT_SECRET`、`DINGTALK_OAUTH_REDIRECT_URI`、
-`DINGTALK_ROBOT_CODE`。数据库连接复用项目根目录的 `DATABASE_URL`，接口地址和
-重试参数使用代码默认值，不需要在通知模块里重复配置。
+配置见本目录的 `.env.example`。项目根目录的 `.env.example` 和
+`docker-compose.selfhost.yml` 会透传同一组变量，方便在服务器或数据库就绪前先完成配置。
+基础设施变量在 `local/mock` 模式下可以留空；启用 staging/production 前必须补齐并通过启动校验。
 
 The schema is intentionally not part of the host migration ledger while the
 deployment database is still being provisioned. Review it with:
@@ -114,5 +112,9 @@ There are no database foreign keys; cleanup and workspace authorization stay
 in the application layer.
 
 `local/mock` 模式不会连接生产数据库或发送真实钉钉消息。启用 staging/production
-前，请先在项目根目录配置 `DATABASE_URL`，并填写上述四个钉钉变量；Client Secret
-只应通过本机 `.env` 或密钥管理器注入。
+前，请先在项目根目录配置 `APP_BASE_URL`、`API_PUBLIC_URL`、`DATABASE_URL`、
+`REDIS_URL`、`ENCRYPTION_KEY`、`SECRET_STORE_REF`、`DEPLOY_ENV`，并填写
+`DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_CORP_ID`、
+`DINGTALK_OAUTH_REDIRECT_URI`、`DINGTALK_AGENT_ID`、`DINGTALK_ROBOT_CODE`、
+`DINGTALK_API_BASE_URL`、`DINGTALK_OAUTH_AUTH_URL`、`DINGTALK_OAUTH_TOKEN_URL`、
+`DINGTALK_OAUTH_USER_URL`。Client Secret 和加密密钥只应通过本机 `.env` 或密钥管理器注入。

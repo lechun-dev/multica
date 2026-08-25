@@ -84,21 +84,6 @@ func TestConfigAllowsPlaceholdersInMockAndRejectsThemInProduction(t *testing.T) 
 	}
 }
 
-func TestConfigProductionNeedsOnlySharedDatabaseAndDingTalkValues(t *testing.T) {
-	config := Config{
-		Mode:                 "production",
-		Enabled:              true,
-		DatabaseURL:          "postgres://db/multica",
-		DingTalkClientID:     "client-id",
-		DingTalkClientSecret: "client-secret",
-		DingTalkRedirectURI:  "https://multica.example/dingtalk/oauth/callback",
-		DingTalkRobotCode:    "robot-code",
-	}
-	if err := config.Validate(); err != nil {
-		t.Fatalf("minimal production config should validate: %v", err)
-	}
-}
-
 func TestConfigFromEnvUsesInjectedValues(t *testing.T) {
 	values := map[string]string{"DINGTALK_NOTIFY_MODE": "staging", "DINGTALK_NOTIFY_ENABLED": "true", "DATABASE_URL": "postgres://staging"}
 	config := ConfigFromEnv(func(key string) string { return values[key] })
