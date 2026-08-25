@@ -4361,7 +4361,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				// Validate parent exists in the same workspace.
-				_, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+				_, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 					ID:          newParentID,
 					WorkspaceID: prevIssue.WorkspaceID,
 				})
