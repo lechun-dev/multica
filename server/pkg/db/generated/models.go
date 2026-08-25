@@ -763,6 +763,17 @@ type IssueLabel struct {
 	Description  string             `json:"description"`
 }
 
+type IssuePermission struct {
+	ID         pgtype.UUID        `json:"id"`
+	IssueID    pgtype.UUID        `json:"issue_id"`
+	ProjectID  pgtype.UUID        `json:"project_id"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	Permission string             `json:"permission"`
+	GrantedBy  pgtype.UUID        `json:"granted_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IssueProperty struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -1096,6 +1107,15 @@ type Project struct {
 	Priority    string             `json:"priority"`
 	StartDate   pgtype.Date        `json:"start_date"`
 	DueDate     pgtype.Date        `json:"due_date"`
+}
+
+type ProjectMember struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ProjectResource struct {
