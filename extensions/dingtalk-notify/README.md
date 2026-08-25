@@ -14,8 +14,11 @@ The mock provider records messages in memory and never sends to DingTalk.
 cd extensions/dingtalk-notify && go test ./...
 ```
 
-配置见本目录的 `.env.example`。项目根目录的 `.env.example` 和
-`docker-compose.selfhost.yml` 会透传同一组变量，方便在服务器或数据库就绪前先完成配置。
+实际配置文件是项目根目录的 `.env`（即 `multica/.env`），不是本目录下的 `.env`。
+本目录的 `.env.example` 仅用于查看变量清单，不能作为运行时配置文件；请不要在
+`extensions/dingtalk-notify/` 下另建 `.env`。如果根目录还没有 `.env`，请在
+`multica/` 目录执行 `cp .env.example .env`，然后只编辑根目录 `.env` 中的钉钉区块。
+项目根目录的 `.env.example` 和 `docker-compose.selfhost.yml` 会透传同一组变量。
 基础设施变量在 `local/mock` 模式下可以留空；启用 staging/production 前必须补齐并通过启动校验。
 
 The schema is intentionally not part of the host migration ledger while the
