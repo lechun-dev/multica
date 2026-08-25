@@ -43,11 +43,11 @@ func (c Config) Validate() error {
 	if !c.Enabled || mode == "local/mock" {
 		return nil
 	}
+	// DATABASE_URL 由项目根配置提供；钉钉只需要应用凭证、回调地址和机器人编码。
 	for name, value := range map[string]string{
-		"app_base_url": c.AppBaseURL, "api_base_url": c.APIBaseURL,
-		"database_url": c.DatabaseURL, "encryption_key": c.EncryptionKey,
-		"secret_store_ref": c.SecretStoreRef, "dingtalk_client_id": c.DingTalkClientID,
-		"dingtalk_client_secret": c.DingTalkClientSecret, "dingtalk_corp_id": c.DingTalkCorpID,
+		"database_url":                c.DatabaseURL,
+		"dingtalk_client_id":          c.DingTalkClientID,
+		"dingtalk_client_secret":      c.DingTalkClientSecret,
 		"dingtalk_oauth_redirect_uri": c.DingTalkRedirectURI,
 		"dingtalk_robot_code":         c.DingTalkRobotCode,
 	} {

@@ -14,12 +14,11 @@ The mock provider records messages in memory and never sends to DingTalk.
 cd extensions/dingtalk-notify && go test ./...
 ```
 
-Configuration is described in `.env.example`. The same variables are exposed
-in the repository root `.env.example` and passed through by
-`docker-compose.selfhost.yml`, so an operator can fill the DingTalk values
-without having a server or database ready yet. Empty infrastructure values are
-allowed only in `local/mock`; staging and production startup should validate
-them before enabling delivery.
+配置见本目录的 `.env.example`。实际使用时只需保留运行开关和四个钉钉变量：
+`DINGTALK_NOTIFY_MODE`、`DINGTALK_NOTIFY_ENABLED`、`DINGTALK_CLIENT_ID`、
+`DINGTALK_CLIENT_SECRET`、`DINGTALK_OAUTH_REDIRECT_URI`、
+`DINGTALK_ROBOT_CODE`。数据库连接复用项目根目录的 `DATABASE_URL`，接口地址和
+重试参数使用代码默认值，不需要在通知模块里重复配置。
 
 The schema is intentionally not part of the host migration ledger while the
 deployment database is still being provisioned. Review it with:
@@ -114,6 +113,6 @@ repository requires every index build to use `CREATE INDEX CONCURRENTLY`.
 There are no database foreign keys; cleanup and workspace authorization stay
 in the application layer.
 
-The server/database values in `.env.example` intentionally remain
-`CHANGE_ME` placeholders until staging is provisioned. Local/mock mode never
-opens a production connection or sends a real DingTalk message.
+`local/mock` 模式不会连接生产数据库或发送真实钉钉消息。启用 staging/production
+前，请先在项目根目录配置 `DATABASE_URL`，并填写上述四个钉钉变量；Client Secret
+只应通过本机 `.env` 或密钥管理器注入。
