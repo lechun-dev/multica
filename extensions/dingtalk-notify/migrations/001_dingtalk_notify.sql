@@ -3,12 +3,13 @@
 CREATE TABLE IF NOT EXISTS dingtalk_notify_member_bindings (
   workspace_id TEXT NOT NULL,
   member_id TEXT NOT NULL,
+  ding_user_id TEXT,
   union_id TEXT,
   open_id TEXT,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (workspace_id, member_id),
-  CHECK (union_id IS NOT NULL OR open_id IS NOT NULL)
+  CHECK (ding_user_id IS NOT NULL OR union_id IS NOT NULL OR open_id IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS dingtalk_notify_agent_channels (
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS dingtalk_notify_agent_channels (
   channel_id TEXT NOT NULL,
   channel_name TEXT NOT NULL,
   robot_code TEXT,
+  owner_id TEXT,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (workspace_id, agent_id, channel_id)
@@ -30,7 +32,9 @@ CREATE TABLE IF NOT EXISTS dingtalk_notify_outbox (
   target_id TEXT NOT NULL,
   target_kind TEXT NOT NULL,
   channel_id TEXT,
+  robot_code TEXT,
   ding_user_id TEXT,
+  channel_type TEXT NOT NULL,
   message_text TEXT NOT NULL,
   status TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -40,11 +44,10 @@ CREATE TABLE IF NOT EXISTS dingtalk_notify_outbox (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS dingtalk_notify_outbox_ready_idx ON dingtalk_notify_outbox (status, next_attempt_at);
 
 CREATE TABLE IF NOT EXISTS dingtalk_notify_delivery_attempts (
   id BIGSERIAL PRIMARY KEY,
-  outbox_id BIGINT NOT NULL REFERENCES dingtalk_notify_outbox(id) ON DELETE CASCADE,
+  outbox_id BIGINT NOT NULL,
   attempt_no INTEGER NOT NULL,
   status TEXT NOT NULL,
   error_class TEXT,

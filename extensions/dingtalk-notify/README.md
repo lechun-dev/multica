@@ -2,8 +2,8 @@
 
 This directory is an isolated, opt-in notification module. It translates a
 stable `MentionCreated` event into delivery intents without importing Multica
-business packages or making network calls. The production adapter can be
-connected later through the documented interfaces.
+business packages. It can run entirely with memory/mock implementations while
+the host's production database and secrets remain unconfigured.
 
 ## Development mode
 
@@ -58,6 +58,42 @@ Routing is intentionally explicit:
   member always receives a P2P message; with intent, configured groups are
   selected and deduplicated. Agent targets remain Bot-only.
 
+## Host integration surface
+
+The host should keep its existing comment path unchanged and mount the module
+behind a feature flag:
+
+1. Convert the host's `comment:created` payload to `CommentMention` with
+   `AdaptCommentMention`, then call `EventAdapter.PublishMention`.
+2. Resolve bindings/channels with `SQLBindingStore` and
+   `SQLAgentChannelStore`, call `BuildMessages`, and enqueue messages in
+   `SQLStore`. The adapter is the only event seam; it never sends HTTP inline.
+3. Run `Worker.Run` under the host supervisor. It leases rows with
+   `FOR UPDATE SKIP LOCKED`, records an optional `AuditSink`, retries only
+   `RetryableError`, and survives process restarts.
+
+The module includes host-neutral HTTP handlers for the remaining management
+surface:
+
+- `OAuthHTTPHandler`: `/dingtalk/oauth/start`, `/dingtalk/oauth/callback`,
+  `/dingtalk/binding`, `/dingtalk/binding/revoke`, and an explicit
+  `/dingtalk/binding/test` message.
+- `ChannelHTTPHandler`: agent Bot/channel list, upsert, and deactivate.
+- `DeliveryHTTPHandler`: workspace-scoped delivery status and manual retry.
+
+The host must authenticate the request and inject an
+`AuthenticatedIdentity` context value before dispatching these handlers.
+`DingTalkOAuthProvider` implements the existing OAuth application flow, and
+`DingTalkProvider` implements P2P and Bot group sends with token caching,
+401 refresh, 429/5xx/timeout classification, and the documented DingTalk
+Open API payloads.
+
+`migrations/001_dingtalk_notify.sql` creates only module tables. The ready
+queue index is in `002_dingtalk_notify_outbox_ready_idx.sql` because the
+repository requires every index build to use `CREATE INDEX CONCURRENTLY`.
+There are no database foreign keys; cleanup and workspace authorization stay
+in the application layer.
+
 The server/database values in `.env.example` intentionally remain
-`CHANGE_ME` placeholders until staging is provisioned. This module never opens
-a production connection or sends a real DingTalk message by itself.
+`CHANGE_ME` placeholders until staging is provisioned. Local/mock mode never
+opens a production connection or sends a real DingTalk message.

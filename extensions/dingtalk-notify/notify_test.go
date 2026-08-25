@@ -48,6 +48,14 @@ func TestBuildMessagesUsesMemberGroupsOnlyForExplicitGroupIntent(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesUsesNamedMemberGroupOnly(t *testing.T) {
+	event := MentionCreated{EventID: "e1", WorkspaceID: "w1", Actor: Actor{Name: "Alice"}, Text: "请发到项目群", Targets: []MentionTarget{{ID: "m1", Kind: "member"}}}
+	messages, failures, err := BuildMessages(context.Background(), event, resolverStub{member: MemberBinding{DingUserID: "d1", Active: true, Groups: []AgentChannel{{ChannelID: "g1", ChannelName: "项目群", Active: true}, {ChannelID: "g2", ChannelName: "其他群", Active: true}}}, found: true})
+	if err != nil || len(failures) != 0 || len(messages) != 1 || messages[0].ChannelID != "g1" {
+		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+}
+
 func TestBuildMessagesMarksUnboundAndDoesNotNotifyAgentOwner(t *testing.T) {
 	event := MentionCreated{EventID: "e1", WorkspaceID: "w1", Actor: Actor{Name: "Alice"}, Text: "普通通知", Targets: []MentionTarget{{ID: "m1", Kind: "member"}, {ID: "a1", Kind: "agent"}}}
 	messages, failures, err := BuildMessages(context.Background(), event, resolverStub{found: false, channels: []AgentChannel{{AgentID: "a1", ChannelID: "c1", ChannelName: "固定群", Active: true}}})

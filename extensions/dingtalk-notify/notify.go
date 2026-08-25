@@ -35,6 +35,8 @@ type MemberBinding struct {
 	WorkspaceID string
 	MemberID    string
 	DingUserID  string
+	UnionID     string
+	OpenID      string
 	Active      bool
 	// Groups are optional member-owned group targets. An empty list keeps the
 	// default P2P behaviour; a group-intent message uses matching groups (or
@@ -47,6 +49,8 @@ type AgentChannel struct {
 	AgentID     string
 	ChannelID   string
 	ChannelName string
+	RobotCode   string
+	OwnerID     string
 	Active      bool
 }
 
@@ -61,6 +65,7 @@ type Message struct {
 	TargetID    string
 	TargetKind  string
 	ChannelID   string
+	RobotCode   string
 	DingUserID  string
 	ChannelType string // p2p or group
 	Text        string
@@ -83,7 +88,10 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 	if event.EventID == "" || event.WorkspaceID == "" {
 		return nil, nil, errors.New("event_id and workspace_id are required")
 	}
-	groupIntent := genericGroupIntent(event.Text)
+	if resolver == nil {
+		return nil, nil, errors.New("mention resolver is required")
+	}
+	text := strings.TrimSpace(event.Text)
 	var messages []Message
 	var failures []Delivery
 	for _, target := range event.Targets {
@@ -97,14 +105,20 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 				failures = append(failures, failed(event, target, "member is not bound to DingTalk"))
 				continue
 			}
-			if groupIntent && len(binding.Groups) > 0 {
+			groupIntent := groupRequested(text, binding.Groups)
+			if groupIntent {
 				matched := 0
+				seen := map[string]struct{}{}
 				for _, group := range binding.Groups {
-					if !group.Active || (!genericGroupIntent(event.Text) && !strings.Contains(event.Text, group.ChannelName)) {
+					if !group.Active || group.ChannelID == "" || (!genericGroupIntent(text) && !strings.Contains(text, group.ChannelName)) {
 						continue
 					}
+					if _, ok := seen[group.ChannelID]; ok {
+						continue
+					}
+					seen[group.ChannelID] = struct{}{}
 					matched++
-					messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: group.ChannelID, ChannelType: "group", Text: FormatText(event)})
+					messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: group.ChannelID, RobotCode: group.RobotCode, ChannelType: "group", Text: FormatText(event)})
 				}
 				if matched == 0 {
 					failures = append(failures, failed(event, target, "member has no matching active DingTalk group"))
@@ -119,11 +133,10 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 			}
 			matched := 0
 			seen := map[string]struct{}{}
+			groupIntent := groupRequested(text, channels)
+			genericIntent := genericGroupIntent(text)
 			for _, channel := range channels {
-				if !channel.Active || (!groupIntent && !strings.Contains(event.Text, channel.ChannelName)) {
-					continue
-				}
-				if channel.ChannelID == "" {
+				if !channel.Active || channel.ChannelID == "" || (groupIntent && !genericIntent && !strings.Contains(text, channel.ChannelName)) || (!groupIntent && !strings.Contains(text, channel.ChannelName)) {
 					continue
 				}
 				if _, ok := seen[channel.ChannelID]; ok {
@@ -131,7 +144,7 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 				}
 				seen[channel.ChannelID] = struct{}{}
 				matched++
-				messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: channel.ChannelID, ChannelType: "group", Text: FormatText(event)})
+				messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, ChannelID: channel.ChannelID, RobotCode: channel.RobotCode, ChannelType: "group", Text: FormatText(event)})
 			}
 			if matched == 0 {
 				failures = append(failures, failed(event, target, "agent has no matching active DingTalk channel"))
@@ -147,16 +160,48 @@ func genericGroupIntent(text string) bool {
 	return strings.Contains(text, "发群") || strings.Contains(text, "群里") || strings.Contains(text, "群消息")
 }
 
+func groupRequested(text string, groups []AgentChannel) bool {
+	if genericGroupIntent(text) {
+		return true
+	}
+	for _, group := range groups {
+		if group.ChannelName != "" && strings.Contains(text, group.ChannelName) {
+			return true
+		}
+	}
+	return false
+}
+
 func failed(event MentionCreated, target MentionTarget, reason string) Delivery {
 	return Delivery{Message: Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind}, Status: "failed", Error: reason}
 }
 
 func FormatText(event MentionCreated) string {
-	text := strings.TrimSpace(event.Text)
-	if len(text) > 2000 {
-		text = text[:2000] + "…"
+	text := sanitizeText(event.Text)
+	if runes := []rune(text); len(runes) > 2000 {
+		text = string(runes[:2000]) + "…"
 	}
-	return fmt.Sprintf("Multica 通知\n操作者：%s\n%s\n原文：%s", event.Actor.Name, text, event.SourceURL)
+	actor := strings.TrimSpace(event.Actor.Name)
+	if actor == "" {
+		actor = event.Actor.ID
+	}
+	if actor == "" {
+		actor = "未知操作者"
+	}
+	if event.SourceURL == "" {
+		return fmt.Sprintf("Multica 通知\n操作者：%s\n%s", actor, text)
+	}
+	return fmt.Sprintf("Multica 通知\n操作者：%s\n%s\n原文：%s", actor, text, event.SourceURL)
+}
+
+func sanitizeText(text string) string {
+	text = strings.TrimSpace(text)
+	return strings.Map(func(r rune) rune {
+		if r == '\x00' || r == '\r' {
+			return -1
+		}
+		return r
+	}, text)
 }
 
 // Deliver sends each message independently. A failed target is returned to

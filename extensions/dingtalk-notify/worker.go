@@ -38,6 +38,7 @@ type Worker struct {
 	Provider Provider
 	Policy   RetryPolicy
 	Now      func() time.Time
+	Audit    AuditSink
 }
 
 // RunOnce claims due rows and handles each row independently. A provider
@@ -56,11 +57,13 @@ func (w Worker) RunOnce(ctx context.Context, limit int) (int, error) {
 	}
 	policy := w.Policy.normalized()
 	for _, item := range items {
+		started := time.Now()
 		sendErr := w.Provider.Send(ctx, item.Message)
 		if sendErr == nil {
 			if err := w.Store.MarkDelivered(ctx, item.ID, now); err != nil {
 				return len(items), err
 			}
+			w.recordAudit(ctx, item, StatusDelivered, "", started)
 			continue
 		}
 		if isRetryable(sendErr) && item.Attempts < policy.MaxAttempts {
@@ -68,13 +71,48 @@ func (w Worker) RunOnce(ctx context.Context, limit int) (int, error) {
 			if err := w.Store.MarkRetry(ctx, item.ID, now.Add(delay), item.Attempts, sendErr.Error()); err != nil {
 				return len(items), err
 			}
+			w.recordAudit(ctx, item, StatusPending, sendErr.Error(), started)
 			continue
 		}
 		if err := w.Store.MarkFailed(ctx, item.ID, now, item.Attempts, sendErr.Error()); err != nil {
 			return len(items), err
 		}
+		w.recordAudit(ctx, item, StatusFailed, sendErr.Error(), started)
 	}
 	return len(items), nil
+}
+
+func (w Worker) recordAudit(ctx context.Context, item OutboxItem, status, reason string, started time.Time) {
+	if w.Audit == nil {
+		return
+	}
+	_ = w.Audit.Record(ctx, DeliveryAudit{OutboxID: item.ID, EventID: item.Message.EventID,
+		WorkspaceID: item.Message.WorkspaceID, TargetID: item.Message.TargetID,
+		TargetKind: item.Message.TargetKind, ChannelType: item.Message.ChannelType,
+		Status: status, Attempts: item.Attempts, Error: reason, Duration: time.Since(started), At: time.Now()})
+}
+
+// Run keeps the worker in the caller's process. It is intentionally
+// synchronous so a host can supervise, cancel, and expose health state.
+func (w Worker) Run(ctx context.Context, interval time.Duration, limit int) error {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	if _, err := w.RunOnce(ctx, limit); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if _, err := w.RunOnce(ctx, limit); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func isRetryable(err error) bool {

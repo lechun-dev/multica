@@ -41,6 +41,10 @@ type Store interface {
 	MarkFailed(ctx context.Context, id string, at time.Time, attempts int, reason string) error
 }
 
+type OutboxReader interface {
+	List(ctx context.Context, workspaceID string, limit int) ([]OutboxItem, error)
+}
+
 func IdempotencyKey(message Message) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s", message.EventID, message.WorkspaceID, message.TargetKind, message.TargetID, message.ChannelID+"\x00"+message.DingUserID)
@@ -144,4 +148,20 @@ func (s *MemoryStore) Snapshot() []OutboxItem {
 		items = append(items, item)
 	}
 	return items
+}
+
+func (s *MemoryStore) List(_ context.Context, workspaceID string, limit int) ([]OutboxItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]OutboxItem, 0)
+	for _, item := range s.items {
+		if workspaceID != "" && item.Message.WorkspaceID != workspaceID {
+			continue
+		}
+		items = append(items, item)
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+	}
+	return items, nil
 }
