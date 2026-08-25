@@ -11,12 +11,32 @@ Use `local/mock` while the server and database are still being provisioned.
 The mock provider records messages in memory and never sends to DingTalk.
 
 ```bash
-go test ./extensions/dingtalk-notify/...
+cd extensions/dingtalk-notify && go test ./...
 ```
 
-Configuration is described in `.env.example`. Empty infrastructure values are
+Configuration is described in `.env.example`. The same variables are exposed
+in the repository root `.env.example` and passed through by
+`docker-compose.selfhost.yml`, so an operator can fill the DingTalk values
+without having a server or database ready yet. Empty infrastructure values are
 allowed only in `local/mock`; staging and production startup should validate
 them before enabling delivery.
+
+The schema is intentionally not part of the host migration ledger while the
+deployment database is still being provisioned. Review it with:
+
+```bash
+make dingtalk-notify-schema
+```
+
+When a staging database is available, apply the two files in order with:
+
+```bash
+make dingtalk-notify-migrate ENV_FILE=.env
+```
+
+The command runs the ready-queue index in a separate `psql` invocation because
+it uses `CREATE INDEX CONCURRENTLY`. It never runs during normal Multica
+startup.
 
 ## Contract
 
