@@ -1,0 +1,123 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish (for example v0.4.35)
+        required: true
+        type: string
+
+# 2026-08-26 coder(lq): Build desktop installers in GitHub Actions and attach
+# them to the private fork's Release so the landing page and desktop package
+# consume the same source of truth.
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  # electron-builder otherwise tries to discover a signing identity on hosted
+  # macOS runners. The private distribution is intentionally unsigned.
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: arm64
+            runner: macos-14
+          - platform: mac
+            arch: x64
+            # electron-builder cross-builds Intel from the Apple Silicon
+            # runner, avoiding the retired Intel-host runner pool.
+            runner: macos-14
+          - platform: windows
+            arch: x64
+            runner: windows-latest
+          - platform: windows
+            arch: arm64
+            runner: windows-latest
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-latest
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop installer
+        run: >-
+          pnpm --filter @multica/desktop package --
+          --${{ matrix.platform == 'windows' && 'win' || matrix.platform }}
+          --${{ matrix.arch }}
+          --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: apps/desktop/dist/**
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: desktop-*
+          merge-multiple: true
+
+      - name: Publish assets to private Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Multica ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: release-assets/**
