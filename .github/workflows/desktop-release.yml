@@ -113,15 +113,41 @@ jobs:
           merge-multiple: true
 
       - name: Publish assets to private Release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: Multica ${{ env.RELEASE_TAG }}
-          # 2026-08-26 coder(lq): Avoid an extra release-notes API request;
-          # the asset upload is the critical operation for private releases.
-          generate_release_notes: false
-          body: "Desktop installers for the private Multica distribution."
-          make_latest: true
-          fail_on_unmatched_files: true
-          files: release-assets/**
+        # 2026-08-26 coder(lq): Upload one asset at a time with retries and a
+        # short delay. A single bulk upload can hit GitHub's secondary API
+        # rate limit before all desktop assets are attached to the Release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(release-assets/*)
+          if (( ${#files[@]} == 0 )); then
+            echo "No desktop assets were downloaded" >&2
+            exit 1
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Multica $RELEASE_TAG" \
+            --notes "Desktop installers for the private Multica distribution." \
+            --latest
+
+          for file in "${files[@]}"; do
+            uploaded=false
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$file" \
+                --repo "$GITHUB_REPOSITORY" --clobber; then
+                uploaded=true
+                break
+              fi
+              sleep $((attempt * 20))
+            done
+            if [[ "$uploaded" != true ]]; then
+              echo "Failed to upload $file after three attempts" >&2
+              exit 1
+            fi
+            sleep 8
+          done
