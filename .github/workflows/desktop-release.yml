@@ -16,6 +16,7 @@ on:
 # consume the same source of truth.
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -117,7 +118,10 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ env.RELEASE_TAG }}
           name: Multica ${{ env.RELEASE_TAG }}
-          generate_release_notes: true
+          # 2026-08-26 coder(lq): Avoid an extra release-notes API request;
+          # the asset upload is the critical operation for private releases.
+          generate_release_notes: false
+          body: "Desktop installers for the private Multica distribution."
           make_latest: true
           fail_on_unmatched_files: true
           files: release-assets/**
