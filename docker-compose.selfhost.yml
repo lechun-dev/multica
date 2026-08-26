@@ -197,6 +197,29 @@ services:
       # for a debugging session and unset it when that session ends, because
       # what it records is user message content.
       MULTICA_WECOM_TRACE: ${MULTICA_WECOM_TRACE:-}
+      # 钉钉机器人集成。留空表示禁用；启用前请生成 Base64 编码的 32 字节密钥。
+      MULTICA_DINGTALK_SECRET_KEY: ${MULTICA_DINGTALK_SECRET_KEY:-}
+      # 独立钉钉通知模块。默认关闭；staging 基础设施准备好前保持本地模拟模式。
+      DINGTALK_NOTIFY_MODE: ${DINGTALK_NOTIFY_MODE:-local/mock}
+      DINGTALK_NOTIFY_ENABLED: ${DINGTALK_NOTIFY_ENABLED:-false}
+      DINGTALK_NOTIFY_WORKER_INTERVAL: ${DINGTALK_NOTIFY_WORKER_INTERVAL:-5s}
+      DINGTALK_NOTIFY_MAX_ATTEMPTS: ${DINGTALK_NOTIFY_MAX_ATTEMPTS:-5}
+      # 基础设施占位配置；服务器和数据库准备好后再填写。
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-}
+      REDIS_URL: ${REDIS_URL:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      SECRET_STORE_REF: ${SECRET_STORE_REF:-}
+      DEPLOY_ENV: ${DEPLOY_ENV:-local}
+      # 钉钉应用配置；敏感信息不要提交代码或发到聊天中。
+      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
+      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
+      DINGTALK_CORP_ID: ${DINGTALK_CORP_ID:-}
+      DINGTALK_OAUTH_REDIRECT_URI: ${DINGTALK_OAUTH_REDIRECT_URI:-}
+      DINGTALK_AGENT_ID: ${DINGTALK_AGENT_ID:-}
+      DINGTALK_ROBOT_CODE: ${DINGTALK_ROBOT_CODE:-}
+      DINGTALK_API_BASE_URL: ${DINGTALK_API_BASE_URL:-https://api.dingtalk.com}
+      DINGTALK_OAUTH_AUTH_URL: ${DINGTALK_OAUTH_AUTH_URL:-https://login.dingtalk.com/oauth2/auth}
     restart: unless-stopped
 
   frontend:

@@ -234,15 +234,29 @@ function LoginPageContent() {
       }
       onTokenObtained={setLoggedInCookie}
       extra={
-        <span className="text-caption text-muted-foreground">
-          {t(($) => $.web.prefer_desktop)}{" "}
-          <Link
-            href="/download"
-            className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
+        <div className="flex w-full flex-col gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            size="lg"
+            onClick={() => {
+              window.location.href = `${api.getBaseUrl()}/auth/dingtalk/start`;
+            }}
+            disabled={isLoading}
           >
-            {t(($) => $.web.download)}
-          </Link>
-        </span>
+            使用钉钉登录
+          </Button>
+          <span className="text-caption text-muted-foreground">
+            {t(($) => $.web.prefer_desktop)}{" "}
+            <Link
+              href="/download"
+              className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
+            >
+              {t(($) => $.web.download)}
+            </Link>
+          </span>
+        </div>
       }
     />
   );
