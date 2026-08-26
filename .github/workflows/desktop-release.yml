@@ -125,11 +125,34 @@ jobs:
           # directory for each matrix artifact. Recursively collect files so
           # installers inside those directories are attached as well as the
           # update metadata files.
-          mapfile -d '' files < <(find release-assets -type f -print0 | sort -z)
+          # 2026-08-26 coder(lq): electron-builder leaves unpacked app
+          # directories beside the installers (especially on Linux). Do not
+          # publish their Chromium/runtime files as Release assets; only keep
+          # distributable installers, updater metadata, blockmaps, and the
+          # licenses that electron-builder emits next to them.
+          mapfile -d '' files < <(
+            find release-assets -type f -print0 |
+              while IFS= read -r -d '' file; do
+                base=${file##*/}
+                case "$base" in
+                  multica-desktop-*.dmg|multica-desktop-*.zip|multica-desktop-*.exe|\
+                  multica-desktop-*.AppImage|multica-desktop-*.deb|multica-desktop-*.rpm|\
+                  latest*.yml|builder-debug.yml|*.blockmap|LICENSE.electron.txt|LICENSES.chromium.html)
+                    printf '%s\0' "$file"
+                    ;;
+                esac
+              done |
+              sort -z
+          )
           if (( ${#files[@]} == 0 )); then
             echo "No desktop assets were downloaded" >&2
             exit 1
           fi
+          if ! printf '%s\n' "${files[@]}" | grep -Eq '\\.(dmg|zip|exe|AppImage|deb|rpm)$'; then
+            echo "No desktop installer assets were downloaded" >&2
+            exit 1
+          fi
+          printf 'Selected release assets:\n%s\n' "$(printf '%s\n' "${files[@]}")"
 
           # 2026-08-26 coder(lq): A previous attempt may have created the
           # Release before being interrupted by an upload/API limit. Reuse
