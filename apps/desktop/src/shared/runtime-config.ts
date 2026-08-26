@@ -15,9 +15,11 @@ export type RuntimeConfigResult =
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   schemaVersion: 1,
-  apiUrl: "https://api.multica.ai",
-  wsUrl: "wss://api.multica.ai/ws",
-  appUrl: "https://multica.ai",
+  // 2026-08-26 coder(lq): Private distribution defaults to the self-hosted
+  // deployment. A user's ~/.multica/desktop.json can still override this.
+  apiUrl: "https://multica.lechun.cc",
+  wsUrl: "wss://multica.lechun.cc/ws",
+  appUrl: "https://multica.lechun.cc",
 });
 
 /** 2026-08-25 coder(lq): Public releases only update Multica Cloud installs. */
