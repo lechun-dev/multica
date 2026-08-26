@@ -1,0 +1,24 @@
+name: Deploy Multica
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /deploy/multica
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose -f docker-compose.selfhost.yml up -d
+            docker image prune -f
