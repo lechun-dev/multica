@@ -128,12 +128,19 @@ jobs:
             exit 1
           fi
 
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "Multica $RELEASE_TAG" \
-            --notes "Desktop installers for the private Multica distribution." \
-            --latest
+          # 2026-08-26 coder(lq): A previous attempt may have created the
+          # Release before being interrupted by an upload/API limit. Reuse
+          # that Release so reruns can finish attaching the remaining files.
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Multica $RELEASE_TAG" \
+              --notes "Desktop installers for the private Multica distribution." \
+              --latest
+          else
+            echo "Reusing existing Release $RELEASE_TAG"
+          fi
 
           for file in "${files[@]}"; do
             uploaded=false
