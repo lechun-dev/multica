@@ -13,6 +13,7 @@ on:
       - apps/web/**
       - packages/**
       - server/**
+      - extensions/**
       - .github/workflows/docker-images-latest.yml
   workflow_dispatch:
 
@@ -87,3 +88,11 @@ jobs:
             COMMIT=${{ github.sha }}
             DATE=${{ github.run_started_at }}
             NEXT_PUBLIC_APP_VERSION=latest
+
+  deploy:
+    # 2026-08-26 coder(lq): Do not let production pull a stale `latest` tag;
+    # both application images must be published before deployment starts.
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

@@ -58,6 +58,7 @@ export function DownloadClient({ release }: { release: LatestRelease }) {
       <VersionInfoFooter
         version={release.version}
         releaseHtmlUrl={releaseHtmlUrl}
+        allReleasesUrl={release.allReleasesUrl}
       />
       <LandingFooter />
     </>
@@ -67,9 +68,11 @@ export function DownloadClient({ release }: { release: LatestRelease }) {
 function VersionInfoFooter({
   version,
   releaseHtmlUrl,
+  allReleasesUrl,
 }: {
   version: string | null;
   releaseHtmlUrl: string;
+  allReleasesUrl: string;
 }) {
   const { t } = useLocale();
   const d = t.download.footer;
@@ -106,7 +109,7 @@ function VersionInfoFooter({
           </>
         )}
         <Link
-          href={release.allReleasesUrl}
+          href={allReleasesUrl}
           className="underline decoration-[#0a0d12]/30 underline-offset-4 hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70"
           target="_blank"
           rel="noreferrer"

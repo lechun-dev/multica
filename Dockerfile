@@ -7,10 +7,15 @@ WORKDIR /src
 
 # Cache dependencies
 COPY server/go.mod server/go.sum ./server/
+# 2026-08-26 coder(lq): The private DingTalk integration is a local Go
+# module referenced by server/go.mod, so its module manifest must exist
+# before Go resolves the server dependencies.
+COPY extensions/dingtalk-notify/go.mod ./extensions/dingtalk-notify/go.mod
 RUN cd server && go mod download
 
 # Copy server source
 COPY server/ ./server/
+COPY extensions/dingtalk-notify/ ./extensions/dingtalk-notify/
 
 # Build binaries
 ARG VERSION=dev
