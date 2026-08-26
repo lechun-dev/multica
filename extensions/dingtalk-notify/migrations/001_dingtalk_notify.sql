@@ -12,6 +12,30 @@ CREATE TABLE IF NOT EXISTS dingtalk_notify_member_bindings (
   CHECK (ding_user_id IS NOT NULL OR union_id IS NOT NULL OR open_id IS NOT NULL)
 );
 
+-- Login identities are account-level and intentionally independent from the
+-- host's member/workspace tables. The host adapter applies its own trusted
+-- email/identity matching policy before writing the Multica user id here.
+CREATE TABLE IF NOT EXISTS dingtalk_notify_identities (
+  ding_user_id TEXT,
+  union_id TEXT,
+  open_id TEXT,
+  email TEXT,
+  multica_user_id TEXT NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  login_only BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL,
+  CHECK (ding_user_id IS NOT NULL OR union_id IS NOT NULL OR open_id IS NOT NULL),
+  UNIQUE (ding_user_id),
+  UNIQUE (union_id),
+  UNIQUE (open_id)
+);
+
+CREATE TABLE IF NOT EXISTS dingtalk_notify_oauth_states (
+  state TEXT PRIMARY KEY,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS dingtalk_notify_agent_channels (
   workspace_id TEXT NOT NULL,
   agent_id TEXT NOT NULL,

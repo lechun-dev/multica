@@ -29,14 +29,28 @@ func (s *providerStub) Send(_ context.Context, message Message) error {
 	return s.err
 }
 
-func TestBuildMessagesRoutesMemberToP2PAndAgentToNamedChannel(t *testing.T) {
+func TestBuildMessagesRoutesMemberToP2PAndDefersAgentByDefault(t *testing.T) {
 	event := MentionCreated{EventID: "e1", WorkspaceID: "w1", Actor: Actor{Name: "Alice"}, Text: "请发到互联网中心", SourceURL: "https://multica.test/i/1", Targets: []MentionTarget{{ID: "m1", Kind: "member"}, {ID: "a1", Kind: "agent"}}}
 	messages, failures, err := BuildMessages(context.Background(), event, resolverStub{member: MemberBinding{DingUserID: "d1", Active: true}, found: true, channels: []AgentChannel{{AgentID: "a1", ChannelID: "c1", ChannelName: "互联网中心", Active: true}, {AgentID: "a1", ChannelID: "c2", ChannelName: "另一个群", Active: true}}})
-	if err != nil || len(failures) != 0 || len(messages) != 2 {
+	if err != nil || len(failures) != 1 || failures[0].Status != StatusSkipped || len(messages) != 1 {
 		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
 	}
-	if messages[0].DingUserID != "d1" || messages[1].ChannelID != "c1" {
+	if messages[0].DingUserID != "d1" {
 		t.Fatalf("unexpected routing: %+v", messages)
+	}
+}
+
+func TestBuildMessagesAgentRequiresExplicitFeatureAndOwnRobot(t *testing.T) {
+	event := MentionCreated{EventID: "e1", WorkspaceID: "w1", Actor: Actor{Name: "Alice"}, Text: "请发到互联网中心", Targets: []MentionTarget{{ID: "a1", Kind: "agent"}}}
+	resolver := resolverStub{channels: []AgentChannel{{AgentID: "a1", ChannelID: "c1", ChannelName: "互联网中心", Active: true}}}
+	messages, failures, err := BuildMessagesWithOptions(context.Background(), event, resolver, RoutingOptions{EnableAgentNotifications: true})
+	if err != nil || len(messages) != 0 || len(failures) != 1 || failures[0].Status != "failed" {
+		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+	resolver.channels[0].RobotCode = "robot-a"
+	messages, failures, err = BuildMessagesWithOptions(context.Background(), event, resolver, RoutingOptions{EnableAgentNotifications: true})
+	if err != nil || len(failures) != 0 || len(messages) != 1 || messages[0].RobotCode != "robot-a" {
+		t.Fatalf("configured agent routing messages=%+v failures=%+v err=%v", messages, failures, err)
 	}
 }
 
@@ -59,7 +73,7 @@ func TestBuildMessagesUsesNamedMemberGroupOnly(t *testing.T) {
 func TestBuildMessagesMarksUnboundAndDoesNotNotifyAgentOwner(t *testing.T) {
 	event := MentionCreated{EventID: "e1", WorkspaceID: "w1", Actor: Actor{Name: "Alice"}, Text: "普通通知", Targets: []MentionTarget{{ID: "m1", Kind: "member"}, {ID: "a1", Kind: "agent"}}}
 	messages, failures, err := BuildMessages(context.Background(), event, resolverStub{found: false, channels: []AgentChannel{{AgentID: "a1", ChannelID: "c1", ChannelName: "固定群", Active: true}}})
-	if err != nil || len(messages) != 0 || len(failures) != 2 {
+	if err != nil || len(messages) != 0 || len(failures) != 2 || failures[1].Status != StatusSkipped {
 		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
 	}
 }

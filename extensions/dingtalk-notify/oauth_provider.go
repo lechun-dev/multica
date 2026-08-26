@@ -86,12 +86,14 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		UnionID    string `json:"unionId"`
 		OpenID     string `json:"openId"`
 		Name       string `json:"nick"`
+		Email      string `json:"email"`
 		Data       *struct {
 			DingUserID string `json:"userid"`
 			UserID     string `json:"userId"`
 			UnionID    string `json:"unionId"`
 			OpenID     string `json:"openId"`
 			Name       string `json:"nick"`
+			Email      string `json:"email"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &user); err != nil {
@@ -113,6 +115,9 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		if user.Name == "" {
 			user.Name = user.Data.Name
 		}
+		if user.Email == "" {
+			user.Email = user.Data.Email
+		}
 	}
 	if user.DingUserID == "" {
 		user.DingUserID = user.UserID
@@ -120,7 +125,7 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 	if user.DingUserID == "" && user.UnionID == "" && user.OpenID == "" {
 		return OAuthUser{}, errors.New("DingTalk OAuth user response has no stable identity")
 	}
-	return OAuthUser{DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID, Name: user.Name}, nil
+	return OAuthUser{DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID, Name: user.Name, Email: user.Email}, nil
 }
 
 func (p DingTalkOAuthProvider) postJSON(ctx context.Context, endpoint string, payload []byte, out any) error {

@@ -15,6 +15,7 @@ const (
 	StatusProcessing = "processing"
 	StatusDelivered  = "delivered"
 	StatusFailed     = "failed"
+	StatusSkipped    = "skipped"
 )
 
 // OutboxItem is the durable unit consumed by the worker. A SQL-backed store

@@ -751,6 +751,13 @@ export class ApiClient {
     });
   }
 
+  async dingTalkLogin(code: string, state: string): Promise<LoginResponse> {
+    return this.fetch("/auth/dingtalk", {
+      method: "POST",
+      body: JSON.stringify({ code, state }),
+    });
+  }
+
   async logout(): Promise<void> {
     await this.fetch("/auth/logout", { method: "POST" });
   }

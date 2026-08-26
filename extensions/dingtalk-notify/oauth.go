@@ -15,6 +15,7 @@ type OAuthUser struct {
 	UnionID    string
 	OpenID     string
 	Name       string
+	Email      string
 }
 
 type OAuthProvider interface {

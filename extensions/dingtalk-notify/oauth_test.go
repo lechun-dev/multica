@@ -12,7 +12,7 @@ func (oauthStub) AuthorizationURL(_ context.Context, state, redirect string) (st
 	return redirect + "?state=" + state, nil
 }
 func (oauthStub) ExchangeCode(context.Context, string, string) (OAuthUser, error) {
-	return OAuthUser{DingUserID: "ding-1"}, nil
+	return OAuthUser{DingUserID: "ding-1", Email: "alice@example.com"}, nil
 }
 
 func TestOAuthBindsCurrentMemberAndRejectsStateReplay(t *testing.T) {
@@ -32,6 +32,35 @@ func TestOAuthBindsCurrentMemberAndRejectsStateReplay(t *testing.T) {
 	got, found, _ := store.Get(context.Background(), "w1", "m1")
 	if !found || !got.Active {
 		t.Fatalf("stored binding=%+v found=%v", got, found)
+	}
+}
+
+func TestLoginOAuthServiceConsumesStateAndReturnsIdentity(t *testing.T) {
+	now := time.Unix(100, 0)
+	svc := &LoginOAuthService{Provider: oauthStub{}, Now: func() time.Time { return now }}
+	auth, err := svc.Begin(context.Background(), "https://example.test/auth/dingtalk/callback")
+	if err != nil || auth.State == "" || auth.URL == "" {
+		t.Fatalf("auth=%+v err=%v", auth, err)
+	}
+	user, err := svc.Complete(context.Background(), auth.State, "code", "https://example.test/auth/dingtalk/callback")
+	if err != nil || user.DingUserID != "ding-1" || user.Email != "alice@example.com" {
+		t.Fatalf("user=%+v err=%v", user, err)
+	}
+	if _, err := svc.Complete(context.Background(), auth.State, "code", "https://example.test/auth/dingtalk/callback"); err == nil {
+		t.Fatal("login state replay should fail")
+	}
+}
+
+func TestLoginOAuthServiceExpiresState(t *testing.T) {
+	now := time.Unix(100, 0)
+	svc := &LoginOAuthService{Provider: oauthStub{}, Now: func() time.Time { return now }, TTL: time.Second}
+	auth, err := svc.Begin(context.Background(), "https://example.test/auth/dingtalk/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Now = func() time.Time { return now.Add(2 * time.Second) }
+	if _, err := svc.Complete(context.Background(), auth.State, "code", "https://example.test/auth/dingtalk/callback"); err == nil {
+		t.Fatal("expired login state should fail")
 	}
 }
 

@@ -815,6 +815,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			botNames := dingtalk.NewBotNameResolver(dingtalkClient, box.Open)
 			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media, botNames))
 			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, slog.Default()).Register(bus)
+			registerDingTalkNotifyRuntime(bus, queries, pool, box.Open, dingtalkClient)
 			dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 				Decrypt: box.Open,
 				Client:  dingtalkClient,
@@ -1296,9 +1297,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
+	dingtalkRedirectURI := strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_REDIRECT_URI"))
+	if dingtalkRedirectURI == "" && signupConfig.AppURL != "" {
+		dingtalkRedirectURI = strings.TrimRight(signupConfig.AppURL, "/") + "/auth/dingtalk/callback"
+	}
+	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI)
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	r.With(authRL).Get("/auth/dingtalk/start", dingtalkLogin.ServeHTTP)
+	r.With(authRL).Post("/auth/dingtalk", dingtalkLogin.ServeHTTP)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API

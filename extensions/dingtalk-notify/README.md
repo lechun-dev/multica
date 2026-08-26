@@ -56,12 +56,12 @@ host explicitly wires it. The isolated SQL proposal is in
 Routing is intentionally explicit:
 
 - A member target is sent to the active DingTalk user binding as a P2P message.
-- An agent target is sent only to active Agent Bot channels. It never falls
-  back to the owner. A group intent (`发群`, `群里`, `群消息`) selects all active
-  channels; otherwise only channels whose configured name is present in the
-  text are selected.
-- Unbound, disabled, or unmatched targets become `failed` deliveries and do
-  not trigger another DingTalk notification.
+- Agent notifications are deferred by default. The host must explicitly enable
+  them, and every selected channel must carry its own `robot_code`; there is no
+  fallback to a deployment-wide/default Bot. Missing configuration is recorded
+  as a skipped delivery and never sends to DingTalk.
+- Unbound, disabled, or unmatched member targets become `failed` deliveries and
+  do not trigger another DingTalk notification.
 
 ## Reliability and identity contracts
 
@@ -72,8 +72,9 @@ Routing is intentionally explicit:
   only `RetryableError` values with exponential backoff, and marks permanent
   failures for audit. It never runs in the comment HTTP request.
 - `OAuthService` binds the DingTalk identity to the already authenticated
-  `(workspace_id, member_id)` using a single-use, expiring state. It does not
-  infer a Multica member from a DingTalk nickname or callback query.
+  `(workspace_id, member_id)` using a single-use, expiring state. The separate
+  `LoginOAuthService` only verifies an unauthenticated login identity; the host
+  must apply its trusted account-matching policy and issue the Multica session.
 - `MemberBinding.Groups` is optional. Without an explicit group intent a
   member always receives a P2P message; with intent, configured groups are
   selected and deduplicated. Agent targets remain Bot-only.
@@ -91,6 +92,13 @@ behind a feature flag:
 3. Run `Worker.Run` under the host supervisor. It leases rows with
    `FOR UPDATE SKIP LOCKED`, records an optional `AuditSink`, retries only
    `RetryableError`, and survives process restarts.
+
+The current Multica host adapter is intentionally thin: it registers public
+`/auth/dingtalk/start` and `/auth/dingtalk` routes, persists OAuth state and
+login identities in the module tables, subscribes to `comment:created`, resolves
+the active DingTalk installation for the configured login app, and reuses the
+built-in per-installation sender. Agent targets remain disabled by default.
+Production workers use `SQLStore`; local/mock callers may use `MemoryStore`.
 
 The module includes host-neutral HTTP handlers for the remaining management
 surface:

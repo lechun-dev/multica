@@ -37,6 +37,7 @@ type MemberBinding struct {
 	DingUserID  string
 	UnionID     string
 	OpenID      string
+	RobotCode   string
 	Active      bool
 	// Groups are optional member-owned group targets. An empty list keeps the
 	// default P2P behaviour; a group-intent message uses matching groups (or
@@ -75,9 +76,17 @@ type Provider interface {
 	Send(ctx context.Context, message Message) error
 }
 
+// RoutingOptions controls optional target types. Agent notifications are
+// deliberately disabled by default for the first rollout: an Agent may only
+// notify DingTalk after its own Bot and destination group have been explicitly
+// configured and the feature is enabled by the host.
+type RoutingOptions struct {
+	EnableAgentNotifications bool
+}
+
 type Delivery struct {
 	Message Message
-	Status  string // delivered, failed
+	Status  string // delivered, failed, skipped
 	Error   string
 }
 
@@ -85,6 +94,13 @@ type Delivery struct {
 // agents only use their configured bot channels. A group is selected only
 // when the text explicitly names the channel or asks to send to a group.
 func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver) ([]Message, []Delivery, error) {
+	return BuildMessagesWithOptions(ctx, event, resolver, RoutingOptions{})
+}
+
+// BuildMessagesWithOptions applies the routing rules for the enabled target
+// types. Members default to P2P. Agent routing remains opt-in until the host
+// enables the deferred Agent notification feature.
+func BuildMessagesWithOptions(ctx context.Context, event MentionCreated, resolver Resolver, options RoutingOptions) ([]Message, []Delivery, error) {
 	if event.EventID == "" || event.WorkspaceID == "" {
 		return nil, nil, errors.New("event_id and workspace_id are required")
 	}
@@ -125,8 +141,12 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 				}
 				continue
 			}
-			messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, DingUserID: binding.DingUserID, ChannelType: "p2p", Text: FormatText(event)})
+			messages = append(messages, Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind, RobotCode: binding.RobotCode, DingUserID: binding.DingUserID, ChannelType: "p2p", Text: FormatText(event)})
 		case "agent":
+			if !options.EnableAgentNotifications {
+				failures = append(failures, skipped(event, target, "agent DingTalk notifications are deferred"))
+				continue
+			}
 			channels, err := resolver.AgentChannels(ctx, event.WorkspaceID, target.ID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("resolve agent %s: %w", target.ID, err)
@@ -136,7 +156,9 @@ func BuildMessages(ctx context.Context, event MentionCreated, resolver Resolver)
 			groupIntent := groupRequested(text, channels)
 			genericIntent := genericGroupIntent(text)
 			for _, channel := range channels {
-				if !channel.Active || channel.ChannelID == "" || (groupIntent && !genericIntent && !strings.Contains(text, channel.ChannelName)) || (!groupIntent && !strings.Contains(text, channel.ChannelName)) {
+				// A channel without its own robot code is not a valid Agent
+				// destination. Never fall back to a deployment-wide/default Bot.
+				if !channel.Active || channel.ChannelID == "" || channel.RobotCode == "" || (groupIntent && !genericIntent && !strings.Contains(text, channel.ChannelName)) || (!groupIntent && !strings.Contains(text, channel.ChannelName)) {
 					continue
 				}
 				if _, ok := seen[channel.ChannelID]; ok {
@@ -174,6 +196,10 @@ func groupRequested(text string, groups []AgentChannel) bool {
 
 func failed(event MentionCreated, target MentionTarget, reason string) Delivery {
 	return Delivery{Message: Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind}, Status: "failed", Error: reason}
+}
+
+func skipped(event MentionCreated, target MentionTarget, reason string) Delivery {
+	return Delivery{Message: Message{EventID: event.EventID, WorkspaceID: event.WorkspaceID, TargetID: target.ID, TargetKind: target.Kind}, Status: StatusSkipped, Error: reason}
 }
 
 func FormatText(event MentionCreated) string {
