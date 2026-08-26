@@ -122,11 +122,10 @@ const REQUIRED_ASSET_KEYS: (keyof DownloadAssets)[] = [
 
 /**
  * Whether every platform/arch/format the /download page offers resolved
- * to a URL. A release that fails this is either mid-flight (CI has
- * uploaded Linux + Windows but the manually notarized Mac builds haven't
- * landed) or permanently broken (a packaging job failed and was never
- * re-run) — both render dead buttons, so both are worth stepping back
- * from. See `pickRelease` in `github-release.ts`.
+ * to a URL. A release that fails this is either mid-flight (some of the
+ * platform jobs have not finished) or permanently broken (a packaging job
+ * failed and was never re-run) — both render dead buttons, so both are worth
+ * stepping back from. See `pickRelease` in `github-release.ts`.
  */
 export function hasCompleteAssetSet(assets: DownloadAssets): boolean {
   return REQUIRED_ASSET_KEYS.every((key) => typeof assets[key] === "string");

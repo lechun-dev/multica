@@ -234,6 +234,8 @@ services:
       DOCS_URL: ${DOCS_URL:-}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+      MULTICA_GITHUB_RELEASE_REPOSITORY: ${MULTICA_GITHUB_RELEASE_REPOSITORY:-lechun-dev/multica}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     restart: unless-stopped
 
 volumes:
