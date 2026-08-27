@@ -833,6 +833,9 @@ func (h *Handler) createAgentCommentSubIssue(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limits service.SourceContextLimitUsage) {
+	if writeIssueLimitReached(w, err) {
+		return
+	}
 	status := http.StatusInternalServerError
 	code := "source_context_capture_failed"
 	message := "failed to capture source context"

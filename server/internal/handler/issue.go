@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/channelmedia"
 	"github.com/multica-ai/multica/server/internal/dispatch"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -901,7 +900,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 	queryNum, hasNum := parseQueryNumber(q)
-	policy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	var creationWindowLimit *int64
 	if windowEnabled && policy.action == entitlement.ActionEnforce {
@@ -981,13 +979,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	if len(results) > 0 {
 		total = results[0].totalCount
 	}
-	resultIDs := make([]pgtype.UUID, len(results))
-	for i, result := range results {
-		resultIDs[i] = result.issue.ID
-	}
-	if windowEnabled {
-		h.observeIssueWindow(ctx, wsUUID, policy, resultIDs, "search")
-	}
 
 	prefix := h.getIssuePrefix(ctx, wsUUID)
 	fillSearch := h.newStatusCategoryFiller(ctx, wsUUID)
@@ -1052,7 +1043,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	windowPolicy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	// Parse optional filter params. Malformed UUIDs in filters return 400 —
 	// silently coercing them to a zero UUID would mask a client bug and let
@@ -1520,9 +1510,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
     ))
 )`, ref))
 	}
-	if windowEnabled {
-		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
-	}
 
 	whereSql := strings.Join(where, " AND ")
 
@@ -1619,9 +1606,6 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	ids := make([]pgtype.UUID, len(issues))
 	for i, issue := range issues {
 		ids[i] = issue.ID
-	}
-	if windowEnabled {
-		h.observeIssueWindow(ctx, wsUUID, windowPolicy, ids, "list")
 	}
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
 	resp := make([]IssueResponse, len(issues))
@@ -1817,7 +1801,6 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	windowPolicy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	limit := 50
 	offset := 0
@@ -2072,9 +2055,6 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			))
 		}
 	}
-	if windowEnabled {
-		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
-	}
 
 	sortCol := "position"
 	sortIsExpr := false
@@ -2237,9 +2217,6 @@ ORDER BY
 	ids := make([]pgtype.UUID, len(groupedRows))
 	for i, row := range groupedRows {
 		ids[i] = row.ID
-	}
-	if windowEnabled {
-		h.observeIssueWindow(ctx, wsUUID, windowPolicy, ids, "grouped")
 	}
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
 	prefix := h.getIssuePrefix(ctx, wsUUID)
@@ -2534,13 +2511,16 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rows, err := h.Queries.ChildIssueProgress(r.Context(), wsUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
+		return
+	}
+
 	type progressEntry struct {
 		ParentIssueID string `json:"parent_issue_id"`
 		Total         int64  `json:"total"`
 		Done          int64  `json:"done"`
-		VisibleTotal  int64  `json:"visible_total"`
-		VisibleDone   int64  `json:"visible_done"`
-		HiddenTotal   int64  `json:"hidden_total"`
 	}
 	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
 	resp := []progressEntry{}
@@ -3298,6 +3278,9 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, service.ErrIssueStatusUnavailable) {
 		writeError(w, http.StatusConflict,
 			"the target status was archived while this request was in flight; reload the status list and retry")
+		return
+	}
+	if writeIssueLimitReached(w, err) {
 		return
 	}
 	if err != nil {

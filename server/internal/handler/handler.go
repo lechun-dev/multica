@@ -195,7 +195,7 @@ type Handler struct {
 	IssueService           *service.IssueService
 	AutopilotService       *service.AutopilotService
 	// Entitlements supplies workspace-scoped commercial gates. A nil provider
-	// preserves the self-hosted and pre-rollout behavior without extra reads.
+	// preserves self-hosted behavior without extra reads.
 	Entitlements entitlement.Provider
 	// SeatCapacity executes Cloud's pre-purchased human-seat protocol. Nil or
 	// disabled preserves self-hosted behavior.

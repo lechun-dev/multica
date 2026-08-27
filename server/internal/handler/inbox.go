@@ -3,13 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -407,17 +405,6 @@ func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to count unread inbox")
 		return
 	}
-	if windowEnabled && policy.action == entitlement.ActionObserve {
-		windowed, observeErr := h.countUnreadInboxWithinWindow(r.Context(), wsUUID, parseUUID(userID), policy)
-		if observeErr != nil {
-			slog.Warn("observe unread inbox window failed", "error", observeErr)
-			h.recordIssueWindow(policy.action, "inbox_count", "error")
-		} else if windowed == count {
-			h.recordIssueWindow(policy.action, "inbox_count", "allowed")
-		} else {
-			h.recordIssueWindow(policy.action, "inbox_count", "would_block")
-		}
-	}
 
 	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
 }
@@ -510,8 +497,8 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 		}
 		resp = append(resp, InboxWorkspaceUnreadResponse{
 			WorkspaceID: uuidToString(row.WorkspaceID),
-			Count:       count,
-		})
+			Count:       row.Count,
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
