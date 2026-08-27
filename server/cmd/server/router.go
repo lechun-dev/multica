@@ -1809,8 +1809,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireWorkspaceMember(queries))
-			r.Get("/api/project-permissions/report", h.ListPermissionReport)
+		r.Use(middleware.RequireWorkspaceMember(queries))
+		r.Get("/api/project-permissions/report", h.ListPermissionReport)
+		r.Route("/api/project-permission-roles", func(r chi.Router) {
+			r.Get("/", h.ListProjectPermissionRoles)
+			r.Post("/", h.CreateProjectPermissionRole)
+			r.Route("/{key}", func(r chi.Router) {
+				r.Patch("/", h.UpdateProjectPermissionRole)
+				r.Delete("/", h.DeleteProjectPermissionRole)
+		})
+		})
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)

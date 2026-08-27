@@ -12,4 +12,5 @@ var (
 	ErrCrossWorkspace         = errors.New("project member is outside the project workspace")
 	ErrLastOwner              = errors.New("project must retain at least one owner")
 	ErrInvalidReportFilter    = errors.New("invalid permission report filter")
+	ErrRoleInUse              = errors.New("project permission role is in use")
 )

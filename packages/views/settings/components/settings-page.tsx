@@ -51,6 +51,7 @@ import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
 import { ProjectPermissionsTab } from "./project-permissions-tab";
+import { ProjectPermissionRolesTab } from "./project-permission-roles-tab";
 import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
@@ -82,6 +83,7 @@ const WORKSPACE_TAB_KEYS = [
   "mcp",
   "plugins",
   "project_permissions",
+  "project_permission_roles",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -98,6 +100,7 @@ const WORKSPACE_TAB_VALUES = {
   mcp: "mcp",
   plugins: "plugins",
   project_permissions: "project-permissions",
+  project_permission_roles: "project-permission-roles",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -114,6 +117,7 @@ const WORKSPACE_TAB_ICONS = {
   mcp: Server,
   plugins: Blocks,
   project_permissions: ShieldCheck,
+  project_permission_roles: ShieldCheck,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -295,6 +299,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="mcp"><McpTab /></TabsContent>
           {pluginsEnabled ? <TabsContent value="plugins"><PluginsTab /></TabsContent> : null}
           <TabsContent value="project-permissions"><ProjectPermissionsTab /></TabsContent>
+          <TabsContent value="project-permission-roles"><ProjectPermissionRolesTab /></TabsContent>
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
           ))}

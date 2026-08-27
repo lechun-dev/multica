@@ -56,6 +56,62 @@ export interface ListProjectsResponse {
   total: number;
 }
 
+export type ProjectPermissionReportRole = string;
+
+export interface ProjectPermissionRole {
+  id: string;
+  workspace_id: string;
+  key: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+  permissions: ProjectPermissionReportPermission[];
+}
+
+export interface ProjectPermissionRolesResponse {
+  roles: ProjectPermissionRole[];
+}
+
+export type ProjectPermissionReportPermission =
+  | "project.view"
+  | "project.edit"
+  | "project.issue.create"
+  | "project.issue.manage"
+  | "project.agent.use"
+  | "project.member.manage"
+  | "project.settings.manage";
+
+export interface ProjectPermissionReportRow {
+  scope: "project";
+  project_id: string;
+  project_title: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  workspace_role?: ProjectPermissionReportRole;
+  project_role?: ProjectPermissionReportRole;
+  permission: ProjectPermissionReportPermission;
+  source: "workspace_role" | "project_role";
+  granted_by?: string;
+}
+
+export interface ProjectPermissionReportParams {
+  project_id?: string;
+  user_id?: string;
+  role?: ProjectPermissionReportRole;
+  permission?: ProjectPermissionReportPermission;
+  scope?: "all" | "project";
+  limit?: number;
+  offset?: number;
+}
+
+export interface ProjectPermissionReportResponse {
+  rows: ProjectPermissionReportRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ProjectResource is a typed pointer from a project to an external resource.
 // The resource_ref shape depends on resource_type. New types add a case in
 // validateAndNormalizeResourceRef on the server and a renderer in the UI.

@@ -69,7 +69,7 @@ func (s *Service) ListPermissionReport(ctx context.Context, subject Subject, fil
 	if filter.Scope != "all" && filter.Scope != "project" {
 		return PermissionReportResult{}, fmt.Errorf("%w: scope=%s", ErrInvalidReportFilter, filter.Scope)
 	}
-	if filter.Role != "" && !validReportRole(filter.Role) {
+	if filter.Role != "" && !validReportRole(ctx, s.repo, filter.WorkspaceID, filter.Role) {
 		return PermissionReportResult{}, fmt.Errorf("%w: role=%s", ErrInvalidReportFilter, filter.Role)
 	}
 	if filter.Permission != "" && !validReportPermission(filter.Permission) {
@@ -96,15 +96,19 @@ func (s *Service) ListPermissionReport(ctx context.Context, subject Subject, fil
 	return rr.ListPermissionReport(ctx, filter)
 }
 
-func validReportRole(role string) bool {
+func validReportRole(ctx context.Context, repo Repository, workspaceID, role string) bool {
 	switch role {
 	// 2026-08-27 coder(lq): Workspace and project roles intentionally share
 	// owner/member values, so validate their distinct wire values only once.
 	case "owner", "admin", "member", "manager", "viewer":
 		return true
-	default:
+	}
+	roleRepo, ok := repo.(RoleRepository)
+	if !ok {
 		return false
 	}
+	definition, err := roleRepo.GetRoleDefinition(ctx, workspaceID, role)
+	return err == nil && definition.Key != ""
 }
 
 func validReportPermission(permission Permission) bool {

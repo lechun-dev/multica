@@ -99,6 +99,10 @@ import type {
   CreateProjectRequest,
   UpdateProjectRequest,
   ListProjectsResponse,
+  ProjectPermissionReportParams,
+  ProjectPermissionReportResponse,
+  ProjectPermissionRole,
+  ProjectPermissionRolesResponse,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
@@ -388,6 +392,7 @@ import {
   ProjectMembersResponseSchema,
   EMPTY_PROJECT_MEMBERS_RESPONSE,
   type ProjectMembersResponse,
+  ProjectPermissionRolesResponseSchema,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
   IssuePropertySchema,
@@ -3609,8 +3614,52 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" });
   }
 
-  async listProjectPermissionReport(params: { project_id?: string; scope?: string } = {}): Promise<{ rows: Array<Record<string, string>>; total: number }> {
-    const q = new URLSearchParams(); if (params.project_id) q.set("project_id", params.project_id); if (params.scope) q.set("scope", params.scope); return this.fetch(`/api/project-permissions/report?${q}`);
+  async listProjectPermissionReport(
+    params: ProjectPermissionReportParams = {},
+  ): Promise<ProjectPermissionReportResponse> {
+    const q = new URLSearchParams();
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.user_id) q.set("user_id", params.user_id);
+    if (params.role) q.set("role", params.role);
+    if (params.permission) q.set("permission", params.permission);
+    if (params.scope) q.set("scope", params.scope);
+    if (params.limit !== undefined) q.set("limit", String(params.limit));
+    if (params.offset !== undefined) q.set("offset", String(params.offset));
+    return this.fetch(`/api/project-permissions/report?${q}`);
+  }
+
+  async listProjectPermissionRoles(): Promise<ProjectPermissionRolesResponse> {
+    const raw = await this.fetch<unknown>("/api/project-permission-roles");
+    return parseWithFallback(raw, ProjectPermissionRolesResponseSchema, { roles: [] }, {
+      endpoint: "GET /api/project-permission-roles",
+    });
+  }
+
+  async createProjectPermissionRole(data: {
+    key: string;
+    name: string;
+    description?: string;
+    permissions: string[];
+  }): Promise<ProjectPermissionRole> {
+    return this.fetch("/api/project-permission-roles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProjectPermissionRole(key: string, data: {
+    name: string;
+    description?: string;
+    permissions: string[];
+  }): Promise<ProjectPermissionRole> {
+    return this.fetch(`/api/project-permission-roles/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProjectPermissionRole(key: string): Promise<void> {
+    await this.fetch(`/api/project-permission-roles/${encodeURIComponent(key)}`, { method: "DELETE" });
   }
 
   // Project resources

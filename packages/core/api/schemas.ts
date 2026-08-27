@@ -3312,7 +3312,7 @@ export const MemberWithUserSchema = z.object({
 export const ProjectMemberSchema = z.object({
   project_id: z.string(),
   user_id: z.string(),
-  role: z.enum(["owner", "manager", "member", "viewer"]),
+  role: z.string(),
 }).loose();
 
 export const ProjectMembersResponseSchema = z.object({
@@ -3330,6 +3330,22 @@ export const EMPTY_PROJECT_MEMBERS_RESPONSE: ProjectMembersResponse = {
   total: 0,
   can_manage: false,
 };
+
+export const ProjectPermissionRoleSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  is_system: z.boolean().default(false),
+  permissions: z.array(z.string()).default([]),
+}).loose();
+
+export const ProjectPermissionRolesResponseSchema = z.object({
+  roles: z.array(ProjectPermissionRoleSchema).default([]),
+}).loose();
+
+export type ProjectPermissionRolesResponse = z.infer<typeof ProjectPermissionRolesResponseSchema>;
 
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,

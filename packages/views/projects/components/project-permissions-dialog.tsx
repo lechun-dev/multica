@@ -27,9 +27,8 @@ import {
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 
-type ProjectRole = "owner" | "manager" | "member" | "viewer";
-
-const PROJECT_ROLES: ProjectRole[] = ["owner", "manager", "member", "viewer"];
+type ProjectRole = string;
+const BUILTIN_PROJECT_ROLES = ["owner", "manager", "member", "viewer"];
 
 function projectMembersKey(projectId: string) {
   return ["project-members", projectId] as const;
@@ -58,6 +57,22 @@ export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
     ...memberListOptions(workspaceId),
     enabled: open && canManage && !!workspaceId,
   });
+  const rolesQuery = useQuery({
+    queryKey: ["project-permission-roles", workspaceId],
+    queryFn: () => api.listProjectPermissionRoles(),
+    enabled: open && canManage && !!workspaceId,
+  });
+  const roles = useMemo(
+    () => rolesQuery.data?.roles?.length ? rolesQuery.data.roles : BUILTIN_PROJECT_ROLES.map((key) => ({
+      key,
+      name: key ? key.charAt(0).toLocaleUpperCase() + key.slice(1) : key,
+      description: "",
+      permissions: [],
+      is_system: true,
+    })),
+    [rolesQuery.data?.roles],
+  );
+  const roleByKey = useMemo(() => new Map(roles.map((item) => [item.key, item])), [roles]);
 
   const projectMembers = useMemo(
     () => projectMembersQuery.data?.members ?? [],
@@ -159,9 +174,9 @@ export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
 
   if (!canManage) return null;
 
-  const roleItems = PROJECT_ROLES.map((value) => ({
-    value,
-    label: t(($) => $.permissions[`role_${value}`]),
+  const roleItems = roles.map((item) => ({
+    value: item.key,
+    label: item.name || item.key,
   }));
   const allFilteredSelected = filteredMembers.length > 0 && filteredMembers.every((member) => selectedIds.has(member.user_id));
 
@@ -199,9 +214,9 @@ export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
                         <div className="truncate text-body font-medium">{name}</div>
                         {profile?.email && <div className="truncate text-caption text-muted-foreground">{profile.email}</div>}
                       </div>
-                      <Select items={roleItems} value={member.role as ProjectRole} onValueChange={(value) => value && void updateMemberRole(member.user_id, value as ProjectRole)}>
+                      <Select items={roleItems} value={member.role as ProjectRole} onValueChange={(value) => value && void updateMemberRole(member.user_id, value)}>
                         <SelectTrigger className="w-28" aria-label={`${t(($) => $.permissions.change_role_aria)} ${name}`}><SelectValue /></SelectTrigger>
-                        <SelectContent>{PROJECT_ROLES.map((value) => <SelectItem key={value} value={value}>{t(($) => $.permissions[`role_${value}`])}</SelectItem>)}</SelectContent>
+                        <SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent>
                       </Select>
                       <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_aria)} ${name}`} disabled={removingId === member.user_id} onClick={() => void removeMember(member.user_id)}><UserMinus className="size-3.5" /></Button>
                     </div>
@@ -218,9 +233,9 @@ export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <div className="relative flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t(($) => $.permissions.search_placeholder)} aria-label={t(($) => $.permissions.search_placeholder)} className="pl-8" /></div>
-              <Select items={roleItems} value={role} onValueChange={(value) => setRole((value ?? "member") as ProjectRole)}><SelectTrigger className="w-full sm:w-44" aria-label={t(($) => $.permissions.selected_role_aria)}><SelectValue /></SelectTrigger><SelectContent>{PROJECT_ROLES.map((value) => <SelectItem key={value} value={value}>{t(($) => $.permissions[`role_${value}`])}</SelectItem>)}</SelectContent></Select>
+              <Select items={roleItems} value={role} onValueChange={(value) => setRole(value ?? "member")}><SelectTrigger className="w-full sm:w-44" aria-label={t(($) => $.permissions.selected_role_aria)}><SelectValue /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>
             </div>
-            <p className="text-caption text-muted-foreground">{t(($) => $.permissions[`role_${role}_description`])}</p>
+            <p className="text-caption text-muted-foreground">{roleByKey.get(role)?.description || t(($) => $.permissions.add_members_description)}</p>
             <div className="flex items-center justify-between border-b pb-2 text-caption"><span className="text-muted-foreground">{t(($) => $.permissions.selected_prefix)} {selectedIds.size}</span><div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set(filteredMembers.map((member) => member.user_id)))} disabled={allFilteredSelected || filteredMembers.length === 0}>{t(($) => $.permissions.select_all)}</Button><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>{t(($) => $.permissions.clear_selection)}</Button></div></div>
             <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
               {membersLoading ? <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.loading)}</div> : membersError ? <div className="py-6 text-center text-body text-destructive">{t(($) => $.permissions.workspace_members_failed)}</div> : filteredMembers.length === 0 ? <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.no_results)}</div> : filteredMembers.map((member) => <div key={member.user_id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60" onClick={(event) => { if ((event.target as HTMLElement).closest('[data-slot="checkbox"]')) return; toggleMember(member.user_id); }}><Checkbox checked={selectedIds.has(member.user_id)} aria-label={member.name} onCheckedChange={(nextChecked) => setMemberSelected(member.user_id, nextChecked)} /><div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-caption font-medium">{(member.name || member.email || "?").slice(0, 1).toLocaleUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-body font-medium">{member.name || member.email}</div>{member.name && member.email && <div className="truncate text-caption text-muted-foreground">{member.email}</div>}</div></div>)}

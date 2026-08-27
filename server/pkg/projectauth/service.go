@@ -3,6 +3,7 @@ package projectauth
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type Service struct {
@@ -51,13 +52,148 @@ func (s *Service) Check(ctx context.Context, subject Subject, projectID string, 
 	// explicit project_members row before any project operation is allowed.
 	// Keep this check explicit so future policy additions cannot accidentally
 	// make a project manager/member able to administer membership.
-	if permission == MemberManage && projectRole != ProjectOwner {
-		return ErrForbidden
+	allowed := s.policy.Allows(projectRole, permission)
+	if resolver, ok := s.repo.(RolePermissionRepository); ok {
+		permissions, found, resolveErr := resolver.RolePermissions(ctx, subject.WorkspaceID, projectRole)
+		if resolveErr != nil {
+			return ErrForbidden
+		}
+		// Role rows are authoritative, including an intentionally empty set.
+		if found {
+			allowed = false
+			for _, candidate := range permissions {
+				if candidate == permission {
+					allowed = true
+					break
+				}
+			}
+		}
 	}
-	if !s.policy.Allows(projectRole, permission) {
+	if !allowed {
 		return fmt.Errorf("%w: role=%s permission=%s", ErrForbidden, projectRole, permission)
 	}
 	return nil
+}
+
+func (s *Service) ListRoles(ctx context.Context, subject Subject) ([]RoleDefinition, error) {
+	rr, ok := s.repo.(RoleRepository)
+	if !ok {
+		return nil, ErrDisabled
+	}
+	// 2026-08-28 coder(lq): Project owners need to read the workspace role
+	// catalog when granting project access; only mutations require admin.
+	if _, err := s.requireWorkspaceMember(ctx, subject); err != nil {
+		return nil, err
+	}
+	return rr.ListRoleDefinitions(ctx, subject.WorkspaceID)
+}
+
+func (s *Service) CreateRole(ctx context.Context, subject Subject, role RoleDefinition) (RoleDefinition, error) {
+	rr, ok := s.repo.(RoleRepository)
+	if !ok {
+		return RoleDefinition{}, ErrDisabled
+	}
+	if err := s.requireRoleAdmin(ctx, subject); err != nil {
+		return RoleDefinition{}, err
+	}
+	if role.IsSystem || !validCustomRoleKey(role.Key) {
+		return RoleDefinition{}, ErrInvalidRole
+	}
+	if err := validatePermissions(role.Permissions); err != nil {
+		return RoleDefinition{}, err
+	}
+	return rr.CreateRoleDefinition(ctx, subject.WorkspaceID, subject.UserID, role)
+}
+
+func (s *Service) UpdateRole(ctx context.Context, subject Subject, key string, role RoleDefinition) (RoleDefinition, error) {
+	rr, ok := s.repo.(RoleRepository)
+	if !ok {
+		return RoleDefinition{}, ErrDisabled
+	}
+	if err := s.requireRoleAdmin(ctx, subject); err != nil {
+		return RoleDefinition{}, err
+	}
+	if key == "" {
+		return RoleDefinition{}, ErrInvalidRole
+	}
+	current, err := rr.GetRoleDefinition(ctx, subject.WorkspaceID, key)
+	if err != nil {
+		return RoleDefinition{}, ErrInvalidRole
+	}
+	// The key and system marker are immutable identity fields. System roles
+	// are editable, but remain undeletable after their permissions change.
+	if role.Key != "" && string(role.Key) != key {
+		return RoleDefinition{}, ErrInvalidRole
+	}
+	role.Key = current.Key
+	role.IsSystem = current.IsSystem
+	if err := validatePermissions(role.Permissions); err != nil {
+		return RoleDefinition{}, err
+	}
+	return rr.UpdateRoleDefinition(ctx, subject.WorkspaceID, key, role)
+}
+
+func (s *Service) DeleteRole(ctx context.Context, subject Subject, key string) error {
+	rr, ok := s.repo.(RoleRepository)
+	if !ok {
+		return ErrDisabled
+	}
+	if err := s.requireRoleAdmin(ctx, subject); err != nil {
+		return err
+	}
+	if key == "" {
+		return ErrInvalidRole
+	}
+	definition, err := rr.GetRoleDefinition(ctx, subject.WorkspaceID, key)
+	if err != nil || definition.IsSystem {
+		return ErrInvalidRole
+	}
+	return rr.DeleteRoleDefinition(ctx, subject.WorkspaceID, key)
+}
+
+func (s *Service) requireRoleAdmin(ctx context.Context, subject Subject) error {
+	role, err := s.requireWorkspaceMember(ctx, subject)
+	if err != nil {
+		return err
+	}
+	if role != WorkspaceOwner && role != WorkspaceAdmin {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func (s *Service) requireWorkspaceMember(ctx context.Context, subject Subject) (WorkspaceRole, error) {
+	if subject.UserID == "" || subject.WorkspaceID == "" || s == nil || s.repo == nil {
+		return "", ErrNotWorkspaceMember
+	}
+	role, err := s.repo.WorkspaceRole(ctx, subject.WorkspaceID, subject.UserID)
+	if err != nil {
+		return "", ErrNotWorkspaceMember
+	}
+	return role, nil
+}
+
+func validatePermissions(permissions []Permission) error {
+	for _, permission := range permissions {
+		if !validReportPermission(permission) {
+			return fmt.Errorf("%w: permission=%s", ErrInvalidRole, permission)
+		}
+	}
+	return nil
+}
+
+func validCustomRoleKey(role ProjectRole) bool {
+	value := strings.TrimSpace(string(role))
+	if value == "" || len(value) > 64 || IsSystemRole(ProjectRole(value)) {
+		return false
+	}
+	for index, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || (char == '-' && index > 0 && index < len(value)-1) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // 2026-08-24 coder(lq): Keep the HTTP adapter on one authorization entry point.

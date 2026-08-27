@@ -70,9 +70,6 @@ func (s *Service) AddMember(ctx context.Context, actor Subject, projectID, userI
 	if err := s.Require(ctx, actor, projectID, MemberManage); err != nil {
 		return err
 	}
-	if !validProjectRole(role) {
-		return ErrInvalidRole
-	}
 	mr, ok := s.repo.(MemberRepository)
 	if !ok {
 		return ErrDisabled
@@ -80,6 +77,16 @@ func (s *Service) AddMember(ctx context.Context, actor Subject, projectID, userI
 	workspaceID, err := mr.ProjectWorkspace(ctx, projectID)
 	if err != nil {
 		return ErrNoProjectAccess
+	}
+	if !validProjectRole(role) {
+		rr, roleRepoOK := s.repo.(RoleRepository)
+		if !roleRepoOK {
+			return ErrInvalidRole
+		}
+		definition, roleErr := rr.GetRoleDefinition(ctx, workspaceID, string(role))
+		if roleErr != nil || definition.IsSystem {
+			return ErrInvalidRole
+		}
 	}
 	if _, err = mr.WorkspaceRole(ctx, workspaceID, userID); err != nil {
 		return ErrCrossWorkspace

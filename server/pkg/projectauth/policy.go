@@ -7,6 +7,28 @@ type Policy struct {
 	roles map[ProjectRole]map[Permission]bool
 }
 
+var systemRoleNames = map[ProjectRole]string{
+	ProjectOwner:   "Owner",
+	ProjectManager: "Manager",
+	ProjectMember:  "Member",
+	ProjectViewer:  "Viewer",
+}
+
+func SystemRoleDefinitions() []RoleDefinition {
+	policy := DefaultPolicy()
+	roles := make([]RoleDefinition, 0, len(systemRoleNames))
+	for _, role := range []ProjectRole{ProjectOwner, ProjectManager, ProjectMember, ProjectViewer} {
+		permissions := make([]Permission, 0)
+		for permission, allowed := range policy.roles[role] {
+			if allowed {
+				permissions = append(permissions, permission)
+			}
+		}
+		roles = append(roles, RoleDefinition{Key: role, Name: systemRoleNames[role], IsSystem: true, Permissions: permissions})
+	}
+	return roles
+}
+
 func DefaultPolicy() Policy {
 	return Policy{roles: map[ProjectRole]map[Permission]bool{
 		ProjectOwner: {
@@ -34,3 +56,5 @@ func validProjectRole(role ProjectRole) bool {
 		return false
 	}
 }
+
+func IsSystemRole(role ProjectRole) bool { return validProjectRole(role) }

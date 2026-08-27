@@ -1,0 +1,141 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Trash2 } from "lucide-react";
+import { api } from "@multica/core/api";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { memberListOptions } from "@multica/core/workspace/queries";
+import { useAuthStore } from "@multica/core/auth";
+import type { ProjectPermissionReportPermission, ProjectPermissionRole } from "@multica/core/types";
+import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Input } from "@multica/ui/components/ui/input";
+import { Textarea } from "@multica/ui/components/ui/textarea";
+import { toast } from "sonner";
+import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
+import { useT } from "../../i18n";
+
+const PERMISSIONS: ProjectPermissionReportPermission[] = [
+  "project.view", "project.edit", "project.issue.create", "project.issue.manage",
+  "project.agent.use", "project.member.manage", "project.settings.manage",
+];
+
+// 2026-08-28 coder(lq): Keep role editing in its own settings surface so
+// upstream project/member UI changes do not conflict with role policy work.
+export function ProjectPermissionRolesTab() {
+  const { t } = useT("settings");
+  const workspaceId = useWorkspaceId();
+  const currentUser = useAuthStore((state) => state.user);
+  const queryClient = useQueryClient();
+  const { data: workspaceMembers = [] } = useQuery({
+    ...memberListOptions(workspaceId),
+    enabled: !!workspaceId,
+  });
+  const rolesQuery = useQuery({
+    queryKey: ["project-permission-roles"],
+    queryFn: () => api.listProjectPermissionRoles(),
+  });
+  const [editing, setEditing] = useState<ProjectPermissionRole | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState({ key: "", name: "", description: "", permissions: [] as string[] });
+  const roles = rolesQuery.data?.roles ?? [];
+  const canManage = workspaceMembers.some(
+    (member) => member.user_id === currentUser?.id && (member.role === "owner" || member.role === "admin"),
+  );
+  const permissionLabel = (permission: ProjectPermissionReportPermission) =>
+    t(($) => $.permission_report.permissions[permission]);
+  const roleLabel = (role: ProjectPermissionRole) => role.name || role.key;
+
+  const openCreate = () => {
+    setCreating(true);
+    setEditing(null);
+    setDraft({ key: "", name: "", description: "", permissions: ["project.view"] });
+  };
+  const openEdit = (role: ProjectPermissionRole) => {
+    setCreating(false);
+    setEditing(role);
+    setDraft({ key: role.key, name: role.name, description: role.description, permissions: [...role.permissions] });
+  };
+  const closeEditor = () => {
+    if (!saving) {
+      setEditing(null);
+      setCreating(false);
+    }
+  };
+  const togglePermission = (permission: string, checked: boolean) => {
+    setDraft((current) => ({
+      ...current,
+      permissions: checked ? [...new Set([...current.permissions, permission])] : current.permissions.filter((item) => item !== permission),
+    }));
+  };
+  const save = async () => {
+    if (!draft.name.trim() || (creating && !draft.key.trim())) return;
+    setSaving(true);
+    try {
+      if (creating) {
+        await api.createProjectPermissionRole({ ...draft, key: draft.key.trim(), name: draft.name.trim() });
+      } else if (editing) {
+        await api.updateProjectPermissionRole(editing.key, { name: draft.name.trim(), description: draft.description.trim(), permissions: draft.permissions });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["project-permission-roles"] });
+      toast.success(t(($) => $.permission_roles.saved));
+      setEditing(null);
+      setCreating(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t(($) => $.permission_roles.save_failed));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async (role: ProjectPermissionRole) => {
+    if (role.is_system) return;
+    try {
+      await api.deleteProjectPermissionRole(role.key);
+      await queryClient.invalidateQueries({ queryKey: ["project-permission-roles"] });
+      toast.success(t(($) => $.permission_roles.deleted));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t(($) => $.permission_roles.delete_failed));
+    }
+  };
+  const groupedRoles = useMemo(() => roles, [roles]);
+
+  return (
+    <SettingsTab title={t(($) => $.permission_roles.title)} description={t(($) => $.permission_roles.description)}>
+      <SettingsSection>
+        <SettingsCard>
+          <div className="flex items-center justify-between border-b border-surface-border pb-4">
+            <div className="text-caption text-muted-foreground">{t(($) => $.permission_roles.system_hint)}</div>
+            {canManage ? <Button size="sm" onClick={openCreate}><Plus className="mr-1 size-4" />{t(($) => $.permission_roles.add)}</Button> : null}
+          </div>
+          {rolesQuery.isLoading ? <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_roles.loading)}</p> : (
+            <div className="divide-y divide-surface-border">
+              {groupedRoles.map((role) => (
+                <div key={role.key} className="flex items-center gap-3 py-3">
+                  <div className="min-w-0 flex-1"><div className="font-medium">{roleLabel(role)} {role.is_system ? <span className="text-caption text-muted-foreground">({t(($) => $.permission_roles.system)})</span> : null}</div><div className="text-caption text-muted-foreground">{role.description || role.key}</div></div>
+                  <div className="hidden max-w-[45%] flex-wrap justify-end gap-1 md:flex">{role.permissions.map((permission) => <span key={permission} className="rounded bg-muted px-1.5 py-0.5 text-caption">{permissionLabel(permission)}</span>)}</div>
+                  {canManage ? <Button variant="outline" size="sm" onClick={() => openEdit(role)}>{t(($) => $.permission_roles.edit)}</Button> : null}
+                  {canManage ? <Button variant="ghost" size="icon-sm" disabled={role.is_system} aria-label={t(($) => $.permission_roles.delete)} onClick={() => void remove(role)}><Trash2 className="size-4" /></Button> : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </SettingsCard>
+      </SettingsSection>
+      <Dialog open={creating || !!editing} onOpenChange={(open) => !open && closeEditor()}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{creating ? t(($) => $.permission_roles.create_title) : t(($) => $.permission_roles.edit_title)}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            {creating ? <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.key)}</label><Input value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value })} placeholder="reviewer" /></div> : null}
+            <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.name)}</label><Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></div>
+            <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.description_field)}</label><Textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></div>
+            <div className="space-y-2"><div className="text-caption font-medium">{t(($) => $.permission_roles.permissions)}</div>{PERMISSIONS.map((permission) => <label key={permission} className="flex items-center gap-2 text-body"><Checkbox checked={draft.permissions.includes(permission)} onCheckedChange={(checked) => togglePermission(permission, checked === true)} />{permissionLabel(permission)}</label>)}</div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={closeEditor}>{t(($) => $.permission_roles.cancel)}</Button><Button onClick={() => void save()} disabled={saving || !draft.name.trim() || (creating && !draft.key.trim())}>{saving ? t(($) => $.permission_roles.saving) : t(($) => $.permission_roles.save)}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </SettingsTab>
+  );
+}
