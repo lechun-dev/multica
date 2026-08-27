@@ -406,6 +406,18 @@ describe("LoginPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders DingTalk OAuth button and delegates the platform flow", async () => {
+    const onDingTalkLogin = vi.fn();
+    renderWithI18n(
+      <LoginPage onSuccess={onSuccess} onDingTalkLogin={onDingTalkLogin} />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /continue with dingtalk/i }),
+    );
+    expect(onDingTalkLogin).toHaveBeenCalledOnce();
+  });
+
   // -------------------------------------------------------------------------
   // CLI callback — existing session
   // -------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 export { createAuthStore } from "./store";
 export type { AuthStoreOptions, AuthState, AuthStatus } from "./store";
 export { sanitizeNextUrl } from "./utils";
+export { buildDingTalkLoginURL, isDesktopDingTalkState } from "./dingtalk-oauth";
+export type { DingTalkOAuthClient } from "./dingtalk-oauth";
 
 import type { createAuthStore as CreateAuthStoreFn } from "./store";
 

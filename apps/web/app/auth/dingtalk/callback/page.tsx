@@ -3,18 +3,23 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@multica/core/auth";
+import { isDesktopDingTalkState, useAuthStore } from "@multica/core/auth";
+import { api } from "@multica/core/api";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
 import { paths, resolvePostAuthDestination } from "@multica/core/paths";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@multica/ui/components/ui/card";
+import { Button } from "@multica/ui/components/ui/button";
 import { Loader2 } from "lucide-react";
+import { useT } from "@multica/views/i18n";
 
 function CallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const qc = useQueryClient();
+  const { t } = useT("auth");
   const loginWithDingTalk = useAuthStore((s) => s.loginWithDingTalk);
   const [error, setError] = useState("");
+  const [desktopToken, setDesktopToken] = useState<string | null>(null);
 
   useEffect(() => {
     const code = searchParams.get("code");
@@ -29,6 +34,19 @@ function CallbackContent() {
       return;
     }
 
+    if (isDesktopDingTalkState(state)) {
+      api
+        .dingTalkLogin(code, state)
+        .then(({ token }) => {
+          setDesktopToken(token);
+          window.location.href = `multica://auth/callback?token=${encodeURIComponent(token)}`;
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "DingTalk login failed");
+        });
+      return;
+    }
+
     loginWithDingTalk(code, state)
       .then(async (user) => {
         const workspaces = await qc.ensureQueryData(workspaceListOptions());
@@ -40,16 +58,43 @@ function CallbackContent() {
       });
   }, [loginWithDingTalk, qc, router, searchParams]);
 
+  if (desktopToken) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle>{t(($) => $.web.desktop_handoff.opening_title)}</CardTitle>
+            <CardDescription>
+              {t(($) => $.web.desktop_handoff.opening_description)}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center">
+            <Button
+              variant="outline"
+              onClick={() => {
+                window.location.href = `multica://auth/callback?token=${encodeURIComponent(desktopToken)}`;
+              }}
+            >
+              {t(($) => $.web.desktop_handoff.open_button)}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
-            <CardTitle>钉钉登录失败</CardTitle>
+            <CardTitle>{t(($) => $.web.dingtalk_callback.failed_title)}</CardTitle>
             <CardDescription>{error}</CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <a href={paths.login()} className="text-primary underline-offset-4 hover:underline">返回登录</a>
+            <a href={paths.login()} className="text-primary underline-offset-4 hover:underline">
+              {t(($) => $.web.dingtalk_callback.back_to_login)}
+            </a>
           </CardContent>
         </Card>
       </div>
@@ -60,8 +105,8 @@ function CallbackContent() {
     <div className="flex min-h-screen items-center justify-center">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle>正在完成钉钉登录</CardTitle>
-          <CardDescription>请稍候…</CardDescription>
+          <CardTitle>{t(($) => $.web.dingtalk_callback.completing_title)}</CardTitle>
+          <CardDescription>{t(($) => $.web.dingtalk_callback.completing_description)}</CardDescription>
         </CardHeader>
         <CardContent className="flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></CardContent>
       </Card>

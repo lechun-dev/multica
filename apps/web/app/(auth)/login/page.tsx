@@ -3,7 +3,11 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
+import {
+  buildDingTalkLoginURL,
+  sanitizeNextUrl,
+  useAuthStore,
+} from "@multica/core/auth";
 import { useConfigStore } from "@multica/core/config";
 import {
   workspaceKeys,
@@ -233,20 +237,15 @@ function LoginPageContent() {
           : undefined
       }
       onTokenObtained={setLoggedInCookie}
+      onDingTalkLogin={() => {
+        window.location.href = buildDingTalkLoginURL(
+          api.getBaseUrl(),
+          platform === "desktop" ? "desktop" : "web",
+          window.location.origin,
+        );
+      }}
       extra={
         <div className="flex w-full flex-col gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            size="lg"
-            onClick={() => {
-              window.location.href = `${api.getBaseUrl()}/auth/dingtalk/start`;
-            }}
-            disabled={isLoading}
-          >
-            使用钉钉登录
-          </Button>
           <span className="text-caption text-muted-foreground">
             {t(($) => $.web.prefer_desktop)}{" "}
             <Link

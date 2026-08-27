@@ -75,6 +75,24 @@ describe("ApiClient edit guards", () => {
   });
 });
 
+describe("ApiClient DingTalk login response schema", () => {
+  it("rejects a successful response without a usable token", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ token: "", user: { id: "user-1" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").dingTalkLogin("code", "state.web"),
+    ).rejects.toThrow("malformed login response");
+  });
+});
+
 describe("ApiClient pull-request response schema", () => {
   const validPR = {
     id: "pr-1",
