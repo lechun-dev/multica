@@ -869,6 +869,14 @@
     "visible_toggle": "Show in view bar",
     "more_label": "More views"
   },
+  "permissions": {
+    "title": "Task permissions (project view access required)",
+    "select_member": "Select member",
+    "grant_success": "Task permission added",
+    "grant_failed": "Failed to grant permission",
+    "revoke_success": "Task permission revoked",
+    "revoke_failed": "Failed to revoke permission"
+  },
   "plugins": {
     "panels": "Plugins",
     "surface_failed": "{{name}} could not load its interface.",

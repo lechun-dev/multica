@@ -152,6 +152,15 @@
   "chip": {
     "fallback_label": "プロジェクト"
   },
+  "permissions": {
+    "title": "プロジェクト権限",
+    "select_member": "ワークスペースメンバーを選択",
+    "loading": "読み込み中…",
+    "add_success": "プロジェクトメンバーを追加しました",
+    "add_failed": "メンバーの追加に失敗しました",
+    "remove_success": "プロジェクトメンバーを削除しました",
+    "remove_failed": "メンバーの削除に失敗しました"
+  },
   "toolbar": {
     "result_count_title": "該当プロジェクト / すべてのプロジェクト",
     "filter_label": "フィルター",

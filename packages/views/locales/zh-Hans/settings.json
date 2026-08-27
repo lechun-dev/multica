@@ -329,7 +329,8 @@
       "quick_actions": "快捷操作",
       "plugins": "Plugins",
       "mcp": "MCP",
-      "billing": "账单与套餐"
+      "billing": "账单与套餐",
+      "project_permissions": "项目权限"
     }
   },
   "plugins": {
@@ -1153,6 +1154,15 @@
       "check_now": "立即检查",
       "checking": "检查中..."
     }
+  },
+  "permission_report": {
+    "title": "项目权限",
+    "description": "按人员和项目查看有效权限及任务级授权。",
+    "loading": "加载中…",
+    "forbidden": "暂无权限报告访问权限",
+    "people_projects": "人员 / 项目",
+    "granted": "授权",
+    "issue_count_other": "任务{{count}}"
   },
   "members": {
     "section_title": "成员（{{count}}）",

@@ -837,6 +837,14 @@
     "visible_toggle": "뷰 바에 표시",
     "more_label": "더 많은 뷰"
   },
+  "permissions": {
+    "title": "작업 권한 (프로젝트 보기 권한 필요)",
+    "select_member": "멤버 선택",
+    "grant_success": "작업 권한을 추가했습니다",
+    "grant_failed": "권한 부여에 실패했습니다",
+    "revoke_success": "작업 권한을 취소했습니다",
+    "revoke_failed": "권한 취소에 실패했습니다"
+  },
   "plugins": {
     "panels": "Plugins",
     "surface_failed": "{{name}}의 인터페이스를 불러오지 못했습니다.",

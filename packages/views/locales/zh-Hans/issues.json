@@ -837,6 +837,14 @@
     "visible_toggle": "在视图栏显示",
     "more_label": "更多视图"
   },
+  "permissions": {
+    "title": "任务权限（需先拥有项目查看权限）",
+    "select_member": "选择成员",
+    "grant_success": "任务权限已添加",
+    "grant_failed": "授权失败",
+    "revoke_success": "任务权限已撤销",
+    "revoke_failed": "撤销失败"
+  },
   "plugins": {
     "panels": "Plugins",
     "surface_failed": "{{name}} 的界面加载失败。",

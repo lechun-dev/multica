@@ -329,7 +329,8 @@
       "quick_actions": "クイックアクション",
       "plugins": "Plugins",
       "mcp": "MCP",
-      "billing": "請求とプラン"
+      "billing": "請求とプラン",
+      "project_permissions": "プロジェクト権限"
     }
   },
   "plugins": {
@@ -553,7 +554,15 @@
     "toast_avatar_updated": "アバターを更新しました",
     "toast_avatar_failed": "アバターをアップロードできませんでした",
     "toast_profile_updated": "プロフィールを更新しました",
-    "toast_profile_failed": "プロフィールを更新できませんでした"
+    "toast_profile_failed": "プロフィールを更新できませんでした",
+    "dingtalk_section": "DingTalkアカウント",
+    "dingtalk_label": "DingTalk ID",
+    "dingtalk_hint": "このMulticaアカウントに連携されたDingTalk IDです。",
+    "dingtalk_connected": "連携済み",
+    "dingtalk_not_connected": "未連携",
+    "dingtalk_identity_unknown": "DingTalkユーザー",
+    "dingtalk_email": "DingTalkメール",
+    "dingtalk_user_id": "DingTalkユーザーID"
   },
   "notifications": {
     "title": "インボックス通知",
@@ -1145,6 +1154,15 @@
       "check_now": "今すぐ確認",
       "checking": "確認中…"
     }
+  },
+  "permission_report": {
+    "title": "プロジェクト権限",
+    "description": "ユーザーとプロジェクト別に有効な権限とタスク単位の付与を確認します。",
+    "loading": "読み込み中…",
+    "forbidden": "権限レポートへのアクセス権がありません",
+    "people_projects": "ユーザー / プロジェクト",
+    "granted": "付与済み",
+    "issue_count_other": "タスク{{count}}件"
   },
   "members": {
     "section_title": "メンバー（{{count}}）",

@@ -329,7 +329,8 @@
       "quick_actions": "퀵 액션",
       "plugins": "Plugins",
       "mcp": "MCP",
-      "billing": "결제 및 요금제"
+      "billing": "결제 및 요금제",
+      "project_permissions": "프로젝트 권한"
     }
   },
   "plugins": {
@@ -553,7 +554,15 @@
     "toast_avatar_updated": "아바타를 업데이트했습니다",
     "toast_avatar_failed": "아바타를 업로드하지 못했습니다",
     "toast_profile_updated": "프로필을 업데이트했습니다",
-    "toast_profile_failed": "프로필을 업데이트하지 못했습니다"
+    "toast_profile_failed": "프로필을 업데이트하지 못했습니다",
+    "dingtalk_section": "DingTalk 계정",
+    "dingtalk_label": "DingTalk 사용자 정보",
+    "dingtalk_hint": "이 Multica 계정에 연결된 DingTalk 사용자 정보입니다.",
+    "dingtalk_connected": "연결됨",
+    "dingtalk_not_connected": "연결되지 않음",
+    "dingtalk_identity_unknown": "DingTalk 사용자",
+    "dingtalk_email": "DingTalk 이메일",
+    "dingtalk_user_id": "DingTalk 사용자 ID"
   },
   "notifications": {
     "title": "인박스 알림",
@@ -883,6 +892,15 @@
       "check_now": "지금 확인",
       "checking": "확인 중..."
     }
+  },
+  "permission_report": {
+    "title": "프로젝트 권한",
+    "description": "사용자 및 프로젝트별 유효 권한과 작업 수준 권한을 확인합니다.",
+    "loading": "불러오는 중…",
+    "forbidden": "권한 보고서에 접근할 수 없습니다",
+    "people_projects": "사용자 / 프로젝트",
+    "granted": "권한 부여됨",
+    "issue_count_other": "작업 {{count}}개"
   },
   "members": {
     "section_title": "멤버 ({{count}})",

@@ -153,6 +153,15 @@
   "chip": {
     "fallback_label": "Project"
   },
+  "permissions": {
+    "title": "Project permissions",
+    "select_member": "Select workspace member",
+    "loading": "Loading…",
+    "add_success": "Project member added",
+    "add_failed": "Failed to add member",
+    "remove_success": "Project member removed",
+    "remove_failed": "Failed to remove member"
+  },
   "toolbar": {
     "result_count_title": "Matching projects / all projects",
     "filter_label": "Filter",
