@@ -54,13 +54,6 @@ export function DingTalkProfileCard() {
               </p>
             </SettingsRow>
           ) : null}
-          {profile.ding_user_id ? (
-            <SettingsRow label={t(($) => $.account.dingtalk_user_id)} size="text">
-              <p className="break-all text-caption text-muted-foreground sm:text-right">
-                {profile.ding_user_id}
-              </p>
-            </SettingsRow>
-          ) : null}
         </>
       ) : null}
     </SettingsCard>
