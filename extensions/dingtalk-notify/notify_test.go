@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type resolverStub struct {
@@ -86,22 +87,27 @@ func TestDeliverContinuesAfterFailure(t *testing.T) {
 	}
 }
 
-func TestConfigAllowsPlaceholdersInMockAndRejectsThemInProduction(t *testing.T) {
-	mock := Config{Mode: "local/mock", Enabled: true, DatabaseURL: "CHANGE_ME"}
-	if err := mock.Validate(); err != nil {
-		t.Fatalf("mock config should validate: %v", err)
+func TestConfigAutomaticallyEnablesOnlyWithProviderCredentials(t *testing.T) {
+	config := Config{DingTalkClientID: "app", DingTalkClientSecret: "secret", DingTalkRobotCode: "robot"}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("configured notification provider should validate: %v", err)
 	}
-	production := mock
-	production.Mode = "production"
-	if err := production.Validate(); err == nil {
-		t.Fatal("production placeholders must be rejected")
+	config.DingTalkRobotCode = "CHANGE_ME"
+	if err := config.Validate(); err == nil {
+		t.Fatal("placeholder provider credentials must be rejected")
 	}
 }
 
 func TestConfigFromEnvUsesInjectedValues(t *testing.T) {
-	values := map[string]string{"DINGTALK_NOTIFY_MODE": "staging", "DINGTALK_NOTIFY_ENABLED": "true", "DATABASE_URL": "postgres://staging"}
+	values := map[string]string{
+		"DINGTALK_CLIENT_ID":              "app",
+		"DINGTALK_CLIENT_SECRET":          "secret",
+		"DINGTALK_ROBOT_CODE":             "robot",
+		"DINGTALK_NOTIFY_WORKER_INTERVAL": "3s",
+		"DINGTALK_NOTIFY_MAX_ATTEMPTS":    "7",
+	}
 	config := ConfigFromEnv(func(key string) string { return values[key] })
-	if config.Mode != "staging" || !config.Enabled || config.DatabaseURL != "postgres://staging" {
+	if config.DingTalkClientID != "app" || config.WorkerInterval != 3*time.Second || config.MaxAttempts != 7 {
 		t.Fatalf("unexpected config: %+v", config)
 	}
 }

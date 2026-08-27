@@ -842,7 +842,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			botNames := dingtalk.NewBotNameResolver(dingtalkClient, box.Open)
 			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media, botNames))
 			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, slog.Default()).Register(bus)
-			registerDingTalkNotifyRuntime(bus, queries, pool, box.Open, dingtalkClient)
 			dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
 				Decrypt:  box.Open,
 				Client:   dingtalkClient,
@@ -860,6 +859,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
 	}
+	// Member @mentions use the deployment-wide DingTalk login application and
+	// are intentionally independent from the optional per-Agent BYO robot
+	// integration above.
+	registerDingTalkNotifyRuntime(bus, pool)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the

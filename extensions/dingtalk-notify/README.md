@@ -1,14 +1,14 @@
 # DingTalk notification module
 
-This directory is an isolated, opt-in notification module. It translates a
+This directory is an isolated notification module. It translates a
 stable `MentionCreated` event into delivery intents without importing Multica
-business packages. It can run entirely with memory/mock implementations while
-the host's production database and secrets remain unconfigured.
+business packages. Tests can run entirely with memory/mock implementations;
+the host enables real member notifications automatically when the three
+required DingTalk application credentials are configured.
 
-## Development mode
+## Development
 
-Use `local/mock` while the server and database are still being provisioned.
-The mock provider records messages in memory and never sends to DingTalk.
+Unit tests use the in-memory store and provider, so they never send to DingTalk.
 
 ```bash
 cd extensions/dingtalk-notify && go test ./...
@@ -19,7 +19,10 @@ cd extensions/dingtalk-notify && go test ./...
 `extensions/dingtalk-notify/` 下另建 `.env`。如果根目录还没有 `.env`，请在
 `multica/` 目录执行 `cp .env.example .env`，然后只编辑根目录 `.env` 中的钉钉区块。
 项目根目录的 `.env.example` 和 `docker-compose.selfhost.yml` 会透传同一组变量。
-基础设施变量在 `local/mock` 模式下可以留空；启用 staging/production 前必须补齐并通过启动校验。
+成员通知没有额外的开关或运行模式；`DINGTALK_CLIENT_ID`、
+`DINGTALK_CLIENT_SECRET`、`DINGTALK_ROBOT_CODE` 三项完整后自动启动，缺少任意
+一项则保持关闭。`DINGTALK_NOTIFY_WORKER_INTERVAL` 和
+`DINGTALK_NOTIFY_MAX_ATTEMPTS` 只用于调整 Worker 行为。
 
 The schema remains outside the host migration ledger. Review it with:
 
@@ -47,14 +50,13 @@ the database error to the browser.
 `event.schema.json` is the only event shape the future Multica adapter needs to
 publish. The adapter should map `comment:created` mention data into this shape,
 then call `BuildMessages` and enqueue the returned messages through `Store`.
-`MemoryStore` is provided for local/mock; production can implement the same
+`MemoryStore` is provided for tests; production can implement the same
 small interface with PostgreSQL. No comment, Inbox, Agent, or database package
 is imported by this module.
 
-`EventAdapter` is the feature-flagged host boundary. Disabled mode returns
-`ErrDisabled` without publishing; enabled mode only validates and forwards the
-normalized event, so the existing comment path remains unchanged until the
-host explicitly wires it. The isolated SQL lives in
+`EventAdapter` is an optional host-neutral boundary for callers that need an
+explicit adapter switch. The current Multica host subscribes directly after
+the required application credentials pass startup validation. The isolated SQL lives in
 `migrations/001_dingtalk_notify.sql` and
 `migrations/002_dingtalk_notify_outbox_ready_idx.sql`; the host invokes only
 the module-owned `EnsureSchema` entry point.
@@ -87,8 +89,8 @@ Routing is intentionally explicit:
 
 ## Host integration surface
 
-The host should keep its existing comment path unchanged and mount the module
-behind a feature flag:
+The host keeps its existing comment path unchanged and mounts the module at the
+event boundary:
 
 1. Convert the host's `comment:created` payload to `CommentMention` with
    `AdaptCommentMention`, then call `EventAdapter.PublishMention`.
@@ -102,9 +104,11 @@ behind a feature flag:
 The current Multica host adapter is intentionally thin: it registers public
 `/auth/dingtalk/start` and `/auth/dingtalk` routes, persists OAuth state and
 login identities in the module tables, subscribes to `comment:created`, resolves
-the active DingTalk installation for the configured login app, and reuses the
-built-in per-installation sender. Agent targets remain disabled by default.
-Production workers use `SQLStore`; local/mock callers may use `MemoryStore`.
+member bindings from the module-owned identity table, and sends through the
+deployment-wide DingTalk application. This member path does not depend on
+`MULTICA_DINGTALK_SECRET_KEY`, `channel_installation`, or an Agent-owned Bot.
+Agent targets remain disabled by default. Production workers use `SQLStore`;
+tests may use `MemoryStore`.
 The login app needs DingTalk permission to resolve a user's `unionId` to the
 enterprise `userId` and read the enterprise member profile/email. Production
 OAuth callbacks must use the exact HTTPS URL registered in DingTalk, for
@@ -132,9 +136,8 @@ repository requires every index build to use `CREATE INDEX CONCURRENTLY`.
 There are no database foreign keys; cleanup and workspace authorization stay
 in the application layer.
 
-`local/mock` 模式不会连接生产数据库或发送真实钉钉消息。启用 staging/production
-前，请先在项目根目录配置 `APP_BASE_URL`、`API_PUBLIC_URL`、`DATABASE_URL`、
-`REDIS_URL`、`ENCRYPTION_KEY`、`SECRET_STORE_REF`、`DEPLOY_ENV`，并填写
+本模块的单元测试不会连接生产数据库或发送真实钉钉消息。部署前，请先在项目根目录
+配置所需的基础设施变量，并填写
 `DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_CORP_ID`、
 `DINGTALK_OAUTH_REDIRECT_URI`、`DINGTALK_AGENT_ID`、`DINGTALK_ROBOT_CODE`、
 `DINGTALK_API_BASE_URL`、`DINGTALK_OAUTH_AUTH_URL`。OAuth token 和用户信息接口

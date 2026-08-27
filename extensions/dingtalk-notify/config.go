@@ -10,52 +10,49 @@ import (
 // Config contains only module-owned settings. Infrastructure and DingTalk
 // values are intentionally strings so deployment can inject them later.
 type Config struct {
-	Mode                  string
-	Enabled               bool
-	AppBaseURL            string
-	APIBaseURL            string
-	DatabaseURL           string
-	RedisURL              string
-	EncryptionKey         string
-	SecretStoreRef        string
-	DingTalkClientID      string
-	DingTalkClientSecret  string
-	DingTalkCorpID        string
-	DingTalkRedirectURI   string
-	DingTalkAgentID       string
-	DingTalkRobotCode     string
-	DingTalkAPIBaseURL    string
-	DingTalkOAuthAuthURL  string
-	WorkerInterval        time.Duration
-	MaxAttempts           int
+	AppBaseURL           string
+	APIBaseURL           string
+	DatabaseURL          string
+	RedisURL             string
+	EncryptionKey        string
+	SecretStoreRef       string
+	DingTalkClientID     string
+	DingTalkClientSecret string
+	DingTalkCorpID       string
+	DingTalkRedirectURI  string
+	DingTalkAgentID      string
+	DingTalkRobotCode    string
+	DingTalkAPIBaseURL   string
+	DingTalkOAuthAuthURL string
+	WorkerInterval       time.Duration
+	MaxAttempts          int
+}
+
+// MissingNotificationSettings reports the application credentials required by
+// the member P2P sender. Notification startup is automatic once this list is
+// empty; there is no separate feature switch or environment mode.
+func (c Config) MissingNotificationSettings() []string {
+	values := []struct {
+		name  string
+		value string
+	}{
+		{name: "DINGTALK_CLIENT_ID", value: c.DingTalkClientID},
+		{name: "DINGTALK_CLIENT_SECRET", value: c.DingTalkClientSecret},
+		{name: "DINGTALK_ROBOT_CODE", value: c.DingTalkRobotCode},
+	}
+	missing := make([]string, 0, len(values))
+	for _, item := range values {
+		value := strings.TrimSpace(item.value)
+		if value == "" || strings.Contains(value, "CHANGE_ME") {
+			missing = append(missing, item.name)
+		}
+	}
+	return missing
 }
 
 func (c Config) Validate() error {
-	mode := strings.ToLower(strings.TrimSpace(c.Mode))
-	if mode == "" {
-		mode = "local/mock"
-	}
-	if mode != "local/mock" && mode != "staging" && mode != "production" {
-		return fmt.Errorf("unsupported DingTalk notification mode %q", c.Mode)
-	}
-	if !c.Enabled || mode == "local/mock" {
-		return nil
-	}
-	for name, value := range map[string]string{
-		"app_base_url":                c.AppBaseURL,
-		"api_base_url":                c.APIBaseURL,
-		"database_url":                c.DatabaseURL,
-		"encryption_key":              c.EncryptionKey,
-		"secret_store_ref":            c.SecretStoreRef,
-		"dingtalk_client_id":          c.DingTalkClientID,
-		"dingtalk_client_secret":      c.DingTalkClientSecret,
-		"dingtalk_corp_id":            c.DingTalkCorpID,
-		"dingtalk_oauth_redirect_uri": c.DingTalkRedirectURI,
-		"dingtalk_robot_code":         c.DingTalkRobotCode,
-	} {
-		if strings.TrimSpace(value) == "" || strings.Contains(value, "CHANGE_ME") {
-			return fmt.Errorf("%s must be configured when notifications are enabled", name)
-		}
+	if missing := c.MissingNotificationSettings(); len(missing) > 0 {
+		return fmt.Errorf("DingTalk notifications require %s", strings.Join(missing, ", "))
 	}
 	return nil
 }

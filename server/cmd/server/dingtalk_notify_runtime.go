@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -15,45 +14,86 @@ import (
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
-	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/util"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // dingtalkNotifyRuntime is the thin host bridge. All routing, idempotency,
 // retry, and message formatting stay in the standalone extension; the host
-// only maps Multica events/rows to its interfaces and reuses the built-in
-// per-installation DingTalk sender.
+// only maps Multica events/rows to its interfaces. Member P2P notifications use
+// the deployment-wide login application and stay independent from Multica's
+// existing per-Agent BYO robot integration.
 type dingtalkNotifyRuntime struct {
-	queries *db.Queries
-	pool    *pgxpool.Pool
-	decrypt dingtalk.Decrypter
-	client  *dingtalk.Client
-	store   notify.Store
+	store          notify.Store
+	resolver       notify.Resolver
+	provider       notify.Provider
+	audit          notify.AuditSink
+	workerInterval time.Duration
+	maxAttempts    int
 }
 
 // registerDingTalkNotifyRuntime wires member mentions only. Agent targets are
-// intentionally left disabled by notify.BuildMessages' default options.
-func registerDingTalkNotifyRuntime(bus *events.Bus, queries *db.Queries, pool *pgxpool.Pool, decrypt dingtalk.Decrypter, client *dingtalk.Client) {
-	var store notify.Store
-	if pool != nil {
-		// The extension owns its table names and migration; this separate
-		// database/sql handle keeps the host's pgx pool contract unchanged while
-		// allowing the durable extension SQLStore to lease rows across replicas.
-		sqlDB := stdlib.OpenDB(*pool.Config().ConnConfig)
-		store = &notify.SQLStore{DB: sqlDB, Lease: 2 * time.Minute}
-	} else {
-		store = notify.NewMemoryStore()
+// intentionally left disabled by notify.BuildMessages' default options. The
+// runtime starts automatically once the global DingTalk application credentials
+// are complete; no feature flag or BYO robot encryption key is involved.
+func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
+	config := notify.ConfigFromEnv(os.Getenv)
+	if missing := config.MissingNotificationSettings(); len(missing) > 0 {
+		slog.Info("dingtalk notify disabled: application configuration is incomplete", "missing", strings.Join(missing, ","))
+		return
 	}
-	runtime := &dingtalkNotifyRuntime{queries: queries, pool: pool, decrypt: decrypt, client: client, store: store}
+	if bus == nil || pool == nil {
+		slog.Warn("dingtalk notify disabled: event bus or database is unavailable")
+		return
+	}
+
+	// The extension owns its schema and outbox. Use simple protocol because its
+	// first migration contains multiple statements, matching the OAuth schema
+	// bootstrap path.
+	connConfig := *pool.Config().ConnConfig
+	connConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	sqlDB := stdlib.OpenDB(connConfig)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err := notify.EnsureSchema(ctx, sqlDB)
+	cancel()
+	if err != nil {
+		_ = sqlDB.Close()
+		slog.Warn("dingtalk notify disabled: schema initialization failed", "error", err)
+		return
+	}
+
+	store := &notify.SQLStore{DB: sqlDB, Lease: 2 * time.Minute}
+	provider := loggingDingTalkNotifyProvider{next: &notify.DingTalkProvider{
+		BaseURL:      strings.TrimSpace(config.DingTalkAPIBaseURL),
+		ClientID:     strings.TrimSpace(config.DingTalkClientID),
+		ClientSecret: strings.TrimSpace(config.DingTalkClientSecret),
+		RobotCode:    strings.TrimSpace(config.DingTalkRobotCode),
+	}}
+	runtime := &dingtalkNotifyRuntime{
+		store:          store,
+		resolver:       dingtalkMentionResolver{pool: pool},
+		provider:       provider,
+		audit:          notify.SQLAuditSink{DB: sqlDB},
+		workerInterval: config.WorkerInterval,
+		maxAttempts:    config.MaxAttempts,
+	}
 	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
 	go runtime.run(context.Background())
+	slog.Info("dingtalk member notifications enabled")
 }
 
 func (r *dingtalkNotifyRuntime) run(ctx context.Context) {
-	worker := notify.Worker{Store: r.store, Provider: dingtalkMemberProvider{queries: r.queries, decrypt: r.decrypt, client: r.client}}
-	if err := worker.Run(ctx, 2*time.Second, 25); err != nil && !errors.Is(err, context.Canceled) {
+	interval := r.workerInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	worker := notify.Worker{
+		Store:    r.store,
+		Provider: r.provider,
+		Policy:   notify.RetryPolicy{MaxAttempts: r.maxAttempts},
+		Audit:    r.audit,
+	}
+	if err := worker.Run(ctx, interval, 25); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Warn("dingtalk notify worker stopped", "error", err)
 	}
 }
@@ -96,22 +136,23 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 		slog.Warn("dingtalk notify: invalid comment event", "error", err)
 		return
 	}
-	messages, failures, err := notify.BuildMessages(context.Background(), event, dingtalkMentionResolver{queries: r.queries, pool: r.pool})
+	messages, failures, err := notify.BuildMessages(context.Background(), event, r.resolver)
 	if err != nil {
-		slog.Warn("dingtalk notify: route mention failed", "error", err)
+		slog.Warn("dingtalk notify: route mention failed", "event_id", commentID, "workspace_id", e.WorkspaceID, "error", err)
 		return
 	}
 	for _, failure := range failures {
 		slog.Info("dingtalk notify: target skipped", "target_id", failure.Message.TargetID, "target_kind", failure.Message.TargetKind, "status", failure.Status, "reason", failure.Error)
 	}
 	if err := notify.EnqueueMessages(context.Background(), r.store, messages, time.Now().UTC()); err != nil {
-		slog.Warn("dingtalk notify: enqueue failed", "error", err)
+		slog.Warn("dingtalk notify: enqueue failed", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages), "error", err)
+		return
 	}
+	slog.Info("dingtalk notify: member mentions enqueued", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
 }
 
 type dingtalkMentionResolver struct {
-	queries *db.Queries
-	pool    *pgxpool.Pool
+	pool *pgxpool.Pool
 }
 
 func (r dingtalkMentionResolver) MemberBinding(ctx context.Context, workspaceID, memberID string) (notify.MemberBinding, bool, error) {
@@ -122,7 +163,10 @@ func (r dingtalkMentionResolver) MemberBinding(ctx context.Context, workspaceID,
 	if err := r.pool.QueryRow(ctx, `
 		SELECT COALESCE(ding_user_id, '')
 		FROM dingtalk_notify_identities
-		WHERE multica_user_id = $1 AND active = true AND login_only = false
+		WHERE multica_user_id = $1
+		  AND active = true
+		  AND login_only = false
+		  AND COALESCE(ding_user_id, '') <> ''
 		ORDER BY updated_at DESC
 		LIMIT 1`, memberID).Scan(&dingUserID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -130,50 +174,24 @@ func (r dingtalkMentionResolver) MemberBinding(ctx context.Context, workspaceID,
 		}
 		return notify.MemberBinding{}, false, err
 	}
-	var config []byte
-	var status string
-	if err := r.pool.QueryRow(ctx, `
-		SELECT id, config, status
-		FROM channel_installation
-		WHERE workspace_id = $1
-		  AND channel_type = 'dingtalk'
-		  AND status = 'active'
-		  AND config ->> 'app_id' = $2
-		ORDER BY updated_at DESC
-		LIMIT 1`, workspaceID, strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID"))).Scan(&config, &status); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return notify.MemberBinding{}, false, nil
-		}
-		return notify.MemberBinding{}, false, err
-	}
-	var cfg struct {
-		RobotCode string `json:"robot_code"`
-		AppID     string `json:"app_id"`
-	}
-	_ = json.Unmarshal(config, &cfg)
-	if cfg.RobotCode == "" {
-		cfg.RobotCode = cfg.AppID
-	}
-	return notify.MemberBinding{WorkspaceID: workspaceID, MemberID: memberID, DingUserID: dingUserID, RobotCode: cfg.RobotCode, Active: status == "active" && cfg.RobotCode != ""}, true, nil
+	return notify.MemberBinding{WorkspaceID: workspaceID, MemberID: memberID, DingUserID: dingUserID, Active: true}, true, nil
 }
 
-func (r dingtalkMentionResolver) AgentChannels(context.Context, string, string) ([]notify.AgentChannel, error) {
+func (dingtalkMentionResolver) AgentChannels(context.Context, string, string) ([]notify.AgentChannel, error) {
 	return nil, nil
 }
 
-type dingtalkMemberProvider struct {
-	queries *db.Queries
-	decrypt dingtalk.Decrypter
-	client  *dingtalk.Client
-}
+type loggingDingTalkNotifyProvider struct{ next notify.Provider }
 
-func (p dingtalkMemberProvider) Send(ctx context.Context, message notify.Message) error {
-	if message.TargetKind != "member" || message.ChannelType != "p2p" || message.DingUserID == "" || message.RobotCode == "" {
-		return errors.New("dingtalk member destination is incomplete")
+func (p loggingDingTalkNotifyProvider) Send(ctx context.Context, message notify.Message) error {
+	if p.next == nil {
+		return errors.New("dingtalk notify provider is unavailable")
 	}
-	inst, err := p.queries.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{ChannelType: string(dingtalk.TypeDingTalk), AppID: message.RobotCode})
+	err := p.next.Send(ctx, message)
 	if err != nil {
+		slog.Warn("dingtalk notify: delivery failed", "event_id", message.EventID, "workspace_id", message.WorkspaceID, "target_id", message.TargetID, "error", err)
 		return err
 	}
-	return dingtalk.SendP2PFromInstallation(ctx, p.queries, p.decrypt, p.client, inst.ID, message.DingUserID, message.Text)
+	slog.Info("dingtalk notify: delivered", "event_id", message.EventID, "workspace_id", message.WorkspaceID, "target_id", message.TargetID)
+	return nil
 }

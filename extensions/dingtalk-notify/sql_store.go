@@ -11,7 +11,7 @@ import (
 
 // SQLStore is the production Store implementation. The host owns the
 // database driver and connection lifecycle; this module only requires a
-// *sql.DB so local/mock mode never opens a connection.
+// *sql.DB, while tests can keep using MemoryStore without a connection.
 type SQLStore struct {
 	DB          *sql.DB
 	Lease       time.Duration

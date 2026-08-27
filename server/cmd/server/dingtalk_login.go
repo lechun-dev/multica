@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
@@ -172,6 +171,8 @@ func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *dingtalkLoginHandler) resolveUser(ctx context.Context, identity notify.OAuthUser) (db.User, error) {
+	var user db.User
+	linked := false
 	var userID string
 	err := h.pool.QueryRow(ctx, `
 		SELECT multica_user_id
@@ -186,69 +187,28 @@ func (h *dingtalkLoginHandler) resolveUser(ctx context.Context, identity notify.
 		if parseErr != nil {
 			return db.User{}, fmt.Errorf("stored DingTalk identity has invalid Multica user id: %w", parseErr)
 		}
-		user, getErr := h.host.Queries.GetUser(ctx, userUUID)
+		linkedUser, getErr := h.host.Queries.GetUser(ctx, userUUID)
 		if getErr == nil {
-			return user, nil
-		}
-		if !errors.Is(getErr, pgx.ErrNoRows) {
+			user = linkedUser
+			linked = true
+		} else if !errors.Is(getErr, pgx.ErrNoRows) {
 			return db.User{}, fmt.Errorf("load DingTalk-linked Multica user: %w", getErr)
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return db.User{}, fmt.Errorf("lookup DingTalk identity: %w", err)
 	}
 
-	if strings.TrimSpace(identity.Email) == "" {
-		return db.User{}, errors.New("DingTalk account has no trusted enterprise email")
-	}
-	user, _, err := h.host.FindOrCreateUserForOAuth(ctx, identity.Email)
-	if err != nil {
-		return db.User{}, fmt.Errorf("resolve Multica account: %w", err)
-	}
-	// Initialize the built-in profile from DingTalk on first login only. A
-	// later DingTalk login must not overwrite a name/avatar the user edited in
-	// Multica. The default name created by findOrCreateUser is the email
-	// local-part, so it is safe to replace that placeholder with the DingTalk
-	// nickname.
-	name := strings.TrimSpace(user.Name)
-	emailLocalPart := strings.TrimSpace(identity.Email)
-	if at := strings.Index(emailLocalPart, "@"); at > 0 {
-		emailLocalPart = emailLocalPart[:at]
-	}
-	if strings.TrimSpace(identity.Name) != "" &&
-		(name == "" || strings.EqualFold(name, emailLocalPart)) {
-		name = strings.TrimSpace(identity.Name)
-	}
-	avatarURL := strings.TrimSpace(identity.AvatarURL)
-	if name != user.Name || (strings.TrimSpace(user.AvatarUrl.String) == "" && avatarURL != "") {
-		params := db.UpdateUserParams{ID: user.ID, Name: name}
-		if strings.TrimSpace(user.AvatarUrl.String) == "" && avatarURL != "" {
-			params.AvatarUrl = pgtype.Text{String: avatarURL, Valid: true}
+	if !linked {
+		if strings.TrimSpace(identity.Email) == "" {
+			return db.User{}, errors.New("DingTalk account has no trusted enterprise email")
 		}
-		updated, updateErr := h.host.Queries.UpdateUser(ctx, params)
-		if updateErr != nil {
-			return db.User{}, fmt.Errorf("update DingTalk profile: %w", updateErr)
+		resolved, _, resolveErr := h.host.FindOrCreateUserForOAuth(ctx, identity.Email)
+		if resolveErr != nil {
+			return db.User{}, fmt.Errorf("resolve Multica account: %w", resolveErr)
 		}
-		user = updated
+		user = resolved
 	}
-	loginOnly := identity.DingUserID == ""
-	_, err = h.pool.Exec(ctx, `
-		INSERT INTO dingtalk_notify_identities
-		    (ding_user_id, union_id, open_id, email, name, avatar_url, multica_user_id, active, login_only, updated_at)
-		VALUES (NULLIF($1, ''), NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, true, $8, now())
-		ON CONFLICT (ding_user_id) DO UPDATE SET
-		    union_id = COALESCE(EXCLUDED.union_id, dingtalk_notify_identities.union_id),
-		    open_id = COALESCE(EXCLUDED.open_id, dingtalk_notify_identities.open_id),
-		    email = COALESCE(EXCLUDED.email, dingtalk_notify_identities.email),
-		    name = COALESCE(EXCLUDED.name, dingtalk_notify_identities.name),
-		    avatar_url = COALESCE(EXCLUDED.avatar_url, dingtalk_notify_identities.avatar_url),
-		    multica_user_id = EXCLUDED.multica_user_id,
-		    active = true,
-		    login_only = EXCLUDED.login_only,
-	    updated_at = now()`, identity.DingUserID, identity.UnionID, identity.OpenID, strings.ToLower(strings.TrimSpace(identity.Email)), strings.TrimSpace(identity.Name), avatarURL, util.UUIDToString(user.ID), loginOnly)
-	if err != nil {
-		return db.User{}, fmt.Errorf("save DingTalk identity: %w", err)
-	}
-	return user, nil
+	return h.syncDingTalkProfile(ctx, user, identity)
 }
 
 func writeDingTalkError(w http.ResponseWriter, status int, message string) {

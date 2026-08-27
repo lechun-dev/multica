@@ -86,7 +86,7 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 			}
 			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
 		case "/detail":
-			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","unionid":"union-1","name":"Alice","email":"Alice@Example.com"}}`), nil
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","unionid":"union-1","name":"Alice","email":"Alice@Example.com","avatar":"https://example.test/alice.png"}}`), nil
 		default:
 			return jsonResponse(http.StatusNotFound, `{}`), nil
 		}
@@ -107,8 +107,45 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 		t.Fatalf("url=%q err=%v", url, err)
 	}
 	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
-	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" || user.Email != "alice@example.com" {
+	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" || user.Email != "alice@example.com" || user.AvatarURL != "https://example.test/alice.png" {
 		t.Fatalf("user=%+v err=%v", user, err)
+	}
+}
+
+func TestDingTalkOAuthProviderBackfillsMissingNickname(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusOK, `{"userId":"u1","unionId":"union-1","openId":"open-1","email":"alice@example.com","avatarUrl":"https://example.test/alice.png"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/union":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","name":"Alice"}}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:         client,
+		TokenURL:       "https://example.test/oauth-token",
+		UserURL:        "https://example.test/me",
+		AppTokenURL:    "https://example.test/app-token",
+		UnionLookupURL: "https://example.test/union",
+		UserDetailURL:  "https://example.test/detail",
+		ClientID:       "id",
+		ClientSecret:   "secret",
+	}
+
+	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Name != "Alice" || user.AvatarURL != "https://example.test/alice.png" {
+		t.Fatalf("user=%+v", user)
 	}
 }
 
