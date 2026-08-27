@@ -75,26 +75,35 @@ func (s *SQLStore) ClaimDue(ctx context.Context, now time.Time, limit int) ([]Ou
 	if limit <= 0 {
 		return nil, nil
 	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	lease := s.Lease
 	if lease <= 0 {
 		lease = 2 * time.Minute
 	}
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT idempotency_key, workspace_id, event_id, target_id, target_kind,
-		       COALESCE(channel_id, ''), COALESCE(robot_code, ''), COALESCE(ding_user_id, ''),
-		       channel_type, message_text, status, attempts, next_attempt_at,
-		       created_at, updated_at
-		FROM %s
-		WHERE (status = $1 AND next_attempt_at <= $2)
-		   OR (status = $3 AND lease_until IS NOT NULL AND lease_until <= $2)
-		ORDER BY next_attempt_at, created_at
-		FOR UPDATE SKIP LOCKED
-		LIMIT $4`, s.table("outbox")), StatusPending, now, StatusProcessing, limit)
+	table := s.table("outbox")
+	rows, err := s.DB.QueryContext(ctx, fmt.Sprintf(`
+		WITH due AS (
+			SELECT idempotency_key
+			FROM %s
+			WHERE (status = $1 AND next_attempt_at <= $2)
+			   OR (status = $3 AND lease_until IS NOT NULL AND lease_until <= $2)
+			ORDER BY next_attempt_at, created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $4
+		)
+		UPDATE %s AS outbox
+		SET status = $3,
+		    attempts = outbox.attempts + 1,
+		    lease_until = $5,
+		    updated_at = $2
+		FROM due
+		WHERE outbox.idempotency_key = due.idempotency_key
+		RETURNING outbox.idempotency_key, outbox.workspace_id, outbox.event_id,
+		          outbox.target_id, outbox.target_kind, COALESCE(outbox.channel_id, ''),
+		          COALESCE(outbox.robot_code, ''), COALESCE(outbox.ding_user_id, ''),
+		          outbox.channel_type, outbox.message_text, outbox.status,
+		          outbox.attempts, outbox.next_attempt_at, outbox.created_at,
+		          outbox.updated_at`, table, table),
+		StatusPending, now, StatusProcessing, limit, now.Add(lease))
 	if err != nil {
 		return nil, err
 	}
@@ -110,20 +119,9 @@ func (s *SQLStore) ClaimDue(ctx context.Context, now time.Time, limit int) ([]Ou
 			return nil, err
 		}
 		item.ID, item.Message = item.IdempotencyKey, message
-		item.Attempts++
-		item.Status, item.UpdatedAt = StatusProcessing, now
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET status=$1, attempts=$2, lease_until=$3, updated_at=$4 WHERE idempotency_key=$5`, s.table("outbox")), StatusProcessing, item.Attempts, now.Add(lease), now, item.IdempotencyKey); err != nil {
-			return nil, err
-		}
 		items = append(items, item)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return items, rows.Err()
 }
 
 func (s *SQLStore) MarkDelivered(ctx context.Context, id string, at time.Time) error {

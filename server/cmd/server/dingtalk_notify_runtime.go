@@ -32,6 +32,11 @@ type dingtalkNotifyRuntime struct {
 	maxAttempts    int
 }
 
+const (
+	dingtalkNotifyWorkerRetryMin = time.Second
+	dingtalkNotifyWorkerRetryMax = 30 * time.Second
+)
+
 // registerDingTalkNotifyRuntime wires member mentions only. Agent targets are
 // intentionally left disabled by notify.BuildMessages' default options. The
 // runtime starts automatically once the global DingTalk application credentials
@@ -93,8 +98,48 @@ func (r *dingtalkNotifyRuntime) run(ctx context.Context) {
 		Policy:   notify.RetryPolicy{MaxAttempts: r.maxAttempts},
 		Audit:    r.audit,
 	}
-	if err := worker.Run(ctx, interval, 25); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Warn("dingtalk notify worker stopped", "error", err)
+	superviseDingTalkNotifyWorker(ctx, dingtalkNotifyWorkerRetryMin, dingtalkNotifyWorkerRetryMax,
+		func(runCtx context.Context) error {
+			return worker.Run(runCtx, interval, 25)
+		})
+}
+
+func superviseDingTalkNotifyWorker(ctx context.Context, minDelay, maxDelay time.Duration, run func(context.Context) error) {
+	if run == nil {
+		return
+	}
+	if minDelay <= 0 {
+		minDelay = time.Second
+	}
+	if maxDelay < minDelay {
+		maxDelay = minDelay
+	}
+	delay := minDelay
+	for {
+		err := run(ctx)
+		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
+		}
+		slog.Warn("dingtalk notify worker interrupted; retrying", "error", err, "retry_in", delay)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		case <-timer.C:
+		}
+		if delay < maxDelay {
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
 	}
 }
 
