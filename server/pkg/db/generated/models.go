@@ -1173,12 +1173,30 @@ type Project struct {
 }
 
 type ProjectMember struct {
-	ID        pgtype.UUID        `json:"id"`
-	ProjectID pgtype.UUID        `json:"project_id"`
-	UserID    pgtype.UUID        `json:"user_id"`
-	Role      string             `json:"role"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Role         string             `json:"role"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	CustomRoleID pgtype.UUID        `json:"custom_role_id"`
+}
+
+type ProjectPermissionRole struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RoleKey     string             `json:"role_key"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	IsSystem    bool               `json:"is_system"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectPermissionRolePermission struct {
+	RoleID     pgtype.UUID `json:"role_id"`
+	Permission string      `json:"permission"`
 }
 
 type ProjectResource struct {
