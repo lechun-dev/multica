@@ -10,12 +10,14 @@ import { ProjectDetail } from "./project-detail";
 const mocks = vi.hoisted(() => ({
   role: "admin",
   deleteProject: vi.fn(),
+  invalidateQueries: vi.fn(),
   push: vi.fn(),
   recordVisit: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
@@ -32,6 +34,7 @@ vi.mock("@tanstack/react-query", () => ({
         return { data: undefined, isLoading: false };
     }
   },
+  useQueryClient: () => ({ invalidateQueries: mocks.invalidateQueries }),
 }));
 
 vi.mock("@multica/core/projects/queries", () => ({
