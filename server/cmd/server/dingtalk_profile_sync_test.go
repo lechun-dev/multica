@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -80,6 +81,11 @@ func TestDingTalkProfileSyncRefreshesExistingIdentityAndPreservesUserEdits(t *te
 				Email:      email,
 				Name:       "张畅",
 				AvatarURL:  "https://example.test/dingtalk-avatar.png",
+				Departments: []notify.DingTalkDepartment{
+					{ID: "42", Name: "信息技术中心"},
+					{ID: "43", Name: "数字化产品部"},
+				},
+				DepartmentsSynced: true,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -97,6 +103,24 @@ func TestDingTalkProfileSyncRefreshesExistingIdentityAndPreservesUserEdits(t *te
 			}
 			if identityName != "张畅" || identityAvatar != "https://example.test/dingtalk-avatar.png" {
 				t.Fatalf("DingTalk identity profile = name %q avatar %q", identityName, identityAvatar)
+			}
+			var departmentsJSON []byte
+			var departmentsSyncedAt *time.Time
+			if err := testPool.QueryRow(context.Background(), `
+				SELECT departments, departments_synced_at
+				FROM dingtalk_notify_identities
+				WHERE ding_user_id = $1`, dingUserID).Scan(&departmentsJSON, &departmentsSyncedAt); err != nil {
+				t.Fatal(err)
+			}
+			var departments []notify.DingTalkDepartment
+			if err := json.Unmarshal(departmentsJSON, &departments); err != nil {
+				t.Fatal(err)
+			}
+			if len(departments) != 2 || departments[0].Name != "信息技术中心" || departments[1].Name != "数字化产品部" {
+				t.Fatalf("departments=%+v", departments)
+			}
+			if departmentsSyncedAt == nil {
+				t.Fatal("departments_synced_at was not set")
 			}
 
 			// A later OAuth response can temporarily omit userId while still
@@ -118,6 +142,14 @@ func TestDingTalkProfileSyncRefreshesExistingIdentityAndPreservesUserEdits(t *te
 			}
 			if loginOnly {
 				t.Fatal("existing DingTalk identity was downgraded to login_only")
+			}
+			var preservedDepartmentsJSON []byte
+			if err := testPool.QueryRow(context.Background(), `
+				SELECT departments FROM dingtalk_notify_identities WHERE ding_user_id = $1`, dingUserID).Scan(&preservedDepartmentsJSON); err != nil {
+				t.Fatal(err)
+			}
+			if string(preservedDepartmentsJSON) != string(departmentsJSON) {
+				t.Fatalf("unsynchronized login replaced departments: got %s want %s", preservedDepartmentsJSON, departmentsJSON)
 			}
 		})
 	}

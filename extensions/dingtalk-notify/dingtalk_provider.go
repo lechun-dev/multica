@@ -152,8 +152,30 @@ func (p *DingTalkProvider) Send(ctx context.Context, message Message) error {
 }
 
 func mustMarkdownParam(text string) string {
-	b, _ := json.Marshal(map[string]string{"title": "Multica 通知", "text": text})
+	b, _ := json.Marshal(map[string]string{"title": markdownMessageTitle(text), "text": text})
 	return string(b)
+}
+
+// markdownMessageTitle is used by DingTalk's push preview. Derive it from the
+// first line of the persisted body so queued notifications remain descriptive
+// after a worker restart, without adding another outbox column.
+func markdownMessageTitle(text string) string {
+	line := ""
+	for _, candidate := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(candidate)
+		if line != "" {
+			break
+		}
+	}
+	line = strings.NewReplacer("**", "", "__", "", "`", "").Replace(line)
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "Multica 通知"
+	}
+	if runes := []rune(line); len(runes) > 64 {
+		return string(runes[:64]) + "…"
+	}
+	return line
 }
 
 func (p *DingTalkProvider) sendJSON(ctx context.Context, path string, payload any, forceRefresh bool) error {

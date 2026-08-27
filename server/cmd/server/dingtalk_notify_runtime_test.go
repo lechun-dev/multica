@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -73,5 +75,34 @@ func TestDingTalkNotifyRuntimeEnqueuesEveryStructuredMemberMention(t *testing.T)
 	}
 	if len(wantRecipients) != 0 {
 		t.Fatalf("missing targets: %+v", wantRecipients)
+	}
+}
+
+func TestSuperviseDingTalkNotifyWorkerRestartsAfterFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	calls := 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		superviseDingTalkNotifyWorker(ctx, time.Millisecond, time.Millisecond,
+			func(context.Context) error {
+				calls++
+				if calls == 1 {
+					return errors.New("temporary database failure")
+				}
+				cancel()
+				return context.Canceled
+			})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker supervisor did not stop after cancellation")
+	}
+	if calls != 2 {
+		t.Fatalf("worker run calls = %d, want 2", calls)
 	}
 }

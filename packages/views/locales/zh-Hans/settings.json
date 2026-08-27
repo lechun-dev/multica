@@ -562,7 +562,7 @@
     "dingtalk_not_connected": "未关联钉钉",
     "dingtalk_identity_unknown": "钉钉用户",
     "dingtalk_email": "钉钉邮箱",
-    "dingtalk_user_id": "钉钉用户 ID"
+    "dingtalk_departments": "所属部门"
   },
   "notifications": {
     "title": "收件箱通知",

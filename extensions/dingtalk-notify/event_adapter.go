@@ -22,13 +22,17 @@ type EventAdapter struct {
 // needs to provide. Keeping this type in the extension prevents the host
 // adapter from importing notification internals or leaking database models.
 type CommentMention struct {
-	EventID     string
-	WorkspaceID string
-	Actor       Actor
-	Targets     []MentionTarget
-	Body        string
-	SourceURL   string
-	CreatedAt   time.Time
+	EventID         string
+	WorkspaceID     string
+	Actor           Actor
+	Targets         []MentionTarget
+	Body            string
+	SourceURL       string
+	WorkspaceName   string
+	ProjectName     string
+	IssueIdentifier string
+	IssueTitle      string
+	CreatedAt       time.Time
 }
 
 func AdaptCommentMention(input CommentMention) (MentionCreated, error) {
@@ -58,7 +62,13 @@ func AdaptCommentMention(input CommentMention) (MentionCreated, error) {
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	return MentionCreated{EventID: input.EventID, WorkspaceID: input.WorkspaceID, Actor: input.Actor, Targets: targets, Text: input.Body, SourceURL: input.SourceURL, CreatedAt: createdAt}, nil
+	return MentionCreated{
+		EventID: input.EventID, WorkspaceID: input.WorkspaceID, Actor: input.Actor,
+		Targets: targets, Text: input.Body, SourceURL: input.SourceURL,
+		WorkspaceName: input.WorkspaceName, ProjectName: input.ProjectName,
+		IssueIdentifier: input.IssueIdentifier, IssueTitle: input.IssueTitle,
+		CreatedAt: createdAt,
+	}, nil
 }
 
 func (a EventAdapter) PublishMention(ctx context.Context, event MentionCreated) error {

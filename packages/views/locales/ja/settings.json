@@ -562,7 +562,7 @@
     "dingtalk_not_connected": "未連携",
     "dingtalk_identity_unknown": "DingTalkユーザー",
     "dingtalk_email": "DingTalkメール",
-    "dingtalk_user_id": "DingTalkユーザーID"
+    "dingtalk_departments": "所属部門"
   },
   "notifications": {
     "title": "インボックス通知",

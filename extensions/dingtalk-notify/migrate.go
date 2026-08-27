@@ -16,6 +16,9 @@ var schemaMigrationSQL string
 //go:embed migrations/002_dingtalk_notify_outbox_ready_idx.sql
 var readyIndexMigrationSQL string
 
+//go:embed migrations/003_dingtalk_identity_departments.up.sql
+var identityDepartmentsMigrationSQL string
+
 type migrationExecutor interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -53,6 +56,7 @@ func ensureSchema(ctx context.Context, exec migrationExecutor) error {
 	}{
 		{name: "001_dingtalk_notify.sql", sql: schemaMigrationSQL},
 		{name: "002_dingtalk_notify_outbox_ready_idx.sql", sql: readyIndexMigrationSQL},
+		{name: "003_dingtalk_identity_departments.up.sql", sql: identityDepartmentsMigrationSQL},
 	} {
 		if _, err := exec.ExecContext(ctx, migration.sql); err != nil {
 			return fmt.Errorf("apply DingTalk migration %s: %w", migration.name, err)
