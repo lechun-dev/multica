@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -1715,6 +1716,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 2026-08-27 coder(lq): Posting comments mutates the task conversation;
+	// project visibility alone must not let a viewer write to an issue.
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+		return
+	}
 
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -3235,6 +3241,13 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: existing.IssueID, WorkspaceID: existing.WorkspaceID})
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "comment not found")
+		}
+		return
+	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -3502,6 +3515,13 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "comment not found")
+		}
+		return
+	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -3515,7 +3535,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "only comment author or admin can delete")
 		return
 	}
-	issue, err := h.Queries.GetIssue(r.Context(), comment.IssueID)
+	issue, err = h.Queries.GetIssue(r.Context(), comment.IssueID)
 	hasIssue := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Warn("load issue for delete post-processing failed", "issue_id", uuidToString(comment.IssueID), "error", err)
@@ -3721,6 +3741,13 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	comment, workspaceID, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
+		return
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "comment not found")
+		}
 		return
 	}
 	wasResolved := comment.ResolvedAt.Valid

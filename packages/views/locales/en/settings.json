@@ -329,7 +329,8 @@
       "quick_actions": "Quick Actions",
       "plugins": "Plugins",
       "mcp": "MCP",
-      "billing": "Billing"
+      "billing": "Billing",
+      "project_permissions": "Project Permissions"
     }
   },
   "plugins": {

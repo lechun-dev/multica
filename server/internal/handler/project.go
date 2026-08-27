@@ -257,6 +257,16 @@ func (h *Handler) writeProjectWriteError(w http.ResponseWriter, r *http.Request,
 	writeError(w, http.StatusInternalServerError, "failed to "+action+" project")
 }
 
+// 2026-08-27 coder(lq): Bind owner initialization to the project transaction
+// so enabling project permissions cannot leave a committed project without an
+// owner when the membership insert fails.
+func (h *Handler) ensureProjectOwnerInTx(ctx context.Context, tx pgx.Tx, projectID, userID string) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return nil
+	}
+	return projectauth.New(newProjectAuthRepository(tx), true).EnsureOwner(ctx, projectID, userID)
+}
+
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -382,19 +392,41 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		DueDate:     dueDate,
 	}
 
-	// Without resources, keep the simple non-tx path.
-	if len(req.Resources) == 0 {
+	// Preserve the upstream non-transactional path while the overlay is off.
+	if len(req.Resources) == 0 && (h.ProjectAuth == nil || !h.ProjectAuth.Enabled()) {
 		project, err := h.Queries.CreateProject(r.Context(), createParams)
 		if err != nil {
 			h.writeProjectWriteError(w, r, err, "create")
 			return
 		}
-		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-			if err := h.ProjectAuth.EnsureOwner(r.Context(), uuidToString(project.ID), userID); err != nil {
-				slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-				writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
-				return
-			}
+		resp := projectToResponse(project)
+		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
+	// Keep project creation and owner initialization atomic when the overlay is
+	// enabled, even when no resources are attached.
+	if len(req.Resources) == 0 {
+		tx, err := h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		project, err := h.Queries.WithTx(tx).CreateProject(r.Context(), createParams)
+		if err != nil {
+			h.writeProjectWriteError(w, r, err, "create")
+			return
+		}
+		if err := h.ensureProjectOwnerInTx(r.Context(), tx, uuidToString(project.ID), userID); err != nil {
+			slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit project create")
+			return
 		}
 		resp := projectToResponse(project)
 		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
@@ -447,16 +479,14 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		resourceRows = append(resourceRows, row)
 	}
+	if err := h.ensureProjectOwnerInTx(r.Context(), tx, uuidToString(project.ID), userID); err != nil {
+		slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project create")
 		return
-	}
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := h.ProjectAuth.EnsureOwner(r.Context(), uuidToString(project.ID), userID); err != nil {
-			slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
-			return
-		}
 	}
 
 	resourceResp := make([]ProjectResourceResponse, len(resourceRows))

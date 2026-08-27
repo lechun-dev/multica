@@ -2435,6 +2435,32 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"issues": []IssueResponse{}})
 		return
 	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// 2026-08-27 coder(lq): Parent ids are an access edge, not merely a
+		// batching hint. Filter them before loading children so an inaccessible
+		// parent cannot be used to discover its task tree or child count.
+		userID := requestUserID(r)
+		if userID == "" {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return
+		}
+		visibleParents, err := h.visibleIssueIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), parentIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list child issues")
+			return
+		}
+		filteredParents := parentIDs[:0]
+		for _, parentID := range parentIDs {
+			if _, ok := visibleParents[parentID]; ok {
+				filteredParents = append(filteredParents, parentID)
+			}
+		}
+		parentIDs = filteredParents
+		if len(parentIDs) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"issues": []IssueResponse{}})
+			return
+		}
+	}
 
 	children, err := h.Queries.ListChildrenByParents(r.Context(), db.ListChildrenByParentsParams{
 		WorkspaceID: wsUUID,

@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	agentver "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 // maxPreviewTriggerIssues caps a single preview request so a pathological
@@ -116,7 +117,10 @@ type IssueTriggerPreviewRequest struct {
 	// or a batch). Empty with IsCreate=true evaluates a candidate new issue.
 	IssueIDs []string `json:"issue_ids"`
 	// IsCreate previews a not-yet-persisted issue from AssigneeType/ID/Status.
-	IsCreate     bool    `json:"is_create"`
+	IsCreate bool `json:"is_create"`
+	// ProjectID is required for create previews when project permissions are
+	// enabled, matching the write path's project binding constraint.
+	ProjectID    *string `json:"project_id,omitempty"`
 	AssigneeType *string `json:"assignee_type"`
 	AssigneeID   *string `json:"assignee_id"`
 	Status       *string `json:"status"`
@@ -210,8 +214,27 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 		if req.Status != nil && *req.Status != "" {
 			status = *req.Status
 		}
+		var projectID pgtype.UUID
+		if req.ProjectID != nil && *req.ProjectID != "" {
+			projectID, err = util.ParseUUID(*req.ProjectID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid project_id")
+				return
+			}
+		} else if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			writeError(w, http.StatusBadRequest, "project_id is required")
+			return
+		}
+		// 2026-08-27 coder(lq): Create previews must use the same project
+		// IssueCreate gate as CreateIssue. Otherwise a member without access
+		// could probe agent readiness for an inaccessible project, and the UI
+		// could show a run that the subsequent create request must reject.
+		if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
+			return
+		}
 		candidate := db.Issue{
 			WorkspaceID:  wsUUID,
+			ProjectID:    projectID,
 			Status:       status,
 			AssigneeType: newAssigneeType,
 			AssigneeID:   newAssigneeID,
@@ -233,6 +256,11 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			continue // cross-workspace / unknown id contributes no trigger
+		}
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			if allowed, _ := h.issueProjectAllowed(r, loaded, projectauth.View); !allowed {
+				continue
+			}
 		}
 
 		post := loaded

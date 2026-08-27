@@ -32,6 +32,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
@@ -4844,6 +4845,12 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 2026-08-27 coder(lq): Cancelling a task mutates the issue execution
+	// state, so issue visibility alone is insufficient; require the project's
+	// manage permission before allowing this issue-scoped cancellation route.
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueManage) {
+		return
+	}
 
 	taskID := chi.URLParam(r, "taskId")
 	existing, err := h.Queries.GetAgentTask(r.Context(), parseUUID(taskID))
@@ -4959,6 +4966,27 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
+	}
+	// 2026-08-27 coder(lq): User-visible task transcripts inherit the issue's
+	// project View permission. Daemon endpoints intentionally stay on the
+	// machine-identity path above; this guard only applies to regular users.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if !task.IssueID.Valid {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		workspaceUUID, parseErr := util.ParseUUID(wsID)
+		if parseErr != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: task.IssueID, WorkspaceID: workspaceUUID})
+		if issueErr != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+			if issueErr != nil {
+				writeError(w, http.StatusNotFound, "task not found")
+			}
+			return
+		}
 	}
 
 	var (

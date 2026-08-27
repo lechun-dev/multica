@@ -87,5 +87,25 @@ func (s *Service) RemoveMember(ctx context.Context, actor Subject, projectID, us
 	if !ok {
 		return ErrDisabled
 	}
+	// 2026-08-27 coder(lq): Never leave a project without an owner. The
+	// workspace-admin bypass can recover access, but ordinary project managers
+	// otherwise could permanently lose project administration.
+	members, err := mr.ListProjectMembers(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	ownerCount := 0
+	targetIsOwner := false
+	for _, member := range members {
+		if member.Role == ProjectOwner {
+			ownerCount++
+			if member.UserID == userID {
+				targetIsOwner = true
+			}
+		}
+	}
+	if targetIsOwner && ownerCount <= 1 {
+		return ErrLastOwner
+	}
 	return mr.RemoveProjectMember(ctx, projectID, userID)
 }

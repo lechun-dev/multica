@@ -138,6 +138,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
 import { useInPageFind } from "../hooks/use-in-page-find";
+import { IssuePermissionsPanel } from "./issue-permissions-panel";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
 import { FindBar } from "./find-bar";
 import {
@@ -2502,6 +2503,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
         </div>}
       </div>
+      <IssuePermissionsPanel issueId={issue.id} projectId={issue.project_id} />
 
       {/* Quick actions — the sidebar's only "do something" block, so it sits
           directly under Properties and above every read-only section. Renders

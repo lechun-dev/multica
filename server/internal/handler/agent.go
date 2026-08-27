@@ -2434,11 +2434,52 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.canManageAgent(w, r, agent) {
-		return
+	projectOverlay := h.ProjectAuth != nil && h.ProjectAuth.Enabled()
+	if !projectOverlay {
+		if !h.canManageAgent(w, r, agent) {
+			return
+		}
+	} else {
+		// 2026-08-27 coder(lq): Project-scoped cancellation may be requested
+		// by a workspace member who is not the agent owner, but only after the
+		// native private-agent visibility gate. The per-task project check below
+		// decides which rows this member may actually mutate.
+		member, memberOK := h.workspaceMember(w, r, uuidToString(agent.WorkspaceID))
+		if !memberOK {
+			return
+		}
+		isAdmin := roleAllowed(member.Role, "owner", "admin")
+		isAgentOwner := uuidToString(agent.OwnerID) == requestUserID(r)
+		if !isAdmin && !isAgentOwner {
+			actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+			if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, uuidToString(agent.WorkspaceID)) {
+				writeError(w, http.StatusForbidden, "you do not have access to this agent")
+				return
+			}
+		}
 	}
 
-	cancelled, err := h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
+	var cancelled []db.AgentTaskQueue
+	var err error
+	if projectOverlay {
+		// 2026-08-27 coder(lq): An agent may own runs across several projects;
+		// member-level owners can only cancel rows in projects they manage.
+		// Workspace owners/admins retain the native cancel-all behavior.
+		member, memberOK := h.workspaceMember(w, r, uuidToString(agent.WorkspaceID))
+		if !memberOK {
+			return
+		}
+		if roleAllowed(member.Role, "owner", "admin") {
+			cancelled, err = h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
+		} else {
+			cancelled, err = h.cancelAgentTasksWithProjectPermission(r.Context(), parseUUID(id), requestUserID(r), uuidToString(agent.WorkspaceID))
+			if err == nil && len(cancelled) > 0 {
+				h.TaskService.BroadcastCancelledTasks(r.Context(), uuidToString(agent.WorkspaceID), cancelled)
+			}
+		}
+	} else {
+		cancelled, err = h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
+	}
 	if err != nil {
 		slog.Warn("cancel agent tasks failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to cancel tasks")
@@ -2468,6 +2509,11 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
+		return
+	}
+	tasks, err = h.filterTasksByProjectPermission(r.Context(), workspaceID, requestUserID(r), tasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
 	}
 
@@ -2614,10 +2660,49 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := make([]WorkspaceWorkingAgent, 0, len(rows))
+	var visibleIssues map[pgtype.UUID]struct{}
+	var visibleWorkingAgents map[pgtype.UUID]struct{}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		issueIDs := make([]pgtype.UUID, 0)
+		agentIDs := make([]pgtype.UUID, 0, len(rows))
+		for _, row := range rows {
+			agentIDs = append(agentIDs, row.ID)
+			for _, issueID := range row.IssueIds {
+				if issueID.Valid {
+					issueIDs = append(issueIDs, issueID)
+				}
+			}
+		}
+		visibleIssues, err = h.visibleIssueIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), issueIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		if workType == "" || workType == "chat" {
+			visibleWorkingAgents, err = h.visibleWorkingAgentIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), agentIDs)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+				return
+			}
+		}
+	}
 	for _, row := range rows {
 		agentID := uuidToString(row.ID)
 		if _, ok := allowed[agentID]; !ok {
 			continue
+		}
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			if workType == "" || workType == "chat" {
+				if _, ok := visibleWorkingAgents[row.ID]; !ok {
+					continue
+				}
+			}
+			// 2026-08-27 coder(lq): A workspace aggregate can mix tasks from
+			// multiple projects. Hide the whole row when any referenced issue is
+			// outside View scope; otherwise its count would reveal hidden work.
+			if !issueIDsVisibleByProjectPermission(row.IssueIds, visibleIssues) {
+				continue
+			}
 		}
 		resp = append(resp, WorkspaceWorkingAgent{
 			ID:               agentID,
@@ -2631,6 +2716,24 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// 2026-08-27 coder(lq): Keep aggregate visibility logic independently
+// testable. An empty issue list means the running work has no issue context,
+// so the project overlay must leave the native workspace result unchanged.
+func issueIDsVisibleByProjectPermission(issueIDs []pgtype.UUID, visible map[pgtype.UUID]struct{}) bool {
+	if len(issueIDs) == 0 {
+		return true
+	}
+	for _, issueID := range issueIDs {
+		if !issueID.Valid {
+			return false
+		}
+		if _, ok := visible[issueID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // GetWorkspaceAgentRunCounts returns 30-day total run counts for every
 // agent in the workspace. Same single-fetch pattern as live-tasks /
 // activity to keep the Agents list cheap regardless of agent count.
@@ -2641,7 +2744,17 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	rows, err := h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
+	var rows []db.GetWorkspaceAgentRunCountsRow
+	var err error
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		rows, err = h.getWorkspaceAgentRunCountsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
+	} else {
+		rows, err = h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get agent run counts")
 		return
@@ -2682,7 +2795,17 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	rows, err := h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
+	var rows []db.GetWorkspaceAgentActivity30dRow
+	var err error
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		rows, err = h.getWorkspaceAgentActivityWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
+	} else {
+		rows, err = h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get agent activity")
 		return
@@ -2741,6 +2864,11 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+	tasks, err = h.filterTasksByProjectPermission(r.Context(), workspaceID, requestUserID(r), tasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
 	}
 

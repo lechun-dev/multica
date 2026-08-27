@@ -108,6 +108,16 @@ a fallback for a private API URL.
 
 Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads all three from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
 
+### Project permissions (optional)
+
+Project roles and issue-level grants are disabled by default for compatibility
+with the upstream workspace-only behavior. After applying the database
+migrations, set `PROJECT_PERMISSION_ENABLED=true` in `.env` and restart the
+backend/Compose stack. This is a backend feature flag; changing it does not
+require rebuilding the web image. Workspace owners and admins retain their
+native administrative bypass, while ordinary members need a project role to
+see its issues.
+
 > **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 
 ### Step 3 — Install CLI & Start Daemon

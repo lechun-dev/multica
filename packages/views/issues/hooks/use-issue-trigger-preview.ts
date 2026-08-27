@@ -11,6 +11,7 @@ export interface UseIssueTriggerPreviewParams {
   issueIds?: string[];
   /** Preview a not-yet-persisted issue from assignee/status (create modal). */
   isCreate?: boolean;
+  projectId?: string | null;
   assigneeType?: IssueAssigneeType | null;
   assigneeId?: string | null;
   status?: IssueStatus;
@@ -33,6 +34,7 @@ function previewSignature(params: UseIssueTriggerPreviewParams): string {
   return JSON.stringify({
     ids: [...(params.issueIds ?? [])].sort(),
     create: params.isCreate ?? false,
+    project: params.projectId ?? null,
     at: params.assigneeType ?? null,
     aid: params.assigneeId ?? null,
     status: params.status ?? null,
@@ -71,6 +73,7 @@ export function useIssueTriggerPreview(
       api.previewIssueTrigger({
         issueIds: params.issueIds,
         isCreate: params.isCreate,
+        projectId: params.projectId,
         assigneeType: params.assigneeType,
         assigneeId: params.assigneeId,
         status: params.status,

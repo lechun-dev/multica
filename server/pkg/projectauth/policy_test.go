@@ -10,6 +10,8 @@ type fakeMemberRepo struct {
 	addedProject string
 	addedUser    string
 	addedRole    ProjectRole
+	members      []ProjectMemberRecord
+	removed      bool
 }
 
 func (f *fakeMemberRepo) AddProjectMember(_ context.Context, projectID, userID string, role ProjectRole) error {
@@ -17,10 +19,13 @@ func (f *fakeMemberRepo) AddProjectMember(_ context.Context, projectID, userID s
 	return nil
 }
 
-func (f *fakeMemberRepo) RemoveProjectMember(context.Context, string, string) error { return nil }
+func (f *fakeMemberRepo) RemoveProjectMember(context.Context, string, string) error {
+	f.removed = true
+	return nil
+}
 
 func (f *fakeMemberRepo) ListProjectMembers(context.Context, string) ([]ProjectMemberRecord, error) {
-	return nil, nil
+	return f.members, nil
 }
 
 type fakeRepo struct {
@@ -94,5 +99,20 @@ func TestEnsureOwnerSeedsCreator(t *testing.T) {
 	}
 	if repo.addedProject != "p-1" || repo.addedUser != "u-1" || repo.addedRole != ProjectOwner {
 		t.Fatalf("unexpected seed: project=%q user=%q role=%q", repo.addedProject, repo.addedUser, repo.addedRole)
+	}
+}
+
+func TestRemoveMemberProtectsLastOwner(t *testing.T) {
+	repo := &fakeMemberRepo{
+		fakeRepo: fakeRepo{workspace: string(WorkspaceMember), project: string(ProjectOwner), projectWorkspace: "ws-1"},
+		members:  []ProjectMemberRecord{{ProjectID: "p-1", UserID: "u-1", Role: ProjectOwner}},
+	}
+	s := New(repo, true)
+	err := s.RemoveMember(context.Background(), Subject{UserID: "u-2", WorkspaceID: "ws-1"}, "p-1", "u-1")
+	if err != ErrLastOwner {
+		t.Fatalf("got %v, want %v", err, ErrLastOwner)
+	}
+	if repo.removed {
+		t.Fatal("last owner must not be removed")
 	}
 }
