@@ -40,85 +40,33 @@ func TestCreateIssue_AutopilotLeaderAssignsPrivateWorker(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	t.Run("verified lineage parks backlog child without enqueue", func(t *testing.T) {
+	t.Run("verified lineage cannot borrow creator authority for backlog child", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newAutopilotDelegationFixture(t, workerID, ownerID, "autopilot")
 		parentIssueID := uuidToString(fx.Issue.ID)
 
-		var created IssueResponse
 		testutil.Call(t, testHandler.CreateIssue,
 			autopilotChildIssueRequest(t, "agent", workerID, parentIssueID, "backlog", fx.LeaderAgentID, fx.LeaderTaskID),
-		).Want(http.StatusCreated).JSON(&created)
-		cleanupAutopilotChildIssue(t, created.ID)
-		if created.ParentIssueID == nil || *created.ParentIssueID != parentIssueID {
-			t.Fatalf("created child parent_issue_id = %v, want %q", created.ParentIssueID, parentIssueID)
-		}
-		if created.AssigneeType == nil || *created.AssigneeType != "agent" || created.AssigneeID == nil || *created.AssigneeID != workerID {
-			t.Fatalf("created child assignee = (%v, %v), want (agent, %s)", created.AssigneeType, created.AssigneeID, workerID)
-		}
-
-		var queued int
-		dbfx.QueryRow(t, `
-			SELECT count(*) FROM agent_task_queue
-			WHERE issue_id = $1 AND agent_id = $2
-		`, created.ID, workerID).Scan(&queued)
-		if queued != 0 {
-			t.Fatalf("backlog child must not enqueue the private worker, got %d tasks", queued)
-		}
+		).Want(http.StatusForbidden)
 	})
 
-	t.Run("verified lineage creates active child and enqueues once", func(t *testing.T) {
+	t.Run("verified lineage cannot borrow creator authority for active child", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newAutopilotDelegationFixture(t, workerID, ownerID, "autopilot")
 
-		var created IssueResponse
 		testutil.Call(t, testHandler.CreateIssue,
 			autopilotChildIssueRequest(t, "agent", workerID, uuidToString(fx.Issue.ID), "todo", fx.LeaderAgentID, fx.LeaderTaskID),
-		).Want(http.StatusCreated).JSON(&created)
-		cleanupAutopilotChildIssue(t, created.ID)
-
-		var taskCount int
-		var originatorCount int
-		dbfx.QueryRow(t, `
-			SELECT count(*), count(originator_user_id) FROM agent_task_queue
-			WHERE issue_id = $1 AND agent_id = $2
-		`, created.ID, workerID).Scan(&taskCount, &originatorCount)
-		if taskCount != 1 {
-			t.Fatalf("active child must enqueue the private worker exactly once, got %d tasks", taskCount)
-		}
-		if originatorCount != 0 {
-			t.Fatal("autopilot creator authority is authorization-only; worker task must remain unattributed")
-		}
+		).Want(http.StatusForbidden)
 	})
 
-	t.Run("verified lineage creates squad child and enqueues its private leader once", func(t *testing.T) {
+	t.Run("verified lineage cannot borrow creator authority for squad child", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newAutopilotDelegationFixture(t, workerID, ownerID, "autopilot")
 		squadID := dbfx.Squad(t, "Autopilot Private Leader Squad", workerID)
 
-		var created IssueResponse
 		testutil.Call(t, testHandler.CreateIssue,
 			autopilotChildIssueRequest(t, "squad", squadID, uuidToString(fx.Issue.ID), "todo", fx.LeaderAgentID, fx.LeaderTaskID),
-		).Want(http.StatusCreated).JSON(&created)
-		cleanupAutopilotChildIssue(t, created.ID)
-		if created.AssigneeType == nil || *created.AssigneeType != "squad" || created.AssigneeID == nil || *created.AssigneeID != squadID {
-			t.Fatalf("created child assignee = (%v, %v), want (squad, %s)", created.AssigneeType, created.AssigneeID, squadID)
-		}
-
-		var taskCount int
-		var originatorCount int
-		var squadTaskCount int
-		dbfx.QueryRow(t, `
-			SELECT count(*), count(originator_user_id), count(*) FILTER (WHERE squad_id = $3)
-			FROM agent_task_queue
-			WHERE issue_id = $1 AND agent_id = $2
-		`, created.ID, workerID, squadID).Scan(&taskCount, &originatorCount, &squadTaskCount)
-		if taskCount != 1 || squadTaskCount != 1 {
-			t.Fatalf("active squad child must enqueue its private leader exactly once with squad lineage, got %d tasks (%d with squad_id)", taskCount, squadTaskCount)
-		}
-		if originatorCount != 0 {
-			t.Fatal("autopilot creator authority is authorization-only; squad leader task must remain unattributed")
-		}
+		).Want(http.StatusForbidden)
 	})
 
 	t.Run("creator without invoke rights is denied", func(t *testing.T) {

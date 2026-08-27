@@ -13,23 +13,10 @@ import (
 // per-workspace name constraint and one test builds two fixtures.
 var runOnlyFixtureSeq atomic.Int64
 
-// MUL-6691 / GH #7563. A schedule/webhook autopilot run carries no top-of-chain
-// human originator by design (MUL-4302), so canInvokeAgent fails closed for a
-// private agent. MUL-4857 restored the autopilot's authority for ONE action —
-// creating a child under the autopilot's own issue — which left the reported
-// flow broken in two places:
-//
-//   - a run_only leader has no autopilot issue at all, so its top-level
-//     `issue create` had nothing to borrow against;
-//   - assigning an ALREADY-created issue went through UpdateIssue, which passed
-//     no scope whatsoever, so even the create_issue lineage MUL-4857 accepts was
-//     refused there. That is the exact reported symptom: DRA-109/DRA-110 got
-//     created and then could not be pointed at anyone.
-//
-// These tests pin the repaired positive paths and, more importantly, the bounds:
-// the borrowed authority comes from the task's OWN accountable human, only while
-// the task runs, only for work the task verifiably owns, and never from
-// owner_fallback (which is the agent owner, i.e. the white-list itself).
+// 2026-08-27 coder(lq): Autopilot task assignment deliberately does not borrow
+// creator/accountable-member authority. Agent and squad assignments must pass
+// the ordinary invocation gate using a real originator, otherwise they fail
+// closed with 403.
 
 // runOnlyAutopilotFixture is the run_only shape: a member-created autopilot with
 // a live run, and a dispatched leader task that carries autopilot attribution
@@ -163,52 +150,33 @@ func TestCreateIssue_RunOnlyAutopilotLeaderAssignsPrivateWorker(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	t.Run("top-level create dispatches the private worker once, unattributed", func(t *testing.T) {
+	t.Run("top-level create cannot borrow accountable member authority", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newRunOnlyAutopilotFixture(t, workerID, ownerID)
 
-		var created IssueResponse
 		testutil.Call(t, testHandler.CreateIssue,
 			topLevelIssueRequest(t, "agent", workerID, "todo", fx.LeaderAgentID, fx.LeaderTaskID),
-		).Want(http.StatusCreated).JSON(&created)
-		cleanupAutopilotChildIssue(t, created.ID)
-
-		total, withOriginator := tasksFor(t, created.ID, workerID)
-		if total != 1 {
-			t.Fatalf("run_only top-level create must enqueue the private worker exactly once, got %d tasks", total)
-		}
-		if withOriginator != 0 {
-			t.Fatal("borrowed authority is authorization-only; the worker task must stay unattributed")
-		}
+		).Want(http.StatusForbidden)
 	})
 
-	t.Run("top-level create accepts a private-leader squad", func(t *testing.T) {
+	t.Run("top-level create cannot borrow authority for private-leader squad", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newRunOnlyAutopilotFixture(t, workerID, ownerID)
 		squadID := dbfx.Squad(t, "MUL-6691 Private Leader Squad", workerID)
 
-		var created IssueResponse
 		testutil.Call(t, testHandler.CreateIssue,
 			topLevelIssueRequest(t, "squad", squadID, "todo", fx.LeaderAgentID, fx.LeaderTaskID),
-		).Want(http.StatusCreated).JSON(&created)
-		cleanupAutopilotChildIssue(t, created.ID)
-
-		total, withOriginator := tasksFor(t, created.ID, workerID)
-		if total != 1 || withOriginator != 0 {
-			t.Fatalf("squad assignment must dispatch its private leader once and unattributed, got %d tasks (%d attributed)", total, withOriginator)
-		}
+		).Want(http.StatusForbidden)
 	})
 
-	t.Run("sub-issue under an issue the run created is admitted", func(t *testing.T) {
+	t.Run("sub-issue cannot borrow authority from its creating run", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newRunOnlyAutopilotFixture(t, workerID, ownerID)
 		parentID := createUnassignedIssueAsRun(t, fx.LeaderAgentID, fx.LeaderTaskID)
 
-		var created IssueResponse
 		testutil.Call(t, testHandler.CreateIssue,
 			autopilotChildIssueRequest(t, "agent", workerID, parentID, "todo", fx.LeaderAgentID, fx.LeaderTaskID),
-		).Want(http.StatusCreated).JSON(&created)
-		cleanupAutopilotChildIssue(t, created.ID)
+		).Want(http.StatusForbidden)
 	})
 
 	t.Run("denials", func(t *testing.T) {
@@ -344,24 +312,15 @@ func TestUpdateIssue_AutopilotLeaderAssignsPrivateWorker(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	// The reported symptom, end to end: create unassigned, then assign.
-	t.Run("run_only run assigns an issue it created", func(t *testing.T) {
+	t.Run("run_only run cannot borrow authority for an issue it created", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newRunOnlyAutopilotFixture(t, workerID, ownerID)
 		issueID := createUnassignedIssueAsRun(t, fx.LeaderAgentID, fx.LeaderTaskID)
 
-		agentAssigns(t, fx.LeaderAgentID, fx.LeaderTaskID, issueID, workerID).Want(http.StatusOK)
-
-		total, withOriginator := tasksFor(t, issueID, workerID)
-		if total != 1 {
-			t.Fatalf("assignment must dispatch the private worker exactly once, got %d tasks", total)
-		}
-		if withOriginator != 0 {
-			t.Fatal("borrowed authority is authorization-only; the worker task must stay unattributed")
-		}
+		agentAssigns(t, fx.LeaderAgentID, fx.LeaderTaskID, issueID, workerID).Want(http.StatusForbidden)
 	})
 
-	t.Run("run_only run assigns a private-leader squad on an issue it created", func(t *testing.T) {
+	t.Run("run_only run cannot borrow authority for private-leader squad", func(t *testing.T) {
 		workerID, ownerID, _ := privateAgentTestFixture(t)
 		fx := newRunOnlyAutopilotFixture(t, workerID, ownerID)
 		squadID := dbfx.Squad(t, "MUL-6691 Update Squad", workerID)
@@ -373,13 +332,13 @@ func TestUpdateIssue_AutopilotLeaderAssignsPrivateWorker(t *testing.T) {
 				"assignee_id":   squadID,
 			}), fx.LeaderAgentID, fx.LeaderTaskID),
 			"id", issueID,
-		)).Want(http.StatusOK)
+		)).Want(http.StatusForbidden)
 	})
 
 	// create_issue mode: the same lineage MUL-4857 already accepts for child
 	// creation now also works for the assignment verb — but ONLY through the
 	// precise accountable-human rule, never through the coarse creator fallback.
-	t.Run("create_issue leader with an attribution stamp assigns via its accountable human", func(t *testing.T) {
+	t.Run("create_issue leader cannot borrow its accountable human authority", func(t *testing.T) {
 		workerID, ownerID, plainMemberID := privateAgentTestFixture(t)
 		fx := newAutopilotDelegationFixture(t, workerID, ownerID, "autopilot")
 		// Production stamps this task trigger_owner/accountable (MUL-4302); the
@@ -389,7 +348,7 @@ func TestUpdateIssue_AutopilotLeaderAssignsPrivateWorker(t *testing.T) {
 		dbfx.Exec(t, `UPDATE autopilot SET created_by_id = $1 WHERE id = $2`, plainMemberID, fx.AutopilotID)
 		stampAutopilotAttribution(t, fx.LeaderTaskID, ownerID, "trigger_owner")
 
-		agentAssigns(t, fx.LeaderAgentID, fx.LeaderTaskID, uuidToString(fx.Issue.ID), workerID).Want(http.StatusOK)
+		agentAssigns(t, fx.LeaderAgentID, fx.LeaderTaskID, uuidToString(fx.Issue.ID), workerID).Want(http.StatusForbidden)
 	})
 
 	// Review must-fix 2: autopilotDelegationAuthority performs no liveness or
@@ -548,7 +507,7 @@ func TestBatchUpdateIssues_AutopilotAuthorityIsPerIssue(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	t.Run("bound issue is updated and a foreign issue in the same batch is not", func(t *testing.T) {
+	t.Run("neither bound nor foreign issue can borrow autopilot authority", func(t *testing.T) {
 		workerID, ownerID, plainMemberID := privateAgentTestFixture(t)
 		fx := newRunOnlyAutopilotFixture(t, workerID, ownerID)
 		ownIssueID := createUnassignedIssueAsRun(t, fx.LeaderAgentID, fx.LeaderTaskID)
@@ -557,8 +516,8 @@ func TestBatchUpdateIssues_AutopilotAuthorityIsPerIssue(t *testing.T) {
 		batchAssignAsRun(t, plainMemberID, fx.LeaderAgentID, fx.LeaderTaskID, workerID, ownIssueID, foreignIssueID).
 			Want(http.StatusOK)
 
-		if got := assigneeOf(t, ownIssueID); got != workerID {
-			t.Fatalf("bound issue assignee = %q, want %q", got, workerID)
+		if got := assigneeOf(t, ownIssueID); got != "" {
+			t.Fatalf("bound issue borrowed autopilot authority and was assigned to %q", got)
 		}
 		if got := assigneeOf(t, foreignIssueID); got != "" {
 			t.Fatalf("foreign issue in the same batch was assigned to %q; per-issue scoping leaked", got)
