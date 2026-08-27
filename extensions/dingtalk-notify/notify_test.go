@@ -99,7 +99,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 	}
 
 	got := FormatText(event)
-	want := "🔔 **张畅 在 Multica 中提到了你**\n\n来源：乐纯工作区 / 钉钉通知\n\n任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n消息：\n> 请 [@李群](mention://member/member-id) 周五前确认\n\n[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
+	want := "🔔 **张畅 在 Multica 中提到了你**\n\n来源：乐纯工作区 / 钉钉通知\n\n任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n消息：\n> 请 [@李群](mention://member/member-id) 周五前确认\n\n---\n\n### ↗️ [打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}

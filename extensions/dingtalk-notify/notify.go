@@ -235,7 +235,10 @@ func FormatText(event MentionCreated) string {
 		lines = append(lines, "消息：\n"+quoteMarkdown(text))
 	}
 	if event.SourceURL != "" {
-		lines = append(lines, "[打开任务并回复]("+event.SourceURL+")")
+		// Keep the reply action visually separate from the quoted message. A
+		// heading gives DingTalk's Markdown renderer a larger, more discoverable
+		// action label while the arrow makes it clear that this is a link.
+		lines = append(lines, "---", "### ↗️ [打开任务并回复]("+event.SourceURL+")")
 	}
 	return strings.Join(lines, "\n\n")
 }
