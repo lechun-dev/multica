@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -108,6 +109,39 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
 	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" || user.Email != "alice@example.com" {
 		t.Fatalf("user=%+v err=%v", user, err)
+	}
+}
+
+func TestDingTalkOAuthProviderUsesEnterpriseScopeWhenCorpIDIsConfigured(t *testing.T) {
+	p := DingTalkOAuthProvider{ClientID: "client", CorpID: "corp"}
+	got, err := p.AuthorizationURL(context.Background(), "state", "https://example.test/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("scope") != "openid corpid" {
+		t.Fatalf("scope=%q", parsed.Query().Get("scope"))
+	}
+	if parsed.Query().Get("corpId") != "corp" {
+		t.Fatalf("corpId=%q", parsed.Query().Get("corpId"))
+	}
+}
+
+func TestDingTalkOAuthProviderSurfacesJSONErrorEnvelope(t *testing.T) {
+	client := httpDoerFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusForbidden, `{"code":"Forbidden.AccessDenied","message":"permission denied"}`), nil
+	})
+	p := DingTalkOAuthProvider{Client: client, ClientID: "id", ClientSecret: "secret"}
+	_, err := p.ExchangeCode(context.Background(), "code", "https://example.test/callback")
+	var apiErr *DingTalkHTTPError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected DingTalkHTTPError, got %v", err)
+	}
+	if apiErr.Code != "Forbidden.AccessDenied" || apiErr.Message != "permission denied" {
+		t.Fatalf("apiErr=%+v", apiErr)
 	}
 }
 

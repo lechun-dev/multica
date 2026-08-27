@@ -20,13 +20,20 @@ type HTTPDoer interface {
 }
 
 type DingTalkHTTPError struct {
-	Path   string
-	Status int
-	Code   string
-	Body   string
+	Path    string
+	Status  int
+	Code    string
+	Message string
+	Body    string
 }
 
 func (e *DingTalkHTTPError) Error() string {
+	if e.Message != "" {
+		if e.Code != "" {
+			return fmt.Sprintf("DingTalk %s returned HTTP %d (%s): %s", e.Path, e.Status, e.Code, e.Message)
+		}
+		return fmt.Sprintf("DingTalk %s returned HTTP %d: %s", e.Path, e.Status, e.Message)
+	}
 	if e.Code != "" {
 		return fmt.Sprintf("DingTalk %s returned HTTP %d (%s)", e.Path, e.Status, e.Code)
 	}

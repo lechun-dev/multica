@@ -220,6 +220,7 @@ services:
       DINGTALK_ROBOT_CODE: ${DINGTALK_ROBOT_CODE:-}
       DINGTALK_API_BASE_URL: ${DINGTALK_API_BASE_URL:-https://api.dingtalk.com}
       DINGTALK_OAUTH_AUTH_URL: ${DINGTALK_OAUTH_AUTH_URL:-https://login.dingtalk.com/oauth2/auth}
+      DINGTALK_OAUTH_SCOPE: ${DINGTALK_OAUTH_SCOPE:-}
     restart: unless-stopped
 
   frontend:

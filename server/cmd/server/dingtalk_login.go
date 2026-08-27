@@ -47,6 +47,8 @@ func newDingTalkLoginHandler(host *handler.Handler, pool *pgxpool.Pool, redirect
 		AuthURL:      strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_AUTH_URL")),
 		TokenURL:     strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_TOKEN_URL")),
 		UserURL:      strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_USER_URL")),
+		Scope:        strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_SCOPE")),
+		CorpID:       strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")),
 	}
 	h := &dingtalkLoginHandler{
 		host:        host,
