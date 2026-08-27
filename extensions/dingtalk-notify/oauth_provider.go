@@ -50,6 +50,9 @@ func (p DingTalkOAuthProvider) AuthorizationURL(_ context.Context, state, redire
 	if corpID := strings.TrimSpace(p.CorpID); corpID != "" {
 		values.Set("corpId", corpID)
 	}
+	// Force a fresh grant so newly enabled DingTalk permissions are reflected
+	// in the user access token instead of reusing a stale authorization.
+	values.Set("prompt", "consent")
 	values.Set("state", state)
 	values.Set("redirect_uri", redirectURI)
 	return base + "?" + values.Encode(), nil
@@ -93,7 +96,7 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return OAuthUser{}, &DingTalkHTTPError{Path: userURL, Status: resp.StatusCode, Body: string(body)}
+		return OAuthUser{}, newDingTalkHTTPError(userURL, resp.StatusCode, body)
 	}
 	var user struct {
 		DingUserID string `json:"userid"`
@@ -256,40 +259,8 @@ func (p DingTalkOAuthProvider) postJSON(ctx context.Context, endpoint string, pa
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	var envelope struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
-	}
-	_ = json.Unmarshal(body, &envelope)
-	code := strings.TrimSpace(envelope.Code)
-	message := strings.TrimSpace(envelope.Message)
-	if envelope.ErrCode != 0 {
-		if code == "" {
-			code = fmt.Sprintf("errcode:%d", envelope.ErrCode)
-		}
-		if message == "" {
-			message = strings.TrimSpace(envelope.ErrMsg)
-		}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &DingTalkHTTPError{
-			Path:    endpoint,
-			Status:  resp.StatusCode,
-			Code:    code,
-			Message: message,
-			Body:    strings.TrimSpace(string(body)),
-		}
-	}
-	if code != "" || envelope.ErrCode != 0 {
-		return &DingTalkHTTPError{
-			Path:    endpoint,
-			Status:  resp.StatusCode,
-			Code:    code,
-			Message: message,
-			Body:    strings.TrimSpace(string(body)),
-		}
+	if apiErr := newDingTalkHTTPError(endpoint, resp.StatusCode, body); apiErr != nil {
+		return apiErr
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("decode DingTalk OAuth response: %w", err)

@@ -128,6 +128,9 @@ func TestDingTalkOAuthProviderUsesEnterpriseScopeWhenCorpIDIsConfigured(t *testi
 	if parsed.Query().Get("corpId") != "corp" {
 		t.Fatalf("corpId=%q", parsed.Query().Get("corpId"))
 	}
+	if parsed.Query().Get("prompt") != "consent" {
+		t.Fatalf("prompt=%q", parsed.Query().Get("prompt"))
+	}
 }
 
 func TestDingTalkOAuthProviderSurfacesJSONErrorEnvelope(t *testing.T) {
@@ -141,6 +144,34 @@ func TestDingTalkOAuthProviderSurfacesJSONErrorEnvelope(t *testing.T) {
 		t.Fatalf("expected DingTalkHTTPError, got %v", err)
 	}
 	if apiErr.Code != "Forbidden.AccessDenied" || apiErr.Message != "permission denied" {
+		t.Fatalf("apiErr=%+v", apiErr)
+	}
+}
+
+func TestDingTalkOAuthProviderSurfacesUserEndpointErrorEnvelope(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusForbidden, `{"code":"Forbidden.AccessDenied","message":"directory permission denied"}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:       client,
+		TokenURL:     "https://example.test/oauth-token",
+		UserURL:      "https://example.test/me",
+		ClientID:     "id",
+		ClientSecret: "secret",
+	}
+	_, err := p.ExchangeCode(context.Background(), "code", "https://app.example/callback")
+	var apiErr *DingTalkHTTPError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected DingTalkHTTPError, got %v", err)
+	}
+	if apiErr.Path != "https://example.test/me" || apiErr.Code != "Forbidden.AccessDenied" || apiErr.Message != "directory permission denied" {
 		t.Fatalf("apiErr=%+v", apiErr)
 	}
 }
