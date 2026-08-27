@@ -31,14 +31,17 @@ func TestEnsureSchemaAppliesModuleFilesInOrder(t *testing.T) {
 	if err := ensureSchema(context.Background(), exec); err != nil {
 		t.Fatal(err)
 	}
-	if len(exec.queries) != 2 {
-		t.Fatalf("queries=%d, want 2", len(exec.queries))
+	if len(exec.queries) != 3 {
+		t.Fatalf("queries=%d, want 3", len(exec.queries))
 	}
 	if !strings.Contains(exec.queries[0], "CREATE TABLE IF NOT EXISTS dingtalk_notify_oauth_states") {
 		t.Fatal("first migration does not create the OAuth state table")
 	}
 	if !strings.Contains(exec.queries[1], "CREATE INDEX CONCURRENTLY") {
 		t.Fatal("ready index must remain a separate concurrent migration")
+	}
+	if !strings.Contains(exec.queries[2], "departments_synced_at") {
+		t.Fatal("third migration does not add DingTalk department profile columns")
 	}
 }
 

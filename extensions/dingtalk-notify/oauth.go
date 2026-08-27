@@ -11,12 +11,21 @@ import (
 )
 
 type OAuthUser struct {
-	DingUserID string
-	UnionID    string
-	OpenID     string
-	Name       string
-	Email      string
-	AvatarURL  string
+	DingUserID        string
+	UnionID           string
+	OpenID            string
+	Name              string
+	Email             string
+	AvatarURL         string
+	Departments       []DingTalkDepartment
+	DepartmentsSynced bool
+}
+
+// DingTalkDepartment is profile metadata from the enterprise directory. The
+// stable ID stays server-side; profile API responses expose names only.
+type DingTalkDepartment struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type OAuthProvider interface {

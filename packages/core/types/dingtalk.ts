@@ -42,9 +42,7 @@ export interface DingTalkProfile {
   name?: string;
   email?: string;
   avatar_url?: string;
-  ding_user_id?: string;
-  union_id?: string;
-  open_id?: string;
+  departments?: string[];
 }
 
 /** One connected Multica bot observed in a DingTalk group. */

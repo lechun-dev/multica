@@ -564,7 +564,7 @@
     "dingtalk_not_connected": "Not connected",
     "dingtalk_identity_unknown": "DingTalk user",
     "dingtalk_email": "DingTalk email",
-    "dingtalk_user_id": "DingTalk user ID"
+    "dingtalk_departments": "Departments"
   },
   "notifications": {
     "title": "Inbox Notifications",

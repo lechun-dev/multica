@@ -149,6 +149,102 @@ func TestDingTalkOAuthProviderBackfillsMissingNickname(t *testing.T) {
 	}
 }
 
+func TestDingTalkOAuthProviderLoadsMultipleDepartmentsWithoutExposingIDsAsNames(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusOK, `{"userId":"u1","unionId":"union-1","openId":"open-1","nick":"Alice","email":"alice@example.com","avatarUrl":"https://example.test/alice.png"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","name":"Alice","dept_id_list":[42,"43",42]}}`), nil
+		case "/department":
+			var payload struct {
+				DepartmentID json.RawMessage `json:"dept_id"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			switch strings.Trim(string(payload.DepartmentID), `"`) {
+			case "42":
+				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"name":"Engineering"}}`), nil
+			case "43":
+				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"name":"Product"}}`), nil
+			default:
+				return jsonResponse(http.StatusBadRequest, `{}`), nil
+			}
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:              client,
+		TokenURL:            "https://example.test/oauth-token",
+		UserURL:             "https://example.test/me",
+		AppTokenURL:         "https://example.test/app-token",
+		UserDetailURL:       "https://example.test/detail",
+		DepartmentDetailURL: "https://example.test/department",
+		ClientID:            "id",
+		ClientSecret:        "secret",
+	}
+
+	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !user.DepartmentsSynced {
+		t.Fatal("departments were not marked as synchronized")
+	}
+	want := []DingTalkDepartment{{ID: "42", Name: "Engineering"}, {ID: "43", Name: "Product"}}
+	if len(user.Departments) != len(want) {
+		t.Fatalf("departments=%+v, want %+v", user.Departments, want)
+	}
+	for i := range want {
+		if user.Departments[i] != want[i] {
+			t.Fatalf("departments[%d]=%+v, want %+v", i, user.Departments[i], want[i])
+		}
+	}
+}
+
+func TestDingTalkOAuthProviderDoesNotFailLoginWhenDepartmentLookupFails(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusOK, `{"userId":"u1","unionId":"union-1","openId":"open-1","nick":"Alice","email":"alice@example.com","avatarUrl":"https://example.test/alice.png"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","name":"Alice","dept_id_list":[42]}}`), nil
+		case "/department":
+			return jsonResponse(http.StatusOK, `{"errcode":60011,"errmsg":"permission denied"}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:              client,
+		TokenURL:            "https://example.test/oauth-token",
+		UserURL:             "https://example.test/me",
+		AppTokenURL:         "https://example.test/app-token",
+		UserDetailURL:       "https://example.test/detail",
+		DepartmentDetailURL: "https://example.test/department",
+		ClientID:            "id",
+		ClientSecret:        "secret",
+	}
+
+	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.DepartmentsSynced || len(user.Departments) != 0 {
+		t.Fatalf("unexpected department profile: %+v", user)
+	}
+}
+
 func TestDingTalkOAuthProviderUsesEnterpriseScopeWhenCorpIDIsConfigured(t *testing.T) {
 	p := DingTalkOAuthProvider{ClientID: "client", CorpID: "corp"}
 	got, err := p.AuthorizationURL(context.Background(), "state", "https://example.test/callback")

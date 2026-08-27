@@ -7,25 +7,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 // DingTalkOAuthProvider implements the standard DingTalk OAuth2 code flow.
 // AuthURL and UserURL are overridable for staging and contract tests.
 type DingTalkOAuthProvider struct {
-	Client         HTTPDoer
-	AuthURL        string
-	TokenURL       string
-	UserURL        string
-	AppTokenURL    string
-	UnionLookupURL string
-	UserDetailURL  string
-	ClientID       string
-	ClientSecret   string
-	Scope          string
-	CorpID         string
+	Client              HTTPDoer
+	AuthURL             string
+	TokenURL            string
+	UserURL             string
+	AppTokenURL         string
+	UnionLookupURL      string
+	UserDetailURL       string
+	DepartmentDetailURL string
+	ClientID            string
+	ClientSecret        string
+	Scope               string
+	CorpID              string
 }
 
 func (p DingTalkOAuthProvider) AuthorizationURL(_ context.Context, state, redirectURI string) (string, error) {
@@ -157,10 +160,14 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		return OAuthUser{}, errors.New("DingTalk OAuth user response has no stable identity")
 	}
 	identity := OAuthUser{DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID, Name: user.Name, Email: user.Email, AvatarURL: user.AvatarURL}
-	if identity.UnionID != "" && (identity.DingUserID == "" || identity.Name == "" || identity.Email == "" || identity.AvatarURL == "") {
-		enterpriseIdentity, err := p.enterpriseIdentity(ctx, identity.UnionID)
+	needsEnterpriseIdentity := identity.DingUserID == "" || identity.Name == "" || identity.Email == "" || identity.AvatarURL == ""
+	if identity.DingUserID != "" || identity.UnionID != "" {
+		enterpriseIdentity, err := p.enterpriseIdentity(ctx, identity.DingUserID, identity.UnionID)
 		if err != nil {
-			return OAuthUser{}, err
+			if needsEnterpriseIdentity {
+				return OAuthUser{}, err
+			}
+			return identity, nil
 		}
 		if identity.DingUserID == "" {
 			identity.DingUserID = enterpriseIdentity.DingUserID
@@ -174,11 +181,13 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		if identity.AvatarURL == "" {
 			identity.AvatarURL = enterpriseIdentity.AvatarURL
 		}
+		identity.Departments = enterpriseIdentity.Departments
+		identity.DepartmentsSynced = enterpriseIdentity.DepartmentsSynced
 	}
 	return identity, nil
 }
 
-func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, unionID string) (OAuthUser, error) {
+func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserID, unionID string) (OAuthUser, error) {
 	appTokenURL := p.AppTokenURL
 	if appTokenURL == "" {
 		appTokenURL = dingtalkAPIBase + "/v1.0/oauth2/accessToken"
@@ -194,43 +203,47 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, unionID s
 		return OAuthUser{}, errors.New("DingTalk application token response missing accessToken")
 	}
 
-	unionURL := p.UnionLookupURL
-	if unionURL == "" {
-		unionURL = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
-	}
-	unionPayload, _ := json.Marshal(map[string]string{"unionid": unionID})
-	var lookup struct {
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
-		Result  struct {
-			UserID string `json:"userid"`
-		} `json:"result"`
-	}
-	if err := p.postAppJSON(ctx, unionURL, token.AccessToken, unionPayload, &lookup); err != nil {
-		return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: %w", err)
-	}
-	if lookup.ErrCode != 0 {
-		return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: DingTalk error %d", lookup.ErrCode)
-	}
-	if lookup.Result.UserID == "" {
-		return OAuthUser{}, errors.New("DingTalk union id response missing userid")
+	if dingUserID == "" {
+		unionURL := p.UnionLookupURL
+		if unionURL == "" {
+			unionURL = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
+		}
+		unionPayload, _ := json.Marshal(map[string]string{"unionid": unionID})
+		var lookup struct {
+			ErrCode int    `json:"errcode"`
+			ErrMsg  string `json:"errmsg"`
+			Result  struct {
+				UserID string `json:"userid"`
+			} `json:"result"`
+		}
+		if err := p.postAppJSON(ctx, unionURL, token.AccessToken, unionPayload, &lookup); err != nil {
+			return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: %w", err)
+		}
+		if lookup.ErrCode != 0 {
+			return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: DingTalk error %d", lookup.ErrCode)
+		}
+		if lookup.Result.UserID == "" {
+			return OAuthUser{}, errors.New("DingTalk union id response missing userid")
+		}
+		dingUserID = lookup.Result.UserID
 	}
 
 	detailURL := p.UserDetailURL
 	if detailURL == "" {
 		detailURL = "https://oapi.dingtalk.com/topapi/v2/user/get"
 	}
-	detailPayload, _ := json.Marshal(map[string]string{"userid": lookup.Result.UserID, "language": "zh_CN"})
+	detailPayload, _ := json.Marshal(map[string]string{"userid": dingUserID, "language": "zh_CN"})
 	var detail struct {
 		ErrCode int    `json:"errcode"`
 		ErrMsg  string `json:"errmsg"`
 		Result  struct {
-			UserID    string `json:"userid"`
-			UnionID   string `json:"unionid"`
-			Name      string `json:"name"`
-			Email     string `json:"email"`
-			AvatarURL string `json:"avatarUrl"`
-			Avatar    string `json:"avatar"`
+			UserID     string        `json:"userid"`
+			UnionID    string        `json:"unionid"`
+			Name       string        `json:"name"`
+			Email      string        `json:"email"`
+			AvatarURL  string        `json:"avatarUrl"`
+			Avatar     string        `json:"avatar"`
+			DeptIDList *[]dingTalkID `json:"dept_id_list"`
 		} `json:"result"`
 	}
 	if err := p.postAppJSON(ctx, detailURL, token.AccessToken, detailPayload, &detail); err != nil {
@@ -240,18 +253,94 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, unionID s
 		return OAuthUser{}, fmt.Errorf("load DingTalk enterprise user: DingTalk error %d", detail.ErrCode)
 	}
 	if detail.Result.UserID == "" {
-		detail.Result.UserID = lookup.Result.UserID
+		detail.Result.UserID = dingUserID
 	}
 	if detail.Result.AvatarURL == "" {
 		detail.Result.AvatarURL = detail.Result.Avatar
 	}
-	return OAuthUser{
+	identity := OAuthUser{
 		DingUserID: detail.Result.UserID,
 		UnionID:    detail.Result.UnionID,
 		Name:       detail.Result.Name,
 		Email:      strings.ToLower(strings.TrimSpace(detail.Result.Email)),
 		AvatarURL:  detail.Result.AvatarURL,
-	}, nil
+	}
+	if detail.Result.DeptIDList != nil {
+		departments, err := p.loadDepartments(ctx, token.AccessToken, *detail.Result.DeptIDList)
+		if err != nil {
+			slog.WarnContext(ctx, "dingtalk login: department profile unavailable", "error", err)
+		} else {
+			identity.Departments = departments
+			identity.DepartmentsSynced = true
+		}
+	}
+	return identity, nil
+}
+
+type dingTalkID string
+
+func (id *dingTalkID) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*id = ""
+		return nil
+	}
+	if len(data) > 0 && data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*id = dingTalkID(value)
+		return nil
+	}
+	var value json.Number
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*id = dingTalkID(value.String())
+	return nil
+}
+
+func (p DingTalkOAuthProvider) loadDepartments(ctx context.Context, accessToken string, departmentIDs []dingTalkID) ([]DingTalkDepartment, error) {
+	endpoint := p.DepartmentDetailURL
+	if endpoint == "" {
+		endpoint = "https://oapi.dingtalk.com/topapi/v2/department/get"
+	}
+	departments := make([]DingTalkDepartment, 0, len(departmentIDs))
+	seen := make(map[string]struct{}, len(departmentIDs))
+	for _, rawID := range departmentIDs {
+		id := strings.TrimSpace(string(rawID))
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		var payloadID any = id
+		if numericID, err := strconv.ParseInt(id, 10, 64); err == nil {
+			payloadID = numericID
+		}
+		payload, _ := json.Marshal(map[string]any{"dept_id": payloadID, "language": "zh_CN"})
+		var detail struct {
+			ErrCode int    `json:"errcode"`
+			ErrMsg  string `json:"errmsg"`
+			Result  struct {
+				Name string `json:"name"`
+			} `json:"result"`
+		}
+		if err := p.postAppJSON(ctx, endpoint, accessToken, payload, &detail); err != nil {
+			return nil, fmt.Errorf("load DingTalk department: %w", err)
+		}
+		if detail.ErrCode != 0 {
+			return nil, fmt.Errorf("load DingTalk department: DingTalk error %d", detail.ErrCode)
+		}
+		name := strings.TrimSpace(detail.Result.Name)
+		if name == "" {
+			return nil, errors.New("load DingTalk department: response missing name")
+		}
+		departments = append(departments, DingTalkDepartment{ID: id, Name: name})
+	}
+	return departments, nil
 }
 
 func (p DingTalkOAuthProvider) postAppJSON(ctx context.Context, endpoint, accessToken string, payload []byte, out any) error {

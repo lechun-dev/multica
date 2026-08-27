@@ -344,10 +344,12 @@ import {
   PurchaseWorkspaceSeatsResponseSchema,
   CreateWorkspaceSubscriptionPortalResponseSchema,
   DingTalkInstallationSchema,
+  DingTalkProfileSchema,
   ListDingTalkInstallationsResponseSchema,
   ListDingTalkGroupsResponseSchema,
   RedeemDingTalkBindingTokenResponseSchema,
   EMPTY_DINGTALK_INSTALLATION,
+  EMPTY_DINGTALK_PROFILE,
   EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
   EMPTY_LIST_DINGTALK_GROUPS_RESPONSE,
   EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE,
@@ -4538,7 +4540,10 @@ export class ApiClient {
   }
 
   async getDingTalkProfile(): Promise<DingTalkProfile> {
-    return this.fetch(`/api/me/dingtalk-profile`);
+    const raw = await this.fetch<unknown>(`/api/me/dingtalk-profile`);
+    return parseWithFallback(raw, DingTalkProfileSchema, EMPTY_DINGTALK_PROFILE, {
+      endpoint: "GET /api/me/dingtalk-profile",
+    });
   }
 
   async listDingTalkGroups(

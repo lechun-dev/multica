@@ -34,6 +34,7 @@ import type {
   CreateWorkspaceSubscriptionPortalResponse,
   CronPreviewResponse,
   DingTalkInstallation,
+  DingTalkProfile,
   ListDingTalkInstallationsResponse,
   ListDingTalkGroupsResponse,
   RedeemDingTalkBindingTokenResponse,
@@ -3234,10 +3235,12 @@ export const DingTalkProfileSchema = z.object({
   name: z.string().optional(),
   email: z.string().optional(),
   avatar_url: z.string().optional(),
-  ding_user_id: z.string().optional(),
-  union_id: z.string().optional(),
-  open_id: z.string().optional(),
-}).loose();
+  departments: z.array(z.string()).optional().catch(undefined),
+});
+
+export const EMPTY_DINGTALK_PROFILE: DingTalkProfile = {
+  bound: false,
+};
 
 export const WorkspaceMcpServerListSchema = z.array(WorkspaceMcpServerSchema);
 

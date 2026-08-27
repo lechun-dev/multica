@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { useT } from "../../i18n";
 import { SettingsCard, SettingsRow } from "./settings-layout";
 
@@ -52,6 +53,21 @@ export function DingTalkProfileCard() {
               <p className="break-all text-caption text-muted-foreground sm:text-right">
                 {profile.email}
               </p>
+            </SettingsRow>
+          ) : null}
+          {profile.departments?.length ? (
+            <SettingsRow label={t(($) => $.account.dingtalk_departments)} size="text">
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                {profile.departments.map((department, index) => (
+                  <Badge
+                    key={`${department}-${index}`}
+                    variant="outline"
+                    className="max-w-full whitespace-normal break-words text-left font-normal"
+                  >
+                    {department}
+                  </Badge>
+                ))}
+              </div>
             </SettingsRow>
           ) : null}
         </>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -73,6 +74,14 @@ func (h *dingtalkLoginHandler) saveDingTalkIdentityProfile(ctx context.Context, 
 	name := strings.TrimSpace(identity.Name)
 	avatarURL := strings.TrimSpace(identity.AvatarURL)
 	loginOnly := dingUserID == ""
+	departmentsJSON := []byte("[]")
+	if identity.DepartmentsSynced {
+		var err error
+		departmentsJSON, err = json.Marshal(identity.Departments)
+		if err != nil {
+			return fmt.Errorf("encode DingTalk departments: %w", err)
+		}
+	}
 
 	updateExisting := func() (int64, error) {
 		result, err := h.pool.Exec(ctx, `
@@ -83,14 +92,17 @@ func (h *dingtalkLoginHandler) saveDingTalkIdentityProfile(ctx context.Context, 
 			    email = COALESCE(NULLIF($4, ''), email),
 			    name = COALESCE(NULLIF($5, ''), name),
 			    avatar_url = COALESCE(NULLIF($6, ''), avatar_url),
-			    multica_user_id = $7,
+			    departments = CASE WHEN $7 THEN $8::jsonb ELSE departments END,
+			    departments_synced_at = CASE WHEN $7 THEN now() ELSE departments_synced_at END,
+			    multica_user_id = $9,
 			    active = true,
 			    login_only = CASE WHEN $1 <> '' THEN false ELSE login_only END,
 			    updated_at = now()
 			WHERE ($1 <> '' AND ding_user_id = $1)
 			   OR ($2 <> '' AND union_id = $2)
 			   OR ($3 <> '' AND open_id = $3)`,
-			dingUserID, unionID, openID, email, name, avatarURL, userID)
+			dingUserID, unionID, openID, email, name, avatarURL,
+			identity.DepartmentsSynced, departmentsJSON, userID)
 		if err != nil {
 			return 0, err
 		}
@@ -107,10 +119,14 @@ func (h *dingtalkLoginHandler) saveDingTalkIdentityProfile(ctx context.Context, 
 
 	result, err := h.pool.Exec(ctx, `
 		INSERT INTO dingtalk_notify_identities
-		    (ding_user_id, union_id, open_id, email, name, avatar_url, multica_user_id, active, login_only, updated_at)
-		VALUES (NULLIF($1, ''), NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, true, $8, now())
+		    (ding_user_id, union_id, open_id, email, name, avatar_url,
+		     departments, departments_synced_at, multica_user_id, active, login_only, updated_at)
+		VALUES (NULLIF($1, ''), NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''),
+		        CASE WHEN $7 THEN $8::jsonb ELSE '[]'::jsonb END,
+		        CASE WHEN $7 THEN now() ELSE NULL END, $9, true, $10, now())
 		ON CONFLICT DO NOTHING`,
-		dingUserID, unionID, openID, email, name, avatarURL, userID, loginOnly)
+		dingUserID, unionID, openID, email, name, avatarURL,
+		identity.DepartmentsSynced, departmentsJSON, userID, loginOnly)
 	if err != nil {
 		return fmt.Errorf("save DingTalk identity: %w", err)
 	}

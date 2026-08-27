@@ -467,6 +467,43 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
+  describe("getDingTalkProfile", () => {
+    it("returns multiple department names and strips private identity fields", async () => {
+      stubFetchJson({
+        bound: true,
+        name: "Alice",
+        departments: ["Engineering", "Product"],
+        ding_user_id: "private-staff-id",
+        union_id: "private-union-id",
+        open_id: "private-open-id",
+      });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.getDingTalkProfile()).resolves.toEqual({
+        bound: true,
+        name: "Alice",
+        departments: ["Engineering", "Product"],
+      });
+    });
+
+    it("tolerates an old server and malformed optional departments", async () => {
+      stubFetchJson({ bound: true, departments: "Engineering" });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.getDingTalkProfile()).resolves.toEqual({
+        bound: true,
+        departments: undefined,
+      });
+    });
+
+    it("falls back safely when the profile response is malformed", async () => {
+      stubFetchJson({ bound: "yes" });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.getDingTalkProfile()).resolves.toEqual({ bound: false });
+    });
+  });
+
   describe("Telegram integration", () => {
     it("falls back to a safe empty installation list when the response is malformed", async () => {
       stubFetchJson({ installations: "not-an-array", configured: true });
