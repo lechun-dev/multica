@@ -460,6 +460,22 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		args = append(args, value)
 		return "$" + strconv.Itoa(len(args))
 	}
+	// 2026-08-27 coder(lq): The table compiler is shared by rows, groups, and
+	// facets, so apply the project boundary here once instead of relying on
+	// each surface to remember it. Projectless issues stay excluded while the
+	// overlay is enabled, even when include_no_project was requested.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return issueTableSQL{}, false
+		}
+		userUUID, err := util.ParseUUID(userID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return issueTableSQL{}, false
+		}
+		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userUUID)))
+	}
 
 	// Any non-empty status KEY, not just the 7 built-ins. A status filter names
 	// the exact statuses the user picked, and since MUL-6243 those can be custom

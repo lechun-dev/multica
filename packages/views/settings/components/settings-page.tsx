@@ -20,6 +20,7 @@ import {
   Blocks,
   CreditCard,
   Server,
+  ShieldCheck,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
@@ -49,6 +50,7 @@ import { PropertiesTab } from "./properties-tab";
 import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
+import { ProjectPermissionsTab } from "./project-permissions-tab";
 import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
@@ -79,6 +81,7 @@ const WORKSPACE_TAB_KEYS = [
   "quick_actions",
   "mcp",
   "plugins",
+  "project_permissions",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -94,6 +97,7 @@ const WORKSPACE_TAB_VALUES = {
   quick_actions: "quick-actions",
   mcp: "mcp",
   plugins: "plugins",
+  project_permissions: "project-permissions",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -109,6 +113,7 @@ const WORKSPACE_TAB_ICONS = {
   quick_actions: Zap,
   mcp: Server,
   plugins: Blocks,
+  project_permissions: ShieldCheck,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -289,6 +294,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="quick-actions"><QuickActionsTab /></TabsContent>
           <TabsContent value="mcp"><McpTab /></TabsContent>
           {pluginsEnabled ? <TabsContent value="plugins"><PluginsTab /></TabsContent> : null}
+          <TabsContent value="project-permissions"><ProjectPermissionsTab /></TabsContent>
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
           ))}

@@ -105,6 +105,7 @@ services:
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
+      PROJECT_PERMISSION_ENABLED: ${PROJECT_PERMISSION_ENABLED:-false}
       # Managed entitlement policy is explicitly opt-in. The false/empty
       # defaults keep self-hosted installs on the legacy path with no Cloud
       # request and no quota-table access.

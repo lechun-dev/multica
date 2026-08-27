@@ -1209,6 +1209,7 @@ export class ApiClient {
       body: JSON.stringify({
         ...(params.issueIds?.length ? { issue_ids: params.issueIds } : {}),
         ...(params.isCreate ? { is_create: true } : {}),
+        ...(params.projectId ? { project_id: params.projectId } : {}),
         ...(params.assigneeType ? { assignee_type: params.assigneeType } : {}),
         ...(params.assigneeId ? { assignee_id: params.assigneeId } : {}),
         ...(params.status ? { status: params.status } : {}),
@@ -3415,6 +3416,25 @@ export class ApiClient {
 
   async deleteProject(id: string): Promise<void> {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
+  }
+
+  async listProjectMembers(projectId: string): Promise<{ members: Array<{ project_id: string; user_id: string; role: string }>; total: number }> {
+    return this.fetch(`/api/projects/${projectId}/members`);
+  }
+
+  async addProjectMember(projectId: string, data: { user_id: string; role: string }): Promise<void> {
+    await this.fetch(`/api/projects/${projectId}/members`, { method: "POST", body: JSON.stringify(data) });
+  }
+
+  async removeProjectMember(projectId: string, userId: string): Promise<void> {
+    await this.fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+  }
+
+  async listIssuePermissions(issueId: string): Promise<{ permissions: Array<{ user_id: string; permission: string }>; total: number }> { return this.fetch(`/api/issues/${issueId}/permissions`); }
+  async grantIssuePermission(issueId: string, data: { user_id: string; permission: string }): Promise<void> { await this.fetch(`/api/issues/${issueId}/permissions`, { method: "POST", body: JSON.stringify(data) }); }
+  async revokeIssuePermission(issueId: string, userId: string, permission: string): Promise<void> { await this.fetch(`/api/issues/${issueId}/permissions/${userId}/${permission}`, { method: "DELETE" }); }
+  async listProjectPermissionReport(params: { project_id?: string; scope?: string } = {}): Promise<{ rows: Array<Record<string, string>>; total: number }> {
+    const q = new URLSearchParams(); if (params.project_id) q.set("project_id", params.project_id); if (params.scope) q.set("scope", params.scope); return this.fetch(`/api/project-permissions/report?${q}`);
   }
 
   // Project resources

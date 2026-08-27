@@ -1191,6 +1191,20 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 		writeError(w, http.StatusNotFound, "inbox item not found")
 		return db.InboxItem{}, false
 	}
+	// 2026-08-27 coder(lq): A notification is an alternate issue lookup path;
+	// enforce the same project View boundary before allowing read/archive state
+	// changes, otherwise a hidden task could still be mutated by its inbox id.
+	if item.IssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID: item.IssueID, WorkspaceID: item.WorkspaceID,
+		})
+		if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+			if err != nil {
+				writeError(w, http.StatusNotFound, "inbox item not found")
+			}
+			return db.InboxItem{}, false
+		}
+	}
 	if item.IssueID.Valid && !h.authorizeIssueWindow(w, r, item.IssueID, item.WorkspaceID, "inbox") {
 		return db.InboxItem{}, false
 	}

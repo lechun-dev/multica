@@ -114,10 +114,12 @@ import { useT } from "../i18n";
 function CreateRunHint({
   assigneeType,
   assigneeId,
+  projectId,
   status,
 }: {
   assigneeType?: IssueAssigneeType;
   assigneeId?: string;
+  projectId?: string;
   status: IssueStatus;
 }) {
   const { t } = useT("modals");
@@ -125,6 +127,7 @@ function CreateRunHint({
   const isAgentLike = assigneeType === "agent" || assigneeType === "squad";
   const preview = useIssueTriggerPreview({
     isCreate: true,
+    projectId: projectId ?? null,
     assigneeType: assigneeType ?? null,
     assigneeId: assigneeId ?? null,
     status,
@@ -885,7 +888,7 @@ export function ManualCreatePanel({
 
             {/* Pre-trigger preview — a passive caption above the toolbar; reveals
                 when an agent assignee will pick the issue up. */}
-            <CreateRunHint assigneeType={assigneeType} assigneeId={assigneeId} status={status} />
+            <CreateRunHint assigneeType={assigneeType} assigneeId={assigneeId} projectId={projectId} status={status} />
 
             {/* Property toolbar — each field renders per the Settings → Issue
                 selection (see showField above). */}

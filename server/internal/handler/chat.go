@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -113,6 +114,12 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if projectID.Valid {
+		// 2026-08-27 coder(lq): Binding a chat to a project grants the
+		// conversation access to that project's context, so creation requires
+		// AgentUse and cannot be used to probe or enter an inaccessible project.
+		if !h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, projectauth.AgentUse) {
+			return
+		}
 		if _, err := qtx.LockProjectForChatSessionCreate(r.Context(), db.LockProjectForChatSessionCreateParams{
 			ID:          projectID,
 			WorkspaceID: workspaceUUID,
@@ -170,6 +177,24 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
+	var (
+		visibleProjects map[pgtype.UUID]struct{}
+		err             error
+	)
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		visibleProjects, err = h.visibleProjectIDSet(r.Context(), workspaceID, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to resolve project access")
+			return
+		}
+	}
+	projectVisible := func(projectID pgtype.UUID) bool {
+		if !projectID.Valid || h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+			return true
+		}
+		_, ok := visibleProjects[projectID]
+		return ok
+	}
 
 	status := r.URL.Query().Get("status")
 
@@ -187,7 +212,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		resp = make([]ChatSessionResponse, 0, len(rows))
 		for _, s := range rows {
-			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
+			if _, ok := allowed[uuidToString(s.AgentID)]; !ok || !projectVisible(s.ProjectID) {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
@@ -217,7 +242,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		resp = make([]ChatSessionResponse, 0, len(rows))
 		for _, s := range rows {
-			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
+			if _, ok := allowed[uuidToString(s.AgentID)]; !ok || !projectVisible(s.ProjectID) {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
@@ -304,6 +329,12 @@ func (h *Handler) gatePublicChatSessionForUser(w http.ResponseWriter, r *http.Re
 		WorkspaceID: session.WorkspaceID,
 	}); err != nil {
 		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
+	// 2026-08-27 coder(lq): A chat session carrying project context is another
+	// task access path, so ordinary user reads must inherit project View. Empty
+	// project context remains valid for normal workspace chats.
+	if session.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(session.ProjectID), workspaceID, projectauth.View) {
 		return db.ChatSession{}, false
 	}
 	return session, true
@@ -407,6 +438,12 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 		qtx := h.Queries.WithTx(tx)
 
 		if projectID.Valid {
+			// 2026-08-27 coder(lq): Moving a session into a project is an
+			// authorization boundary too; require the same run capability as
+			// creating a project-bound session.
+			if !h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, projectauth.AgentUse) {
+				return
+			}
 			if _, lockErr := qtx.LockProjectForChatSessionCreate(r.Context(), db.LockProjectForChatSessionCreateParams{
 				ID:          projectID,
 				WorkspaceID: session.WorkspaceID,
@@ -885,6 +922,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
 	}
+	if session.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(session.ProjectID), workspaceID, projectauth.AgentUse) {
+		return
+	}
 
 	// Detect whether this is the very first human message in the session,
 	// BEFORE we insert the new row. This scopes LLM auto-titling (MUL-4295) to
@@ -1072,6 +1112,9 @@ func (h *Handler) RegenerateChatQuickActions(w http.ResponseWriter, r *http.Requ
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if !h.canInvokeAgent(r.Context(), agent, actorType, actorID, h.invokeOriginatorFromRequest(r, actorType, actorID), workspaceID) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
+		return
+	}
+	if session.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(session.ProjectID), workspaceID, projectauth.AgentUse) {
 		return
 	}
 
@@ -1499,6 +1542,11 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
 		return
 	}
+	rows, err = h.filterPendingChatTasksByProjectPermission(r.Context(), workspaceID, userID, rows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+		return
+	}
 
 	// The pending query now returns cs.agent_id per row, so we can filter
 	// out private agents the caller has lost access to directly against the
@@ -1557,6 +1605,32 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	// No accessible agents → nothing the caller may see can be pending.
 	// Skip the round-trip and return false.
 	if len(allowed) == 0 {
+		writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: false})
+		return
+	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// The generated EXISTS query predates project context on chat sessions.
+		// Resolve the same rows as the detailed endpoint, apply project View,
+		// then reduce to a boolean so hidden project work cannot light the FAB.
+		rows, err := h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
+			WorkspaceID: parseUUID(workspaceID),
+			CreatorID:   parseUUID(userID),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check pending chat tasks")
+			return
+		}
+		rows, err = h.filterPendingChatTasksByProjectPermission(r.Context(), workspaceID, userID, rows)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		for _, row := range rows {
+			if _, ok := allowed[uuidToString(row.AgentID)]; ok {
+				writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: true})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: false})
 		return
 	}
@@ -1776,6 +1850,16 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	if task.IssueID.Valid {
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: task.IssueID, WorkspaceID: wsUUID})
+		if issueErr != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueManage) {
+			return
+		}
+	}
 
 	var (
 		queuedOnly      bool
@@ -1818,6 +1902,12 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if uuidToString(cs.CreatorID) != userID {
 			writeError(w, http.StatusForbidden, "not your task")
+			return
+		}
+		// 2026-08-27 coder(lq): Cancelling a project-bound task mutates agent
+		// work, so project View alone is insufficient; use the same issue/task
+		// management capability as issue-backed task cancellation.
+		if cs.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(cs.ProjectID), workspaceID, projectauth.IssueManage) {
 			return
 		}
 	} else {

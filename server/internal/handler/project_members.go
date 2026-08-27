@@ -93,6 +93,8 @@ func writeProjectAuthError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid issue permission")
 	case errors.Is(err, projectauth.ErrForbidden):
 		writeError(w, http.StatusForbidden, "insufficient project permissions")
+	case errors.Is(err, projectauth.ErrLastOwner):
+		writeError(w, http.StatusConflict, "project must retain at least one owner")
 	case errors.Is(err, projectauth.ErrNotWorkspaceMember), errors.Is(err, projectauth.ErrNoProjectAccess), errors.Is(err, projectauth.ErrCrossWorkspace):
 		writeError(w, http.StatusNotFound, "project not found")
 	default:

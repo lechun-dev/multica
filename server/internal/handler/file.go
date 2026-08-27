@@ -17,7 +17,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -50,6 +52,41 @@ const (
 // to "please download". Sized so a typical README/source-file fits but a
 // 100 MB log dump can't blow up the renderer.
 const maxPreviewTextSize = 2 << 20 // 2 MB
+
+// 2026-08-27 coder(lq): Attachments inherit the project boundary of their
+// issue, including when they are submitted through a comment. Keep this
+// adapter local to the file handler so the independent projectauth package is
+// not coupled to attachment models or HTTP details.
+func (h *Handler) requireAttachmentProjectPermission(w http.ResponseWriter, r *http.Request, workspaceID string, issueID, commentID pgtype.UUID, permission projectauth.Permission) bool {
+	if !issueID.Valid && !commentID.Valid {
+		return true
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace_id")
+		return false
+	}
+	var issue db.Issue
+	if issueID.Valid {
+		issue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceUUID})
+	} else {
+		comment, commentErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{ID: commentID, WorkspaceID: workspaceUUID})
+		if commentErr == nil {
+			issue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: workspaceUUID})
+		} else {
+			err = commentErr
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusNotFound, "attachment target not found")
+		return false
+	}
+	return h.requireIssueProjectPermission(w, r, issue, permission)
+}
+
+func (h *Handler) requireAttachmentProjectEdit(w http.ResponseWriter, r *http.Request, workspaceID string, issueID, commentID pgtype.UUID) bool {
+	return h.requireAttachmentProjectPermission(w, r, workspaceID, issueID, commentID, projectauth.Edit)
+}
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -476,6 +513,9 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid issue_id")
 				return
 			}
+			if !h.requireAttachmentProjectEdit(w, r, workspaceID, issue.ID, pgtype.UUID{}) {
+				return
+			}
 			params.IssueID = issue.ID
 		}
 		if commentID := r.FormValue("comment_id"); commentID != "" {
@@ -486,6 +526,9 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			comment, err := h.Queries.GetComment(r.Context(), commentUUID)
 			if err != nil || uuidToString(comment.WorkspaceID) != workspaceID {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
+				return
+			}
+			if !h.requireAttachmentProjectEdit(w, r, workspaceID, pgtype.UUID{}, comment.ID) {
 				return
 			}
 			params.CommentID = comment.ID
@@ -753,6 +796,9 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
+	if !h.requireAttachmentProjectPermission(w, r, workspaceID, att.IssueID, att.CommentID, projectauth.View) {
+		return db.Attachment{}, false
+	}
 
 	return att, true
 }
@@ -801,6 +847,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		return db.Attachment{}, false
 	}
 	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
+		if !h.requireAttachmentProjectPermission(w, r, workspaceID, att.IssueID, att.CommentID, projectauth.View) {
+			return db.Attachment{}, false
+		}
 		return att, true
 	}
 	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
@@ -808,6 +857,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		return db.Attachment{}, false
 	}
 	h.MembershipCache.Set(r.Context(), userID, workspaceID)
+	if !h.requireAttachmentProjectPermission(w, r, workspaceID, att.IssueID, att.CommentID, projectauth.View) {
+		return db.Attachment{}, false
+	}
 	return att, true
 }
 
@@ -1419,6 +1471,9 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+	if !h.requireAttachmentProjectEdit(w, r, workspaceID, att.IssueID, att.CommentID) {
 		return
 	}
 

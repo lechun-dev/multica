@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -416,6 +417,27 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list autopilots")
 		return
 	}
+	// 2026-08-27 coder(lq): A project-bound Autopilot is a project resource;
+	// filter it with the same project visibility boundary as issues and task
+	// history. Projectless legacy rows remain visible for native compatibility.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r))
+		if scopeErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		filtered := make([]db.ListAutopilotsRow, 0, len(autopilots))
+		for _, row := range autopilots {
+			if !row.Autopilot.ProjectID.Valid {
+				filtered = append(filtered, row)
+				continue
+			}
+			if _, allowed := visibleProjects[row.Autopilot.ProjectID]; allowed {
+				filtered = append(filtered, row)
+			}
+		}
+		autopilots = filtered
+	}
 
 	// Resolve the caller's write access for per-row can_write. The collaborator
 	// grants are fetched once as a set (keyed by autopilot id) so the flag
@@ -538,6 +560,19 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "autopilot not found")
+		return db.Autopilot{}, false
+	}
+	// 2026-08-27 coder(lq): Keep every authenticated Autopilot read and write
+	// path behind project View when the automation is bound to a project. This
+	// central guard covers detail, runs, deliveries, triggers, and mutations
+	// without changing generated queries or public webhook ingress.
+	if autopilot.ProjectID.Valid && !h.requireProjectPermission(
+		w,
+		r,
+		uuidToString(autopilot.ProjectID),
+		workspaceID,
+		projectauth.View,
+	) {
 		return db.Autopilot{}, false
 	}
 	return autopilot, true
@@ -1069,6 +1104,13 @@ func (h *Handler) parseAutopilotProjectID(
 		WorkspaceID: workspaceID,
 	}); err != nil {
 		writeError(w, http.StatusBadRequest, "project_id must reference a project in this workspace")
+		return pgtype.UUID{}, false
+	}
+	// 2026-08-27 coder(lq): Binding an automation to a project must not create
+	// a resource the caller cannot subsequently read. View is the narrowest
+	// safe prerequisite; write/execute rights remain governed by the existing
+	// Autopilot ownership and collaborator policy.
+	if !h.requireProjectPermission(w, r, uuidToString(projectID), uuidToString(workspaceID), projectauth.View) {
 		return pgtype.UUID{}, false
 	}
 	return projectID, true
