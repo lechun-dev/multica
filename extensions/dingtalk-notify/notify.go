@@ -28,7 +28,14 @@ type MentionCreated struct {
 	Targets     []MentionTarget
 	Text        string
 	SourceURL   string
-	CreatedAt   time.Time
+	// Context fields are optional enrichment supplied by the host adapter. The
+	// notification module keeps them independent from Multica's database types
+	// so future event sources can reuse the same formatter.
+	WorkspaceName   string
+	ProjectName     string
+	IssueIdentifier string
+	IssueTitle      string
+	CreatedAt       time.Time
 }
 
 type MemberBinding struct {
@@ -207,17 +214,81 @@ func FormatText(event MentionCreated) string {
 	if runes := []rune(text); len(runes) > 2000 {
 		text = string(runes[:2000]) + "…"
 	}
+
 	actor := strings.TrimSpace(event.Actor.Name)
 	if actor == "" {
-		actor = event.Actor.ID
+		if event.Actor.Kind == "agent" {
+			actor = "Multica Agent"
+		} else {
+			actor = "一位 Multica 成员"
+		}
 	}
-	if actor == "" {
-		actor = "未知操作者"
+
+	lines := []string{fmt.Sprintf("🔔 **%s 在 Multica 中提到了你**", escapeMarkdown(actor))}
+	if source := notificationSource(event); source != "" {
+		lines = append(lines, "来源："+source)
+	}
+	if task := notificationTask(event); task != "" {
+		lines = append(lines, "任务："+task)
+	}
+	if text != "" {
+		lines = append(lines, "消息：\n"+quoteMarkdown(text))
+	}
+	if event.SourceURL != "" {
+		lines = append(lines, "[打开任务并回复]("+event.SourceURL+")")
+	}
+	return strings.Join(lines, "\n\n")
+}
+
+func notificationSource(event MentionCreated) string {
+	workspace := strings.TrimSpace(event.WorkspaceName)
+	project := strings.TrimSpace(event.ProjectName)
+	if workspace == "" {
+		return escapeMarkdown(project)
+	}
+	if project == "" {
+		return escapeMarkdown(workspace)
+	}
+	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
+}
+
+func notificationTask(event MentionCreated) string {
+	identifier := strings.TrimSpace(event.IssueIdentifier)
+	title := strings.TrimSpace(event.IssueTitle)
+	if identifier == "" {
+		return escapeMarkdown(title)
+	}
+	label := escapeMarkdown(identifier)
+	if title != "" {
+		label += " · " + escapeMarkdown(title)
 	}
 	if event.SourceURL == "" {
-		return fmt.Sprintf("Multica 通知\n操作者：%s\n%s", actor, text)
+		return label
 	}
-	return fmt.Sprintf("Multica 通知\n操作者：%s\n%s\n原文：%s", actor, text, event.SourceURL)
+	return "[" + label + "](" + event.SourceURL + ")"
+}
+
+func quoteMarkdown(text string) string {
+	parts := strings.Split(text, "\n")
+	for i, part := range parts {
+		parts[i] = "> " + part
+	}
+	return strings.Join(parts, "\n")
+}
+
+// escapeMarkdown protects display-only values (names and titles). The body
+// intentionally remains Markdown because Multica mention links are useful in
+// the DingTalk card and are rendered as the human-readable mention label.
+func escapeMarkdown(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		switch r {
+		case '\\', '*', '_', '`', '[', ']', '<', '>':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func sanitizeText(text string) string {

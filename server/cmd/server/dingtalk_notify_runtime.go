@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +30,7 @@ type dingtalkNotifyRuntime struct {
 	resolver       notify.Resolver
 	provider       notify.Provider
 	audit          notify.AuditSink
+	pool           *pgxpool.Pool
 	workerInterval time.Duration
 	maxAttempts    int
 }
@@ -79,6 +82,7 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
 		resolver:       dingtalkMentionResolver{pool: pool},
 		provider:       provider,
 		audit:          notify.SQLAuditSink{DB: sqlDB},
+		pool:           pool,
 		workerInterval: config.WorkerInterval,
 		maxAttempts:    config.MaxAttempts,
 	}
@@ -148,14 +152,17 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 	if !ok {
 		return
 	}
-	var commentID, content, actorType string
+	var commentID, issueID, content, actorType, actorID string
 	switch c := payload["comment"].(type) {
 	case handler.CommentResponse:
-		commentID, content, actorType = c.ID, c.Content, c.AuthorType
+		commentID, issueID, content, actorType = c.ID, c.IssueID, c.Content, c.AuthorType
+		actorID = c.AuthorID
 	case map[string]any:
 		commentID, _ = c["id"].(string)
+		issueID, _ = c["issue_id"].(string)
 		content, _ = c["content"].(string)
 		actorType, _ = c["author_type"].(string)
+		actorID, _ = c["author_id"].(string)
 	default:
 		return
 	}
@@ -172,11 +179,26 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 	if len(targets) == 0 {
 		return
 	}
-	event, err := notify.AdaptCommentMention(notify.CommentMention{
+	if actorType == "" {
+		actorType = e.ActorType
+	}
+	if actorID == "" {
+		actorID = e.ActorID
+	}
+	mention := notify.CommentMention{
 		EventID: commentID, WorkspaceID: e.WorkspaceID,
-		Actor:   notify.Actor{ID: e.ActorID, Kind: e.ActorType},
+		Actor:   notify.Actor{ID: actorID, Kind: actorType},
 		Targets: targets, Body: content, CreatedAt: time.Now().UTC(),
-	})
+	}
+	if context := r.loadMentionContext(context.Background(), issueID, e.WorkspaceID, actorType, actorID, commentID); context != nil {
+		mention.WorkspaceName = context.workspaceName
+		mention.ProjectName = context.projectName
+		mention.IssueIdentifier = context.issueIdentifier
+		mention.IssueTitle = context.issueTitle
+		mention.SourceURL = context.sourceURL
+		mention.Actor.Name = context.actorName
+	}
+	event, err := notify.AdaptCommentMention(mention)
 	if err != nil {
 		slog.Warn("dingtalk notify: invalid comment event", "error", err)
 		return
@@ -194,6 +216,61 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 		return
 	}
 	slog.Info("dingtalk notify: member mentions enqueued", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
+}
+
+type dingtalkMentionContext struct {
+	workspaceName   string
+	projectName     string
+	issueIdentifier string
+	issueTitle      string
+	sourceURL       string
+	actorName       string
+}
+
+// loadMentionContext is best-effort enrichment. Notification delivery must
+// still proceed with the original comment when a context lookup is unavailable.
+func (r *dingtalkNotifyRuntime) loadMentionContext(ctx context.Context, issueID, workspaceID, actorType, actorID, commentID string) *dingtalkMentionContext {
+	if r == nil || r.pool == nil || issueID == "" || workspaceID == "" {
+		return nil
+	}
+	var out dingtalkMentionContext
+	var slug, prefix string
+	var number int32
+	if err := r.pool.QueryRow(ctx, `
+		SELECT w.name, w.slug, w.issue_prefix, i.number, i.title, COALESCE(p.title, '')
+		FROM issue i
+		JOIN workspace w ON w.id = i.workspace_id
+		LEFT JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
+		WHERE i.id = $1 AND i.workspace_id = $2`, issueID, workspaceID).
+		Scan(&out.workspaceName, &slug, &prefix, &number, &out.issueTitle, &out.projectName); err != nil {
+		slog.Warn("dingtalk notify: context lookup failed", "issue_id", issueID, "workspace_id", workspaceID, "error", err)
+		return nil
+	}
+	out.issueIdentifier = strings.TrimSpace(prefix) + "-" + strconv.Itoa(int(number))
+	if appURL := appURLFromEnv(); appURL != "" {
+		segment := slug
+		if segment == "" {
+			segment = workspaceID
+		}
+		identifier := out.issueIdentifier
+		if identifier == "-0" {
+			identifier = issueID
+		}
+		out.sourceURL = strings.TrimRight(appURL, "/") + "/" + url.PathEscape(segment) + "/issues/" + url.PathEscape(identifier)
+		if commentID != "" {
+			out.sourceURL += "#comment-" + url.PathEscape(commentID)
+		}
+	}
+	if actorID != "" {
+		if actorType == "agent" {
+			_ = r.pool.QueryRow(ctx, `SELECT name FROM agent WHERE id = $1 AND workspace_id = $2`, actorID, workspaceID).Scan(&out.actorName)
+		} else {
+			_ = r.pool.QueryRow(ctx, `
+				SELECT u.name FROM "user" u JOIN member m ON m.user_id = u.id
+				WHERE u.id = $1 AND m.workspace_id = $2 LIMIT 1`, actorID, workspaceID).Scan(&out.actorName)
+		}
+	}
+	return &out
 }
 
 type dingtalkMentionResolver struct {
