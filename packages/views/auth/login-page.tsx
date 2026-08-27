@@ -56,6 +56,8 @@ interface LoginPageProps {
   onTokenObtained?: () => void;
   /** Override Google login handler (e.g. desktop opens browser externally). When provided, renders the Google button even if `google` config is omitted. */
   onGoogleLogin?: () => void;
+  /** Starts DingTalk OAuth in the platform-provided browser flow. */
+  onDingTalkLogin?: () => void;
   /** Slot rendered at the bottom of the sign-in card, below the
    *  Google button. The web shell uses it for a "Prefer the desktop
    *  app?" prompt; desktop omits it (a download prompt inside the app
@@ -104,6 +106,7 @@ export function LoginPage({
   cliCallback,
   onTokenObtained,
   onGoogleLogin,
+  onDingTalkLogin,
   extra,
 }: LoginPageProps) {
   const { t } = useT("auth");
@@ -477,6 +480,18 @@ export function LoginPage({
                 />
               </svg>
               {t(($) => $.signin.google)}
+            </Button>
+          )}
+          {onDingTalkLogin && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              size="lg"
+              onClick={onDingTalkLogin}
+              disabled={loading}
+            >
+              {t(($) => $.signin.dingtalk)}
             </Button>
           )}
           {extra && <div className="w-full pt-1 text-center">{extra}</div>}

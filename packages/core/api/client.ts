@@ -323,6 +323,7 @@ import {
   SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
+  LoginResponseSchema,
   UserSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
@@ -810,10 +811,20 @@ export class ApiClient {
   }
 
   async dingTalkLogin(code: string, state: string): Promise<LoginResponse> {
-    return this.fetch("/auth/dingtalk", {
+    const raw = await this.fetch<unknown>("/auth/dingtalk", {
       method: "POST",
       body: JSON.stringify({ code, state }),
     });
+    const response = parseWithFallback<LoginResponse | null>(
+      raw,
+      LoginResponseSchema,
+      null,
+      { endpoint: "POST /auth/dingtalk" },
+    );
+    if (!response) {
+      throw new Error("POST /auth/dingtalk returned a malformed login response");
+    }
+    return response;
   }
 
   async logout(): Promise<void> {

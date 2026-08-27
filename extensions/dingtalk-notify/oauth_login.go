@@ -4,9 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
+
+var ErrInvalidLoginState = errors.New("oauth state is invalid or expired")
+
+type LoginClient string
+
+const (
+	LoginClientWeb     LoginClient = "web"
+	LoginClientDesktop LoginClient = "desktop"
+)
+
+func ParseLoginClient(value string) (LoginClient, error) {
+	switch LoginClient(strings.TrimSpace(value)) {
+	case "", LoginClientWeb:
+		return LoginClientWeb, nil
+	case LoginClientDesktop:
+		return LoginClientDesktop, nil
+	default:
+		return "", errors.New("unsupported OAuth client")
+	}
+}
+
+// LoginClientFromState extracts the client marker from a state that has
+// already been verified and consumed by Complete. The random prefix never
+// contains a dot because randomState uses base64url without padding.
+func LoginClientFromState(state string) LoginClient {
+	if strings.HasSuffix(state, "."+string(LoginClientDesktop)) {
+		return LoginClientDesktop
+	}
+	return LoginClientWeb
+}
 
 // LoginOAuthService is the unauthenticated half of the DingTalk OAuth flow.
 // It deliberately stops at a verified DingTalk identity. The host supplies
@@ -30,16 +61,27 @@ type LoginStateStore interface {
 
 // Begin creates a short-lived, single-use state for a public login redirect.
 func (s *LoginOAuthService) Begin(ctx context.Context, redirectURI string) (Authorization, error) {
+	return s.BeginForClient(ctx, redirectURI, LoginClientWeb)
+}
+
+// BeginForClient carries a trusted client marker through DingTalk's OAuth
+// round trip. The full state remains random, server-stored, and single-use.
+func (s *LoginOAuthService) BeginForClient(ctx context.Context, redirectURI string, client LoginClient) (Authorization, error) {
 	if s.Provider == nil {
 		return Authorization{}, errors.New("oauth provider is required")
 	}
 	if redirectURI == "" {
 		return Authorization{}, errors.New("redirect URI is required")
 	}
+	parsedClient, err := ParseLoginClient(string(client))
+	if err != nil {
+		return Authorization{}, err
+	}
 	state, err := randomState()
 	if err != nil {
 		return Authorization{}, err
 	}
+	state += "." + string(parsedClient)
 	now := time.Now()
 	if s.Now != nil {
 		now = s.Now()
@@ -106,7 +148,7 @@ func (s *LoginOAuthService) Complete(ctx context.Context, state, code, redirectU
 		ok = found && !expiresAt.Before(now)
 	}
 	if !ok {
-		return OAuthUser{}, errors.New("oauth state is invalid or expired")
+		return OAuthUser{}, ErrInvalidLoginState
 	}
 	user, err := s.Provider.ExchangeCode(ctx, code, redirectURI)
 	if err != nil {

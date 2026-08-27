@@ -20,17 +20,71 @@ type HTTPDoer interface {
 }
 
 type DingTalkHTTPError struct {
-	Path   string
-	Status int
-	Code   string
-	Body   string
+	Path    string
+	Status  int
+	Code    string
+	Message string
+	Body    string
 }
 
 func (e *DingTalkHTTPError) Error() string {
+	if e.Message != "" {
+		if e.Code != "" {
+			return fmt.Sprintf("DingTalk %s returned HTTP %d (%s): %s", e.Path, e.Status, e.Code, e.Message)
+		}
+		return fmt.Sprintf("DingTalk %s returned HTTP %d: %s", e.Path, e.Status, e.Message)
+	}
 	if e.Code != "" {
 		return fmt.Sprintf("DingTalk %s returned HTTP %d (%s)", e.Path, e.Status, e.Code)
 	}
+	if body := strings.TrimSpace(e.Body); body != "" {
+		if len(body) > 512 {
+			body = body[:512] + "..."
+		}
+		return fmt.Sprintf("DingTalk %s returned HTTP %d: %s", e.Path, e.Status, body)
+	}
 	return fmt.Sprintf("DingTalk %s returned HTTP %d", e.Path, e.Status)
+}
+
+// newDingTalkHTTPError converts both the v1.0 {code,message} envelope and the
+// legacy {errcode,errmsg} envelope into one structured error. A nil result
+// means the response is successful and does not contain an API error envelope.
+func newDingTalkHTTPError(path string, status int, body []byte) *DingTalkHTTPError {
+	var envelope struct {
+		Code         string `json:"code"`
+		Message      string `json:"message"`
+		ErrorCode    string `json:"errorCode"`
+		ErrorMessage string `json:"errorMessage"`
+		ErrCode      int    `json:"errcode"`
+		ErrMsg       string `json:"errmsg"`
+	}
+	_ = json.Unmarshal(body, &envelope)
+	code := strings.TrimSpace(envelope.Code)
+	if code == "" {
+		code = strings.TrimSpace(envelope.ErrorCode)
+	}
+	message := strings.TrimSpace(envelope.Message)
+	if message == "" {
+		message = strings.TrimSpace(envelope.ErrorMessage)
+	}
+	if envelope.ErrCode != 0 {
+		if code == "" {
+			code = fmt.Sprintf("errcode:%d", envelope.ErrCode)
+		}
+		if message == "" {
+			message = strings.TrimSpace(envelope.ErrMsg)
+		}
+	}
+	if status >= 200 && status < 300 && code == "" && envelope.ErrCode == 0 {
+		return nil
+	}
+	return &DingTalkHTTPError{
+		Path:    path,
+		Status:  status,
+		Code:    code,
+		Message: message,
+		Body:    strings.TrimSpace(string(body)),
+	}
 }
 
 func transientDingTalkError(err error) error {
@@ -132,12 +186,7 @@ func (p *DingTalkProvider) sendJSON(ctx context.Context, path string, payload an
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var envelope struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(bodyBytes, &envelope)
-		return &DingTalkHTTPError{Path: path, Status: resp.StatusCode, Code: envelope.Code, Body: string(bodyBytes)}
+		return newDingTalkHTTPError(path, resp.StatusCode, bodyBytes)
 	}
 	return nil
 }
@@ -174,8 +223,8 @@ func (p *DingTalkProvider) token(ctx context.Context, forceRefresh bool) (string
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", &DingTalkHTTPError{Path: "/v1.0/oauth2/accessToken", Status: resp.StatusCode, Body: string(body)}
+	if apiErr := newDingTalkHTTPError("/v1.0/oauth2/accessToken", resp.StatusCode, body); apiErr != nil {
+		return "", apiErr
 	}
 	var out struct {
 		AccessToken string `json:"accessToken"`

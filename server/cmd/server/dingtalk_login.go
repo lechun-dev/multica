@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -29,6 +30,7 @@ type dingtalkLoginHandler struct {
 	pool        *pgxpool.Pool
 	service     *notify.LoginOAuthService
 	redirectURI string
+	initErr     error
 }
 
 type dingtalkLoginRequest struct {
@@ -45,13 +47,35 @@ func newDingTalkLoginHandler(host *handler.Handler, pool *pgxpool.Pool, redirect
 		AuthURL:      strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_AUTH_URL")),
 		TokenURL:     strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_TOKEN_URL")),
 		UserURL:      strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_USER_URL")),
+		Scope:        strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_SCOPE")),
+		CorpID:       strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")),
 	}
-	return &dingtalkLoginHandler{
+	h := &dingtalkLoginHandler{
 		host:        host,
 		pool:        pool,
 		redirectURI: strings.TrimSpace(redirectURI),
 		service:     &notify.LoginOAuthService{Provider: provider, Store: dingtalkOAuthStateStore{pool: pool}, TTL: 10 * time.Minute},
 	}
+	switch {
+	case clientID == "" || clientSecret == "":
+		h.initErr = errors.New("DingTalk OAuth client credentials are not configured")
+	case pool == nil:
+		h.initErr = errors.New("DingTalk OAuth database is unavailable")
+	default:
+		connConfig := *pool.Config().ConnConfig
+		connConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		schemaDB := stdlib.OpenDB(connConfig)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		h.initErr = notify.EnsureSchema(ctx, schemaDB)
+		cancel()
+		if closeErr := schemaDB.Close(); h.initErr == nil && closeErr != nil {
+			h.initErr = fmt.Errorf("close DingTalk schema database: %w", closeErr)
+		}
+	}
+	if h.initErr != nil {
+		slog.Warn("dingtalk login unavailable", "error", h.initErr)
+	}
+	return h
 }
 
 type dingtalkOAuthStateStore struct{ pool *pgxpool.Pool }
@@ -83,11 +107,21 @@ func (h *dingtalkLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		writeDingTalkError(w, http.StatusServiceUnavailable, "DingTalk OAuth redirect URI is not configured")
 		return
 	}
+	if h.initErr != nil {
+		writeDingTalkError(w, http.StatusServiceUnavailable, "DingTalk login is temporarily unavailable")
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/auth/dingtalk/start":
-		authz, err := h.service.Begin(r.Context(), h.redirectURI)
+		client, err := notify.ParseLoginClient(r.URL.Query().Get("client"))
 		if err != nil {
-			writeDingTalkError(w, http.StatusBadGateway, err.Error())
+			writeDingTalkError(w, http.StatusBadRequest, "unsupported DingTalk login client")
+			return
+		}
+		authz, err := h.service.BeginForClient(r.Context(), h.redirectURI, client)
+		if err != nil {
+			slog.Warn("dingtalk login: start failed", "error", err)
+			writeDingTalkError(w, http.StatusBadGateway, "Unable to start DingTalk login")
 			return
 		}
 		http.Redirect(w, r, authz.URL, http.StatusFound)
@@ -106,16 +140,18 @@ func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) 
 	}
 	identity, err := h.service.Complete(r.Context(), req.State, req.Code, h.redirectURI)
 	if err != nil {
-		writeDingTalkError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if strings.TrimSpace(identity.Email) == "" {
-		writeDingTalkError(w, http.StatusForbidden, "DingTalk account has no trusted enterprise email")
+		if errors.Is(err, notify.ErrInvalidLoginState) {
+			writeDingTalkError(w, http.StatusBadRequest, "DingTalk login state is invalid or expired")
+			return
+		}
+		slog.Warn("dingtalk login: OAuth exchange failed", "error", err)
+		writeDingTalkError(w, http.StatusBadGateway, "Unable to complete DingTalk login")
 		return
 	}
 	user, err := h.resolveUser(r.Context(), identity)
 	if err != nil {
-		writeDingTalkError(w, http.StatusForbidden, err.Error())
+		slog.Warn("dingtalk login: account resolution failed", "error", err)
+		writeDingTalkError(w, http.StatusForbidden, "DingTalk account could not be linked to a Multica account")
 		return
 	}
 	token, err := h.host.IssueLoginTokenForOAuth(user)
@@ -160,6 +196,9 @@ func (h *dingtalkLoginHandler) resolveUser(ctx context.Context, identity notify.
 		return db.User{}, fmt.Errorf("lookup DingTalk identity: %w", err)
 	}
 
+	if strings.TrimSpace(identity.Email) == "" {
+		return db.User{}, errors.New("DingTalk account has no trusted enterprise email")
+	}
 	user, _, err := h.host.FindOrCreateUserForOAuth(ctx, identity.Email)
 	if err != nil {
 		return db.User{}, fmt.Errorf("resolve Multica account: %w", err)

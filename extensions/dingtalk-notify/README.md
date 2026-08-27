@@ -21,22 +21,26 @@ cd extensions/dingtalk-notify && go test ./...
 项目根目录的 `.env.example` 和 `docker-compose.selfhost.yml` 会透传同一组变量。
 基础设施变量在 `local/mock` 模式下可以留空；启用 staging/production 前必须补齐并通过启动校验。
 
-The schema is intentionally not part of the host migration ledger while the
-deployment database is still being provisioned. Review it with:
+The schema remains outside the host migration ledger. Review it with:
 
 ```bash
 make dingtalk-notify-schema
 ```
 
-When a staging database is available, apply the two files in order with:
+When a staging database is available, the files can still be applied manually
+in order with:
 
 ```bash
 make dingtalk-notify-migrate ENV_FILE=.env
 ```
 
 The command runs the ready-queue index in a separate `psql` invocation because
-it uses `CREATE INDEX CONCURRENTLY`. It never runs during normal Multica
-startup.
+it uses `CREATE INDEX CONCURRENTLY`. When DingTalk OAuth credentials are
+configured, the Multica server also calls `EnsureSchema` during startup. The
+module takes a PostgreSQL advisory lock, applies its embedded migrations on a
+dedicated connection, and keeps the concurrent index outside a transaction.
+If migration fails, only DingTalk login is disabled; the server does not expose
+the database error to the browser.
 
 ## Contract
 
@@ -50,8 +54,10 @@ is imported by this module.
 `EventAdapter` is the feature-flagged host boundary. Disabled mode returns
 `ErrDisabled` without publishing; enabled mode only validates and forwards the
 normalized event, so the existing comment path remains unchanged until the
-host explicitly wires it. The isolated SQL proposal is in
-`migrations/001_dingtalk_notify.sql`; it is not applied automatically.
+host explicitly wires it. The isolated SQL lives in
+`migrations/001_dingtalk_notify.sql` and
+`migrations/002_dingtalk_notify_outbox_ready_idx.sql`; the host invokes only
+the module-owned `EnsureSchema` entry point.
 
 Routing is intentionally explicit:
 
@@ -99,6 +105,10 @@ login identities in the module tables, subscribes to `comment:created`, resolves
 the active DingTalk installation for the configured login app, and reuses the
 built-in per-installation sender. Agent targets remain disabled by default.
 Production workers use `SQLStore`; local/mock callers may use `MemoryStore`.
+The login app needs DingTalk permission to resolve a user's `unionId` to the
+enterprise `userId` and read the enterprise member profile/email. Production
+OAuth callbacks must use the exact HTTPS URL registered in DingTalk, for
+example `https://multica.example.com/auth/dingtalk/callback`.
 
 The module includes host-neutral HTTP handlers for the remaining management
 surface:

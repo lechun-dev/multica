@@ -50,6 +50,10 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"124": {"124_autopilot_run_planned_at", "124_channel_generalization", "124_task_prepare_lease"},
 	"127": {"127_issue_pull_request_reference_only", "127_task_squad_id", "127_user_composio_connection"},
 	"128": {"128_agent_task_queue_runtime_mcp_overlay", "128_autopilot_collaborator", "128_comment_routing_escalation"},
+	// 2026-08-27 coder(lq): Both migrations shipped independently before the
+	// private and upstream histories were merged. Preserve their recorded names
+	// so existing private deployments do not try to recreate project_members.
+	"404": {"404_agent_starter_prompts", "404_project_members"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

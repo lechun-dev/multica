@@ -4,12 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+type httpDoerFunc func(*http.Request) (*http.Response, error)
+
+func (f httpDoerFunc) Do(req *http.Request) (*http.Response, error) { return f(req) }
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
 
 func TestDingTalkProviderRefreshesTokenAfterUnauthorized(t *testing.T) {
 	var tokenCalls, sendCalls int32
@@ -58,24 +72,143 @@ func TestDingTalkProviderClassifiesRateLimitAsRetryable(t *testing.T) {
 }
 
 func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/token":
-			_ = json.NewEncoder(w).Encode(map[string]string{"accessToken": "oauth-token"})
-		case "/user":
-			_ = json.NewEncoder(w).Encode(map[string]string{"userid": "u1", "unionId": "union-1", "openId": "open-1", "nick": "Alice"})
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusOK, `{"unionId":"union-1","openId":"open-1","nick":"Alice"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/union":
+			if req.URL.Query().Get("access_token") != "app-token" {
+				return jsonResponse(http.StatusUnauthorized, `{}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","unionid":"union-1","name":"Alice","email":"Alice@Example.com"}}`), nil
 		default:
-			http.NotFound(w, r)
+			return jsonResponse(http.StatusNotFound, `{}`), nil
 		}
-	}))
-	defer srv.Close()
-	p := DingTalkOAuthProvider{AuthURL: srv.URL + "/auth", TokenURL: srv.URL + "/token", UserURL: srv.URL + "/user", ClientID: "id", ClientSecret: "secret"}
+	})
+	p := DingTalkOAuthProvider{
+		Client:         client,
+		AuthURL:        "https://example.test/auth",
+		TokenURL:       "https://example.test/oauth-token",
+		UserURL:        "https://example.test/me",
+		AppTokenURL:    "https://example.test/app-token",
+		UnionLookupURL: "https://example.test/union",
+		UserDetailURL:  "https://example.test/detail",
+		ClientID:       "id",
+		ClientSecret:   "secret",
+	}
 	url, err := p.AuthorizationURL(context.Background(), "state", "https://app/callback")
 	if err != nil || !strings.Contains(url, "state=state") {
 		t.Fatalf("url=%q err=%v", url, err)
 	}
 	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
-	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" {
+	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" || user.Email != "alice@example.com" {
 		t.Fatalf("user=%+v err=%v", user, err)
+	}
+}
+
+func TestDingTalkOAuthProviderUsesEnterpriseScopeWhenCorpIDIsConfigured(t *testing.T) {
+	p := DingTalkOAuthProvider{ClientID: "client", CorpID: "corp"}
+	got, err := p.AuthorizationURL(context.Background(), "state", "https://example.test/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("scope") != "openid corpid" {
+		t.Fatalf("scope=%q", parsed.Query().Get("scope"))
+	}
+	if parsed.Query().Get("corpId") != "corp" {
+		t.Fatalf("corpId=%q", parsed.Query().Get("corpId"))
+	}
+	if parsed.Query().Get("prompt") != "consent" {
+		t.Fatalf("prompt=%q", parsed.Query().Get("prompt"))
+	}
+}
+
+func TestDingTalkOAuthProviderSurfacesJSONErrorEnvelope(t *testing.T) {
+	client := httpDoerFunc(func(_ *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusForbidden, `{"code":"Forbidden.AccessDenied","message":"permission denied"}`), nil
+	})
+	p := DingTalkOAuthProvider{Client: client, ClientID: "id", ClientSecret: "secret"}
+	_, err := p.ExchangeCode(context.Background(), "code", "https://example.test/callback")
+	var apiErr *DingTalkHTTPError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected DingTalkHTTPError, got %v", err)
+	}
+	if apiErr.Code != "Forbidden.AccessDenied" || apiErr.Message != "permission denied" {
+		t.Fatalf("apiErr=%+v", apiErr)
+	}
+}
+
+func TestDingTalkOAuthProviderSurfacesUserEndpointErrorEnvelope(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusForbidden, `{"code":"Forbidden.AccessDenied","message":"directory permission denied"}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:       client,
+		TokenURL:     "https://example.test/oauth-token",
+		UserURL:      "https://example.test/me",
+		ClientID:     "id",
+		ClientSecret: "secret",
+	}
+	_, err := p.ExchangeCode(context.Background(), "code", "https://app.example/callback")
+	var apiErr *DingTalkHTTPError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected DingTalkHTTPError, got %v", err)
+	}
+	if apiErr.Path != "https://example.test/me" || apiErr.Code != "Forbidden.AccessDenied" || apiErr.Message != "directory permission denied" {
+		t.Fatalf("apiErr=%+v", apiErr)
+	}
+}
+
+func TestDingTalkOAuthProviderPreservesOAuthEmailWhenEnterpriseEmailIsEmpty(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			return jsonResponse(http.StatusOK, `{"unionId":"union-1","openId":"open-1","nick":"Alice","email":"alice@example.com"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/union":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","unionid":"union-1","name":"Alice","email":""}}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:         client,
+		TokenURL:       "https://example.test/oauth-token",
+		UserURL:        "https://example.test/me",
+		AppTokenURL:    "https://example.test/app-token",
+		UnionLookupURL: "https://example.test/union",
+		UserDetailURL:  "https://example.test/detail",
+		ClientID:       "id",
+		ClientSecret:   "secret",
+	}
+
+	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.DingUserID != "u1" || user.Email != "alice@example.com" {
+		t.Fatalf("user=%+v", user)
 	}
 }

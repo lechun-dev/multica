@@ -1,0 +1,116 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import { I18nProvider } from "@multica/core/i18n/react";
+import enAuth from "@multica/views/locales/en/auth.json";
+import enCommon from "@multica/views/locales/en/common.json";
+import enSettings from "@multica/views/locales/en/settings.json";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  mockDingTalkLogin,
+  mockEnsureQueryData,
+  mockLoginWithDingTalk,
+  mockPush,
+  mockSearchParams,
+} = vi.hoisted(() => ({
+  mockDingTalkLogin: vi.fn(),
+  mockEnsureQueryData: vi.fn(),
+  mockLoginWithDingTalk: vi.fn(),
+  mockPush: vi.fn(),
+  mockSearchParams: new URLSearchParams(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => mockSearchParams,
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ ensureQueryData: mockEnsureQueryData }),
+}));
+
+vi.mock("@multica/core/auth", async () => {
+  const actual =
+    await vi.importActual<typeof import("@multica/core/auth")>(
+      "@multica/core/auth",
+    );
+  return {
+    ...actual,
+    useAuthStore: (selector: (state: unknown) => unknown) =>
+      selector({ loginWithDingTalk: mockLoginWithDingTalk }),
+  };
+});
+
+vi.mock("@multica/core/api", () => ({
+  api: { dingTalkLogin: mockDingTalkLogin },
+}));
+
+vi.mock("@multica/core/workspace/queries", () => ({
+  workspaceKeys: { list: () => ["workspaces"] },
+  workspaceListOptions: () => ({ queryKey: ["workspaces"] }),
+}));
+
+const TEST_RESOURCES = {
+  en: { auth: enAuth, common: enCommon, settings: enSettings },
+};
+
+function Wrapper({ children }: { children: ReactNode }) {
+  return (
+    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      {children}
+    </I18nProvider>
+  );
+}
+
+import CallbackPage from "./page";
+
+describe("DingTalkCallbackPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Array.from(mockSearchParams.keys()).forEach((key) =>
+      mockSearchParams.delete(key),
+    );
+    mockSearchParams.set("code", "dingtalk-code");
+    mockSearchParams.set("state", "trusted-random.desktop");
+  });
+
+  it("hands a successful desktop login back to the Multica app", async () => {
+    mockDingTalkLogin.mockResolvedValue({ token: "desktop-jwt" });
+    const hrefSetter = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        ...originalLocation,
+        set href(value: string) {
+          hrefSetter(value);
+        },
+      },
+    });
+
+    try {
+      render(<CallbackPage />, { wrapper: Wrapper });
+
+      await waitFor(() => {
+        expect(mockDingTalkLogin).toHaveBeenCalledWith(
+          "dingtalk-code",
+          "trusted-random.desktop",
+        );
+      });
+      await waitFor(() => {
+        expect(hrefSetter).toHaveBeenCalledWith(
+          "multica://auth/callback?token=desktop-jwt",
+        );
+      });
+      expect(
+        await screen.findByRole("button", { name: "Open Multica Desktop" }),
+      ).toBeInTheDocument();
+      expect(mockLoginWithDingTalk).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: originalLocation,
+      });
+    }
+  });
+});

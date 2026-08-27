@@ -2358,6 +2358,11 @@ export const EMPTY_USER: User = {
   updated_at: "",
 };
 
+export const LoginResponseSchema = z.object({
+  token: z.string().min(1),
+  user: UserSchema,
+}).loose();
+
 // ---------------------------------------------------------------------------
 // Cross-workspace unread inbox summary (`/api/inbox/unread-summary` GET).
 // One entry per workspace the user belongs to that has unread items; the

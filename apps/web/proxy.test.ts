@@ -246,21 +246,24 @@ describe("proxy runtime upstream rewrites", () => {
     }
   });
 
-  it("does not rewrite frontend auth callback pages", () => {
-    const previous = process.env.REMOTE_API_URL;
-    process.env.REMOTE_API_URL = "http://backend:8080";
-    try {
-      const res = proxy(makeRequest("/auth/callback"));
+  it.each(["/auth/callback", "/auth/dingtalk/callback"])(
+    "does not rewrite frontend auth callback page %s",
+    (path) => {
+      const previous = process.env.REMOTE_API_URL;
+      process.env.REMOTE_API_URL = "http://backend:8080";
+      try {
+        const res = proxy(makeRequest(path));
 
-      expect(res.status).toBe(200);
-      expect(res.headers.get("x-middleware-rewrite")).toBeNull();
-      expect(
-        res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`),
-      ).toBe("en");
-    } finally {
-      restoreEnv("REMOTE_API_URL", previous);
-    }
-  });
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-middleware-rewrite")).toBeNull();
+        expect(
+          res.headers.get(`x-middleware-request-${MULTICA_LOCALE_HEADER}`),
+        ).toBe("en");
+      } finally {
+        restoreEnv("REMOTE_API_URL", previous);
+      }
+    },
+  );
 });
 
 describe("proxy root and locale handling", () => {
