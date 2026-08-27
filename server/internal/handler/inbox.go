@@ -3,11 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -497,8 +499,8 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 		}
 		resp = append(resp, InboxWorkspaceUnreadResponse{
 			WorkspaceID: uuidToString(row.WorkspaceID),
-			Count:       row.Count,
-		}
+			Count:       count,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, resp)
