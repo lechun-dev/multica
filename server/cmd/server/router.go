@@ -1836,9 +1836,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
-					r.Get("/permissions", h.ListIssuePermissions)
-					r.Post("/permissions", h.GrantIssuePermission)
-					r.Delete("/permissions/{userId}/{permission}", h.RevokeIssuePermission)
 					r.Put("/", h.UpdateIssue)
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)

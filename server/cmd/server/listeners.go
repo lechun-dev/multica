@@ -49,6 +49,14 @@ var internalOnlyPayloadKeys = map[string][]string{
 // time this is called, but the producer still owns the map and a second
 // forwarder may yet read it, so mutating it in place would be a landmine.
 func projectOutbound(eventType string, payload any) any {
+	// 2026-08-27 coder(lq): Autopilot visibility is narrower than workspace
+	// membership, while the realtime hub still fans these events out by
+	// workspace. Clients only use this event family to invalidate and refetch
+	// permission-filtered API queries, so expose an empty refresh signal and
+	// keep titles, assignees, resource IDs, and run details off the wire.
+	if strings.HasPrefix(eventType, "autopilot:") {
+		return map[string]any{}
+	}
 	keys := internalOnlyPayloadKeys[eventType]
 	if len(keys) == 0 {
 		return payload

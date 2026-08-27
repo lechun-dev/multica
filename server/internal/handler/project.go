@@ -424,6 +424,18 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
 			return
 		}
+		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
+			return
+		}
+		if project.Description.Valid {
+			if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
+				slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+				writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
+				return
+			}
+		}
 		if err := tx.Commit(r.Context()); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to commit project create")
 			return
@@ -483,6 +495,18 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
 		return
+	}
+	if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+		slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
+		return
+	}
+	if project.Description.Valid {
+		if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
+			slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
+			return
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project create")
@@ -634,7 +658,33 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
 		}
 	}
-	project, err := h.Queries.UpdateProject(r.Context(), params)
+	var project db.Project
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// 2026-08-27 coder(lq): Project metadata and its automatic access grants
+		// commit together, so selecting a lead never produces an inaccessible project.
+		if h.TxStarter == nil {
+			writeError(w, http.StatusInternalServerError, "project update requires transaction support")
+			return
+		}
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start project update")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		project, err = h.Queries.WithTx(tx).UpdateProject(r.Context(), params)
+		if err == nil {
+			err = promoteMemberLeadWithExecutor(r.Context(), tx, id, project.LeadType, project.LeadID)
+		}
+		if err == nil && project.Description.Valid {
+			err = promoteMentionedMembersWithExecutor(r.Context(), tx, id, project.Description.String)
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+	} else {
+		project, err = h.Queries.UpdateProject(r.Context(), params)
+	}
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "update")
 		return
@@ -739,6 +789,14 @@ type SearchProjectResponse struct {
 
 // buildProjectSearchQuery builds a dynamic SQL query for project search.
 func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
+	return buildProjectSearchQueryForUser(phrase, terms, includeClosed, "")
+}
+
+// 2026-08-27 coder(lq): Keep the upstream search builder's legacy signature
+// for callers/tests while allowing the authenticated endpoint to push project
+// visibility into SQL before LIMIT/OFFSET. Filtering after pagination could
+// hide an authorized project that was ranked beyond an unauthorized row.
+func buildProjectSearchQueryForUser(phrase string, terms []string, includeClosed bool, userID string) (string, []any) {
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
 		terms[i] = strings.ToLower(t)
@@ -759,6 +817,10 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	phraseStartsWith := phraseParam + " || '%'"
 
 	wsParam := nextArg(nil) // workspace_id placeholder
+	userParam := ""
+	if userID != "" {
+		userParam = nextArg(userID)
+	}
 
 	var termParams []string
 	if len(terms) > 1 {
@@ -795,6 +857,14 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 
 	if !includeClosed {
 		whereClause += " AND p.status NOT IN ('completed', 'cancelled')"
+	}
+	if userParam != "" {
+		whereClause += fmt.Sprintf(` AND (
+			EXISTS (SELECT 1 FROM member m
+				WHERE m.workspace_id = p.workspace_id AND m.user_id = %s::uuid AND m.role = 'owner')
+			OR EXISTS (SELECT 1 FROM project_members pm
+				WHERE pm.project_id = p.id AND pm.user_id = %s::uuid)
+		)`, userParam, userParam)
 	}
 
 	// --- ORDER BY ranking ---
@@ -913,7 +983,15 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed)
+	userID := ""
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		var userOK bool
+		userID, userOK = requireUserID(w, r)
+		if !userOK {
+			return
+		}
+	}
+	sqlQuery, args := buildProjectSearchQueryForUser(q, terms, includeClosed, userID)
 	args[1] = wsUUID
 	args[len(args)-2] = limit
 	args[len(args)-1] = offset
@@ -966,33 +1044,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to search projects")
 		return
 	}
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		userID, ok := requireUserID(w, r)
-		if !ok {
-			return
-		}
-		visible, err := h.ProjectAuth.Scope(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID})
-		if err != nil {
-			writeProjectAuthError(w, err)
-			return
-		}
-		allowed := make(map[string]struct{}, len(visible))
-		for _, id := range visible {
-			allowed[id] = struct{}{}
-		}
-		filtered := results[:0]
-		for _, row := range results {
-			if _, ok := allowed[uuidToString(row.project.ID)]; ok {
-				filtered = append(filtered, row)
-			}
-		}
-		results = filtered
-		totalVisible := int64(len(results))
-		for i := range results {
-			results[i].totalCount = totalVisible
-		}
-	}
-
 	var total int64
 	if len(results) > 0 {
 		total = results[0].totalCount

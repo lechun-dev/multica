@@ -891,6 +891,8 @@ type claimProjectContext struct {
 	Repos       []RepoData
 }
 
+var errIssueProjectRequired = errors.New("issue task requires a valid project")
+
 // applyTo copies the resolved context onto a claim response. Callers assign the
 // whole context or none of it, so a claim can never carry a project's title
 // without its resources.
@@ -977,6 +979,26 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 		}
 	}
 	return out, nil
+}
+
+// resolveRequiredIssueClaimProjectContext is the strict Issue wrapper around
+// the shared project resolver. Chat, Autopilot and quick-create tasks may keep
+// their historical workspace-repository fallback, but an Issue claim cannot
+// run without a project that still exists in the task's workspace.
+// 2026-08-27 coder(lq): Keep the strict policy isolated so disabling the
+// project-permission overlay preserves Multica's native claim behavior.
+func (h *Handler) resolveRequiredIssueClaimProjectContext(ctx context.Context, projectID, workspaceID pgtype.UUID) (claimProjectContext, error) {
+	if !projectID.Valid {
+		return claimProjectContext{}, errIssueProjectRequired
+	}
+	resolved, err := h.resolveClaimProjectContext(ctx, projectID, workspaceID)
+	if err != nil {
+		return claimProjectContext{}, err
+	}
+	if resolved.ProjectID == "" {
+		return claimProjectContext{}, errIssueProjectRequired
+	}
+	return resolved, nil
 }
 
 // projectResourcesForClaim maps resource rows onto the claim wire shape and

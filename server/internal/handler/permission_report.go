@@ -35,7 +35,6 @@ func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 	filter := projectauth.PermissionReportFilter{
 		WorkspaceID: workspaceID,
 		ProjectID:   q.Get("project_id"),
-		IssueID:     q.Get("issue_id"),
 		UserID:      q.Get("user_id"),
 		Role:        q.Get("role"),
 		Permission:  projectauth.Permission(q.Get("permission")),

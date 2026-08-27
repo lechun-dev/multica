@@ -1157,12 +1157,11 @@
   },
   "permission_report": {
     "title": "项目权限",
-    "description": "按人员和项目查看有效权限及任务级授权。",
+    "description": "按人员和项目查看有效的项目权限。",
     "loading": "加载中…",
     "forbidden": "暂无权限报告访问权限",
     "people_projects": "人员 / 项目",
-    "granted": "授权",
-    "issue_count_other": "任务{{count}}"
+    "granted": "授权"
   },
   "members": {
     "section_title": "成员（{{count}}）",

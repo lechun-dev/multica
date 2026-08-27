@@ -895,12 +895,11 @@
   },
   "permission_report": {
     "title": "프로젝트 권한",
-    "description": "사용자 및 프로젝트별 유효 권한과 작업 수준 권한을 확인합니다.",
+    "description": "사용자 및 프로젝트별 유효 프로젝트 권한을 확인합니다.",
     "loading": "불러오는 중…",
     "forbidden": "권한 보고서에 접근할 수 없습니다",
     "people_projects": "사용자 / 프로젝트",
-    "granted": "권한 부여됨",
-    "issue_count_other": "작업 {{count}}개"
+    "granted": "권한 부여됨"
   },
   "members": {
     "section_title": "멤버 ({{count}})",

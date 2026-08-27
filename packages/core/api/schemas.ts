@@ -3306,6 +3306,28 @@ export const MemberWithUserSchema = z.object({
   avatar_url: z.string().nullable().optional().default(null),
 }).loose();
 
+export const ProjectMemberSchema = z.object({
+  project_id: z.string(),
+  user_id: z.string(),
+  role: z.enum(["owner", "manager", "member", "viewer"]),
+}).loose();
+
+export const ProjectMembersResponseSchema = z.object({
+  members: z.array(ProjectMemberSchema).default([]),
+  total: z.number().default(0),
+  // 2026-08-27 coder(lq): Default closed when an older or malformed server
+  // omits this capability bit, so the client never exposes an unusable action.
+  can_manage: z.boolean().default(false),
+}).loose();
+
+export type ProjectMembersResponse = z.infer<typeof ProjectMembersResponseSchema>;
+
+export const EMPTY_PROJECT_MEMBERS_RESPONSE: ProjectMembersResponse = {
+  members: [],
+  total: 0,
+  can_manage: false,
+};
+
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,
   workspace_id: z.string(),

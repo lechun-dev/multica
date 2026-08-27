@@ -73,7 +73,6 @@ import {
 import { useT } from "../../i18n";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
-import { ProjectPermissionsPanel } from "./project-permissions-panel";
 
 // ---------------------------------------------------------------------------
 // Property row — sidebar property display
@@ -471,7 +470,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
       {/* Resources */}
       <ProjectResourcesSection projectId={projectId} />
-      <ProjectPermissionsPanel projectId={projectId} canManage={isWorkspaceAdmin} />
     </div>
   );
 

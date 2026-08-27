@@ -11,6 +11,7 @@ type ProjectMemberRecord struct {
 type MemberRepository interface {
 	Repository
 	AddProjectMember(ctx context.Context, projectID, userID string, role ProjectRole) error
+	PromoteProjectMember(ctx context.Context, projectID, userID string, minimumRole ProjectRole) error
 	RemoveProjectMember(ctx context.Context, projectID, userID string) error
 	ListProjectMembers(ctx context.Context, projectID string) ([]ProjectMemberRecord, error)
 }
@@ -32,7 +33,31 @@ func (s *Service) EnsureOwner(ctx context.Context, projectID, userID string) err
 	if _, err = mr.WorkspaceRole(ctx, workspaceID, userID); err != nil {
 		return ErrCrossWorkspace
 	}
-	return mr.AddProjectMember(ctx, projectID, userID, ProjectOwner)
+	return mr.PromoteProjectMember(ctx, projectID, userID, ProjectOwner)
+}
+
+// 2026-08-27 coder(lq): Automatic grants are monotonic. Business events may
+// raise a member's minimum project role, but must never overwrite a stronger
+// explicit grant made by a project owner.
+func (s *Service) PromoteMember(ctx context.Context, projectID, userID string, minimumRole ProjectRole) error {
+	if s == nil || !s.enabled {
+		return nil
+	}
+	if !validProjectRole(minimumRole) {
+		return ErrInvalidRole
+	}
+	mr, ok := s.repo.(MemberRepository)
+	if !ok {
+		return ErrDisabled
+	}
+	workspaceID, err := mr.ProjectWorkspace(ctx, projectID)
+	if err != nil {
+		return ErrNoProjectAccess
+	}
+	if _, err = mr.WorkspaceRole(ctx, workspaceID, userID); err != nil {
+		return ErrCrossWorkspace
+	}
+	return mr.PromoteProjectMember(ctx, projectID, userID, minimumRole)
 }
 
 // 2026-08-24 coder(lq): Perform the two tenant checks that cannot be represented by a
@@ -59,6 +84,25 @@ func (s *Service) AddMember(ctx context.Context, actor Subject, projectID, userI
 	if _, err = mr.WorkspaceRole(ctx, workspaceID, userID); err != nil {
 		return ErrCrossWorkspace
 	}
+	if role != ProjectOwner {
+		// 2026-08-27 coder(lq): AddMember also updates existing grants. Protect
+		// the final owner from role changes, not only from member removal.
+		members, listErr := mr.ListProjectMembers(ctx, projectID)
+		if listErr != nil {
+			return listErr
+		}
+		ownerCount := 0
+		targetIsOwner := false
+		for _, member := range members {
+			if member.Role == ProjectOwner {
+				ownerCount++
+				targetIsOwner = targetIsOwner || member.UserID == userID
+			}
+		}
+		if targetIsOwner && ownerCount <= 1 {
+			return ErrLastOwner
+		}
+	}
 	return mr.AddProjectMember(ctx, projectID, userID, role)
 }
 
@@ -66,7 +110,10 @@ func (s *Service) ListMembers(ctx context.Context, actor Subject, projectID stri
 	if s == nil || !s.enabled {
 		return nil, nil
 	}
-	if err := s.Require(ctx, actor, projectID, View); err != nil {
+	// 2026-08-27 coder(lq): Authorization details are sensitive project
+	// metadata; only project owners and workspace owners may inspect them.
+	// This keeps the list endpoint aligned with Add/Update/Remove membership.
+	if err := s.Require(ctx, actor, projectID, MemberManage); err != nil {
 		return nil, err
 	}
 	mr, ok := s.repo.(MemberRepository)
@@ -88,8 +135,8 @@ func (s *Service) RemoveMember(ctx context.Context, actor Subject, projectID, us
 		return ErrDisabled
 	}
 	// 2026-08-27 coder(lq): Never leave a project without an owner. The
-	// workspace-admin bypass can recover access, but ordinary project managers
-	// otherwise could permanently lose project administration.
+	// workspace owner can recover access, but project managers must never be
+	// able to leave the project without an owner.
 	members, err := mr.ListProjectMembers(ctx, projectID)
 	if err != nil {
 		return err

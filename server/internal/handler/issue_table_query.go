@@ -462,8 +462,8 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	}
 	// 2026-08-27 coder(lq): The table compiler is shared by rows, groups, and
 	// facets, so apply the project boundary here once instead of relying on
-	// each surface to remember it. Projectless issues stay excluded while the
-	// overlay is enabled, even when include_no_project was requested.
+	// each surface to remember it. Projectless issues use the same creator,
+	// assignee, and workspace-owner visibility rule as the issue endpoints.
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		userID, ok := requireUserID(w, r)
 		if !ok {

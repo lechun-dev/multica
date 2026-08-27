@@ -441,6 +441,7 @@ func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 		Title:            title,
 		Description:      description,
 		ExpectedRevision: expectedRevision,
+		BeforeCommit:     h.issueAccessBeforeCommit(),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrIssueRevisionConflict) {

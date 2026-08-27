@@ -39,12 +39,20 @@ func (s *Service) Check(ctx context.Context, subject Subject, projectID string, 
 	if err != nil {
 		return ErrNotWorkspaceMember
 	}
-	if role == WorkspaceOwner || role == WorkspaceAdmin {
+	if role == WorkspaceOwner {
 		return nil
 	}
 	projectRole, err := s.repo.ProjectRole(ctx, projectID, subject.UserID)
 	if err != nil {
 		return ErrNoProjectAccess
+	}
+	// 2026-08-27 coder(lq): Workspace admin is not a project grant. Once the
+	// project-permission overlay is enabled, every non-owner must have an
+	// explicit project_members row before any project operation is allowed.
+	// Keep this check explicit so future policy additions cannot accidentally
+	// make a project manager/member able to administer membership.
+	if permission == MemberManage && projectRole != ProjectOwner {
+		return ErrForbidden
 	}
 	if !s.policy.Allows(projectRole, permission) {
 		return fmt.Errorf("%w: role=%s permission=%s", ErrForbidden, projectRole, permission)

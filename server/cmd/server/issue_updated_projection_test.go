@@ -215,6 +215,52 @@ func TestTaskFailedBroadcast_DeliversErrorOnlyInProcess(t *testing.T) {
 	}
 }
 
+// 2026-08-27 coder(lq): Autopilot events are workspace-wide cache invalidation
+// signals, not a data transport. Pin that private titles, assignees, IDs, and
+// run details never cross the WebSocket boundary while in-process consumers
+// still receive the original event payload.
+func TestAutopilotBroadcast_StripsPrivatePayload(t *testing.T) {
+	bus := events.New()
+	fb := &fakeBroadcaster{}
+	payload := map[string]any{
+		"autopilot": map[string]any{
+			"id":          "autopilot-private",
+			"title":       "private automation",
+			"assignee_id": "agent-private",
+		},
+	}
+
+	var inProcessPayload map[string]any
+	bus.Subscribe(protocol.EventAutopilotUpdated, func(e events.Event) {
+		inProcessPayload, _ = e.Payload.(map[string]any)
+	})
+	registerListeners(bus, fb)
+	bus.Publish(events.Event{
+		Type:        protocol.EventAutopilotUpdated,
+		WorkspaceID: "workspace-1",
+		Payload:     payload,
+	})
+
+	if len(fb.workspaceCalls) != 1 {
+		t.Fatalf("workspace broadcasts = %d, want 1", len(fb.workspaceCalls))
+	}
+	var frame struct {
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(fb.workspaceCalls[0].msg, &frame); err != nil {
+		t.Fatalf("unmarshal workspace frame: %v", err)
+	}
+	if len(frame.Payload) != 0 {
+		t.Fatalf("private autopilot payload reached workspace broadcast: %#v", frame.Payload)
+	}
+	if inProcessPayload["autopilot"] == nil {
+		t.Fatal("in-process listener lost the original autopilot payload")
+	}
+	if payload["autopilot"] == nil {
+		t.Fatal("broadcast projection mutated the producer payload")
+	}
+}
+
 // TestProjectOutbound_PassesThroughUnlistedEvents keeps the projection from
 // becoming a general-purpose payload filter: an event type with no entry in the
 // table must be forwarded byte-for-byte, and a non-map payload must survive.

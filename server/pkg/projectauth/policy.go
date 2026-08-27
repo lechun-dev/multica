@@ -1,7 +1,8 @@
 package projectauth
 
-// 2026-08-24 coder(lq): Map project roles to permissions. Workspace owners and admins are
-// handled as an explicit bypass in Service.Check, preserving native semantics.
+// 2026-08-27 coder(lq): Map project roles to permissions. Service.Check keeps
+// native workspace-owner semantics and excludes membership management from
+// the otherwise-preserved workspace-admin bypass.
 type Policy struct {
 	roles map[ProjectRole]map[Permission]bool
 }

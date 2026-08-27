@@ -59,6 +59,84 @@ func TestCreateCommentRequiresProjectEditPermission(t *testing.T) {
 	}
 }
 
+// 2026-08-27 coder(lq): Comment reactions mutate task conversation state, so
+// both add and remove must inherit the task project's Edit permission.
+func TestCommentReactionRequiresProjectEditPermission(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	deniedID := createSecondWorkspaceMember(t)
+	var projectID, issueID, commentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, 'Comment reaction permission guard') RETURNING id
+	`, testWorkspaceID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')
+	`, projectID, testUserID); err != nil {
+		t.Fatalf("seed project owner: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_type, creator_id, number, position
+		)
+		VALUES ($1, $2, 'Comment reaction permission guard issue', 'todo', 'none', 'member', $3,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 100)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'member', $3, 'reaction guard comment')
+		RETURNING id
+	`, testWorkspaceID, issueID, testUserID).Scan(&commentID); err != nil {
+		t.Fatalf("create comment: %v", err)
+	}
+
+	previous := testHandler.ProjectAuth
+	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
+	t.Cleanup(func() { testHandler.ProjectAuth = previous })
+
+	ownerAdd := httptest.NewRecorder()
+	ownerAddReq := withURLParam(newRequestAs(testUserID, http.MethodPost,
+		"/api/comments/"+commentID+"/reactions?workspace_id="+testWorkspaceID,
+		map[string]any{"emoji": "thumbs_up"}), "commentId", commentID)
+	testHandler.AddReaction(ownerAdd, ownerAddReq)
+	if ownerAdd.Code != http.StatusCreated {
+		t.Fatalf("owner AddReaction: expected 201, got %d: %s", ownerAdd.Code, ownerAdd.Body.String())
+	}
+
+	deniedAdd := httptest.NewRecorder()
+	deniedAddReq := withURLParam(newRequestAs(deniedID, http.MethodPost,
+		"/api/comments/"+commentID+"/reactions?workspace_id="+testWorkspaceID,
+		map[string]any{"emoji": "heart"}), "commentId", commentID)
+	testHandler.AddReaction(deniedAdd, deniedAddReq)
+	if deniedAdd.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized AddReaction: expected 404, got %d: %s", deniedAdd.Code, deniedAdd.Body.String())
+	}
+
+	deniedRemove := httptest.NewRecorder()
+	deniedRemoveReq := withURLParam(newRequestAs(deniedID, http.MethodDelete,
+		"/api/comments/"+commentID+"/reactions?workspace_id="+testWorkspaceID,
+		map[string]any{"emoji": "thumbs_up"}), "commentId", commentID)
+	testHandler.RemoveReaction(deniedRemove, deniedRemoveReq)
+	if deniedRemove.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized RemoveReaction: expected 404, got %d: %s", deniedRemove.Code, deniedRemove.Body.String())
+	}
+
+	var reactionCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM comment_reaction WHERE comment_id = $1`, commentID).Scan(&reactionCount); err != nil {
+		t.Fatalf("count comment reactions: %v", err)
+	}
+	if reactionCount != 1 {
+		t.Fatalf("unauthorized reaction mutations changed count to %d, want 1", reactionCount)
+	}
+}
+
 // 2026-08-27 coder(lq): A saved project view is an indirect issue query
 // surface, so it must inherit project View permission even when the view is
 // shared or owned by another member.

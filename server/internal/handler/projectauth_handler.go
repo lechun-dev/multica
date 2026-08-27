@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
@@ -34,11 +35,9 @@ func (h *Handler) cancelAgentTasksWithProjectPermission(ctx context.Context, age
 			if issueErr != nil {
 				continue
 			}
-			// 2026-08-27 coder(lq): Tasks whose issue has no project context
-			// retain Multica's native agent-owner cancellation behavior. Only
-			// project-bound issues are subject to the project permission overlay.
+			// 2026-08-27 coder(lq): Once project permissions are enabled, every
+			// task must resolve to a project that the caller can manage.
 			if !issue.ProjectID.Valid {
-				allowedIDs = append(allowedIDs, task.ID)
 				continue
 			}
 			if err := h.ProjectAuth.CheckIssue(ctx, subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), projectauth.IssueManage); err == nil {
@@ -49,20 +48,18 @@ func (h *Handler) cancelAgentTasksWithProjectPermission(ctx context.Context, age
 			if sessionErr != nil {
 				continue
 			}
-			// 2026-08-27 coder(lq): A projectless chat is governed by the
-			// existing agent-owner gate, not by project membership.
+			// 2026-08-27 coder(lq): Projectless chat tasks have no permission
+			// scope and are hidden while the overlay is enabled.
 			if !session.ProjectID.Valid {
-				allowedIDs = append(allowedIDs, task.ID)
 				continue
 			}
 			if err := h.ProjectAuth.Check(ctx, subject, uuidToString(session.ProjectID), projectauth.IssueManage); err == nil {
 				allowedIDs = append(allowedIDs, task.ID)
 			}
 		default:
-			// 2026-08-27 coder(lq): Run-only and quick-create tasks have no
-			// project source and must remain cancellable through the native
-			// agent-owner path.
-			allowedIDs = append(allowedIDs, task.ID)
+			// 2026-08-27 coder(lq): Unscoped tasks cannot be authorized by the
+			// project permission overlay.
+			continue
 		}
 	}
 	if len(allowedIDs) == 0 {
@@ -141,8 +138,7 @@ func (h *Handler) getWorkspaceAgentActivityWithProjectPermission(ctx context.Con
 
 func projectVisibleTaskPredicate(taskAlias, workspaceRef, userRef string) string {
 	return fmt.Sprintf(`(
-		(%s.issue_id IS NULL AND %s.chat_session_id IS NULL)
-		OR (%s.issue_id IS NOT NULL AND EXISTS (
+		(%s.issue_id IS NOT NULL AND EXISTS (
 		SELECT 1 FROM issue acl_issue
 		WHERE acl_issue.id = %s.issue_id
 		  AND acl_issue.workspace_id = %s
@@ -152,19 +148,19 @@ func projectVisibleTaskPredicate(taskAlias, workspaceRef, userRef string) string
 		SELECT 1 FROM chat_session acl_chat
 		WHERE acl_chat.id = %s.chat_session_id
 		  AND acl_chat.workspace_id = %s
-		  AND (acl_chat.project_id IS NULL OR %s)
+		  AND %s
 		))
-	)`, taskAlias, taskAlias, taskAlias, taskAlias, workspaceRef,
+	)`, taskAlias, taskAlias, workspaceRef,
 		issueProjectVisibilityPredicate("acl_issue", workspaceRef, userRef),
 		taskAlias, taskAlias, taskAlias, workspaceRef,
 		chatProjectVisibilityPredicate("acl_chat", workspaceRef, userRef))
 }
 
-// 2026-08-27 coder(lq): Chat tasks inherit project View only when their
-// session carries project context; ordinary workspace chats remain visible.
+// 2026-08-27 coder(lq): Chat tasks require project context when the overlay is
+// enabled; ordinary workspace chats have no project permission to evaluate.
 func chatProjectVisibilityPredicate(chatAlias, workspaceRef, userRef string) string {
 	return fmt.Sprintf(`(%s.project_id IS NOT NULL AND (
-		EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role IN ('owner', 'admin'))
+		EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')
 		OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
 	))`, chatAlias, workspaceRef, userRef, chatAlias, userRef)
 }
@@ -180,14 +176,45 @@ func taskVisibleByProjectPermission(task db.AgentTaskQueue, visibleIssueIDs, vis
 		_, ok := visibleChatSessionIDs[task.ChatSessionID]
 		return ok
 	}
-	return true
+	return false
 }
 
 func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) string {
-	return fmt.Sprintf(`(%s.project_id IS NOT NULL AND (
-		EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role IN ('owner', 'admin'))
-		OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
-	))`, issueAlias, workspaceRef, userRef, issueAlias, userRef)
+	// 2026-08-27 coder(lq): Project-bound tasks inherit visibility from their
+	// project. Projectless tasks remain visible only to their member creator,
+	// member assignee, or the workspace owner; agent identities cannot be
+	// matched to a logged-in member and therefore do not widen this boundary.
+	return fmt.Sprintf(`(
+		(%s.project_id IS NOT NULL AND (
+			EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')
+			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
+		))
+		OR (%s.project_id IS NULL AND (
+			EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')
+			OR (%s.creator_type = 'member' AND %s.creator_id = %s::uuid)
+			OR (%s.assignee_type = 'member' AND %s.assignee_id = %s::uuid)
+		))
+	)`, issueAlias, workspaceRef, userRef, issueAlias, userRef,
+		issueAlias, workspaceRef, userRef,
+		issueAlias, issueAlias, userRef,
+		issueAlias, issueAlias, userRef)
+}
+
+// 2026-08-27 coder(lq): Keep the direct issue guard consistent with the SQL
+// list predicate. Non-owner creators/assignees receive visibility only; all
+// mutation permissions for projectless tasks remain denied because there is no
+// project role from which to inherit them.
+func projectlessIssuePermissionAllowed(issue db.Issue, userID pgtype.UUID, workspaceRole projectauth.WorkspaceRole, permission projectauth.Permission) bool {
+	if workspaceRole == projectauth.WorkspaceOwner {
+		return true
+	}
+	if permission != projectauth.View || !userID.Valid {
+		return false
+	}
+	if issue.CreatorType == "member" && issue.CreatorID.Valid && issue.CreatorID == userID {
+		return true
+	}
+	return issue.AssigneeType.Valid && issue.AssigneeType.String == "member" && issue.AssigneeID.Valid && issue.AssigneeID == userID
 }
 
 // 2026-08-27 coder(lq): Dashboard rollups need a project boundary even when
@@ -201,7 +228,7 @@ func dashboardProjectVisibilityPredicate(projectExpr, workspaceRef, userRef stri
 		  AND p.workspace_id = %s
 		  AND (EXISTS (
 			SELECT 1 FROM member m
-			WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role IN ('owner', 'admin')
+			WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'
 		  ) OR EXISTS (
 			SELECT 1 FROM project_members pm
 			WHERE pm.project_id = p.id AND pm.user_id = %s::uuid
@@ -610,8 +637,9 @@ func (h *Handler) visibleIssueIDsByProjectPermission(ctx context.Context, worksp
 }
 
 // 2026-08-27 coder(lq): Filter task projections in one authorization pass so
-// history and presence endpoints cannot expose runs from projects outside the
-// caller's View scope. Tasks without project context retain native behavior.
+// history and presence endpoints cannot expose runs outside the caller's
+// View scope. Issue-backed tasks use the same project/projectless predicate as
+// issue lists; chat-only tasks still require a project context.
 func (h *Handler) filterTasksByProjectPermission(ctx context.Context, workspaceID, userID string, tasks []db.AgentTaskQueue) ([]db.AgentTaskQueue, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(tasks) == 0 {
 		return tasks, nil
@@ -655,7 +683,8 @@ func (h *Handler) filterTasksByProjectPermission(ctx context.Context, workspaceI
 }
 
 // 2026-08-27 coder(lq): Resolve chat-session visibility in one query to avoid
-// an authorization round trip per task while preserving projectless chats.
+// an authorization round trip per task. Chat-only tasks without a project are
+// excluded because the projectless creator/assignee rule applies to issues.
 func (h *Handler) visibleChatSessionIDsByProjectPermission(ctx context.Context, workspaceID, userID pgtype.UUID, sessionIDs []pgtype.UUID) (map[pgtype.UUID]struct{}, error) {
 	visible := make(map[pgtype.UUID]struct{}, len(sessionIDs))
 	if len(sessionIDs) == 0 || h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
@@ -664,7 +693,7 @@ func (h *Handler) visibleChatSessionIDsByProjectPermission(ctx context.Context, 
 	query := fmt.Sprintf(`SELECT requested.id
 		FROM unnest($2::uuid[]) requested(id)
 		JOIN chat_session cs ON cs.id = requested.id AND cs.workspace_id = $1
-		WHERE cs.project_id IS NULL OR %s`, chatProjectVisibilityPredicate("cs", "$1", "$3"))
+		WHERE %s`, chatProjectVisibilityPredicate("cs", "$1", "$3"))
 	rows, err := h.DB.Query(ctx, query, workspaceID, sessionIDs, userID)
 	if err != nil {
 		return nil, err
@@ -713,7 +742,7 @@ func (h *Handler) visibleWorkingAgentIDsByProjectPermission(ctx context.Context,
 // 2026-08-27 coder(lq): Pending chat rows do not include their task's issue
 // or session project in the upstream query shape. Resolve those links here so
 // the aggregate FAB endpoints apply the same project boundary as transcript
-// reads, while retaining projectless workspace chats.
+// reads; tasks without a project-bound issue or chat session remain hidden.
 func (h *Handler) filterPendingChatTasksByProjectPermission(ctx context.Context, workspaceID, userID string, rows []db.ListPendingChatTasksByCreatorRow) ([]db.ListPendingChatTasksByCreatorRow, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(rows) == 0 {
 		return rows, nil
@@ -745,8 +774,8 @@ func (h *Handler) filterPendingChatTasksByProjectPermission(ctx context.Context,
 	filtered := make([]db.ListPendingChatTasksByCreatorRow, 0, len(rows))
 	for i, row := range rows {
 		// 2026-08-27 coder(lq): Keep pending-chat aggregation identical to
-		// task history: issue context wins when both links exist, projectless
-		// chats remain visible, and unscoped tasks retain native behavior.
+		// task history: issue context wins when both links exist, while
+		// projectless chats and unscoped tasks remain hidden under the overlay.
 		if !taskVisibleByProjectPermission(tasks[i], visibleIssues, visibleChats) {
 			continue
 		}
@@ -813,8 +842,9 @@ func (h *Handler) requireProjectPermission(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
-// 2026-08-24 coder(lq): Make task authorization inherit the issue's project;
-// projectless issues are rejected while the project-permission overlay is on.
+// 2026-08-27 coder(lq): Project-bound tasks inherit the issue's project;
+// projectless tasks are visible only to their creator, member assignee, or
+// workspace owner while the project-permission overlay is on.
 func (h *Handler) requireIssueProjectPermission(w http.ResponseWriter, r *http.Request, issue db.Issue, permission projectauth.Permission) bool {
 	ok, reason := h.issueProjectAllowed(r, issue, permission)
 	if ok {
@@ -836,9 +866,6 @@ func (h *Handler) issueProjectAllowed(r *http.Request, issue db.Issue, permissio
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return true, ""
 	}
-	if !issue.ProjectID.Valid {
-		return false, "projectless"
-	}
 	userID := requestUserID(r)
 	if userID == "" {
 		return false, "denied"
@@ -846,6 +873,16 @@ func (h *Handler) issueProjectAllowed(r *http.Request, issue db.Issue, permissio
 	member, err := h.getWorkspaceMember(r.Context(), userID, uuidToString(issue.WorkspaceID))
 	if err != nil {
 		return false, "denied"
+	}
+	if !issue.ProjectID.Valid {
+		userUUID, parseErr := util.ParseUUID(userID)
+		if parseErr != nil {
+			return false, "denied"
+		}
+		if projectlessIssuePermissionAllowed(issue, userUUID, projectauth.WorkspaceRole(member.Role), permission) {
+			return true, ""
+		}
+		return false, "projectless"
 	}
 	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	err = h.ProjectAuth.CheckIssue(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission)

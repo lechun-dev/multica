@@ -235,21 +235,18 @@ describe("setupAutoUpdater", () => {
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it("does not access the public updater for a private deployment", async () => {
+  it("enables the configured updater for a private deployment", async () => {
     setupAutoUpdater(() => null, {
       serverUrl: "https://multica.example.internal",
     });
 
     await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
-      automaticUpdates: false,
-      updatesAvailable: false,
+      automaticUpdates: true,
+      updatesAvailable: true,
     });
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 5_000);
-    expect(ctx.checkForUpdates).not.toHaveBeenCalled();
-    await expect(invokeIpc("updater:check")).resolves.toMatchObject({
-      ok: false,
-      error: expect.stringContaining("private Multica deployment"),
-    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+    await expect(invokeIpc("updater:check")).resolves.toMatchObject({ ok: true });
   });
 
   it("forwards update progress to a live renderer", () => {

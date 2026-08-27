@@ -1160,13 +1160,11 @@
   },
   "permission_report": {
     "title": "Project permissions",
-    "description": "Review effective permissions and task-level grants by person and project.",
+    "description": "Review effective project permissions by person and project.",
     "loading": "Loading…",
     "forbidden": "You do not have access to the permission report",
     "people_projects": "People / Projects",
-    "granted": "Granted",
-    "issue_count_one": "{{count}} task",
-    "issue_count_other": "{{count}} tasks"
+    "granted": "Granted"
   },
   "members": {
     "section_title": "Members ({{count}})",

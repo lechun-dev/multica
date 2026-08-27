@@ -2330,7 +2330,25 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 
-		projectCtx, projectErr := h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		var projectCtx claimProjectContext
+		var projectErr error
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			projectCtx, projectErr = h.resolveRequiredIssueClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		} else {
+			projectCtx, projectErr = h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		}
+		if errors.Is(projectErr, errIssueProjectRequired) {
+			// 2026-08-27 coder(lq): An Issue is project-scoped when the
+			// permission overlay is enabled. Settle stale/cross-workspace
+			// references terminally instead of dispatching with workspace repos.
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task,
+				"This task cannot run because its issue is not attached to a valid project in this workspace.",
+				taskfailure.ReasonInvalidTaskIdentity,
+				"error_issue_project_required", http.StatusConflict,
+				"issue task must reference a valid project",
+			)
+		}
 		if projectErr != nil {
 			slog.Error("issue claim: load project context failed; preserving task for redelivery",
 				"task_id", uuidToString(task.ID),

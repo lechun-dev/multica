@@ -1,35 +1,11 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { UserMinus, UserPlus, Shield } from "lucide-react";
-import { api } from "@multica/core/api";
-import { memberListOptions } from "@multica/core/workspace/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
-import { Button } from "@multica/ui/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
-import { toast } from "sonner";
-import { useState } from "react";
-import { useT } from "../../i18n";
+import { ProjectPermissionsDialog } from "./project-permissions-dialog";
 
-// 2026-08-27 coder(lq): Keep project authorization UI isolated from the upstream project detail surface.
-export function ProjectPermissionsPanel({ projectId, canManage }: { projectId: string; canManage: boolean }) {
-  const { t } = useT("projects");
-  const wsId = useWorkspaceId();
-  const qc = useQueryClient();
-  const { data: workspaceMembers = [] } = useQuery(memberListOptions(wsId));
-  const { data, isLoading } = useQuery({ queryKey: ["project-members", projectId], queryFn: () => api.listProjectMembers(projectId) });
-  const [userId, setUserId] = useState("");
-  const [role, setRole] = useState("member");
-  const assigned = new Set((data?.members ?? []).map((m) => m.user_id));
-  const memberItems = workspaceMembers.map((m) => ({ value: m.user_id, label: m.name }));
-  const roleValues = ["owner", "manager", "member", "viewer"];
-  const roleItems = roleValues.map((value) => ({ value, label: value }));
-  const refresh = () => qc.invalidateQueries({ queryKey: ["project-members", projectId] });
-  const add = async () => { if (!userId) return; try { await api.addProjectMember(projectId, { user_id: userId, role }); setUserId(""); refresh(); toast.success(t(($) => $.permissions.add_success)); } catch (e) { toast.error(e instanceof Error ? e.message : t(($) => $.permissions.add_failed)); } };
-  const remove = async (id: string) => { try { await api.removeProjectMember(projectId, id); refresh(); toast.success(t(($) => $.permissions.remove_success)); } catch (e) { toast.error(e instanceof Error ? e.message : t(($) => $.permissions.remove_failed)); } };
-  return <div className="rounded-lg border p-3 space-y-3">
-    <div className="flex items-center gap-2 text-body font-medium"><Shield className="size-4" />{t(($) => $.permissions.title)}</div>
-    {canManage && <div className="flex gap-2"><Select items={memberItems} value={userId} onValueChange={(v) => setUserId(v ?? "")}><SelectTrigger className="flex-1"><SelectValue placeholder={t(($) => $.permissions.select_member)} /></SelectTrigger><SelectContent>{workspaceMembers.filter((m) => !assigned.has(m.user_id)).map((m) => <SelectItem key={m.user_id} value={m.user_id}>{m.name}</SelectItem>)}</SelectContent></Select><Select items={roleItems} value={role} onValueChange={(v) => setRole(v ?? "member")}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent>{roleValues.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent></Select><Button size="icon" onClick={add} disabled={!userId}><UserPlus className="size-4" /></Button></div>}
-    {isLoading ? <div className="text-caption text-muted-foreground">{t(($) => $.permissions.loading)}</div> : (data?.members ?? []).map((m) => <div key={m.user_id} className="flex items-center gap-2 text-body"><span className="flex-1">{workspaceMembers.find((w) => w.user_id === m.user_id)?.name ?? m.user_id}</span><span className="text-caption text-muted-foreground">{m.role}</span>{canManage && <Button variant="ghost" size="icon" onClick={() => remove(m.user_id)}><UserMinus className="size-4" /></Button>}</div>)}
-  </div>;
+// 2026-08-27 coder(lq): Keep the historical project-detail import stable while
+// routing it through the complete project authorization experience. The dialog
+// reads can_manage from the server, so workspace admins without project access
+// cannot mutate permissions through a stale client-side role check.
+export function ProjectPermissionsPanel({ projectId }: { projectId: string }) {
+  return <ProjectPermissionsDialog projectId={projectId} />;
 }

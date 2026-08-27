@@ -1890,7 +1890,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	created, err := h.createCommentWithProjectAccess(r.Context(), issue, db.CreateCommentParams{
 		ID:           dbid.NewV7(),
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
@@ -3370,7 +3370,10 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
-	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit)
+	// 2026-08-27 coder(lq): A member mention grants project-level viewer access,
+	// so persist the edited body and its inherited project role as one outcome.
+	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid
+	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit) || promoteMentionAccess
 	if transactionalEdit {
 		// Strict body edits, attachment-set edits, and cancellation of tasks built
 		// from the old body are one database outcome. UpdateComment takes the row
@@ -3406,6 +3409,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 					WorkspaceID: existing.WorkspaceID,
 				})
 			}
+		}
+		if err == nil && promoteMentionAccess {
+			err = promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(issue.ProjectID), req.Content)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())

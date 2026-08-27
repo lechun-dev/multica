@@ -213,7 +213,8 @@ func TestIssueTableProjectScopeAssigneeTypes(t *testing.T) {
 }
 
 // 2026-08-27 coder(lq): Keep the table compiler covered by the project
-// permission boundary; rows, groups, and facets all reuse this predicate.
+// permission boundary; rows, groups, and facets all reuse this predicate,
+// including the restricted visibility branch for projectless issues.
 func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -236,8 +237,11 @@ func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if !ok {
 		t.Fatalf("compile failed: %d %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(compiled.where, "i.project_id IS NOT NULL") {
-		t.Fatalf("project visibility must exclude projectless issues: %q", compiled.where)
+	if !strings.Contains(compiled.where, "i.project_id IS NOT NULL") || !strings.Contains(compiled.where, "i.project_id IS NULL") {
+		t.Fatalf("project visibility must cover project-bound and projectless issues: %q", compiled.where)
+	}
+	if !strings.Contains(compiled.where, "i.creator_type = 'member'") || !strings.Contains(compiled.where, "i.assignee_type = 'member'") {
+		t.Fatalf("projectless visibility must restrict creator and assignee identities: %q", compiled.where)
 	}
 	if !strings.Contains(compiled.where, "FROM project_members pm") {
 		t.Fatalf("project visibility membership predicate missing: %q", compiled.where)

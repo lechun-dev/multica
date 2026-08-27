@@ -21,6 +21,7 @@ import (
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -385,6 +386,26 @@ func (h *Handler) resolveSourceContextAuthors(ctx context.Context, workspaceID p
 	return states
 }
 
+// 2026-08-27 coder(lq): Source-context previews expose the full comment
+// thread, so they must enforce the anchor task's project View permission.
+func (h *Handler) requireSourceContextProjectView(w http.ResponseWriter, r *http.Request, workspaceID, anchorCommentID pgtype.UUID) bool {
+	comment, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+		ID: anchorCommentID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "comment not found")
+		return false
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+		ID: comment.IssueID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "comment not found")
+		return false
+	}
+	return h.requireIssueProjectPermission(w, r, issue, projectauth.View)
+}
+
 func (h *Handler) PreviewCommentSubIssue(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -396,6 +417,9 @@ func (h *Handler) PreviewCommentSubIssue(w http.ResponseWriter, r *http.Request)
 	}
 	anchorCommentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "commentId"), "comment_id")
 	if !ok {
+		return
+	}
+	if !h.requireSourceContextProjectView(w, r, wsUUID, anchorCommentID) {
 		return
 	}
 	build, err := service.BuildSourceContext(r.Context(), h.Queries, wsUUID, anchorCommentID)
@@ -440,6 +464,9 @@ func (h *Handler) CreateCommentSubIssue(w http.ResponseWriter, r *http.Request) 
 	}
 	anchorCommentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "commentId"), "comment_id")
 	if !ok {
+		return
+	}
+	if !h.requireSourceContextProjectView(w, r, wsUUID, anchorCommentID) {
 		return
 	}
 	wantDigest, tokenIssueID, validToken := service.ParseSourceContextToken(strings.TrimSpace(req.CaptureToken))
@@ -694,7 +721,8 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Stage: stage,
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
-		ActorID: util.UUIDToString(userID),
+		ActorID:      util.UUIDToString(userID),
+		BeforeCommit: h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
 			response := issueToResponse(issue, prefix)
 			labelResponses := labelsToResponse(labels)

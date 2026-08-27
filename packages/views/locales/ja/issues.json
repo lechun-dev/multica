@@ -836,14 +836,6 @@
     "visible_toggle": "ビューバーに表示",
     "more_label": "その他のビュー"
   },
-  "permissions": {
-    "title": "タスク権限（プロジェクト閲覧権限が必要）",
-    "select_member": "メンバーを選択",
-    "grant_success": "タスク権限を追加しました",
-    "grant_failed": "権限の付与に失敗しました",
-    "revoke_success": "タスク権限を取り消しました",
-    "revoke_failed": "権限の取り消しに失敗しました"
-  },
   "plugins": {
     "panels": "Plugins",
     "surface_failed": "{{name}} のインターフェースを読み込めませんでした。",

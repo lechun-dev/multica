@@ -1,17 +1,45 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 type projectMemberRequest struct {
 	UserID string `json:"user_id"`
 	Role   string `json:"role"`
+}
+
+// 2026-08-27 coder(lq): Serialize explicit membership changes on the project
+// row so two simultaneous owner removals/downgrades cannot leave zero owners.
+func (h *Handler) updateProjectMembers(ctx context.Context, projectID string, update func(*projectauth.Service) error) error {
+	if h.TxStarter == nil {
+		return errors.New("project member update requires transaction starter")
+	}
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var lockedID string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM project WHERE id = $1 FOR UPDATE`, projectID).Scan(&lockedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return projectauth.ErrNoProjectAccess
+		}
+		return err
+	}
+	service := projectauth.New(newProjectAuthRepository(tx), true)
+	if err := update(service); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (h *Handler) projectSubject(w http.ResponseWriter, r *http.Request, projectID string) (projectauth.Subject, bool) {
@@ -43,7 +71,8 @@ func (h *Handler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
 		writeProjectAuthError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"members": members, "total": len(members)})
+	canManage := h.ProjectAuth.Check(r.Context(), subject, projectID, projectauth.MemberManage) == nil
+	writeJSON(w, http.StatusOK, map[string]any{"members": members, "total": len(members), "can_manage": canManage})
 }
 
 func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +90,9 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	if err := h.ProjectAuth.AddMember(r.Context(), subject, projectID, req.UserID, projectauth.ProjectRole(req.Role)); err != nil {
+	if err := h.updateProjectMembers(r.Context(), projectID, func(service *projectauth.Service) error {
+		return service.AddMember(r.Context(), subject, projectID, req.UserID, projectauth.ProjectRole(req.Role))
+	}); err != nil {
 		writeProjectAuthError(w, err)
 		return
 	}
@@ -78,7 +109,9 @@ func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.ProjectAuth.RemoveMember(r.Context(), subject, projectID, chi.URLParam(r, "userId")); err != nil {
+	if err := h.updateProjectMembers(r.Context(), projectID, func(service *projectauth.Service) error {
+		return service.RemoveMember(r.Context(), subject, projectID, chi.URLParam(r, "userId"))
+	}); err != nil {
 		writeProjectAuthError(w, err)
 		return
 	}
@@ -89,8 +122,6 @@ func writeProjectAuthError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, projectauth.ErrInvalidRole):
 		writeError(w, http.StatusBadRequest, "invalid project role")
-	case errors.Is(err, projectauth.ErrInvalidIssuePermission):
-		writeError(w, http.StatusBadRequest, "invalid issue permission")
 	case errors.Is(err, projectauth.ErrForbidden):
 		writeError(w, http.StatusForbidden, "insufficient project permissions")
 	case errors.Is(err, projectauth.ErrLastOwner):

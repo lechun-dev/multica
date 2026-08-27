@@ -110,13 +110,22 @@ Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` 
 
 ### Project permissions (optional)
 
-Project roles and issue-level grants are disabled by default for compatibility
-with the upstream workspace-only behavior. After applying the database
-migrations, set `PROJECT_PERMISSION_ENABLED=true` in `.env` and restart the
-backend/Compose stack. This is a backend feature flag; changing it does not
-require rebuilding the web image. Workspace owners and admins retain their
-native administrative bypass, while ordinary members need a project role to
-see its issues.
+Project-level permissions are disabled by default for compatibility with the
+upstream workspace-only behavior. After applying the database migrations, set
+`PROJECT_PERMISSION_ENABLED=true` in `.env` and restart the backend/Compose
+stack. This is a backend feature flag; changing it does not require rebuilding
+the web image.
+
+When enabled:
+
+- Workspace owners can access and manage every project.
+- Project owners can manage that project's authorization entries.
+- Project creators and member leads are automatically granted the `owner` role;
+  the migration also backfills owners for existing member-led projects.
+- Other members must have a project role to see its tasks and resources.
+- Tasks inherit project permissions and have no separate task-level ACL. A task
+  assignee is promoted to project `member`, and users mentioned in a project or
+  task are promoted to project `viewer`.
 
 > **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 

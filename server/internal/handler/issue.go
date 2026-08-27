@@ -1162,21 +1162,15 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnauthorized, "user not authenticated")
 				return
 			}
-			visibleProjects, scopeErr := h.ProjectAuth.Scope(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID})
+			visible, scopeErr := h.visibleIssueIDsByProjectPermission(ctx, wsUUID, parseUUID(userID), openIDs)
 			if scopeErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to list issues")
 				return
 			}
-			visible := make(map[string]struct{}, len(visibleProjects))
-			for _, id := range visibleProjects {
-				visible[id] = struct{}{}
-			}
 			filtered := issues[:0]
 			for _, issue := range issues {
-				if issue.ProjectID.Valid {
-					if _, ok := visible[uuidToString(issue.ProjectID)]; ok {
-						filtered = append(filtered, issue)
-					}
+				if _, ok := visible[issue.ID]; ok {
+					filtered = append(filtered, issue)
 				}
 			}
 			issues = filtered
@@ -3253,6 +3247,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
+		BeforeCommit:     h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment, labels []db.IssueLabel) map[string]any {
 			payload := issueToResponse(issue, prefix)
 			// The event other tabs receive must carry the category too — filling
@@ -3533,6 +3528,11 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			}
 		}
 	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.Issue{}, current, false, fmt.Errorf("commit atomic issue update: %w", err)
 	}
@@ -3782,11 +3782,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			prevIssue = lockedPrev
 		}
 	} else {
-		err = h.runWithIssueStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, func(q *db.Queries) error {
-			var innerErr error
-			issue, innerErr = q.UpdateIssue(r.Context(), params)
-			return innerErr
-		})
+		issue, err = h.updateIssueWithProjectAccess(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params)
 	}
 	if err != nil {
 		if writeIssueStatusRaceError(w, err) {
@@ -4470,11 +4466,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				prevIssue = lockedPrev
 			}
 		} else {
-			err = h.runWithIssueStatusGuard(r.Context(), wsUUID, batchStatusKey, func(q *db.Queries) error {
-				var innerErr error
-				issue, innerErr = q.UpdateIssue(r.Context(), params)
-				return innerErr
-			})
+			issue, err = h.updateIssueWithProjectAccess(r.Context(), wsUUID, batchStatusKey, params)
 		}
 		if err != nil {
 			// The archive race is a property of the batch's shared target

@@ -1157,12 +1157,11 @@
   },
   "permission_report": {
     "title": "プロジェクト権限",
-    "description": "ユーザーとプロジェクト別に有効な権限とタスク単位の付与を確認します。",
+    "description": "ユーザーとプロジェクト別に有効なプロジェクト権限を確認します。",
     "loading": "読み込み中…",
     "forbidden": "権限レポートへのアクセス権がありません",
     "people_projects": "ユーザー / プロジェクト",
-    "granted": "付与済み",
-    "issue_count_other": "タスク{{count}}件"
+    "granted": "付与済み"
   },
   "members": {
     "section_title": "メンバー（{{count}}）",

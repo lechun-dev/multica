@@ -10,7 +10,6 @@ import {
   saveUpdaterPreferences,
   updaterPreferencesPath,
 } from "./updater-preferences";
-import { isOfficialCloudServerUrl } from "../shared/runtime-config";
 
 // Silent background updates: electron-updater downloads on its own as soon
 // as `update-available` fires; we only surface UI when the package is fully
@@ -115,11 +114,12 @@ const PRIVATE_DEPLOYMENT_UPDATE_MESSAGE =
 
 export function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null,
-  options: { serverUrl?: string } = {},
+  _options: { serverUrl?: string } = {},
 ): void {
-  // 2026-08-25 coder(lq): Fail closed when no runtime server is available, so
-  // private builds never fall back to the public GitHub release channel.
-  const updatesAvailable = isOfficialCloudServerUrl(options.serverUrl ?? "");
+  // 2026-08-27 coder(lq): Desktop releases are published to the configured
+  // public GitHub repository, so private deployments can safely use the same
+  // updater without embedding credentials or falling back to upstream.
+  const updatesAvailable = true;
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
   let automaticUpdatesEnabled =
     updatesAvailable && DEFAULT_UPDATER_PREFERENCES.automaticUpdates;

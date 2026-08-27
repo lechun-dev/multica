@@ -383,6 +383,9 @@ import {
   EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
   LabelSchema,
   ListLabelsResponseSchema,
+  ProjectMembersResponseSchema,
+  EMPTY_PROJECT_MEMBERS_RESPONSE,
+  type ProjectMembersResponse,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
   IssuePropertySchema,
@@ -3589,8 +3592,11 @@ export class ApiClient {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
-  async listProjectMembers(projectId: string): Promise<{ members: Array<{ project_id: string; user_id: string; role: string }>; total: number }> {
-    return this.fetch(`/api/projects/${projectId}/members`);
+  async listProjectMembers(projectId: string): Promise<ProjectMembersResponse> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/members`);
+    return parseWithFallback(raw, ProjectMembersResponseSchema, EMPTY_PROJECT_MEMBERS_RESPONSE, {
+      endpoint: "GET /api/projects/:id/members",
+    });
   }
 
   async addProjectMember(projectId: string, data: { user_id: string; role: string }): Promise<void> {
@@ -3601,9 +3607,6 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" });
   }
 
-  async listIssuePermissions(issueId: string): Promise<{ permissions: Array<{ user_id: string; permission: string }>; total: number }> { return this.fetch(`/api/issues/${issueId}/permissions`); }
-  async grantIssuePermission(issueId: string, data: { user_id: string; permission: string }): Promise<void> { await this.fetch(`/api/issues/${issueId}/permissions`, { method: "POST", body: JSON.stringify(data) }); }
-  async revokeIssuePermission(issueId: string, userId: string, permission: string): Promise<void> { await this.fetch(`/api/issues/${issueId}/permissions/${userId}/${permission}`, { method: "DELETE" }); }
   async listProjectPermissionReport(params: { project_id?: string; scope?: string } = {}): Promise<{ rows: Array<Record<string, string>>; total: number }> {
     const q = new URLSearchParams(); if (params.project_id) q.set("project_id", params.project_id); if (params.scope) q.set("scope", params.scope); return this.fetch(`/api/project-permissions/report?${q}`);
   }
