@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["fix-path"] })],
   },
   preload: {
     // `@electron-toolkit/preload` must be bundled INTO the preload script:
