@@ -1,0 +1,56 @@
+.frame :global([data-slot="card"]:has(form#login-form)) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-header"]) {
+  grid-row: 1;
+}
+
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-content"]) {
+  grid-row: 3;
+}
+
+/* Let the footer controls participate in the card grid so the DingTalk
+ * action can appear above the email form without changing LoginPage. */
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-footer"]) {
+  display: contents;
+}
+
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-footer"] > button:nth-of-type(1)) {
+  grid-row: 4;
+  width: calc(100% - 2rem);
+  margin-inline: 1rem;
+}
+
+/* The shared DingTalk action is the last button in the footer. */
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-footer"] > button:last-of-type) {
+  grid-row: 2;
+  width: calc(100% - 2rem);
+  min-height: 3.25rem;
+  margin-inline: 1rem;
+  border-color: #1677ff;
+  background: #1677ff;
+  color: #fff;
+  font-size: var(--text-body-lg);
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgb(22 119 255 / 24%);
+}
+
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-footer"] > button:last-of-type:hover) {
+  border-color: #4096ff;
+  background: #4096ff;
+}
+
+.frame :global([data-slot="card"]:has(form#login-form) > [data-slot="card-footer"] > div) {
+  grid-row: 5;
+  width: calc(100% - 2rem);
+  margin-inline: 1rem;
+}
+
+@media (max-width: 480px) {
+  .frame :global([data-slot="card"]:has(form#login-form)) {
+    margin-inline: 1rem;
+  }
+}

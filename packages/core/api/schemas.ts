@@ -3176,6 +3176,16 @@ export const WorkspaceMcpServerSchema = z.object({
   updated_at: z.string().default(""),
 });
 
+export const DingTalkProfileSchema = z.object({
+  bound: z.boolean().default(false),
+  name: z.string().optional(),
+  email: z.string().optional(),
+  avatar_url: z.string().optional(),
+  ding_user_id: z.string().optional(),
+  union_id: z.string().optional(),
+  open_id: z.string().optional(),
+}).loose();
+
 export const WorkspaceMcpServerListSchema = z.array(WorkspaceMcpServerSchema);
 
 export const EMPTY_WORKSPACE_MCP_SERVER: WorkspaceMcpServer = {

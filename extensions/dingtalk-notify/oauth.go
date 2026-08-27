@@ -16,6 +16,7 @@ type OAuthUser struct {
 	OpenID     string
 	Name       string
 	Email      string
+	AvatarURL  string
 }
 
 type OAuthProvider interface {

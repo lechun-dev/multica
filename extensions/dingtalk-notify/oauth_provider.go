@@ -105,6 +105,7 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		OpenID     string `json:"openId"`
 		Name       string `json:"nick"`
 		Email      string `json:"email"`
+		AvatarURL  string `json:"avatarUrl"`
 		Data       *struct {
 			DingUserID string `json:"userid"`
 			UserID     string `json:"userId"`
@@ -112,6 +113,7 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 			OpenID     string `json:"openId"`
 			Name       string `json:"nick"`
 			Email      string `json:"email"`
+			AvatarURL  string `json:"avatarUrl"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &user); err != nil {
@@ -136,6 +138,9 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		if user.Email == "" {
 			user.Email = user.Data.Email
 		}
+		if user.AvatarURL == "" {
+			user.AvatarURL = user.Data.AvatarURL
+		}
 	}
 	if user.DingUserID == "" {
 		user.DingUserID = user.UserID
@@ -143,8 +148,8 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 	if user.DingUserID == "" && user.UnionID == "" && user.OpenID == "" {
 		return OAuthUser{}, errors.New("DingTalk OAuth user response has no stable identity")
 	}
-	identity := OAuthUser{DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID, Name: user.Name, Email: user.Email}
-	if identity.UnionID != "" && (identity.DingUserID == "" || identity.Email == "") {
+	identity := OAuthUser{DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID, Name: user.Name, Email: user.Email, AvatarURL: user.AvatarURL}
+	if identity.UnionID != "" && (identity.DingUserID == "" || identity.Email == "" || identity.AvatarURL == "") {
 		enterpriseIdentity, err := p.enterpriseIdentity(ctx, identity.UnionID)
 		if err != nil {
 			return OAuthUser{}, err
@@ -157,6 +162,9 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		}
 		if identity.Email == "" {
 			identity.Email = enterpriseIdentity.Email
+		}
+		if identity.AvatarURL == "" {
+			identity.AvatarURL = enterpriseIdentity.AvatarURL
 		}
 	}
 	return identity, nil
@@ -209,10 +217,11 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, unionID s
 		ErrCode int    `json:"errcode"`
 		ErrMsg  string `json:"errmsg"`
 		Result  struct {
-			UserID  string `json:"userid"`
-			UnionID string `json:"unionid"`
-			Name    string `json:"name"`
-			Email   string `json:"email"`
+			UserID    string `json:"userid"`
+			UnionID   string `json:"unionid"`
+			Name      string `json:"name"`
+			Email     string `json:"email"`
+			AvatarURL string `json:"avatarUrl"`
 		} `json:"result"`
 	}
 	if err := p.postAppJSON(ctx, detailURL, token.AccessToken, detailPayload, &detail); err != nil {
@@ -229,6 +238,7 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, unionID s
 		UnionID:    detail.Result.UnionID,
 		Name:       detail.Result.Name,
 		Email:      strings.ToLower(strings.TrimSpace(detail.Result.Email)),
+		AvatarURL:  detail.Result.AvatarURL,
 	}, nil
 }
 

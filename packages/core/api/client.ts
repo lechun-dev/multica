@@ -181,6 +181,7 @@ import type {
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   DingTalkInstallation,
+  DingTalkProfile,
   ListDingTalkInstallationsResponse,
   ListDingTalkGroupsResponse,
   ListDingTalkGroupsParams,
@@ -4537,6 +4538,10 @@ export class ApiClient {
       EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
       { endpoint: "GET /api/workspaces/:id/dingtalk/installations" },
     );
+  }
+
+  async getDingTalkProfile(): Promise<DingTalkProfile> {
+    return this.fetch(`/api/me/dingtalk-profile`);
   }
 
   async listDingTalkGroups(

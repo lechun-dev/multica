@@ -16,6 +16,7 @@ import {
   SettingsTab,
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
+import { DingTalkProfileCard } from "./dingtalk-profile-card";
 
 // Mirror server/internal/handler/auth.go:MaxProfileDescriptionLen. Counted in
 // JS String.length (UTF-16 code units) here while the server counts runes,
@@ -189,6 +190,9 @@ export function AccountTab() {
             </div>
           </SettingsRow>
         </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title={t(($) => $.account.dingtalk_section)}>
+        <DingTalkProfileCard />
       </SettingsSection>
     </SettingsTab>
   );

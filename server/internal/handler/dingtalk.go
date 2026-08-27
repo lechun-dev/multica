@@ -726,6 +726,48 @@ type RedeemDingTalkBindingTokenResponse struct {
 	DingTalkUserID string `json:"dingtalk_user_id"`
 }
 
+// DingTalkProfileResponse is limited to the authenticated user's own linked
+// identity. It is intentionally separate from UserResponse so the public user
+// model does not become coupled to the optional DingTalk module.
+type DingTalkProfileResponse struct {
+	Bound      bool   `json:"bound"`
+	Name       string `json:"name,omitempty"`
+	Email      string `json:"email,omitempty"`
+	AvatarURL  string `json:"avatar_url,omitempty"`
+	DingUserID string `json:"ding_user_id,omitempty"`
+	UnionID    string `json:"union_id,omitempty"`
+	OpenID     string `json:"open_id,omitempty"`
+}
+
+// GetDingTalkProfile returns the current user's saved DingTalk identity.
+func (h *Handler) GetDingTalkProfile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var profile DingTalkProfileResponse
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT COALESCE(name, ''), COALESCE(email, ''), COALESCE(avatar_url, ''),
+		       COALESCE(ding_user_id, ''), COALESCE(union_id, ''), COALESCE(open_id, '')
+		FROM dingtalk_notify_identities
+		WHERE multica_user_id = $1 AND active = true
+		ORDER BY updated_at DESC
+		LIMIT 1`, userID).Scan(
+		&profile.Name, &profile.Email, &profile.AvatarURL,
+		&profile.DingUserID, &profile.UnionID, &profile.OpenID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, profile)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DingTalk profile is unavailable")
+		return
+	}
+	profile.Bound = profile.DingUserID != "" || profile.UnionID != "" || profile.OpenID != ""
+	writeJSON(w, http.StatusOK, profile)
+}
+
 // RedeemDingTalkBindingToken (POST /api/dingtalk/binding/redeem) binds the
 // DingTalk user id carried by the bearer token to the logged-in Multica user.
 // The redeemer's identity comes from the session, while token possession proves

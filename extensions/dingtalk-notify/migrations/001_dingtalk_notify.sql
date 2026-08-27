@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS dingtalk_notify_identities (
   UNIQUE (open_id)
 );
 
+ALTER TABLE dingtalk_notify_identities
+  ADD COLUMN IF NOT EXISTS name TEXT,
+  ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
 CREATE TABLE IF NOT EXISTS dingtalk_notify_oauth_states (
   state TEXT PRIMARY KEY,
   expires_at TIMESTAMPTZ NOT NULL,

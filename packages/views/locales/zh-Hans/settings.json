@@ -553,7 +553,15 @@
     "toast_avatar_updated": "头像已更新",
     "toast_avatar_failed": "上传头像失败",
     "toast_profile_updated": "资料已更新",
-    "toast_profile_failed": "更新资料失败"
+    "toast_profile_failed": "更新资料失败",
+    "dingtalk_section": "钉钉账号",
+    "dingtalk_label": "钉钉身份",
+    "dingtalk_hint": "与当前 Multica 账号关联的钉钉身份信息。",
+    "dingtalk_connected": "已关联钉钉",
+    "dingtalk_not_connected": "未关联钉钉",
+    "dingtalk_identity_unknown": "钉钉用户",
+    "dingtalk_email": "钉钉邮箱",
+    "dingtalk_user_id": "钉钉用户 ID"
   },
   "notifications": {
     "title": "收件箱通知",

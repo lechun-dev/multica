@@ -20,3 +20,7 @@ declare module "*.svg" {
   const src: string | StaticImageAsset;
   export default src;
 }
+declare module "*.module.css" {
+  const classes: Record<string, string>;
+  export default classes;
+}

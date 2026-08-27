@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 vi.mock("@multica/views/auth", () => ({
+  DingTalkFirstLoginFrame: ({ children }: { children: ReactNode }) => <>{children}</>,
   LoginPage: ({
     onDingTalkLogin,
   }: {

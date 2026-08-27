@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
@@ -203,19 +204,47 @@ func (h *dingtalkLoginHandler) resolveUser(ctx context.Context, identity notify.
 	if err != nil {
 		return db.User{}, fmt.Errorf("resolve Multica account: %w", err)
 	}
+	// Initialize the built-in profile from DingTalk on first login only. A
+	// later DingTalk login must not overwrite a name/avatar the user edited in
+	// Multica. The default name created by findOrCreateUser is the email
+	// local-part, so it is safe to replace that placeholder with the DingTalk
+	// nickname.
+	name := strings.TrimSpace(user.Name)
+	emailLocalPart := strings.TrimSpace(identity.Email)
+	if at := strings.Index(emailLocalPart, "@"); at > 0 {
+		emailLocalPart = emailLocalPart[:at]
+	}
+	if strings.TrimSpace(identity.Name) != "" &&
+		(name == "" || strings.EqualFold(name, emailLocalPart)) {
+		name = strings.TrimSpace(identity.Name)
+	}
+	avatarURL := strings.TrimSpace(identity.AvatarURL)
+	if name != user.Name || (strings.TrimSpace(user.AvatarUrl.String) == "" && avatarURL != "") {
+		params := db.UpdateUserParams{ID: user.ID, Name: name}
+		if strings.TrimSpace(user.AvatarUrl.String) == "" && avatarURL != "" {
+			params.AvatarUrl = pgtype.Text{String: avatarURL, Valid: true}
+		}
+		updated, updateErr := h.host.Queries.UpdateUser(ctx, params)
+		if updateErr != nil {
+			return db.User{}, fmt.Errorf("update DingTalk profile: %w", updateErr)
+		}
+		user = updated
+	}
 	loginOnly := identity.DingUserID == ""
 	_, err = h.pool.Exec(ctx, `
 		INSERT INTO dingtalk_notify_identities
-		    (ding_user_id, union_id, open_id, email, multica_user_id, active, login_only, updated_at)
-		VALUES (NULLIF($1, ''), NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, true, $6, now())
+		    (ding_user_id, union_id, open_id, email, name, avatar_url, multica_user_id, active, login_only, updated_at)
+		VALUES (NULLIF($1, ''), NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, true, $8, now())
 		ON CONFLICT (ding_user_id) DO UPDATE SET
 		    union_id = COALESCE(EXCLUDED.union_id, dingtalk_notify_identities.union_id),
 		    open_id = COALESCE(EXCLUDED.open_id, dingtalk_notify_identities.open_id),
 		    email = COALESCE(EXCLUDED.email, dingtalk_notify_identities.email),
+		    name = COALESCE(EXCLUDED.name, dingtalk_notify_identities.name),
+		    avatar_url = COALESCE(EXCLUDED.avatar_url, dingtalk_notify_identities.avatar_url),
 		    multica_user_id = EXCLUDED.multica_user_id,
 		    active = true,
 		    login_only = EXCLUDED.login_only,
-		    updated_at = now()`, identity.DingUserID, identity.UnionID, identity.OpenID, strings.ToLower(strings.TrimSpace(identity.Email)), util.UUIDToString(user.ID), loginOnly)
+	    updated_at = now()`, identity.DingUserID, identity.UnionID, identity.OpenID, strings.ToLower(strings.TrimSpace(identity.Email)), strings.TrimSpace(identity.Name), avatarURL, util.UUIDToString(user.ID), loginOnly)
 	if err != nil {
 		return db.User{}, fmt.Errorf("save DingTalk identity: %w", err)
 	}

@@ -226,6 +226,7 @@ export type {
 } from "./slack";
 export type {
   DingTalkInstallation,
+  DingTalkProfile,
   ListDingTalkInstallationsResponse,
   DingTalkGroupBot,
   DingTalkGroup,

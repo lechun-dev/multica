@@ -556,7 +556,15 @@
     "toast_avatar_updated": "Avatar updated",
     "toast_avatar_failed": "Failed to upload avatar",
     "toast_profile_updated": "Profile updated",
-    "toast_profile_failed": "Failed to update profile"
+    "toast_profile_failed": "Failed to update profile",
+    "dingtalk_section": "DingTalk account",
+    "dingtalk_label": "DingTalk identity",
+    "dingtalk_hint": "The DingTalk identity linked to this Multica account.",
+    "dingtalk_connected": "Connected",
+    "dingtalk_not_connected": "Not connected",
+    "dingtalk_identity_unknown": "DingTalk user",
+    "dingtalk_email": "DingTalk email",
+    "dingtalk_user_id": "DingTalk user ID"
   },
   "notifications": {
     "title": "Inbox Notifications",
