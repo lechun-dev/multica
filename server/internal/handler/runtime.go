@@ -119,6 +119,7 @@ func (h *Handler) GetRuntimeUsage(w http.ResponseWriter, r *http.Request) {
 	since := parseSinceParamInTZ(r, 90, viewTZ)
 
 	var resp []RuntimeUsageResponse
+	var err error
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		rows, queryErr := h.listRuntimeUsageWithProjectPermission(r.Context(), rt.ID, rt.WorkspaceID, parseUUID(requestUserID(r)), viewTZ, since)
 		if queryErr != nil {
@@ -197,6 +198,7 @@ func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request)
 
 	viewTZ := h.resolveViewingTZ(r)
 	var rows []db.GetRuntimeTaskHourlyActivityRow
+	var err error
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		rows, err = h.getRuntimeTaskHourlyActivityWithProjectPermission(r.Context(), rt.ID, rt.WorkspaceID, parseUUID(requestUserID(r)), viewTZ)
 	} else {
@@ -264,6 +266,7 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	var rows []db.ListRuntimeUsageByAgentRow
+	var err error
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		rows, err = h.listRuntimeUsageByAgentWithProjectPermission(r.Context(), rt.ID, rt.WorkspaceID, parseUUID(requestUserID(r)), since)
 	} else {
@@ -339,6 +342,7 @@ func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) 
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	var rows []db.GetRuntimeUsageByHourRow
+	var err error
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		rows, err = h.getRuntimeUsageByHourWithProjectPermission(r.Context(), rt.ID, rt.WorkspaceID, parseUUID(requestUserID(r)), viewTZ, since)
 	} else {
