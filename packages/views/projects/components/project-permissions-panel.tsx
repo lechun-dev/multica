@@ -19,12 +19,15 @@ export function ProjectPermissionsPanel({ projectId, canManage }: { projectId: s
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState("member");
   const assigned = new Set((data?.members ?? []).map((m) => m.user_id));
+  const memberItems = workspaceMembers.map((m) => ({ value: m.user_id, label: m.name }));
+  const roleValues = ["owner", "manager", "member", "viewer"];
+  const roleItems = roleValues.map((value) => ({ value, label: value }));
   const refresh = () => qc.invalidateQueries({ queryKey: ["project-members", projectId] });
   const add = async () => { if (!userId) return; try { await api.addProjectMember(projectId, { user_id: userId, role }); setUserId(""); refresh(); toast.success("项目成员已添加"); } catch (e) { toast.error(e instanceof Error ? e.message : "添加失败"); } };
   const remove = async (id: string) => { try { await api.removeProjectMember(projectId, id); refresh(); toast.success("项目成员已移除"); } catch (e) { toast.error(e instanceof Error ? e.message : "移除失败"); } };
   return <div className="rounded-lg border p-3 space-y-3">
     <div className="flex items-center gap-2 text-sm font-medium"><Shield className="size-4" />项目权限</div>
-    {canManage && <div className="flex gap-2"><Select value={userId} onValueChange={(v) => setUserId(v ?? "")}><SelectTrigger className="flex-1"><SelectValue placeholder="选择工作区成员" /></SelectTrigger><SelectContent>{workspaceMembers.filter((m) => !assigned.has(m.user_id)).map((m) => <SelectItem key={m.user_id} value={m.user_id}>{m.name}</SelectItem>)}</SelectContent></Select><Select value={role} onValueChange={(v) => setRole(v ?? "member")}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent>{["owner", "manager", "member", "viewer"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent></Select><Button size="icon" onClick={add} disabled={!userId}><UserPlus className="size-4" /></Button></div>}
+    {canManage && <div className="flex gap-2"><Select items={memberItems} value={userId} onValueChange={(v) => setUserId(v ?? "")}><SelectTrigger className="flex-1"><SelectValue placeholder="选择工作区成员" /></SelectTrigger><SelectContent>{workspaceMembers.filter((m) => !assigned.has(m.user_id)).map((m) => <SelectItem key={m.user_id} value={m.user_id}>{m.name}</SelectItem>)}</SelectContent></Select><Select items={roleItems} value={role} onValueChange={(v) => setRole(v ?? "member")}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent>{roleValues.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent></Select><Button size="icon" onClick={add} disabled={!userId}><UserPlus className="size-4" /></Button></div>}
     {isLoading ? <div className="text-xs text-muted-foreground">加载中…</div> : (data?.members ?? []).map((m) => <div key={m.user_id} className="flex items-center gap-2 text-sm"><span className="flex-1">{workspaceMembers.find((w) => w.user_id === m.user_id)?.name ?? m.user_id}</span><span className="text-xs text-muted-foreground">{m.role}</span>{canManage && <Button variant="ghost" size="icon" onClick={() => remove(m.user_id)}><UserMinus className="size-4" /></Button>}</div>)}
   </div>;
 }
