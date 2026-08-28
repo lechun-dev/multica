@@ -2,6 +2,7 @@ package projectauth
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -101,5 +102,53 @@ func TestListRolesAllowsWorkspaceMembersToReadCatalog(t *testing.T) {
 	repo := &fakeRoleRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember)}, roles: map[string]RoleDefinition{}}
 	if _, err := New(repo, true).ListRoles(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}); err != nil {
 		t.Fatalf("workspace member role catalog read: %v", err)
+	}
+}
+
+func TestRoleDefinitionsCanOnlyBeManagedByWorkspaceOwner(t *testing.T) {
+	ctx := context.Background()
+	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
+
+	for _, workspaceRole := range []WorkspaceRole{WorkspaceAdmin, WorkspaceMember} {
+		t.Run(string(workspaceRole), func(t *testing.T) {
+			repo := &fakeRoleRepo{
+				fakeRepo: fakeRepo{workspace: string(workspaceRole)},
+				roles: map[string]RoleDefinition{
+					"reviewer": {Key: "reviewer", Name: "Reviewer"},
+				},
+				permissions: map[ProjectRole][]Permission{"reviewer": {View}},
+			}
+			service := New(repo, true)
+
+			if _, err := service.CreateRole(ctx, subject, RoleDefinition{Key: "auditor", Name: "Auditor", Permissions: []Permission{View}}); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("create role error = %v, want %v", err, ErrForbidden)
+			}
+			if _, err := service.UpdateRole(ctx, subject, "reviewer", RoleDefinition{Name: "Updated", Permissions: []Permission{View}}); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("update role error = %v, want %v", err, ErrForbidden)
+			}
+			if err := service.DeleteRole(ctx, subject, "reviewer"); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("delete role error = %v, want %v", err, ErrForbidden)
+			}
+		})
+	}
+}
+
+func TestWorkspaceOwnerCanManageRoleDefinitions(t *testing.T) {
+	repo := &fakeRoleRepo{
+		fakeRepo:    fakeRepo{workspace: string(WorkspaceOwner)},
+		roles:       map[string]RoleDefinition{},
+		permissions: map[ProjectRole][]Permission{},
+	}
+	service := New(repo, true)
+	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
+
+	if _, err := service.CreateRole(context.Background(), subject, RoleDefinition{Key: "reviewer", Name: "Reviewer", Permissions: []Permission{View}}); err != nil {
+		t.Fatalf("create role: %v", err)
+	}
+	if _, err := service.UpdateRole(context.Background(), subject, "reviewer", RoleDefinition{Name: "Auditor", Permissions: []Permission{View}}); err != nil {
+		t.Fatalf("update role: %v", err)
+	}
+	if err := service.DeleteRole(context.Background(), subject, "reviewer"); err != nil {
+		t.Fatalf("delete role: %v", err)
 	}
 }

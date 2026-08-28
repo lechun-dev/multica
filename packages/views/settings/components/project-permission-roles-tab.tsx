@@ -88,8 +88,11 @@ export function ProjectPermissionRolesTab() {
     const customRoles = persisted.filter((role) => !SYSTEM_ROLE_DEFAULTS.some((fallback) => fallback.key === role.key));
     return [...builtIns, ...customRoles];
   }, [rolesQuery.data?.roles, workspaceId]);
+  // 2026-08-28 coder(lq): Role definitions apply across the workspace. Keep
+  // their management surface owner-only; project owners still consume this
+  // catalog from the project-permission matrix.
   const canManage = workspaceMembers.some(
-    (member) => member.user_id === currentUser?.id && (member.role === "owner" || member.role === "admin"),
+    (member) => member.user_id === currentUser?.id && member.role === "owner",
   );
   const permissionLabel = (permission: ProjectPermissionReportPermission) =>
     t(($) => $.permission_report.permissions[permission]);
