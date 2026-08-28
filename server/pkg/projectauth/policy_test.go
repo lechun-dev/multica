@@ -105,6 +105,25 @@ func TestEnabledWithoutRepositoryFailsClosed(t *testing.T) {
 	}
 }
 
+func TestListMembersAllowsProjectViewWithoutGrantingManagement(t *testing.T) {
+	repo := &fakeMemberRepo{fakeRepo: fakeRepo{
+		workspace:        string(WorkspaceMember),
+		project:          string(ProjectViewer),
+		projectWorkspace: "ws-1",
+	}, members: []ProjectMemberRecord{{ProjectID: "p-1", UserID: "u-2", Role: ProjectViewer}}}
+	s := New(repo, true)
+	members, err := s.ListMembers(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1")
+	if err != nil {
+		t.Fatalf("ListMembers returned %v", err)
+	}
+	if len(members) != 1 || members[0].UserID != "u-2" {
+		t.Fatalf("unexpected members: %#v", members)
+	}
+	if err := s.Check(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", MemberManage); err == nil {
+		t.Fatal("project viewer unexpectedly gained member management")
+	}
+}
+
 func TestEnsureOwnerSeedsCreator(t *testing.T) {
 	repo := &fakeMemberRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember), projectWorkspace: "ws-1"}}
 	s := New(repo, true)

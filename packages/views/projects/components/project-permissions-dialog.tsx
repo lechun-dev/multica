@@ -63,14 +63,26 @@ export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
     enabled: open && canManage && !!workspaceId,
   });
   const roles = useMemo(
-    () => rolesQuery.data?.roles?.length ? rolesQuery.data.roles : BUILTIN_PROJECT_ROLES.map((key) => ({
-      key,
-      name: key ? key.charAt(0).toLocaleUpperCase() + key.slice(1) : key,
-      description: "",
-      permissions: [],
-      is_system: true,
-    })),
-    [rolesQuery.data?.roles],
+    () => {
+      const persisted = rolesQuery.data?.roles ?? [];
+      const persistedKeys = new Set(persisted.map((role) => role.key));
+      // 2026-08-28 coder(lq): Keep built-in roles selectable if an older
+      // deployment has not seeded its role catalog yet. Persisted definitions
+      // remain first-class and keep their customized names and permissions.
+      const missingBuiltIns = BUILTIN_PROJECT_ROLES
+        .filter((key) => !persistedKeys.has(key))
+        .map((key) => ({
+          id: `system-${workspaceId}-${key}`,
+          workspace_id: workspaceId,
+          key,
+          name: key.charAt(0).toLocaleUpperCase() + key.slice(1),
+          description: "",
+          permissions: [],
+          is_system: true,
+        }));
+      return [...persisted, ...missingBuiltIns];
+    },
+    [rolesQuery.data?.roles, workspaceId],
   );
   const roleByKey = useMemo(() => new Map(roles.map((item) => [item.key, item])), [roles]);
 

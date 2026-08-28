@@ -24,6 +24,7 @@ function GithubIcon({ className }: { className?: string }) {
 import { useQuery } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
+import { api } from "@multica/core/api";
 import {
   PROJECT_STATUS_CONFIG,
   PROJECT_STATUS_ORDER,
@@ -74,6 +75,7 @@ import {
 import { useConfigStore } from "@multica/core/config";
 import type { LocalDirectoryExecutionMode } from "@multica/core/types";
 import { LocalDirectoryModeOptions } from "../projects/components/local-directory-mode-dialog";
+import { ProjectPermissionPicker, type ProjectPermissionSelection } from "../projects/components/project-permission-picker";
 
 /**
  * Builds the resource_ref for a local directory attached during project
@@ -169,6 +171,9 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
   const [customRepoUrl, setCustomRepoUrl] = useState("");
+  // 2026-08-28 coder(lq): Keep creation-time grants separate from the native
+  // project payload; they are persisted after the server returns the project ID.
+  const [projectPermissions, setProjectPermissions] = useState<ProjectPermissionSelection[]>([]);
   const workspaceRepos = workspace?.repos ?? [];
   const repoQuery = repoSearch.trim().toLowerCase();
   const filteredWorkspaceRepos = workspaceRepos.filter((repo) =>
@@ -363,9 +368,27 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         // Server attaches these in the same transaction as the project.
         resources,
       });
+      let permissionGrantFailed = false;
+      if (projectPermissions.length > 0) {
+        const permissionResults = await Promise.allSettled(
+          projectPermissions.map(({ userId, role }) =>
+            api.addProjectMember(project.id, { user_id: userId, role }),
+          ),
+        );
+        const failedCount = permissionResults.filter((result) => result.status === "rejected").length;
+        if (failedCount > 0) {
+          // 2026-08-28 coder(lq): Keep the partial-grant warning as the only
+          // result toast so a later success message does not hide it.
+          permissionGrantFailed = true;
+        }
+      }
       clearDraft();
       onClose();
-      toast.success(t(($) => $.create_project.toast_created));
+      if (permissionGrantFailed) {
+        toast.error(tProjects(($) => $.permissions.grant_failed));
+      } else {
+        toast.success(t(($) => $.create_project.toast_created));
+      }
       router.push(wsPaths.projectDetail(project.id));
     } catch (err) {
       toast.error(
@@ -947,6 +970,13 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
               )}
             </PopoverContent>
           </Popover>
+
+          <ProjectPermissionPicker
+            members={members}
+            workspaceId={wsId}
+            value={projectPermissions}
+            onChange={setProjectPermissions}
+          />
 
           {/* Overflow — always the last child so it stays at the end of the
               wrap flow. Only rendered while a date is still collapsible; when

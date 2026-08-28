@@ -106,6 +106,25 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	}
 }
 
+func TestGetConfigReportsProjectPermissionSwitch(t *testing.T) {
+	origCfg := testHandler.cfg
+	t.Cleanup(func() { testHandler.cfg = origCfg })
+
+	testHandler.cfg.ProjectPermissionEnabled = false
+	var disabled map[string]json.RawMessage
+	testutil.Call(t, testHandler.GetConfig, httptest.NewRequest(http.MethodGet, "/api/config", nil)).Want(http.StatusOK).JSON(&disabled)
+	if _, ok := disabled["project_permissions_enabled"]; ok {
+		t.Fatal("project_permissions_enabled must be omitted when disabled")
+	}
+
+	testHandler.cfg.ProjectPermissionEnabled = true
+	var enabled map[string]json.RawMessage
+	testutil.Call(t, testHandler.GetConfig, httptest.NewRequest(http.MethodGet, "/api/config", nil)).Want(http.StatusOK).JSON(&enabled)
+	if got := string(enabled["project_permissions_enabled"]); got != "true" {
+		t.Fatalf("project_permissions_enabled: want true, got %s", got)
+	}
+}
+
 func TestGetConfigUsesDaemonServerURLOverride(t *testing.T) {
 	t.Setenv("MULTICA_DAEMON_SERVER_URL", " https://api.internal.example/// ")
 	t.Setenv("MULTICA_PUBLIC_URL", "https://hooks.example.com/")

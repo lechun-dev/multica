@@ -1,6 +1,6 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../test/i18n";
 
@@ -9,15 +9,51 @@ const longRepoUrl =
 const apiRepoUrl = "https://github.com/multica-ai/api";
 const webRepoUrl = "https://github.com/multica-ai/web";
 
+const {
+  createProjectMock,
+  addProjectMemberMock,
+  listProjectPermissionRolesMock,
+  toastSuccessMock,
+  toastErrorMock,
+} = vi.hoisted(() => ({
+  createProjectMock: vi.fn(),
+  addProjectMemberMock: vi.fn(),
+  listProjectPermissionRolesMock: vi.fn(),
+  toastSuccessMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+}));
+
+const workspaceMembers = [
+  {
+    id: "membership-alice",
+    workspace_id: "workspace-1",
+    user_id: "alice",
+    role: "member",
+    created_at: "2026-08-27T00:00:00Z",
+    name: "Alice Owner",
+    email: "alice@example.com",
+    avatar_url: null,
+  },
+];
+
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: [] }),
+  useQuery: (options: { queryKey?: unknown[] }) => ({
+    data: options?.queryKey?.[0] === "members" ? workspaceMembers : [],
+  }),
   // The modal now reads the runtime list to gate worktree mode, and
   // runtimeListOptions builds its descriptor with queryOptions.
   queryOptions: (options: unknown) => options,
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
-  useCreateProject: () => ({ mutateAsync: vi.fn() }),
+  useCreateProject: () => ({ mutateAsync: createProjectMock }),
+}));
+
+vi.mock("@multica/core/api", () => ({
+  api: {
+    addProjectMember: addProjectMemberMock,
+    listProjectPermissionRoles: listProjectPermissionRolesMock,
+  },
 }));
 
 vi.mock("@multica/core/projects", () => ({
@@ -67,8 +103,11 @@ vi.mock("../navigation", () => ({
 }));
 
 vi.mock("../editor", () => {
-  const ContentEditor = React.forwardRef<HTMLTextAreaElement, { placeholder?: string }>(
-    ({ placeholder }, ref) => <textarea ref={ref} placeholder={placeholder} />,
+  const ContentEditor = React.forwardRef<{ getMarkdown: () => string }, { placeholder?: string }>(
+    ({ placeholder }, ref) => {
+      React.useImperativeHandle(ref, () => ({ getMarkdown: () => "" }));
+      return <textarea placeholder={placeholder} />;
+    },
   );
   ContentEditor.displayName = "ContentEditor";
 
@@ -169,14 +208,22 @@ vi.mock("@multica/ui/lib/utils", () => ({
 
 vi.mock("sonner", () => ({
   toast: {
-    success: vi.fn(),
-    error: vi.fn(),
+    success: toastSuccessMock,
+    error: toastErrorMock,
   },
 }));
 
 import { CreateProjectModal } from "./create-project";
 
 describe("CreateProjectModal", () => {
+  beforeEach(() => {
+    createProjectMock.mockReset().mockResolvedValue({ id: "project-1", slug: "project-1" });
+    addProjectMemberMock.mockReset().mockResolvedValue(undefined);
+    listProjectPermissionRolesMock.mockReset().mockResolvedValue({ roles: [] });
+    toastSuccessMock.mockReset();
+    toastErrorMock.mockReset();
+  });
+
   it("exposes full repository URLs in the repository picker", () => {
     render(<CreateProjectModal onClose={vi.fn()} />);
 
@@ -184,6 +231,54 @@ describe("CreateProjectModal", () => {
     // same URL would stack a browser tooltip on top of it (MUL-4836).
     expect(screen.getByRole("tooltip", { name: longRepoUrl })).toBeInTheDocument();
     expect(screen.queryByTitle(longRepoUrl)).toBeNull();
+  });
+
+  it("shows project access controls in the property toolbar", () => {
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Access" })).toBeInTheDocument();
+  });
+
+  it("adds selected members with their project role after creation", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText("Project title"), "Private project");
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    await user.click(screen.getByRole("checkbox", { name: "Alice Owner" }));
+    expect(screen.getByRole("checkbox", { name: "Alice Owner" })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Manager" }));
+    await user.click(screen.getByRole("button", { name: "Add members" }));
+    expect(screen.getAllByText("Alice Owner").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: "Create Project" }));
+
+    await waitFor(() => {
+      expect(createProjectMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Private project" }),
+      );
+      expect(addProjectMemberMock).toHaveBeenCalledWith("project-1", {
+        user_id: "alice",
+        role: "manager",
+      });
+    });
+  });
+
+  it("does not hide a partial authorization failure with a success toast", async () => {
+    const user = userEvent.setup();
+    addProjectMemberMock.mockRejectedValue(new Error("permission denied"));
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText("Project title"), "Partially shared project");
+    await user.click(screen.getByRole("checkbox", { name: "Alice Owner" }));
+    await user.click(screen.getByRole("button", { name: "Add members" }));
+    await user.click(screen.getByRole("button", { name: "Create Project" }));
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith("Some members could not be updated. Try again.");
+    });
+    expect(toastSuccessMock).not.toHaveBeenCalled();
   });
 
   it("reveals the start/due date pickers from the ⋯ overflow menu", async () => {
