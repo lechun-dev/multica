@@ -203,12 +203,15 @@ func mustActionCardParam(text string) (string, bool) {
 		return "", false
 	}
 
-	title := markdownMessageTitle(text)
-	markdownLines := append([]string(nil), lines[first+1:last+1]...)
-	if len(markdownLines) == 0 {
+	// Keep the human-readable bell title in the card body. Some DingTalk
+	// clients hide the ActionCard `title` field, so relying on it alone loses
+	// the notification context on mobile.
+	const cardTitle = "Multica 通知"
+	textLines := append([]string(nil), lines[first:last+1]...)
+	if len(textLines) == 0 {
 		return "", false
 	}
-	lastLine := strings.TrimSpace(markdownLines[len(markdownLines)-1])
+	lastLine := strings.TrimSpace(textLines[len(textLines)-1])
 	const buttonPrefix = "[打开任务并回复]("
 	lastLine = strings.TrimPrefix(lastLine, "**")
 	lastLine = strings.TrimSuffix(lastLine, "**")
@@ -219,14 +222,14 @@ func mustActionCardParam(text string) (string, bool) {
 	if actionURL == "" {
 		return "", false
 	}
-	markdownLines = markdownLines[:len(markdownLines)-1]
-	markdown := strings.TrimSpace(strings.Join(markdownLines, "\n"))
-	if markdown == "" {
+	textLines = textLines[:len(textLines)-1]
+	cardText := strings.TrimSpace(strings.Join(textLines, "\n"))
+	if cardText == "" {
 		return "", false
 	}
 	b, err := json.Marshal(map[string]string{
-		"title":       title,
-		"markdown":    markdown,
+		"title":       cardTitle,
+		"text":        cardText,
 		"singleTitle": "打开任务并回复",
 		"singleURL":   actionURL,
 	})

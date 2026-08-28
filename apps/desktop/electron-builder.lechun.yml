@@ -23,6 +23,12 @@ protocols:
 mac:
   artifactName: multica-lechun-${version}-mac-${arch}.${ext}
 
+# `dmg.artifactName` overrides the parent mac target's name for DMG output.
+# Keep it in the Lechun namespace so the release workflow selects the DMG
+# alongside the matching Lechun ZIP instead of producing `multica-desktop-*`.
+dmg:
+  artifactName: multica-lechun-${version}-mac-${arch}.${ext}
+
 linux:
   artifactName: multica-lechun-${version}-linux-${arch}.${ext}
   executableName: multica-lechun

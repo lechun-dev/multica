@@ -14,6 +14,21 @@ import {
   stripLeadingSeparator,
   updateChannelForTarget,
 } from "./package.mjs";
+import { stripForwardedSeparator } from "./package-lechun.mjs";
+
+describe("stripForwardedSeparator (Lechun wrapper)", () => {
+  it("removes pnpm's leading separator before config injection", () => {
+    expect(stripForwardedSeparator(["--", "--linux", "--x64", "--publish", "never"])).toEqual([
+      "--linux", "--x64", "--publish", "never",
+    ]);
+  });
+
+  it("does not remove a separator that is not leading", () => {
+    expect(stripForwardedSeparator(["--config", "electron-builder.lechun.yml", "--"])).toEqual([
+      "--config", "electron-builder.lechun.yml", "--",
+    ]);
+  });
+});
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -131,6 +146,20 @@ describe("deriveVersion (real git describe)", () => {
     const { dir, run } = initRepo();
     run("tag", "v1.4.2");
     expect(deriveVersion(dir)).toBe("1.4.2");
+  });
+
+  it("prefers the explicit release tag when multiple tags point at one commit", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v0.4.51");
+    run("tag", "v0.4.52");
+    run("tag", "v0.4.53");
+    expect(deriveVersion(dir, "v0.4.53")).toBe("0.4.53");
+  });
+
+  it("ignores an invalid release tag and falls back to git describe", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v1.4.2");
+    expect(deriveVersion(dir, "release_iteration/Sprint_0705")).toBe("1.4.2");
   });
 
   it("selects the semver tag even when a nearer non-semver tag exists", () => {

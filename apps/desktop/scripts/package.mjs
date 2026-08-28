@@ -153,7 +153,22 @@ export const DESCRIBE_ARGS = [
 // Exported (with an optional cwd) so tests can exercise the real describe
 // invocation against a throwaway repo, not just normalizeGitVersion in
 // isolation — the gap that let the Windows quoting regression through CI.
-export function deriveVersion(cwd) {
+export function deriveVersion(cwd, releaseTag) {
+  // A release commit can intentionally carry more than one version tag while
+  // an older release is being repaired or re-published. `git describe` is
+  // ambiguous in that situation and may select the oldest tag (for example,
+  // producing 0.4.51 while building v0.4.53). CI exposes the exact checkout
+  // tag as RELEASE_TAG, so prefer that explicit source of truth whenever it
+  // is a valid semver release tag, then fall back to git describe for local
+  // builds and development checkouts.
+  const explicitReleaseTag =
+    releaseTag ?? (cwd === undefined ? process.env.RELEASE_TAG : undefined);
+  if (
+    explicitReleaseTag &&
+    /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(explicitReleaseTag)
+  ) {
+    return normalizeGitVersion(explicitReleaseTag);
+  }
   return normalizeGitVersion(git(DESCRIBE_ARGS, cwd));
 }
 
