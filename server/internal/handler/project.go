@@ -24,6 +24,7 @@ import (
 type ProjectResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
+	CreatedBy   *string `json:"created_by"`
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 	Icon        *string `json:"icon"`
@@ -54,6 +55,7 @@ func projectToResponse(p db.Project) ProjectResponse {
 	return ProjectResponse{
 		ID:          uuidToString(p.ID),
 		WorkspaceID: uuidToString(p.WorkspaceID),
+		CreatedBy:   uuidToPtr(p.CreatedBy),
 		Title:       p.Title,
 		Description: textToPtr(p.Description),
 		Icon:        textToPtr(p.Icon),
@@ -400,8 +402,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	creator, _ := h.parseUserUUIDOrZero(userID)
 	createParams := db.CreateProjectParams{
 		WorkspaceID: wsUUID,
+		CreatedBy:   creator,
 		Title:       req.Title,
 		Description: ptrToText(req.Description),
 		Icon:        ptrToText(req.Icon),
@@ -482,7 +486,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creator, _ := h.parseUserUUIDOrZero(userID)
 	resourceRows := make([]db.ProjectResource, 0, len(req.Resources))
 	for i, res := range req.Resources {
 		var label pgtype.Text
@@ -949,7 +952,7 @@ func buildProjectSearchQueryForUser(phrase string, terms []string, includeClosed
 	offsetParam := nextArg(nil)
 
 	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
-		p.status, p.priority, p.lead_type, p.lead_id,
+		p.created_by, p.status, p.priority, p.lead_type, p.lead_id,
 		p.start_date, p.due_date,
 		p.created_at, p.updated_at,
 		COUNT(*) OVER() AS total_count,
@@ -1033,6 +1036,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				&row.project.Title,
 				&row.project.Description,
 				&row.project.Icon,
+				&row.project.CreatedBy,
 				&row.project.Status,
 				&row.project.Priority,
 				&row.project.LeadType,

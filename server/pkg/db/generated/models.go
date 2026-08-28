@@ -1170,6 +1170,7 @@ type Project struct {
 	Priority    string             `json:"priority"`
 	StartDate   pgtype.Date        `json:"start_date"`
 	DueDate     pgtype.Date        `json:"due_date"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
 }
 
 type ProjectMember struct {

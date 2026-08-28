@@ -26,6 +26,7 @@
     "lead": "负责人",
     "my_role": "我的角色",
     "created": "创建时间",
+    "creator": "创建人",
     "issues": "任务数"
   },
   "status": {

@@ -26,6 +26,7 @@
     "lead": "리드",
     "my_role": "내 역할",
     "created": "생성일",
+    "creator": "생성자",
     "issues": "태스크 수"
   },
   "status": {

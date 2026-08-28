@@ -27,6 +27,7 @@
     "lead": "Lead",
     "my_role": "My role",
     "created": "Created",
+    "creator": "Created by",
     "issues": "Issues"
   },
   "status": {

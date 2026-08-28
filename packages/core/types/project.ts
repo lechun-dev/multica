@@ -18,6 +18,8 @@ export interface Project {
   due_date: string | null;
   created_at: string;
   updated_at: string;
+  /** User who created the project; null for projects created before attribution was added. */
+  created_by: string | null;
   issue_count: number;
   done_count: number;
   resource_count: number;
