@@ -457,7 +457,7 @@ function ProjectTableRow({
       )}
 
       {isColVisible("role") ? (
-        <ListGridCell className="hidden @2xl:flex">
+        <ListGridCell className="hidden text-body @2xl:flex">
           {project.current_user_role === "owner"
             ? t(($) => $.permissions.role_owner)
             : project.current_user_role === "manager"

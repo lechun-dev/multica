@@ -766,7 +766,20 @@
     "tool_kind_command": "コマンド",
     "tool_kind_write": "編集",
     "tool_kind_read": "読み取り",
-    "tool_kind_misc": "その他"
+    "tool_kind_misc": "その他",
+    "view_details": "実行の詳細",
+    "view_human": "実行概要",
+    "human_agent_message": "エージェントがメッセージを送信しました。",
+    "human_thinking": "エージェントが考えています",
+    "human_running": "進行中：{{action}}",
+    "human_completed": "完了：{{action}}",
+    "human_command": "コマンドを実行 {{subject}}",
+    "human_read": "読み取り {{subject}}",
+    "human_search": "検索 {{subject}}",
+    "human_edit": "編集 {{subject}}",
+    "human_tool": "ツールを使用 {{subject}}",
+    "human_error": "実行中に問題が発生しました：{{text}}",
+    "human_group": "{{tool}}の操作を{{count}}回実行"
   },
   "task_failure": {
     "cancelled_by_system": "システムによってキャンセルされました",

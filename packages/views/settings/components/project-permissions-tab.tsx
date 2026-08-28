@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -14,6 +14,7 @@ import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 import { useT } from "../../i18n";
 
 const NO_ACCESS = "__no_project_access__";
+const ALL_FILTER = "__all__";
 const BUILTIN_ROLES = ["owner", "manager", "member", "viewer"];
 
 // 2026-08-28 coder(lq): Project cells represent explicit project membership;
@@ -36,6 +37,17 @@ export function ProjectPermissionsTab() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((state) => state.user);
   const [savingCell, setSavingCell] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState(ALL_FILTER);
+  const [roleFilter, setRoleFilter] = useState(ALL_FILTER);
+  const [personFilter, setPersonFilter] = useState(ALL_FILTER);
+
+  useEffect(() => {
+    // 2026-08-28 coder(lq): Filters belong to a workspace; never carry an ID
+    // from the previous workspace into the next report.
+    setProjectFilter(ALL_FILTER);
+    setRoleFilter(ALL_FILTER);
+    setPersonFilter(ALL_FILTER);
+  }, [workspaceId]);
 
   const { data: members = [], isLoading: membersLoading } = useQuery(memberListOptions(workspaceId));
   const { data: projects = [], isLoading: projectsLoading } = useQuery(projectListOptions(workspaceId));
@@ -77,6 +89,27 @@ export function ProjectPermissionsTab() {
   const projectMembersByProject = useMemo(
     () => new Map(projects.map((project, index) => [project.id, projectMemberQueries[index]?.data?.members ?? []])),
     [projectMemberQueries, projects],
+  );
+  // 2026-08-28 coder(lq): Keep report filtering local to the already loaded
+  // matrix. This makes filter changes immediate and avoids a second report
+  // endpoint whose write permissions could drift from the matrix controls.
+  const filteredProjects = useMemo(
+    () => projectFilter === ALL_FILTER ? projects : projects.filter((project) => project.id === projectFilter),
+    [projectFilter, projects],
+  );
+  const filteredMembers = useMemo(
+    () => members.filter((member) => {
+      if (personFilter !== ALL_FILTER && member.user_id !== personFilter) return false;
+      if (roleFilter === ALL_FILTER) return true;
+      return filteredProjects.some((project) =>
+        projectPermissionCellValue(
+          (projectMembersByProject.get(project.id) ?? []).find(
+            (projectMember) => projectMember.user_id === member.user_id,
+          )?.role,
+        ) === roleFilter,
+      );
+    }),
+    [filteredProjects, members, personFilter, projectMembersByProject, roleFilter],
   );
   const canManageByProject = useMemo(
     () => new Map(projects.map((project, index) => [project.id, projectMemberQueries[index]?.data?.can_manage ?? false])),
@@ -124,24 +157,78 @@ export function ProjectPermissionsTab() {
           ) : members.length === 0 || projects.length === 0 ? (
             <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
           ) : (
-            <div className="overflow-auto">
+            <>
+              <div className="flex flex-wrap items-end gap-3 border-b border-surface-border px-4 py-3">
+                <div className="flex min-w-44 flex-1 flex-col gap-1">
+                  <span className="text-caption text-muted-foreground">{t(($) => $.permission_report.project_filter)}</span>
+                  <Select
+                    items={[{ value: ALL_FILTER, label: t(($) => $.permission_report.all_projects) }, ...projects.map((project) => ({ value: project.id, label: project.title }))]}
+                    value={projectFilter}
+                    onValueChange={(value) => value && setProjectFilter(value)}
+                  >
+                    <SelectTrigger className="w-full" aria-label={t(($) => $.permission_report.project_filter)}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_FILTER}>{t(($) => $.permission_report.all_projects)}</SelectItem>
+                      {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.title}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex min-w-44 flex-1 flex-col gap-1">
+                  <span className="text-caption text-muted-foreground">{t(($) => $.permission_report.role_filter)}</span>
+                  <Select
+                    items={[{ value: ALL_FILTER, label: t(($) => $.permission_report.all_roles) }, { value: NO_ACCESS, label: t(($) => $.permission_report.no_access) }, ...roles.map((role) => ({ value: role.key, label: roleLabel(role.key) }))]}
+                    value={roleFilter}
+                    onValueChange={(value) => value && setRoleFilter(value)}
+                  >
+                    <SelectTrigger className="w-full" aria-label={t(($) => $.permission_report.role_filter)}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_FILTER}>{t(($) => $.permission_report.all_roles)}</SelectItem>
+                      <SelectItem value={NO_ACCESS}>{t(($) => $.permission_report.no_access)}</SelectItem>
+                      {roles.map((role) => <SelectItem key={role.key} value={role.key}>{roleLabel(role.key)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex min-w-44 flex-1 flex-col gap-1">
+                  <span className="text-caption text-muted-foreground">{t(($) => $.permission_report.person_filter)}</span>
+                  <Select
+                    items={[{ value: ALL_FILTER, label: t(($) => $.permission_report.all_people) }, ...members.map((member) => ({ value: member.user_id, label: userLabel(member.user_id) }))]}
+                    value={personFilter}
+                    onValueChange={(value) => value && setPersonFilter(value)}
+                  >
+                    <SelectTrigger className="w-full" aria-label={t(($) => $.permission_report.person_filter)}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_FILTER}>{t(($) => $.permission_report.all_people)}</SelectItem>
+                      {members.map((member) => <SelectItem key={member.user_id} value={member.user_id}>{userLabel(member.user_id)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {filteredProjects.length === 0 || filteredMembers.length === 0 ? (
+                <p className="py-6 text-center text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
+              ) : <div className="overflow-auto">
               <table className="w-full min-w-[64rem] text-body">
                 <thead>
                   <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
                     <th className="sticky left-0 z-20 min-w-56 bg-surface p-2">{t(($) => $.permission_report.person_column)}</th>
                     <th className="sticky left-56 z-20 min-w-32 bg-surface p-2">{t(($) => $.permission_report.workspace_role_column)}</th>
-                    {projects.map((project) => <th key={project.id} className="min-w-36 p-2" title={project.title}>{project.title}</th>)}
+                    {filteredProjects.map((project) => <th key={project.id} className="min-w-36 p-2" title={project.title}>{project.title}</th>)}
                   </tr>
                 </thead>
                 <tbody>
-                  {members.map((member) => (
+                  {filteredMembers.map((member) => (
                     <tr key={member.user_id} className="border-b border-surface-border/60">
                       <td className="sticky left-0 z-10 min-w-56 bg-surface p-2">
                         <div>{userLabel(member.user_id)}</div>
                         {member.email && <div className="text-caption text-muted-foreground">{member.email}</div>}
                       </td>
                       <td className="sticky left-56 z-10 min-w-32 bg-surface p-2">{roleLabel(member.role)}</td>
-                      {projects.map((project) => {
+                      {filteredProjects.map((project) => {
                         const projectMembers = projectMembersByProject.get(project.id) ?? [];
                         const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
                         const value = projectPermissionCellValue(explicit?.role);
@@ -171,7 +258,8 @@ export function ProjectPermissionsTab() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </div>}
+            </>
           )}
           <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
             <span>{t(($) => $.permission_report.people_projects)}</span>

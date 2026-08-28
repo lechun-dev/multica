@@ -315,6 +315,29 @@ describe("AgentTranscriptDialog", () => {
     expect(screen.getByText(/"command": "pnpm test"/)).toBeInTheDocument();
   });
 
+  it("offers a plain-language tab for the same execution events", async () => {
+    renderDialog([
+      { seq: 1, type: "text", content: "I found the issue." },
+      { seq: 2, type: "thinking", content: "Checking the config." },
+      { seq: 3, type: "tool_use", tool: "Bash", input: { command: "pnpm test" } },
+      { seq: 4, type: "tool_result", tool: "Bash", output: "ok" },
+      { seq: 5, type: "error", content: "The command failed." },
+    ]);
+
+    expect(screen.getByRole("tab", { name: "Execution details" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: /pnpm test/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Execution summary" }));
+
+    expect(screen.getByText(/The agent is thinking.*Checking the config\./)).toBeInTheDocument();
+    expect(screen.getByText("Completed: run command pnpm test")).toBeInTheDocument();
+    expect(screen.getByText("Execution ran into a problem: The command failed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /pnpm test/ })).not.toBeInTheDocument();
+  });
+
   // Regression, #7125: a run of short prose steps under a long agent name put
   // the same semibold name above every one-line body, so the row's heaviest
   // element was the one value that never changes. Identity belongs to the run,
