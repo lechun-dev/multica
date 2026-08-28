@@ -3065,11 +3065,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		assigneeID = id
 	}
 
-	if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID); status != 0 {
-		writeError(w, status, msg)
-		return
-	}
-
 	var parentIssueID pgtype.UUID
 	var projectID pgtype.UUID
 	if req.ProjectID != nil {
@@ -3086,11 +3081,13 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		parentIssueID = id
 	}
-	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
-		return
-	}
-	if parentIssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		parent, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+	// 2026-08-28 coder(lq): Validate the parent workspace boundary before
+	// project or assignee authorization so a foreign parent cannot be masked by
+	// an unrelated permission response when the project overlay is disabled.
+	var parentIssue db.Issue
+	if parentIssueID.Valid {
+		var err error
+		parentIssue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 			ID:          parentIssueID,
 			WorkspaceID: wsUUID,
 		})
@@ -3098,14 +3095,21 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 			return
 		}
-		if !h.requireParentIssueProjectPermission(w, r, parent, projectID) {
+	}
+	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
+		return
+	}
+	if parentIssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if !h.requireParentIssueProjectPermission(w, r, parentIssue, projectID) {
 			return
 		}
 	}
-	// Cross-workspace parent / project existence is enforced inside
-	// IssueService.Create (atomically with the create), so every entry
-	// point — HTTP, Lark, future MCP — gets the same boundary check
-	// without duplicating the lookup here.
+	if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID); status != 0 {
+		writeError(w, status, msg)
+		return
+	}
+	// IssueService.Create repeats the parent/project boundary checks atomically
+	// for non-HTTP entry points and to close races between validation and insert.
 
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
@@ -4581,10 +4585,18 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deleted := 0
+	// Resolve and authorize the complete target set before mutating any issue.
+	// The exclusion set lets parent/child deletes in one request preserve only
+	// surviving descendants, independent of request order or duplicate IDs.
+	issues := make([]db.Issue, 0, len(req.IssueIDs))
+	excludedIssueIDs := make([]pgtype.UUID, 0, len(req.IssueIDs))
+	seenIssueIDs := make(map[pgtype.UUID]struct{}, len(req.IssueIDs))
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
+			continue
+		}
+		if _, seen := seenIssueIDs[issueUUID]; seen {
 			continue
 		}
 		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -4597,6 +4609,40 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueManage) {
 			return
 		}
+		seenIssueIDs[issueUUID] = struct{}{}
+		issues = append(issues, issue)
+		excludedIssueIDs = append(excludedIssueIDs, issueUUID)
+	}
+
+	// Detach direct children that will survive this batch before deleting any
+	// target. Children also in the target set stay attached until their own
+	// pass, so a surviving grandchild is detached exactly once.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	detached := make(map[pgtype.UUID]struct{})
+	for _, issue := range issues {
+		children, err := h.Queries.DetachDirectChildIssues(r.Context(), db.DetachDirectChildIssuesParams{
+			WorkspaceID:      wsUUID,
+			ParentIssueID:    issue.ID,
+			ExcludedIssueIds: excludedIssueIDs,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to detach child issues")
+			return
+		}
+		for _, child := range children {
+			if _, already := detached[child.ID]; already {
+				continue
+			}
+			detached[child.ID] = struct{}{}
+			prefix := h.getIssuePrefix(r.Context(), child.WorkspaceID)
+			h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
+				"issue": issueToResponse(child, prefix),
+			})
+		}
+	}
+	deleted := 0
+	for _, issue := range issues {
+		issueID := uuidToString(issue.ID)
 
 		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 		_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
@@ -4610,7 +4656,6 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		h.deleteS3Objects(r.Context(), attachmentURLs)
 
 		// Always emit the resolved UUID — frontend caches key by UUID.
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
 		h.publish(protocol.EventIssueDeleted, workspaceID, actorType, actorID, map[string]any{"issue_id": uuidToString(issue.ID)})
 		deleted++
 	}

@@ -1497,6 +1497,12 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
 		return
 	}
+	// 2026-08-28 coder(lq): Source-context snapshots are immutable; a no-op
+	// delete must not remove their object or report a false success.
+	if !deleted.Changed {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
 	if deleted.Changed && att.IssueID.Valid {
 		h.publish(protocol.EventIssueAttachmentsChanged, workspaceID, "member", userID, map[string]any{
 			"issue_id":       uuidToString(att.IssueID),

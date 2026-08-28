@@ -115,6 +115,7 @@ func TestClaimTask_IssueProjectInForeignWorkspace_CancelsTask(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	enableProjectAuthForTest(t)
 
 	setHandlerTestWorkspaceRepos(t, []map[string]string{
 		{"url": localFallbackRepoURL, "description": "local"},

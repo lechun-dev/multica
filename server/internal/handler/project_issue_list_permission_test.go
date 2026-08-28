@@ -102,12 +102,14 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("ListProjects: got %d: %s", recorder.Code, recorder.Body.String())
 		}
-		var projects []ProjectResponse
-		if err := json.NewDecoder(recorder.Body).Decode(&projects); err != nil {
+		var response struct {
+			Projects []ProjectResponse `json:"projects"`
+		}
+		if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 			t.Fatalf("decode projects: %v", err)
 		}
-		result := make(map[string]bool, len(projects))
-		for _, project := range projects {
+		result := make(map[string]bool, len(response.Projects))
+		for _, project := range response.Projects {
 			result[project.ID] = true
 		}
 		return result
