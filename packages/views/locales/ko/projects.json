@@ -25,6 +25,7 @@
     "progress": "진행률",
     "lead": "리드",
     "created": "생성일",
+    "creator": "생성자",
     "issues": "태스크 수"
   },
   "status": {

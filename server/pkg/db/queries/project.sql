@@ -25,10 +25,10 @@ FOR UPDATE;
 
 -- name: CreateProject :one
 INSERT INTO project (
-    workspace_id, title, description, icon, status,
+    workspace_id, created_by, title, description, icon, status,
     lead_type, lead_id, priority, start_date, due_date
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 ) RETURNING *;
 
 -- name: UpdateProject :one

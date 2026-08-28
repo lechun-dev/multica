@@ -149,6 +149,7 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
   progress: 88,
   lead: 132,
   issues: 80,
+  creator: 132,
   created: 104,
 };
 
@@ -158,13 +159,13 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
 const FIXED_TRACKS_WIDTH = 384 + 10 * 12;
 
 // Render/track order: checkbox, name, status (core, fixed 116px), priority,
-// progress, lead, issues, created, kebab. MUST be a literal string —
+// progress, lead, issues, creator, created, kebab. MUST be a literal string —
 // Tailwind can't see interpolated `grid-cols-[...]` arbitrary values, so an
 // interpolated width silently drops the whole template and the grid
 // collapses to one column.
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-creator)_var(--pjc-created)_1.75rem_0.75rem]";
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
@@ -184,6 +185,7 @@ function columnTrackVars(
     "--pjc-progress": width("progress"),
     "--pjc-lead": width("lead"),
     "--pjc-issues": width("issues"),
+    "--pjc-creator": width("creator"),
     "--pjc-created": width("created"),
     "--pjc-minw": `${minWidth}px`,
   } as React.CSSProperties;
@@ -371,6 +373,7 @@ function ProjectTableRow({
   onToggleSelect,
   rowHref,
   rowLink,
+  getActorName,
 }: {
   project: Project;
   pinned: boolean;
@@ -380,6 +383,7 @@ function ProjectTableRow({
   onToggleSelect: () => void;
   rowHref: string;
   rowLink: ReturnType<typeof useRowLink>;
+  getActorName: (actorType: string, actorId: string) => string | undefined;
 }) {
   const formatRelativeDate = useFormatRelativeDate();
   const updateProject = useUpdateProject();
@@ -452,6 +456,23 @@ function ProjectTableRow({
       {isColVisible("issues") ? (
         <ListGridCell className="hidden justify-end font-mono text-caption tabular-nums text-muted-foreground @2xl:flex">
           {project.issue_count}
+        </ListGridCell>
+      ) : (
+        <ListGridCell className="hidden px-0 @2xl:flex" />
+      )}
+
+      {isColVisible("creator") ? (
+        <ListGridCell className="hidden @2xl:flex">
+          {project.created_by ? (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <ActorAvatar actorType="member" actorId={project.created_by} size="sm" enableHoverCard />
+              <span className="min-w-0 truncate text-caption text-muted-foreground">
+                {getActorName("member", project.created_by) ?? "—"}
+              </span>
+            </span>
+          ) : (
+            <span className="text-caption text-faint-foreground">—</span>
+          )}
         </ListGridCell>
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -556,6 +577,13 @@ function ProjectTableHeader({
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
       )}
+      {isColVisible("creator") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          {t(($) => $.table.creator)}
+        </ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
       {isColVisible("created") ? (
         <ListGridHeaderCell
           className="hidden @2xl:flex"
@@ -580,10 +608,12 @@ function ProjectCard({
   project,
   pinned,
   canDelete,
+  getActorName,
 }: {
   project: Project;
   pinned: boolean;
   canDelete: boolean;
+  getActorName: (actorType: string, actorId: string) => string | undefined;
 }) {
   const { t } = useT("projects");
   const wsPaths = useWorkspacePaths();
@@ -660,6 +690,16 @@ function ProjectCard({
           )}
         />
         <div className="flex items-center gap-2">
+          <span className="flex max-w-[100px] items-center gap-1 text-micro text-muted-foreground" title={t(($) => $.table.creator)}>
+            {project.created_by ? (
+              <>
+                <ActorAvatar actorType="member" actorId={project.created_by} size="sm" enableHoverCard />
+                <span className="truncate">{getActorName("member", project.created_by) ?? "—"}</span>
+              </>
+            ) : (
+              "—"
+            )}
+          </span>
           <ProjectPriorityBadge project={project} handleUpdate={handleUpdate} align="start" />
           <span className="text-micro text-muted-foreground">
             {formatRelativeDate(project.created_at)}
@@ -683,7 +723,7 @@ const STATUS_VALUES: ProjectStatus[] = [
   "cancelled",
 ];
 const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "none"];
-const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
+const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "creator", "created"];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
 
 function countActiveFilters(f: ProjectListFilters): number {
@@ -929,7 +969,9 @@ export function ProjectsPage() {
           ? t(($) => $.table.lead)
           : k === "issues"
             ? t(($) => $.table.issues)
-            : t(($) => $.table.created);
+            : k === "creator"
+              ? t(($) => $.table.creator)
+              : t(($) => $.table.created);
 
   const showEmpty = !isLoading && projects.length === 0;
   const countBadge = (n: number) => (
@@ -1261,6 +1303,7 @@ export function ProjectsPage() {
                     onToggleSelect={() => toggleSelected(project.id)}
                     rowHref={wsPaths.projectDetail(project.id)}
                     rowLink={rowLink}
+                    getActorName={getActorName}
                   />
                 ))}
               </ListGrid>
@@ -1277,6 +1320,7 @@ export function ProjectsPage() {
                     project={project}
                     pinned={pinnedProjectIds.has(project.id)}
                     canDelete={isWorkspaceAdmin}
+                    getActorName={getActorName}
                   />
                 ))}
               </div>
