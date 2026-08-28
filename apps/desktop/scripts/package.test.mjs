@@ -533,7 +533,8 @@ describe("electron-builder.yml packaging config", () => {
     expect(config).toContain("extends: electron-builder.yml");
     expect(config).toContain("appId: ai.multica.desktop.lechun");
     expect(config).toContain("productName: Multica Lechun");
-    expect(config).toContain("packageName: multica-lechun");
+    expect(config).toContain("deb:\n  packageName: multica-lechun");
+    expect(config).toContain("rpm:\n  packageName: multica-lechun");
     expect(config).toContain("channel: latest-lechun");
     expect(config).toContain("multica-lechun");
   });

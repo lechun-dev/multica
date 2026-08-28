@@ -24,10 +24,6 @@ mac:
   artifactName: multica-lechun-${version}-mac-${arch}.${ext}
 
 linux:
-  # Linux package managers require a machine-safe package name. Keep this
-  # separate from productName so the installed app still displays "Multica
-  # Lechun" while RPM/deb metadata uses a valid identifier without spaces.
-  packageName: multica-lechun
   artifactName: multica-lechun-${version}-linux-${arch}.${ext}
   executableName: multica-lechun
   desktop:
@@ -36,3 +32,12 @@ linux:
 
 win:
   artifactName: multica-lechun-${version}-windows-${arch}.${ext}
+
+# Linux package managers require a machine-safe package name. Keep this
+# separate from productName so the installed app still displays "Multica
+# Lechun" while deb/rpm metadata uses a valid identifier without spaces.
+deb:
+  packageName: multica-lechun
+
+rpm:
+  packageName: multica-lechun
