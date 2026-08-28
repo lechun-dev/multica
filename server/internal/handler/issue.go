@@ -3558,7 +3558,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
 			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
 		}
 	}

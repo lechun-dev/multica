@@ -11,6 +11,11 @@ type Repository interface {
 	VisibleProjectIDs(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
+// IssuePermissionReader is an optional task-level grant lookup.
+type IssuePermissionReader interface {
+	IssuePermission(ctx context.Context, issueID, userID string, permission Permission) (bool, error)
+}
+
 // 2026-08-28 coder(lq): ScopedProjectRepository optionally hides projects that
 // are visible only through workspace ownership. Additive shape preserves old
 // test/adapter implementations when the list toggle is unused.
