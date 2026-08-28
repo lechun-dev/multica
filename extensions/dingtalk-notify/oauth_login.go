@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -39,6 +40,9 @@ func ParseLoginClient(value string) (LoginClient, error) {
 // already been verified and consumed by Complete. The random prefix never
 // contains a dot because randomState uses base64url without padding.
 func LoginClientFromState(state string) LoginClient {
+	if idx := strings.Index(state, ".next."); idx >= 0 {
+		state = state[:idx]
+	}
 	if strings.HasSuffix(state, "."+string(LoginClientDesktopDev)) {
 		return LoginClientDesktopDev
 	}
@@ -73,12 +77,19 @@ type LoginStateStore interface {
 
 // Begin creates a short-lived, single-use state for a public login redirect.
 func (s *LoginOAuthService) Begin(ctx context.Context, redirectURI string) (Authorization, error) {
-	return s.BeginForClient(ctx, redirectURI, LoginClientWeb)
+	return s.BeginForClientWithNext(ctx, redirectURI, LoginClientWeb, "")
 }
 
 // BeginForClient carries a trusted client marker through DingTalk's OAuth
 // round trip. The full state remains random, server-stored, and single-use.
 func (s *LoginOAuthService) BeginForClient(ctx context.Context, redirectURI string, client LoginClient) (Authorization, error) {
+	return s.BeginForClientWithNext(ctx, redirectURI, client, "")
+}
+
+// BeginForClientWithNext carries a validated, same-origin post-login path
+// through the one-time OAuth state. Keeping it in state avoids a schema change
+// while still working across replicas and server restarts.
+func (s *LoginOAuthService) BeginForClientWithNext(ctx context.Context, redirectURI string, client LoginClient, next string) (Authorization, error) {
 	if s.Provider == nil {
 		return Authorization{}, errors.New("oauth provider is required")
 	}
@@ -94,6 +105,9 @@ func (s *LoginOAuthService) BeginForClient(ctx context.Context, redirectURI stri
 		return Authorization{}, err
 	}
 	state += "." + string(parsedClient)
+	if next != "" {
+		state += ".next." + base64.RawURLEncoding.EncodeToString([]byte(next))
+	}
 	now := time.Now()
 	if s.Now != nil {
 		now = s.Now()
@@ -124,6 +138,21 @@ func (s *LoginOAuthService) BeginForClient(ctx context.Context, redirectURI stri
 		return Authorization{}, err
 	}
 	return Authorization{URL: url, State: state}, nil
+}
+
+// LoginNextFromState returns the optional post-login path carried by a
+// verified DingTalk OAuth state. Invalid or absent values are ignored.
+func LoginNextFromState(state string) string {
+	marker := ".next."
+	idx := strings.LastIndex(state, marker)
+	if idx < 0 || idx+len(marker) == len(state) {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(state[idx+len(marker):])
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // Complete verifies and consumes a login state before exchanging the code.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -210,7 +211,7 @@ func skipped(event MentionCreated, target MentionTarget, reason string) Delivery
 }
 
 func FormatText(event MentionCreated) string {
-	text := sanitizeText(event.Text)
+	text := stripMentionLinks(sanitizeText(event.Text))
 	if runes := []rune(text); len(runes) > 2000 {
 		text = string(runes[:2000]) + "…"
 	}
@@ -305,6 +306,44 @@ func sanitizeText(text string) string {
 		}
 		return r
 	}, text)
+}
+
+// stripMentionLinks removes Multica's internal mention:// links from the copy
+// sent to DingTalk. DingTalk cannot resolve that private protocol, so keeping
+// the link syntax only renders the @name as a misleading blue hyperlink.
+// Internal comment content remains unchanged; this is a presentation-only
+// transformation for outbound notifications.
+var mentionLinkRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(?:member|agent|squad|issue|all)/[^)]+\)`)
+
+func stripMentionLinks(text string) string {
+	matches := mentionLinkRe.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	var b strings.Builder
+	last := 0
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		// Preserve explicitly escaped literal markdown mentions.
+		if start > 0 && text[start-1] == '\\' {
+			continue
+		}
+		b.WriteString(text[last:start])
+		full := text[start:end]
+		parts := mentionLinkRe.FindStringSubmatch(full)
+		if len(parts) != 2 {
+			b.WriteString(full)
+		} else {
+			label := strings.ReplaceAll(strings.ReplaceAll(parts[1], `\[`, `[`), `\]`, `]`)
+			if strings.HasPrefix(full, "[@") {
+				b.WriteByte('@')
+			}
+			b.WriteString(label)
+		}
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 // Deliver sends each message independently. A failed target is returned to

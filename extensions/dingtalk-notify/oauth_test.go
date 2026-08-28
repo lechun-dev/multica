@@ -66,6 +66,21 @@ func TestLoginOAuthServiceCarriesDesktopClientInVerifiedState(t *testing.T) {
 	}
 }
 
+func TestLoginOAuthServiceCarriesPostLoginPathInState(t *testing.T) {
+	svc := &LoginOAuthService{Provider: oauthStub{}, Now: func() time.Time { return time.Unix(100, 0) }}
+	next := "/acme/issues/MUL-67#comment-comment-1"
+	auth, err := svc.BeginForClientWithNext(context.Background(), "https://example.test/auth/dingtalk/callback", LoginClientWeb, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := LoginNextFromState(auth.State); got != next {
+		t.Fatalf("next=%q, want %q", got, next)
+	}
+	if got := LoginClientFromState(auth.State); got != LoginClientWeb {
+		t.Fatalf("client=%q, want %q", got, LoginClientWeb)
+	}
+}
+
 func TestLoginOAuthServiceCarriesDevelopmentDesktopClientInVerifiedState(t *testing.T) {
 	now := time.Unix(100, 0)
 	svc := &LoginOAuthService{Provider: oauthStub{}, Now: func() time.Time { return now }}

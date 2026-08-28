@@ -85,7 +85,7 @@ describe("proxy legacy workspace route redirects", () => {
 
   it("sends logged-out legacy URLs to login", () => {
     expect(redirectLocation("/usage?tab=billing")).toBe(
-      "https://app.multica.test/login?tab=billing",
+      "https://app.multica.test/login?next=%2Fusage%3Ftab%3Dbilling",
     );
   });
 

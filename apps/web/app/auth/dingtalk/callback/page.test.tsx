@@ -11,17 +11,19 @@ const {
   mockEnsureQueryData,
   mockLoginWithDingTalk,
   mockPush,
+  mockReplace,
   mockSearchParams,
 } = vi.hoisted(() => ({
   mockDingTalkLogin: vi.fn(),
   mockEnsureQueryData: vi.fn(),
   mockLoginWithDingTalk: vi.fn(),
   mockPush: vi.fn(),
+  mockReplace: vi.fn(),
   mockSearchParams: new URLSearchParams(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
   useSearchParams: () => mockSearchParams,
 }));
 
@@ -175,5 +177,19 @@ describe("DingTalkCallbackPage", () => {
         value: originalLocation,
       });
     }
+  });
+
+  it("returns a web login to the task and comment carried in state", async () => {
+    const next = "/acme/issues/MUL-67#comment-comment-1";
+    const encoded = btoa(next).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    mockSearchParams.set("state", `trusted-random.web.next.${encoded}`);
+    mockLoginWithDingTalk.mockResolvedValue({ onboarded_at: "2026-01-01" });
+    mockEnsureQueryData.mockResolvedValue([]);
+
+    render(<CallbackPage />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(next);
+    });
   });
 });

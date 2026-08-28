@@ -5,7 +5,9 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   dingtalkCallbackProtocol,
+  dingtalkNextFromState,
   isDesktopDingTalkState,
+  sanitizeNextUrl,
   useAuthStore,
 } from "@multica/core/auth";
 import { api } from "@multica/core/api";
@@ -56,7 +58,10 @@ function CallbackContent() {
       .then(async (user) => {
         const workspaces = await qc.ensureQueryData(workspaceListOptions());
         qc.setQueryData(workspaceKeys.list(), workspaces);
-        router.replace(resolvePostAuthDestination(workspaces, user.onboarded_at != null));
+        const next = sanitizeNextUrl(dingtalkNextFromState(state));
+        router.replace(
+          next ?? resolvePostAuthDestination(workspaces, user.onboarded_at != null),
+        );
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "DingTalk login failed");

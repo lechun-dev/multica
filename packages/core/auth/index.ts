@@ -3,6 +3,7 @@ export type { AuthStoreOptions, AuthState, AuthStatus } from "./store";
 export { sanitizeNextUrl } from "./utils";
 export {
   buildDingTalkLoginURL,
+  dingtalkNextFromState,
   dingtalkCallbackProtocol,
   isDesktopDingTalkState,
 } from "./dingtalk-oauth";

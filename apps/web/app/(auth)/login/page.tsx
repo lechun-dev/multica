@@ -253,6 +253,7 @@ function LoginPageContent() {
             api.getBaseUrl(),
             platform === "desktop" ? "desktop" : "web",
             window.location.origin,
+            nextUrl,
           );
         }}
         extra={

@@ -118,7 +118,8 @@ func (h *dingtalkLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			writeDingTalkError(w, http.StatusBadRequest, "unsupported DingTalk login client")
 			return
 		}
-		authz, err := h.service.BeginForClient(r.Context(), h.redirectURI, client)
+		next := sanitizeDingTalkNext(r.URL.Query().Get("next"))
+		authz, err := h.service.BeginForClientWithNext(r.Context(), h.redirectURI, client, next)
 		if err != nil {
 			slog.Warn("dingtalk login: start failed", "error", err)
 			writeDingTalkError(w, http.StatusBadGateway, "Unable to start DingTalk login")
@@ -130,6 +131,22 @@ func (h *dingtalkLoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// sanitizeDingTalkNext accepts only an in-app relative path. The value is
+// carried through OAuth state and is never allowed to become an external
+// redirect target.
+func sanitizeDingTalkNext(raw string) string {
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return ""
+	}
+	if strings.ContainsAny(raw, "\\\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f") {
+		return ""
+	}
+	if len(raw) > 4096 {
+		return ""
+	}
+	return raw
 }
 
 func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) {
