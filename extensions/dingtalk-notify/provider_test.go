@@ -67,8 +67,8 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 	if got["title"] != "🔔 张畅 在 Multica 中提到了你" {
 		t.Fatalf("title=%q", got["title"])
 	}
-	if got["text"] != "***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
-		t.Fatalf("text=%q", got["text"])
+	if got["markdown"] != "***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
+		t.Fatalf("markdown=%q", got["markdown"])
 	}
 	if got["singleTitle"] != "打开任务并回复" || got["singleURL"] != "https://example.test/task" {
 		t.Fatalf("button=%q url=%q", got["singleTitle"], got["singleURL"])

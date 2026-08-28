@@ -226,7 +226,7 @@ func mustActionCardParam(text string) (string, bool) {
 	}
 	b, err := json.Marshal(map[string]string{
 		"title":       title,
-		"text":        markdown,
+		"markdown":    markdown,
 		"singleTitle": "打开任务并回复",
 		"singleURL":   actionURL,
 	})
