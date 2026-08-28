@@ -81,7 +81,7 @@ func (s *Service) ListRoles(ctx context.Context, subject Subject) ([]RoleDefinit
 		return nil, ErrDisabled
 	}
 	// 2026-08-28 coder(lq): Project owners need to read the workspace role
-	// catalog when granting project access; only mutations require admin.
+	// catalog when granting project access; only the workspace owner may mutate it.
 	if _, err := s.requireWorkspaceMember(ctx, subject); err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (s *Service) CreateRole(ctx context.Context, subject Subject, role RoleDefi
 	if !ok {
 		return RoleDefinition{}, ErrDisabled
 	}
-	if err := s.requireRoleAdmin(ctx, subject); err != nil {
+	if err := s.requireRoleOwner(ctx, subject); err != nil {
 		return RoleDefinition{}, err
 	}
 	if role.IsSystem || !validCustomRoleKey(role.Key) {
@@ -110,7 +110,7 @@ func (s *Service) UpdateRole(ctx context.Context, subject Subject, key string, r
 	if !ok {
 		return RoleDefinition{}, ErrDisabled
 	}
-	if err := s.requireRoleAdmin(ctx, subject); err != nil {
+	if err := s.requireRoleOwner(ctx, subject); err != nil {
 		return RoleDefinition{}, err
 	}
 	if key == "" {
@@ -138,7 +138,7 @@ func (s *Service) DeleteRole(ctx context.Context, subject Subject, key string) e
 	if !ok {
 		return ErrDisabled
 	}
-	if err := s.requireRoleAdmin(ctx, subject); err != nil {
+	if err := s.requireRoleOwner(ctx, subject); err != nil {
 		return err
 	}
 	if key == "" {
@@ -151,12 +151,15 @@ func (s *Service) DeleteRole(ctx context.Context, subject Subject, key string) e
 	return rr.DeleteRoleDefinition(ctx, subject.WorkspaceID, key)
 }
 
-func (s *Service) requireRoleAdmin(ctx context.Context, subject Subject) error {
+func (s *Service) requireRoleOwner(ctx context.Context, subject Subject) error {
 	role, err := s.requireWorkspaceMember(ctx, subject)
 	if err != nil {
 		return err
 	}
-	if role != WorkspaceOwner && role != WorkspaceAdmin {
+	// 2026-08-28 coder(lq): Role definitions affect authorization across the
+	// whole workspace, so workspace admins and project owners may only consume
+	// the catalog; only the workspace owner may mutate it.
+	if role != WorkspaceOwner {
 		return ErrForbidden
 	}
 	return nil

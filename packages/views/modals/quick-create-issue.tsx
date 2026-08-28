@@ -84,6 +84,7 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { useT } from "../i18n";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
+import { NoProjectCollaborationHint } from "./no-project-collaboration-hint";
 
 type ActorSelection =
   | { type: "agent"; id: string }
@@ -707,6 +708,8 @@ export function AgentCreatePanel({
         {error && (
           <div className="px-5 pb-2 text-caption text-destructive">{error}</div>
         )}
+
+        <NoProjectCollaborationHint visible={projectId === null} />
 
         {/* Property toolbar — the project is visible by default; priority and
             due date live behind the overflow until exposed in settings or

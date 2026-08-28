@@ -21,19 +21,107 @@ func promoteProjectMemberWithExecutor(ctx context.Context, executor dbExecutor, 
 	return projectauth.New(newProjectAuthRepository(executor), true).PromoteMember(ctx, projectID, userID, role)
 }
 
+// 2026-08-28 coder(lq): Agents are permission aliases for their owning user.
+// Resolve through the project workspace in the same query so an agent from a
+// different workspace can never create a project grant accidentally.
+func resolveAgentOwnerWithExecutor(ctx context.Context, executor dbExecutor, projectID, agentID string) (string, error) {
+	if executor == nil || projectID == "" || agentID == "" {
+		return "", nil
+	}
+	projectUUID, err := util.ParseUUID(projectID)
+	if err != nil {
+		return "", nil
+	}
+	agentUUID, err := util.ParseUUID(agentID)
+	if err != nil {
+		return "", nil
+	}
+	var ownerID pgtype.UUID
+	err = executor.QueryRow(ctx, `
+		SELECT a.owner_id
+		FROM agent a
+		JOIN project p ON p.workspace_id = a.workspace_id
+		WHERE a.id = $1 AND p.id = $2 AND a.kind = 'user'`, agentUUID, projectUUID).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !ownerID.Valid {
+		return "", nil
+	}
+	return uuidToString(ownerID), nil
+}
+
+// 2026-08-28 coder(lq): Projectless issues still treat an Agent as its owning
+// user, but there is no project row to anchor the lookup. Keep the workspace
+// predicate explicit so an Agent from another workspace cannot grant access.
+func resolveAgentOwnerInWorkspaceWithExecutor(ctx context.Context, executor dbExecutor, workspaceID, agentID string) (string, error) {
+	if executor == nil || workspaceID == "" || agentID == "" {
+		return "", nil
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return "", nil
+	}
+	agentUUID, err := util.ParseUUID(agentID)
+	if err != nil {
+		return "", nil
+	}
+	var ownerID pgtype.UUID
+	err = executor.QueryRow(ctx, `
+		SELECT owner_id
+		FROM agent
+		WHERE id = $1 AND workspace_id = $2 AND kind = 'user'`, agentUUID, workspaceUUID).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !ownerID.Valid {
+		return "", nil
+	}
+	return uuidToString(ownerID), nil
+}
+
 func promoteMemberLeadWithExecutor(ctx context.Context, executor dbExecutor, projectID string, leadType pgtype.Text, leadID pgtype.UUID) error {
-	if !leadType.Valid || leadType.String != "member" || !leadID.Valid {
+	if !leadType.Valid || !leadID.Valid {
 		return nil
 	}
-	return promoteProjectMemberWithExecutor(ctx, executor, projectID, uuidToString(leadID), projectauth.ProjectOwner)
+	leadUserID := ""
+	switch leadType.String {
+	case "member":
+		leadUserID = uuidToString(leadID)
+	case "agent":
+		var err error
+		leadUserID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, uuidToString(leadID))
+		if err != nil {
+			return err
+		}
+	default:
+		return nil
+	}
+	return promoteProjectMemberWithExecutor(ctx, executor, projectID, leadUserID, projectauth.ProjectOwner)
 }
 
 func promoteMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, projectID, content string) error {
 	for _, mention := range util.ParseMentions(content) {
-		if mention.Type != "member" {
+		userID := ""
+		switch mention.Type {
+		case "member":
+			userID = mention.ID
+		case "agent":
+			var err error
+			userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+			if err != nil {
+				return err
+			}
+		default:
 			continue
 		}
-		if err := promoteProjectMemberWithExecutor(ctx, executor, projectID, mention.ID, projectauth.ProjectViewer); err != nil {
+		if err := promoteProjectMemberWithExecutor(ctx, executor, projectID, userID, projectauth.ProjectViewer); err != nil {
 			return err
 		}
 	}
@@ -45,8 +133,21 @@ func promoteIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, pr
 		return nil
 	}
 	projectIDString := uuidToString(projectID)
-	if assigneeType.Valid && assigneeType.String == "member" && assigneeID.Valid {
-		if err := promoteProjectMemberWithExecutor(ctx, executor, projectIDString, uuidToString(assigneeID), projectauth.ProjectMember); err != nil {
+	if assigneeType.Valid && assigneeID.Valid {
+		assigneeUserID := ""
+		switch assigneeType.String {
+		case "member":
+			assigneeUserID = uuidToString(assigneeID)
+		case "agent":
+			var err error
+			assigneeUserID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectIDString, uuidToString(assigneeID))
+			if err != nil {
+				return err
+			}
+		default:
+			assigneeUserID = ""
+		}
+		if err := promoteProjectMemberWithExecutor(ctx, executor, projectIDString, assigneeUserID, projectauth.ProjectMember); err != nil {
 			return err
 		}
 	}
@@ -107,8 +208,9 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 }
 
 // 2026-08-27 coder(lq): Persist a human comment and viewer inheritance in one
-// PostgreSQL transaction. Agent/squad mentions remain handled by the native
-// trigger flow; this adapter only promotes member mentions.
+// PostgreSQL transaction. Native comment triggers still handle agent/squad
+// execution; this adapter also maps Agent mentions to their owner's viewer
+// grant without creating a separate Agent permission record.
 func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.Issue, params db.CreateCommentParams) (db.CreateCommentRow, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || !issue.ProjectID.Valid {
 		return h.Queries.CreateComment(ctx, params)

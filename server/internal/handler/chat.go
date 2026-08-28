@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -182,26 +183,30 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
-	var (
-		visibleProjects map[pgtype.UUID]struct{}
-		err             error
-	)
+	status := r.URL.Query().Get("status")
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		visibleProjects, err = h.visibleProjectIDSet(r.Context(), workspaceID, userID)
+		// 2026-08-28 coder(lq): Use the project-auth adapter for the whole
+		// workspace. The upstream creator-only query would hide projectless
+		// sessions owned by an Agent's user and sessions visible to workspace
+		// owners or project members who did not create them.
+		resp, err := h.listChatSessionsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), status == "all")
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to resolve project access")
+			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
 			return
 		}
-	}
-	projectVisible := func(projectID pgtype.UUID) bool {
-		if !projectID.Valid || h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
-			return true
+		filtered := resp[:0]
+		for _, session := range resp {
+			if _, ok := allowed[session.AgentID]; ok {
+				filtered = append(filtered, session)
+			}
 		}
-		_, ok := visibleProjects[projectID]
-		return ok
+		if err := h.hydrateChatSessionChannelMetadata(r.Context(), filtered); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
+			return
+		}
+		writeJSON(w, http.StatusOK, filtered)
+		return
 	}
-
-	status := r.URL.Query().Get("status")
 
 	// Two call sites → two row types with identical shape. Collect into a
 	// common response slice via small per-branch loops.
@@ -217,7 +222,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		resp = make([]ChatSessionResponse, 0, len(rows))
 		for _, s := range rows {
-			if _, ok := allowed[uuidToString(s.AgentID)]; !ok || !projectVisible(s.ProjectID) {
+			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
@@ -247,7 +252,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		resp = make([]ChatSessionResponse, 0, len(rows))
 		for _, s := range rows {
-			if _, ok := allowed[uuidToString(s.AgentID)]; !ok || !projectVisible(s.ProjectID) {
+			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
@@ -296,6 +301,52 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		return db.ChatSession{}, false
 	}
 	return session, true
+}
+
+// 2026-08-28 coder(lq): Project viewers may open a Chat session that another
+// member created when the project overlay grants them access. Keep the
+// creator-only loader above for every mutating endpoint; this read-only loader
+// is deliberately selected only by public transcript/read surfaces.
+func (h *Handler) loadChatSessionForProjectViewer(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return h.loadChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	}
+	sessionUUID, ok := parseUUIDOrBadRequest(w, sessionID, "chat session id")
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	session, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+		ID:          sessionUUID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
+	visible, err := h.chatSessionVisibleByProjectPermission(r.Context(), session.ID, workspaceUUID, parseUUID(userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat access")
+		return db.ChatSession{}, false
+	}
+	if !visible {
+		writeError(w, http.StatusForbidden, "you do not have access to this chat session")
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
+func (h *Handler) chatSessionVisibleByProjectPermission(ctx context.Context, sessionID, workspaceID, userID pgtype.UUID) (bool, error) {
+	query := fmt.Sprintf(`SELECT EXISTS (
+		SELECT 1 FROM chat_session cs
+		WHERE cs.id = $1 AND cs.workspace_id = $2 AND %s
+	)`, chatProjectVisibilityPredicate("cs", "$2", "$3"))
+	var visible bool
+	err := h.DB.QueryRow(ctx, query, sessionID, workspaceID, userID).Scan(&visible)
+	return visible, err
 }
 
 // gateChatSessionForUser combines the session ownership check with the
@@ -349,6 +400,38 @@ func (h *Handler) gatePublicChatSessionForUser(w http.ResponseWriter, r *http.Re
 	return session, true
 }
 
+// gatePublicChatSessionForViewer applies the same public-message and
+// project-view checks as gatePublicChatSessionForUser, but permits a project
+// viewer (including an Agent owner) to read a session created by somebody else.
+// All write paths intentionally continue using gatePublicChatSessionForUser.
+func (h *Handler) gatePublicChatSessionForViewer(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	}
+	session, ok := h.loadChatSessionForProjectViewer(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return db.ChatSession{}, false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return db.ChatSession{}, false
+	}
+	if _, err := h.Queries.GetPublicChatSessionInWorkspace(r.Context(), db.GetPublicChatSessionInWorkspaceParams{
+		ID:          session.ID,
+		WorkspaceID: session.WorkspaceID,
+	}); err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
 func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -357,7 +440,7 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForViewer(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -1214,7 +1297,7 @@ func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForViewer(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -1247,7 +1330,7 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForViewer(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -1582,10 +1665,16 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
-	})
+	var rows []db.ListPendingChatTasksByCreatorRow
+	var err error
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		rows, err = h.listPendingChatTasksWithProjectPermission(r.Context(), parseUUID(workspaceID))
+	} else {
+		rows, err = h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
+			WorkspaceID: parseUUID(workspaceID),
+			CreatorID:   parseUUID(userID),
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
 		return
@@ -1660,10 +1749,16 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		// The generated EXISTS query predates project context on chat sessions.
 		// Resolve the same rows as the detailed endpoint, apply project View,
 		// then reduce to a boolean so hidden project work cannot light the FAB.
-		rows, err := h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
-			WorkspaceID: parseUUID(workspaceID),
-			CreatorID:   parseUUID(userID),
-		})
+		var rows []db.ListPendingChatTasksByCreatorRow
+		var err error
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			rows, err = h.listPendingChatTasksWithProjectPermission(r.Context(), parseUUID(workspaceID))
+		} else {
+			rows, err = h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
+				WorkspaceID: parseUUID(workspaceID),
+				CreatorID:   parseUUID(userID),
+			})
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check pending chat tasks")
 			return

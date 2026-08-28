@@ -1,12 +1,73 @@
 package handler
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
+
+// 2026-08-28 coder(lq): Exercise the projectless Agent-owner rule against
+// PostgreSQL so a placeholder or workspace-join regression cannot hide behind
+// string-only predicate tests.
+func TestProjectlessAgentOwnerVisibilityInDatabase(t *testing.T) {
+	ownerID := dbfx.User(t, "Projectless Agent Owner", "projectless-agent-owner@test.invalid")
+	otherID := dbfx.User(t, "Projectless Other", "projectless-other@test.invalid")
+	dbfx.Member(t, testWorkspaceID, ownerID, "member")
+	dbfx.Member(t, testWorkspaceID, otherID, "member")
+	agentID := dbfx.Agent(t, "Projectless Agent", "", testutil.Cols{"owner_id": ownerID, "kind": "user"})
+	issueID := dbfx.Issue(t, "Projectless Agent Issue", testutil.Cols{
+		"creator_type": "agent",
+		"creator_id":   agentID,
+	})
+
+	query := fmt.Sprintf(`SELECT EXISTS (
+		SELECT 1 FROM issue i
+		WHERE i.id = $1 AND i.workspace_id = $2 AND %s
+	)`, issueProjectVisibilityPredicate("i", "$2", "$3"))
+	assertVisible := func(t *testing.T, userID string, want bool) {
+		t.Helper()
+		var got bool
+		if err := testPool.QueryRow(context.Background(), query, issueID, testWorkspaceID, userID).Scan(&got); err != nil {
+			t.Fatalf("check projectless issue visibility: %v", err)
+		}
+		if got != want {
+			t.Fatalf("projectless issue visibility for %s = %v, want %v", userID, got, want)
+		}
+	}
+
+	assertVisible(t, ownerID, true)
+	assertVisible(t, otherID, false)
+}
+
+func TestProjectlessVisibilityPredicatesIncludeAgentOwners(t *testing.T) {
+	for name, predicate := range map[string]string{
+		"issue": issueProjectVisibilityPredicate("i", "$1", "$2"),
+		"chat":  chatProjectVisibilityPredicate("c", "$1", "$2"),
+		"task":  projectVisibleTaskPredicate("t", "$1", "$2"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(predicate, "%!") {
+				t.Fatalf("predicate formatting failed: %s", predicate)
+			}
+			if !strings.Contains(predicate, "owner_id") {
+				t.Fatalf("predicate does not resolve Agent owner: %s", predicate)
+			}
+			if name == "chat" {
+				for _, fragment := range []string{"project_id IS NULL", "creator_id", "agent a"} {
+					if !strings.Contains(predicate, fragment) {
+						t.Fatalf("chat predicate missing projectless access fragment %q: %s", fragment, predicate)
+					}
+				}
+			}
+		})
+	}
+}
 
 // 2026-08-27 coder(lq): Projectless issues are intentionally narrower than
 // project-bound issues: only the creator, member assignee, or workspace owner
@@ -49,12 +110,18 @@ func TestProjectlessIssuePermission(t *testing.T) {
 	agentIssue := issue
 	agentIssue.CreatorType = "agent"
 	if projectlessIssuePermissionAllowed(agentIssue, creatorID, projectauth.WorkspaceMember, projectauth.View) {
-		t.Fatal("agent creator must not match a member identity")
+		t.Fatal("agent creator must not match a member identity without owner resolution")
+	}
+	if !projectlessIssuePermissionAllowedWithOwners(agentIssue, creatorID, projectauth.WorkspaceMember, projectauth.View, creatorID, pgtype.UUID{}) {
+		t.Fatal("agent creator owner should be able to view")
 	}
 	agentAssignee := issue
 	agentAssignee.AssigneeType = pgtype.Text{String: "agent", Valid: true}
 	if projectlessIssuePermissionAllowed(agentAssignee, assigneeID, projectauth.WorkspaceMember, projectauth.View) {
-		t.Fatal("agent assignee must not match a member identity")
+		t.Fatal("agent assignee must not match a member identity without owner resolution")
+	}
+	if !projectlessIssuePermissionAllowedWithOwners(agentAssignee, assigneeID, projectauth.WorkspaceMember, projectauth.View, pgtype.UUID{}, assigneeID) {
+		t.Fatal("agent assignee owner should be able to view")
 	}
 }
 
@@ -62,6 +129,7 @@ func TestTaskVisibleByProjectPermission(t *testing.T) {
 	issueID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 	projectChatID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
 	projectlessChatID := pgtype.UUID{Bytes: [16]byte{5}, Valid: true}
+	unscopedTaskID := pgtype.UUID{Bytes: [16]byte{8}, Valid: true}
 	visibleIssues := map[pgtype.UUID]struct{}{issueID: {}}
 	visibleChats := map[pgtype.UUID]struct{}{projectChatID: {}}
 
@@ -75,12 +143,14 @@ func TestTaskVisibleByProjectPermission(t *testing.T) {
 		{name: "visible project chat task", task: db.AgentTaskQueue{ChatSessionID: projectChatID}, want: true},
 		{name: "hidden project chat task", task: db.AgentTaskQueue{ChatSessionID: pgtype.UUID{Bytes: [16]byte{4}, Valid: true}}, want: false},
 		{name: "projectless chat task", task: db.AgentTaskQueue{ChatSessionID: projectlessChatID}, want: false},
+		{name: "visible unscoped task", task: db.AgentTaskQueue{ID: unscopedTaskID}, want: true},
 		{name: "unscoped task", task: db.AgentTaskQueue{}, want: false},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := taskVisibleByProjectPermission(tc.task, visibleIssues, visibleChats); got != tc.want {
+			unscoped := map[pgtype.UUID]struct{}{unscopedTaskID: {}}
+			if got := taskVisibleByProjectPermission(tc.task, visibleIssues, visibleChats, unscoped); got != tc.want {
 				t.Fatalf("taskVisibleByProjectPermission() = %v, want %v", got, tc.want)
 			}
 		})
