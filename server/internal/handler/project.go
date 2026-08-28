@@ -44,6 +44,10 @@ type ProjectResponse struct {
 	// payload to keep parent metadata and child collections separate; clients
 	// that need the list call ListProjectResources directly.
 	ResourceCount int64 `json:"resource_count"`
+	// CurrentUserRole includes workspace-owner inheritance and explicit project
+	// grants. It stays null for legacy deployments with permissions disabled.
+	// 2026-08-28 coder(lq): Surface the caller's effective project role.
+	CurrentUserRole *string `json:"current_user_role"`
 }
 
 func projectToResponse(p db.Project) ProjectResponse {
@@ -138,12 +142,15 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list projects")
 		return
 	}
+	var currentUserID string
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		userID, ok := requireUserID(w, r)
 		if !ok {
 			return
 		}
-		visible, err := h.ProjectAuth.Scope(r.Context(), projectauth.Subject{UserID: userID, WorkspaceID: workspaceID})
+		currentUserID = userID
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visible, err := h.ProjectAuth.ScopeWithWorkspaceOwned(r.Context(), projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}, includeWorkspaceOwned)
 		if err != nil {
 			writeProjectAuthError(w, err)
 			return
@@ -159,6 +166,16 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		projects = filtered
+	}
+	// 2026-08-28 coder(lq): Resolve roles with one optional batch read so the
+	// additive metadata cannot turn a valid list request into an N+1 query.
+	roleMap := map[string]projectauth.ProjectRole{}
+	if currentUserID != "" {
+		if roles, roleErr := h.ProjectAuth.CurrentProjectRoles(r.Context(), workspaceID, currentUserID); roleErr == nil {
+			roleMap = roles
+		} else {
+			slog.Warn("failed to load current project roles", "workspace_id", workspaceID, "user_id", currentUserID, "error", roleErr)
+		}
 	}
 
 	// Batch-fetch issue stats and resource counts for all projects
@@ -191,6 +208,10 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			resp[i].DoneCount = s.DoneCount
 		}
 		resp[i].ResourceCount = resourceCountMap[resp[i].ID]
+		if role, ok := roleMap[resp[i].ID]; ok {
+			value := string(role)
+			resp[i].CurrentUserRole = &value
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
 }

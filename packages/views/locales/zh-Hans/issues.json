@@ -177,7 +177,8 @@
     "card_project": "项目",
     "card_labels": "标签",
     "card_child_progress": "子任务进度",
-    "show_sub_issues": "显示子任务"
+    "show_sub_issues": "显示子任务",
+    "show_workspace_owned_items": "显示空间权限任务"
   },
   "view": {
     "tooltip_board": "看板视图",

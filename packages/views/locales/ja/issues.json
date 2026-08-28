@@ -177,7 +177,8 @@
     "card_project": "プロジェクト",
     "card_labels": "ラベル",
     "card_child_progress": "サブタスクの進捗",
-    "show_sub_issues": "サブタスクを表示"
+    "show_sub_issues": "サブタスクを表示",
+    "show_workspace_owned_items": "ワークスペース所有のタスクを表示"
   },
   "view": {
     "tooltip_board": "ボード表示",

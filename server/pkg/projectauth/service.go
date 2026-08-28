@@ -18,6 +18,21 @@ func New(repo Repository, enabled bool) *Service {
 
 func (s *Service) Enabled() bool { return s != nil && s.enabled }
 
+// CurrentProjectRoles returns the caller's effective role for visible projects
+// when the persistence adapter supports the optional batch read. A missing
+// adapter is treated as an empty result so older adapters remain compatible.
+// 2026-08-28 coder(lq): Expose list metadata without coupling handlers to SQL.
+func (s *Service) CurrentProjectRoles(ctx context.Context, workspaceID, userID string) (map[string]ProjectRole, error) {
+	if s == nil || !s.enabled || s.repo == nil {
+		return map[string]ProjectRole{}, nil
+	}
+	reader, ok := s.repo.(ProjectRoleReader)
+	if !ok {
+		return map[string]ProjectRole{}, nil
+	}
+	return reader.CurrentProjectRoles(ctx, workspaceID, userID)
+}
+
 // 2026-08-24 coder(lq): Return nil only when the subject may perform the
 // permission; disabled deployments preserve legacy behavior during rollout.
 func (s *Service) Check(ctx context.Context, subject Subject, projectID string, permission Permission) error {
@@ -206,6 +221,12 @@ func (s *Service) Require(ctx context.Context, subject Subject, projectID string
 
 // 2026-08-24 coder(lq): Scope project lists to native admins or project_members.
 func (s *Service) Scope(ctx context.Context, subject Subject) ([]string, error) {
+	return s.ScopeWithWorkspaceOwned(ctx, subject, true)
+}
+
+// 2026-08-28 coder(lq): ScopeWithWorkspaceOwned omits workspace-owner-only
+// visibility when requested while preserving explicit project grants.
+func (s *Service) ScopeWithWorkspaceOwned(ctx context.Context, subject Subject, includeWorkspaceOwned bool) ([]string, error) {
 	if s == nil || !s.enabled {
 		return nil, nil
 	}
@@ -218,6 +239,9 @@ func (s *Service) Scope(ctx context.Context, subject Subject) ([]string, error) 
 	_, err := s.repo.WorkspaceRole(ctx, subject.WorkspaceID, subject.UserID)
 	if err != nil {
 		return nil, ErrNotWorkspaceMember
+	}
+	if scoped, ok := s.repo.(ScopedProjectRepository); ok {
+		return scoped.VisibleProjectIDsWithWorkspaceScope(ctx, subject.WorkspaceID, subject.UserID, includeWorkspaceOwned)
 	}
 	return s.repo.VisibleProjectIDs(ctx, subject.WorkspaceID, subject.UserID)
 }

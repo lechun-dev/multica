@@ -45,7 +45,7 @@ export const EMPTY_PROJECT_FILTERS: ProjectListFilters = {
 
 // Hideable table columns. Name + status are the always-visible core (status
 // is the project's defining lifecycle field), so they're not in this set.
-export type ProjectColumnKey = "priority" | "progress" | "lead" | "issues" | "created";
+export type ProjectColumnKey = "priority" | "progress" | "lead" | "role" | "issues" | "created";
 
 /** Issues count is opt-in; the rest show by default (matching the prior
  *  compact table). */
@@ -57,6 +57,8 @@ export interface ProjectViewState {
   sortDirection: ProjectSortDirection;
   hiddenColumns: ProjectColumnKey[];
   filters: ProjectListFilters;
+  /** 2026-08-28 coder(lq): Display preference for workspace-owned projects. */
+  showWorkspaceOwnedItems: boolean;
   setViewMode: (mode: ProjectViewMode) => void;
   toggleSort: (field: ProjectSortField) => void;
   setSortField: (field: ProjectSortField) => void;
@@ -64,6 +66,7 @@ export interface ProjectViewState {
   toggleColumn: (key: ProjectColumnKey) => void;
   toggleFilter: (key: keyof ProjectListFilters, value: string) => void;
   clearFilters: () => void;
+  setShowWorkspaceOwnedItems: (show: boolean) => void;
 }
 
 const DEFAULTS = {
@@ -72,12 +75,14 @@ const DEFAULTS = {
   sortDirection: PROJECT_SORT_DEFAULT_DIRECTION.created,
   hiddenColumns: PROJECT_DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_PROJECT_FILTERS,
+  showWorkspaceOwnedItems: true,
 };
 
 export const useProjectViewStore = create<ProjectViewState>()(
   persist(
     (set) => ({
       ...DEFAULTS,
+      setShowWorkspaceOwnedItems: (show) => set({ showWorkspaceOwnedItems: show }),
       setViewMode: (mode) => set({ viewMode: mode }),
       toggleSort: (field) =>
         set((state) =>
@@ -123,6 +128,7 @@ export const useProjectViewStore = create<ProjectViewState>()(
         sortDirection: state.sortDirection,
         hiddenColumns: state.hiddenColumns,
         filters: state.filters,
+        showWorkspaceOwnedItems: state.showWorkspaceOwnedItems,
       }),
       // Deep-merge filters so a payload persisted before a filter dimension
       // existed still gets that key's default (avoids `.length` on
@@ -134,6 +140,7 @@ export const useProjectViewStore = create<ProjectViewState>()(
           ...current,
           ...p,
           filters: { ...EMPTY_PROJECT_FILTERS, ...(p.filters ?? {}) },
+          showWorkspaceOwnedItems: p.showWorkspaceOwnedItems ?? DEFAULTS.showWorkspaceOwnedItems,
         };
       },
     }

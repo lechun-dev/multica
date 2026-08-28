@@ -128,6 +128,8 @@ export interface IssueTriggerPreview {
 }
 
 export interface ListIssuesParams {
+  /** 2026-08-28 coder(lq): Include workspace-owner-only issues in list results. */
+  include_workspace_owned?: boolean;
   limit?: number;
   offset?: number;
   workspace_id?: string;
@@ -219,6 +221,8 @@ export interface IssueActorRef {
 }
 
 export interface ListGroupedIssuesParams {
+  /** 2026-08-28 coder(lq): Include workspace-owner-only issues in grouped results. */
+  include_workspace_owned?: boolean;
   group_by: "assignee";
   limit?: number;
   offset?: number;
@@ -292,6 +296,8 @@ export type IssueTableScope =
   | { kind: "my"; relation: "assigned" | "created" | "involved" | "any" };
 
 export interface IssueTableFilters {
+  /** 2026-08-28 coder(lq): Include workspace-owner-only issues in table results. */
+  include_workspace_owned?: boolean;
   statuses?: IssueStatus[];
   priorities?: IssuePriority[];
   assignees?: IssueActorRef[];

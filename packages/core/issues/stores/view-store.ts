@@ -242,6 +242,8 @@ export interface IssueViewState {
   tableCollapsedParents: string[];
   tableHierarchy: boolean;
   tableCalculation: TableCalculation;
+  /** 2026-08-28 coder(lq): Display preference; does not change permissions. */
+  showWorkspaceOwnedItems: boolean;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -286,6 +288,7 @@ export interface IssueViewState {
   toggleTableParentCollapsed: (issueId: string) => void;
   toggleTableHierarchy: () => void;
   setTableCalculation: (calculation: TableCalculation) => void;
+  setShowWorkspaceOwnedItems: (show: boolean) => void;
 }
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
@@ -329,6 +332,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCollapsedParents: [],
   tableHierarchy: true,
   tableCalculation: "none",
+  showWorkspaceOwnedItems: true,
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setGanttZoom: (zoom) => set({ ganttZoom: zoom }),
@@ -540,6 +544,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   toggleTableHierarchy: () =>
     set((state) => ({ tableHierarchy: !state.tableHierarchy })),
   setTableCalculation: (tableCalculation) => set({ tableCalculation }),
+  setShowWorkspaceOwnedItems: (show) => set({ showWorkspaceOwnedItems: show }),
 });
 
 export const viewStorePersistOptions = (name: string) => ({
@@ -581,6 +586,7 @@ export const viewStorePersistOptions = (name: string) => ({
     tableCollapsedParents: state.tableCollapsedParents,
     tableHierarchy: state.tableHierarchy,
     tableCalculation: state.tableCalculation,
+    showWorkspaceOwnedItems: state.showWorkspaceOwnedItems,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
   // saved before a new toggle was introduced wins entirely and the new key is
@@ -624,6 +630,8 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   return {
     ...current,
     ...p,
+    showWorkspaceOwnedItems:
+      p.showWorkspaceOwnedItems ?? current.showWorkspaceOwnedItems,
     cardProperties: {
       ...current.cardProperties,
       ...(p.cardProperties ?? {}),

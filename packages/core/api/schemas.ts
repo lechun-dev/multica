@@ -1306,6 +1306,8 @@ const ProjectSchema = z.object({
   issue_count: z.number().default(0),
   done_count: z.number().default(0),
   resource_count: z.number().default(0),
+  // 2026-08-28 coder(lq): Keep role metadata optional for older self-hosted servers.
+  current_user_role: z.string().nullable().default(null),
 }).loose();
 
 const SearchProjectResultSchema = ProjectSchema.extend({

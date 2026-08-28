@@ -148,6 +148,7 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
   priority: 116,
   progress: 88,
   lead: 132,
+  role: 108,
   issues: 80,
   created: 104,
 };
@@ -158,13 +159,13 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
 const FIXED_TRACKS_WIDTH = 384 + 10 * 12;
 
 // Render/track order: checkbox, name, status (core, fixed 116px), priority,
-// progress, lead, issues, created, kebab. MUST be a literal string —
+// progress, lead, role, issues, created, kebab. MUST be a literal string —
 // Tailwind can't see interpolated `grid-cols-[...]` arbitrary values, so an
 // interpolated width silently drops the whole template and the grid
 // collapses to one column.
 const GRID_COLS =
   "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-role)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
@@ -183,6 +184,7 @@ function columnTrackVars(
     "--pjc-priority": width("priority"),
     "--pjc-progress": width("progress"),
     "--pjc-lead": width("lead"),
+    "--pjc-role": width("role"),
     "--pjc-issues": width("issues"),
     "--pjc-created": width("created"),
     "--pjc-minw": `${minWidth}px`,
@@ -381,6 +383,7 @@ function ProjectTableRow({
   rowHref: string;
   rowLink: ReturnType<typeof useRowLink>;
 }) {
+  const { t } = useT("projects");
   const formatRelativeDate = useFormatRelativeDate();
   const updateProject = useUpdateProject();
   const handleUpdate = useCallback(
@@ -444,6 +447,22 @@ function ProjectTableRow({
               </button>
             )}
           />
+        </ListGridCell>
+      ) : (
+        <ListGridCell className="hidden px-0 @2xl:flex" />
+      )}
+
+      {isColVisible("role") ? (
+        <ListGridCell className="hidden @2xl:flex">
+          {project.current_user_role === "owner"
+            ? t(($) => $.permissions.role_owner)
+            : project.current_user_role === "manager"
+              ? t(($) => $.permissions.role_manager)
+              : project.current_user_role === "member"
+                ? t(($) => $.permissions.role_member)
+                : project.current_user_role === "viewer"
+                  ? t(($) => $.permissions.role_viewer)
+                  : project.current_user_role || "—"}
         </ListGridCell>
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -545,6 +564,13 @@ function ProjectTableHeader({
       {isColVisible("lead") ? (
         <ListGridHeaderCell className="hidden @2xl:flex">
           {t(($) => $.table.lead)}
+        </ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
+      {isColVisible("role") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          {t(($) => $.table.my_role)}
         </ListGridHeaderCell>
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
@@ -683,7 +709,7 @@ const STATUS_VALUES: ProjectStatus[] = [
   "cancelled",
 ];
 const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "none"];
-const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
+const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "role", "issues", "created"];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
 
 function countActiveFilters(f: ProjectListFilters): number {
@@ -808,17 +834,31 @@ export function ProjectsPage() {
   const sortDirection = useProjectViewStore((s) => s.sortDirection);
   const hiddenColumns = useProjectViewStore((s) => s.hiddenColumns);
   const filters = useProjectViewStore((s) => s.filters);
+  const showWorkspaceOwnedItems = useProjectViewStore((s) => s.showWorkspaceOwnedItems);
   const toggleSort = useProjectViewStore((s) => s.toggleSort);
   const setSortField = useProjectViewStore((s) => s.setSortField);
   const setSortDirection = useProjectViewStore((s) => s.setSortDirection);
   const toggleColumn = useProjectViewStore((s) => s.toggleColumn);
   const toggleFilter = useProjectViewStore((s) => s.toggleFilter);
   const clearFilters = useProjectViewStore((s) => s.clearFilters);
+  const setShowWorkspaceOwnedItems = useProjectViewStore((s) => s.setShowWorkspaceOwnedItems);
   const isCompact = viewMode === "compact";
   const isColVisible = (key: ProjectColumnKey) => !hiddenColumns.includes(key);
 
-  const { data: projects = [], isLoading } = useQuery(projectListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const isWorkspaceOwner = useMemo(() => {
+    if (!currentUser) return false;
+    const me = members.find((m: MemberWithUser) => m.user_id === currentUser.id);
+    return me?.role === "owner";
+  }, [members, currentUser]);
+  // 2026-08-28 coder(lq): Keep the preference enabled until membership settles
+  // so the first request does not hide rows before identity is known.
+  const includeWorkspaceOwned = members.length === 0 || !isWorkspaceOwner
+    ? true
+    : showWorkspaceOwnedItems;
+  const { data: projects = [], isLoading } = useQuery(
+    projectListOptions(wsId, includeWorkspaceOwned),
+  );
   const { data: pins = [] } = useQuery({
     ...pinListOptions(wsId, currentUser?.id ?? ""),
     enabled: !!wsId && !!currentUser?.id,
@@ -927,6 +967,8 @@ export function ProjectsPage() {
         ? t(($) => $.table.progress)
         : k === "lead"
           ? t(($) => $.table.lead)
+          : k === "role"
+            ? t(($) => $.table.my_role)
           : k === "issues"
             ? t(($) => $.table.issues)
             : t(($) => $.table.created);
@@ -1167,6 +1209,20 @@ export function ProjectsPage() {
                             </label>
                           ))}
                         </div>
+                      </div>
+                    )}
+                    {isWorkspaceOwner && (
+                      <div className="border-t px-3 py-2.5">
+                        <label className="flex cursor-pointer items-center justify-between gap-3">
+                          <span className="text-caption font-medium text-muted-foreground">
+                            {t(($) => $.toolbar.show_workspace_owned_items)}
+                          </span>
+                          <Switch
+                            size="sm"
+                            checked={showWorkspaceOwnedItems}
+                            onCheckedChange={setShowWorkspaceOwnedItems}
+                          />
+                        </label>
                       </div>
                     )}
                   </PopoverContent>

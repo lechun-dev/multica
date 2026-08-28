@@ -99,6 +99,7 @@ export function useIssueSurfaceData({
   serverStatusBranches,
   serverGroupBranches,
   ganttShowCompleted,
+  includeWorkspaceOwned,
   statusFilters,
   hiddenStatusCategories,
   statusFilterPending,
@@ -126,6 +127,7 @@ export function useIssueSurfaceData({
   /** Gantt's "show completed" display toggle. The canvas hides done/cancelled
    *  rows without it, so the working scope has to honour it too. */
   ganttShowCompleted: boolean;
+  includeWorkspaceOwned: boolean;
   statusFilters: IssueStatus[];
   hiddenStatusCategories: IssueStatusCategory[];
   /** A custom status filter is waiting on the catalog — hold loading. */
@@ -147,7 +149,7 @@ export function useIssueSurfaceData({
   loadProjects: boolean;
 }): IssueSurfaceData {
   const ganttIssuesQuery = useQuery({
-    ...issueSurfaceGanttOptions(wsId, projectId ?? "", queryPlan),
+    ...issueSurfaceGanttOptions(wsId, projectId ?? "", queryPlan, includeWorkspaceOwned),
     enabled: usesGantt,
   });
   const workingFilterContext = useMemo(

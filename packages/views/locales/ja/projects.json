@@ -24,6 +24,7 @@
     "status": "ステータス",
     "progress": "進捗",
     "lead": "リード",
+    "my_role": "自分のロール",
     "created": "作成日",
     "issues": "タスク数"
   },
@@ -202,6 +203,7 @@
     "direction_asc": "昇順",
     "direction_desc": "降順",
     "section_columns": "列",
-    "view": "ビュー"
+    "view": "ビュー",
+    "show_workspace_owned_items": "ワークスペース所有のプロジェクトを表示"
   }
 }

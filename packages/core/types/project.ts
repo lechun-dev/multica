@@ -21,6 +21,8 @@ export interface Project {
   issue_count: number;
   done_count: number;
   resource_count: number;
+  /** Effective role for the signed-in user; omitted by legacy backends. */
+  current_user_role?: string | null;
 }
 
 export interface CreateProjectRequest {
@@ -54,6 +56,12 @@ export interface UpdateProjectRequest {
 export interface ListProjectsResponse {
   projects: Project[];
   total: number;
+}
+
+export interface ListProjectsParams {
+  status?: string;
+  /** 2026-08-28 coder(lq): Include workspace-owner-only projects in list results. */
+  include_workspace_owned?: boolean;
 }
 
 export type ProjectPermissionReportRole = string;

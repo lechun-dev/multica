@@ -1349,7 +1349,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userID)))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
 	}
 
 	if len(statusCategoriesFilter) > 0 {
@@ -1841,7 +1842,8 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userID)))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
 	}
 
 	statuses := splitCommaParam(r.URL.Query().Get("statuses"))

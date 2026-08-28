@@ -378,6 +378,7 @@ export const PROJECT_GANTT_MAX_ISSUES = 10_000;
 async function fetchProjectGanttIssues(
   projectId: string,
   assigneeTypes?: IssueAssigneeType[],
+  includeWorkspaceOwned = true,
 ) {
   const issues = [];
   let offset = 0;
@@ -386,6 +387,7 @@ async function fetchProjectGanttIssues(
       project_id: projectId,
       scheduled: true,
       ...(assigneeTypes?.length ? { assignee_types: assigneeTypes } : {}),
+      ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }),
       limit: PROJECT_GANTT_PAGE_LIMIT,
       offset,
     });
@@ -416,10 +418,13 @@ export function projectGanttIssuesOptions(
   // The page's assignee-type tab narrows the Gantt exactly like every
   // other mode — same scope, same single mapping upstream.
   assigneeTypes?: IssueAssigneeType[],
+  includeWorkspaceOwned = true,
 ) {
   return queryOptions({
-    queryKey: issueKeys.projectGantt(wsId, projectId, assigneeTypes),
-    queryFn: () => fetchProjectGanttIssues(projectId, assigneeTypes),
+    queryKey: includeWorkspaceOwned
+      ? issueKeys.projectGantt(wsId, projectId, assigneeTypes)
+      : [...issueKeys.projectGantt(wsId, projectId, assigneeTypes), false] as const,
+    queryFn: () => fetchProjectGanttIssues(projectId, assigneeTypes, includeWorkspaceOwned),
   });
 }
 
