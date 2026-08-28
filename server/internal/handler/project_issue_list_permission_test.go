@@ -94,11 +94,15 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
 	t.Cleanup(func() { testHandler.ProjectAuth = previous })
 
-	projectIDsFor := func(t *testing.T, userID string) map[string]bool {
+	projectIDsFor := func(t *testing.T, userID string, includeWorkspaceOwned ...bool) map[string]bool {
 		t.Helper()
 		recorder := httptest.NewRecorder()
+		path := "/api/projects?workspace_id=" + testWorkspaceID
+		if len(includeWorkspaceOwned) > 0 && !includeWorkspaceOwned[0] {
+			path += "&include_workspace_owned=false"
+		}
 		testHandler.ListProjects(recorder, newRequestAs(userID, http.MethodGet,
-			"/api/projects?workspace_id="+testWorkspaceID, nil))
+			path, nil))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("ListProjects: got %d: %s", recorder.Code, recorder.Body.String())
 		}
@@ -115,11 +119,15 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 		return result
 	}
 
-	issueIDsFor := func(t *testing.T, userID string) map[string]bool {
+	issueIDsFor := func(t *testing.T, userID string, includeWorkspaceOwned ...bool) map[string]bool {
 		t.Helper()
 		recorder := httptest.NewRecorder()
+		path := "/api/issues?workspace_id=" + testWorkspaceID + "&limit=100"
+		if len(includeWorkspaceOwned) > 0 && !includeWorkspaceOwned[0] {
+			path += "&include_workspace_owned=false"
+		}
 		testHandler.ListIssues(recorder, newRequestAs(userID, http.MethodGet,
-			"/api/issues?workspace_id="+testWorkspaceID+"&limit=100", nil))
+			path, nil))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("ListIssues: got %d: %s", recorder.Code, recorder.Body.String())
 		}
@@ -179,5 +187,35 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 		if !ownerProjects[projectIDs[i]] || !ownerIssues[issueIDs[i]] {
 			t.Fatalf("workspace owner missing project/issue %d", i)
 		}
+	}
+
+	ownerProjectsWithoutWorkspaceScope := projectIDsFor(t, testUserID, false)
+	if len(ownerProjectsWithoutWorkspaceScope) != 0 {
+		t.Fatalf("workspace owner projects with workspace scope hidden = %v; want none", ownerProjectsWithoutWorkspaceScope)
+	}
+	ownerIssuesWithoutWorkspaceScope := issueIDsFor(t, testUserID, false)
+	for _, issueID := range issueIDs {
+		if ownerIssuesWithoutWorkspaceScope[issueID] {
+			t.Fatalf("workspace owner can see ungranted project issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
+		}
+	}
+	for _, issueID := range projectlessIssueIDs {
+		if !ownerIssuesWithoutWorkspaceScope[issueID] {
+			t.Fatalf("workspace owner lost projectless issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
+		}
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_members (project_id, user_id, role)
+		VALUES ($1, $2, 'viewer')
+	`, projectIDs[0], testUserID); err != nil {
+		t.Fatalf("grant owner explicit visible project: %v", err)
+	}
+	ownerProjectsWithoutWorkspaceScope = projectIDsFor(t, testUserID, false)
+	if !ownerProjectsWithoutWorkspaceScope[projectIDs[0]] || ownerProjectsWithoutWorkspaceScope[projectIDs[1]] {
+		t.Fatalf("workspace owner projects with explicit grant and workspace scope hidden = %v; want only %s", ownerProjectsWithoutWorkspaceScope, projectIDs[0])
+	}
+	ownerIssuesWithoutWorkspaceScope = issueIDsFor(t, testUserID, false)
+	if !ownerIssuesWithoutWorkspaceScope[issueIDs[0]] || ownerIssuesWithoutWorkspaceScope[issueIDs[1]] {
+		t.Fatalf("workspace owner issues with explicit grant and workspace scope hidden = %v; want only %s", ownerIssuesWithoutWorkspaceScope, issueIDs[0])
 	}
 }

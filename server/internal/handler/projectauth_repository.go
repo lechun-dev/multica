@@ -37,6 +37,36 @@ func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, user
 	return projectauth.ProjectRole(role), err
 }
 
+// CurrentProjectRoles resolves workspace-owner inheritance and explicit
+// project grants in one query for the project list response.
+// 2026-08-28 coder(lq): Keep list role metadata in the Handler SQL adapter.
+func (r *projectAuthRepository) CurrentProjectRoles(ctx context.Context, workspaceID, userID string) (map[string]projectauth.ProjectRole, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT p.id::text,
+		       CASE WHEN m.role = 'owner' THEN 'owner' ELSE pm.role END AS role
+		FROM project p
+		LEFT JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id = $2
+		LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
+		WHERE p.workspace_id = $1
+		  AND (m.role = 'owner' OR pm.user_id IS NOT NULL)`, workspaceID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	roles := make(map[string]projectauth.ProjectRole)
+	for rows.Next() {
+		var projectID string
+		var role string
+		if err := rows.Scan(&projectID, &role); err != nil {
+			return nil, err
+		}
+		if role != "" {
+			roles[projectID] = projectauth.ProjectRole(role)
+		}
+	}
+	return roles, rows.Err()
+}
+
 func (r *projectAuthRepository) RolePermissions(ctx context.Context, workspaceID string, role projectauth.ProjectRole) ([]projectauth.Permission, bool, error) {
 	permissions, found, err := r.queryRolePermissions(ctx, workspaceID, role)
 	if err != nil {
@@ -239,19 +269,28 @@ func (r *projectAuthRepository) ProjectWorkspace(ctx context.Context, projectID 
 }
 
 func (r *projectAuthRepository) VisibleProjectIDs(ctx context.Context, workspaceID, userID string) ([]string, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT p.id::text
-		FROM project p
-		WHERE p.workspace_id = $1
-		  AND (EXISTS (
+	return r.VisibleProjectIDsWithWorkspaceScope(ctx, workspaceID, userID, true)
+}
+
+func (r *projectAuthRepository) VisibleProjectIDsWithWorkspaceScope(ctx context.Context, workspaceID, userID string, includeWorkspaceOwned bool) ([]string, error) {
+	ownerClause := "FALSE"
+	if includeWorkspaceOwned {
+		ownerClause = `EXISTS (
 				SELECT 1 FROM member m
 				WHERE m.workspace_id = p.workspace_id AND m.user_id = $2
 				AND m.role = 'owner'
-			) OR EXISTS (
+			)`
+	}
+	query := fmt.Sprintf(`
+		SELECT p.id::text
+		FROM project p
+		WHERE p.workspace_id = $1
+		  AND (%s OR EXISTS (
 				SELECT 1 FROM project_members pm
 				WHERE pm.project_id = p.id AND pm.user_id = $2
 			))
-		ORDER BY p.created_at DESC`, workspaceID, userID)
+		ORDER BY p.created_at DESC`, ownerClause)
+	rows, err := r.db.Query(ctx, query, workspaceID, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -137,6 +137,10 @@ func (h *Handler) getWorkspaceAgentActivityWithProjectPermission(ctx context.Con
 }
 
 func projectVisibleTaskPredicate(taskAlias, workspaceRef, userRef string) string {
+	return projectVisibleTaskPredicateWithWorkspaceScope(taskAlias, workspaceRef, userRef, true)
+}
+
+func projectVisibleTaskPredicateWithWorkspaceScope(taskAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
 	return fmt.Sprintf(`(
 		(%s.issue_id IS NOT NULL AND EXISTS (
 		SELECT 1 FROM issue acl_issue
@@ -157,9 +161,9 @@ func projectVisibleTaskPredicate(taskAlias, workspaceRef, userRef string) string
 			OR EXISTS (SELECT 1 FROM agent a WHERE a.id = %s.agent_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid)
 		))
 	)`, taskAlias, taskAlias, workspaceRef,
-		issueProjectVisibilityPredicate("acl_issue", workspaceRef, userRef),
+		issueProjectVisibilityPredicateWithWorkspaceScope("acl_issue", workspaceRef, userRef, includeWorkspaceOwned),
 		taskAlias, taskAlias, taskAlias, workspaceRef,
-		chatProjectVisibilityPredicate("acl_chat", workspaceRef, userRef),
+		chatProjectVisibilityPredicateWithWorkspaceScope("acl_chat", workspaceRef, userRef, includeWorkspaceOwned),
 		taskAlias, taskAlias, workspaceRef, userRef,
 		taskAlias, userRef, taskAlias, userRef,
 		taskAlias, workspaceRef, userRef)
@@ -169,9 +173,17 @@ func projectVisibleTaskPredicate(taskAlias, workspaceRef, userRef string) string
 // Projectless Chats remain visible to their creator, the owning user of the
 // bound Agent, or the workspace owner.
 func chatProjectVisibilityPredicate(chatAlias, workspaceRef, userRef string) string {
+	return chatProjectVisibilityPredicateWithWorkspaceScope(chatAlias, workspaceRef, userRef, true)
+}
+
+func chatProjectVisibilityPredicateWithWorkspaceScope(chatAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
+	ownerProjectClause := "FALSE"
+	if includeWorkspaceOwned {
+		ownerProjectClause = fmt.Sprintf("EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')", workspaceRef, userRef)
+	}
 	return fmt.Sprintf(`(
 		(%s.project_id IS NOT NULL AND (
-			EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')
+			%s
 			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
 		))
 		OR (%s.project_id IS NULL AND (
@@ -179,7 +191,7 @@ func chatProjectVisibilityPredicate(chatAlias, workspaceRef, userRef string) str
 			OR %s.creator_id = %s::uuid
 			OR EXISTS (SELECT 1 FROM agent a WHERE a.id = %s.agent_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid)
 		))
-	)`, chatAlias, workspaceRef, userRef, chatAlias, userRef,
+	)`, chatAlias, ownerProjectClause, chatAlias, userRef,
 		chatAlias, workspaceRef, userRef, chatAlias, userRef,
 		chatAlias, workspaceRef, userRef)
 }
@@ -289,12 +301,20 @@ func taskVisibleByProjectPermission(task db.AgentTaskQueue, visibleIssueIDs, vis
 }
 
 func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) string {
+	return issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef, true)
+}
+
+func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
 	// 2026-08-27 coder(lq): Project-bound tasks inherit visibility from their
 	// project. Projectless tasks remain visible only to their creator/assignee,
 	// the owning user of an Agent identity, or the workspace owner.
+	ownerProjectClause := "FALSE"
+	if includeWorkspaceOwned {
+		ownerProjectClause = fmt.Sprintf("EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')", workspaceRef, userRef)
+	}
 	return fmt.Sprintf(`(
 		(%s.project_id IS NOT NULL AND (
-			EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')
+			%s
 			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
 		))
 		OR (%s.project_id IS NULL AND (
@@ -308,7 +328,7 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
 			))
 		))
-	)`, issueAlias, workspaceRef, userRef, issueAlias, userRef,
+	)`, issueAlias, ownerProjectClause, issueAlias, userRef,
 		issueAlias, workspaceRef, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, userRef,

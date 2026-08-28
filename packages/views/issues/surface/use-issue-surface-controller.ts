@@ -31,6 +31,8 @@ import {
 } from "@multica/core/issues/surface/scope";
 import type { IssueDateFilter, SortField } from "@multica/core/issues/stores/view-store";
 import { propertyListOptions } from "@multica/core/properties";
+import { memberListOptions } from "@multica/core/workspace/queries";
+import { useAuthStore } from "@multica/core/auth";
 import { propertyIdFromViewKey } from "@multica/core/issues/stores/view-store";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import type { IssueFilters } from "../utils/filter";
@@ -205,6 +207,19 @@ export function useIssueSurfaceController({
   search = "",
 }: UseIssueSurfaceControllerInput): IssueSurfaceController {
   const wsId = useWorkspaceId();
+  const currentUser = useAuthStore((s) => s.user);
+  const showWorkspaceOwnedItems = useViewStore((s) => s.showWorkspaceOwnedItems);
+  const { data: workspaceMembers = EMPTY_LIST } = useQuery(memberListOptions(wsId));
+  const isWorkspaceOwner = useMemo(() => {
+    if (!currentUser) return false;
+    const me = workspaceMembers.find((member) => member.user_id === currentUser.id);
+    return me?.role === "owner";
+  }, [currentUser, workspaceMembers]);
+  // 2026-08-28 coder(lq): Keep the inclusive request while membership loads.
+  const includeWorkspaceOwned =
+    workspaceMembers.length === 0 || !isWorkspaceOwner
+      ? true
+      : showWorkspaceOwnedItems;
   const queryPlan = useMemo<IssueSurfaceQueryPlan>(
     () => buildIssueSurfaceQueryPlan(scope),
     [scope],
@@ -492,6 +507,7 @@ export function useIssueSurfaceController({
         ...(agentRunningFilter
           ? { working_issue_ids: [...workingIssueIDs] }
           : {}),
+        ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }),
         include_sub_issues: showSubIssues,
       },
       ...(debouncedActiveSearch ? { search: debouncedActiveSearch } : {}),
@@ -507,6 +523,7 @@ export function useIssueSurfaceController({
     dateParams,
     debouncedActiveSearch,
     effectivePropertyFilters,
+    includeWorkspaceOwned,
     includeNoAssignee,
     labelFilters,
     priorityFilters,
@@ -697,6 +714,7 @@ export function useIssueSurfaceController({
         effectivePropertyFilters,
         agentRunningFilter,
         showSubIssues,
+        includeWorkspaceOwned,
         dateParams,
         debouncedActiveSearch,
       ]),
@@ -707,6 +725,7 @@ export function useIssueSurfaceController({
       dateParams,
       debouncedActiveSearch,
       effectivePropertyFilters,
+      includeWorkspaceOwned,
       includeNoAssignee,
       labelFilters,
       priorityFilters,
@@ -730,6 +749,7 @@ export function useIssueSurfaceController({
     serverStatusBranches,
     serverGroupBranches,
     ganttShowCompleted,
+    includeWorkspaceOwned,
     statusFilters,
     hiddenStatusCategories,
     statusFilterPending,

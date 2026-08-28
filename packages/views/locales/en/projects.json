@@ -25,6 +25,7 @@
     "status": "Status",
     "progress": "Progress",
     "lead": "Lead",
+    "my_role": "My role",
     "created": "Created",
     "issues": "Issues"
   },
@@ -204,6 +205,7 @@
     "direction_asc": "Ascending",
     "direction_desc": "Descending",
     "section_columns": "Columns",
-    "view": "View"
+    "view": "View",
+    "show_workspace_owned_items": "Show workspace-owned projects"
   }
 }

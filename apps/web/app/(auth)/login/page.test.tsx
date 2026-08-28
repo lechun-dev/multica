@@ -96,6 +96,10 @@ describe("LoginPage", () => {
     mockListMyInvitations.mockResolvedValue([]);
   });
 
+  // Shared LoginPage behavior is canonical in
+  // packages/views/auth/login-page.test.tsx. This wrapper suite only owns web
+  // platform handoff and redirect behavior.
+
   it("renders DingTalk login without exposing email login controls", () => {
     render(<LoginPage />, { wrapper: createWrapper() });
 

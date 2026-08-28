@@ -12,10 +12,12 @@ export function issueSurfaceGanttOptions(
   wsId: string,
   projectId: string,
   plan: IssueSurfaceQueryPlan,
+  includeWorkspaceOwned = true,
 ) {
   return projectGanttIssuesOptions(
     wsId,
     projectId,
     plan.queryFilter.assignee_types,
+    includeWorkspaceOwned,
   );
 }

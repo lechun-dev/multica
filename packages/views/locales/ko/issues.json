@@ -177,7 +177,8 @@
     "card_project": "프로젝트",
     "card_labels": "라벨",
     "card_child_progress": "하위 태스크 진행률",
-    "show_sub_issues": "하위 태스크 표시"
+    "show_sub_issues": "하위 태스크 표시",
+    "show_workspace_owned_items": "워크스페이스 소유 작업 표시"
   },
   "view": {
     "tooltip_board": "보드 보기",
