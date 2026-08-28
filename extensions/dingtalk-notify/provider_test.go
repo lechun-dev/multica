@@ -64,10 +64,10 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 	if err := json.Unmarshal([]byte(param), &got); err != nil {
 		t.Fatalf("decode action card payload: %v", err)
 	}
-	if got["title"] != "🔔 张畅 在 Multica 中提到了你" {
+	if got["title"] != "Multica 通知" {
 		t.Fatalf("title=%q", got["title"])
 	}
-	if got["text"] != "***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
+	if got["text"] != "🔔 **张畅 在 Multica 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
 		t.Fatalf("text=%q", got["text"])
 	}
 	if _, ok := got["markdown"]; ok {

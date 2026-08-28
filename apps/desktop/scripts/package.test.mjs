@@ -14,6 +14,21 @@ import {
   stripLeadingSeparator,
   updateChannelForTarget,
 } from "./package.mjs";
+import { stripForwardedSeparator } from "./package-lechun.mjs";
+
+describe("stripForwardedSeparator (Lechun wrapper)", () => {
+  it("removes pnpm's leading separator before config injection", () => {
+    expect(stripForwardedSeparator(["--", "--linux", "--x64", "--publish", "never"])).toEqual([
+      "--linux", "--x64", "--publish", "never",
+    ]);
+  });
+
+  it("does not remove a separator that is not leading", () => {
+    expect(stripForwardedSeparator(["--config", "electron-builder.lechun.yml", "--"])).toEqual([
+      "--config", "electron-builder.lechun.yml", "--",
+    ]);
+  });
+});
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
