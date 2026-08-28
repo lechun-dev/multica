@@ -98,6 +98,7 @@ import {
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
 import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
+import { NoProjectCollaborationHint } from "./no-project-collaboration-hint";
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -975,6 +976,8 @@ export function ManualCreatePanel({
             {/* Pre-trigger preview — a passive caption above the toolbar; reveals
                 when an agent assignee will pick the issue up. */}
             <CreateRunHint assigneeType={assigneeType} assigneeId={assigneeId} projectId={projectId} status={status} />
+
+            <NoProjectCollaborationHint visible={projectId == null} />
 
             {/* Property toolbar — each field renders per the Settings → Issue
                 selection (see showField above). */}
