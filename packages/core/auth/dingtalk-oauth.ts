@@ -37,7 +37,8 @@ export function isDesktopDingTalkState(state: string): boolean {
 function dingtalkStateClient(
   state: string,
 ): DingTalkOAuthClient {
-  const withoutNext = state.split(".next.", 1)[0];
+  // 2026-08-28 coder(lq): Keep strict TypeScript builds safe for malformed OAuth state input.
+  const withoutNext = state.split(".next.", 1)[0] ?? state;
   if (withoutNext.endsWith(".desktop-dev")) return "desktop-dev";
   if (withoutNext.endsWith(".desktop-lechun")) return "desktop-lechun";
   if (withoutNext.endsWith(".desktop")) return "desktop";
