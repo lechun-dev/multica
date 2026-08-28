@@ -60,6 +60,10 @@ import {
   NotificationGate,
   parseNativeNotificationPayload,
 } from "./notification-gate";
+import {
+  resolveDesktopIdentity,
+  resolveDesktopUpdateChannel,
+} from "../shared/desktop-identity";
 
 // Guards against registering the will-download handler more than once on the
 // same session. window.webContents.session is shared, and createWindow() can
@@ -117,7 +121,18 @@ if (process.platform !== "win32") {
   process.env.PATH = `${fallbackPaths.join(":")}:${process.env.PATH ?? ""}`;
 }
 
-const PROTOCOL = "multica";
+const viteBuildEnv = import.meta.env as ImportMetaEnv & {
+  readonly VITE_MULTICA_DESKTOP_VARIANT?: string;
+};
+const DESKTOP_IDENTITY = resolveDesktopIdentity({
+  isDev: is.dev,
+  variant: viteBuildEnv.VITE_MULTICA_DESKTOP_VARIANT,
+});
+
+// Keep each Electron build isolated from the others. The protocol is also
+// used by the OAuth callback, so registration and deep-link handling must
+// always derive from the same identity.
+const PROTOCOL = DESKTOP_IDENTITY.protocol;
 const devLog = is.dev ? createBestEffortDevLog() : undefined;
 
 // Where the main process parks a freeze/crash breadcrumb until the next
@@ -547,22 +562,33 @@ function createIssueWindow(context: IssueWindowContext): void {
 // appended to the app name + userData path, so each worktree gets its own
 // lock file. Default (no env var) keeps behavior unchanged — the common
 // single-worktree case still lands at "Multica Canary".
-const DEV_APP_NAME = process.env.DESKTOP_APP_SUFFIX
-  ? `Multica Canary ${process.env.DESKTOP_APP_SUFFIX}`
-  : "Multica Canary";
+const DEV_APP_SUFFIX = process.env.DESKTOP_APP_SUFFIX?.trim();
+const DESKTOP_APP_NAME = is.dev
+  ? DEV_APP_SUFFIX
+    ? `${DESKTOP_IDENTITY.productName} ${DEV_APP_SUFFIX}`
+    : DESKTOP_IDENTITY.productName
+  : DESKTOP_IDENTITY.productName;
+const USER_DATA_DIRECTORY_NAME = is.dev
+  ? DESKTOP_APP_NAME
+  : DESKTOP_IDENTITY.userDataDirectoryName;
 
-if (is.dev) {
-  app.setName(DEV_APP_NAME);
-  app.setPath("userData", join(app.getPath("appData"), DEV_APP_NAME));
-} else {
-  // Pin the production app name in code. Electron's Linux WM_CLASS is set
-  // from app.getName() when the first BrowserWindow is realized; the
-  // packaged ASAR's package.json `productName` already steers app.getName()
-  // to "Multica", but anchoring it here makes WM_CLASS ↔ StartupWMClass
-  // (declared in electron-builder.yml) survive a regression in
-  // productName / the build pipeline. Must run before requestSingleInstanceLock().
-  app.setName("Multica");
-}
+app.setName(DESKTOP_APP_NAME);
+app.setPath(
+  "userData",
+  join(app.getPath("appData"), USER_DATA_DIRECTORY_NAME),
+);
+
+/*
+ * The userData path is intentionally derived from the packaged identity, not
+ * from the runtime API URL. This prevents an official install and the Lechun
+ * install from sharing tokens, cookies, databases, updater preferences, or
+ * the single-instance lock, even when both point at the same server.
+ */
+const DESKTOP_UPDATE_CHANNEL = resolveDesktopUpdateChannel({
+  variant: DESKTOP_IDENTITY.variant,
+  platform: process.platform,
+  arch: process.arch,
+});
 
 // --- Protocol registration -----------------------------------------------
 
@@ -627,9 +653,7 @@ if (!gotTheLock) {
       },
     });
 
-    electronApp.setAppUserModelId(
-      is.dev ? "ai.multica.desktop.dev" : "ai.multica.desktop",
-    );
+    electronApp.setAppUserModelId(DESKTOP_IDENTITY.appId);
 
     // macOS: replace the default Electron dock icon with the bundled logo
     // so the Canary dev build is visually distinct from a stock Electron
@@ -833,6 +857,7 @@ if (!gotTheLock) {
       serverUrl: runtimeConfigResult.ok
         ? runtimeConfigResult.config.apiUrl
         : "",
+      channel: DESKTOP_UPDATE_CHANNEL ?? undefined,
     });
     setupDaemonManager(() => mainWindow);
     setupLocalDirectory(() => mainWindow);

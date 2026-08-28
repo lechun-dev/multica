@@ -3,7 +3,11 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { isDesktopDingTalkState, useAuthStore } from "@multica/core/auth";
+import {
+  dingtalkCallbackProtocol,
+  isDesktopDingTalkState,
+  useAuthStore,
+} from "@multica/core/auth";
 import { api } from "@multica/core/api";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
 import { paths, resolvePostAuthDestination } from "@multica/core/paths";
@@ -35,11 +39,12 @@ function CallbackContent() {
     }
 
     if (isDesktopDingTalkState(state)) {
+      const protocol = dingtalkCallbackProtocol(state);
       api
         .dingTalkLogin(code, state)
         .then(({ token }) => {
           setDesktopToken(token);
-          window.location.href = `multica://auth/callback?token=${encodeURIComponent(token)}`;
+          window.location.href = `${protocol}://auth/callback?token=${encodeURIComponent(token)}`;
         })
         .catch((err) => {
           setError(err instanceof Error ? err.message : "DingTalk login failed");
@@ -59,6 +64,8 @@ function CallbackContent() {
   }, [loginWithDingTalk, qc, router, searchParams]);
 
   if (desktopToken) {
+    const state = searchParams.get("state") || "";
+    const protocol = dingtalkCallbackProtocol(state);
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Card className="w-full max-w-sm">
@@ -72,7 +79,7 @@ function CallbackContent() {
             <Button
               variant="outline"
               onClick={() => {
-                window.location.href = `multica://auth/callback?token=${encodeURIComponent(desktopToken)}`;
+                window.location.href = `${protocol}://auth/callback?token=${encodeURIComponent(desktopToken)}`;
               }}
             >
               {t(($) => $.web.desktop_handoff.open_button)}

@@ -37,6 +37,12 @@ func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, user
 	return projectauth.ProjectRole(role), err
 }
 
+func (r *projectAuthRepository) IssuePermission(ctx context.Context, issueID, userID string, permission projectauth.Permission) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM issue_permissions WHERE issue_id=$1 AND user_id=$2 AND permission=$3)`, issueID, userID, string(permission)).Scan(&exists)
+	return exists, err
+}
+
 // CurrentProjectRoles resolves workspace-owner inheritance and explicit
 // project grants in one query for the project list response.
 // 2026-08-28 coder(lq): Keep list role metadata in the Handler SQL adapter.

@@ -114,12 +114,27 @@ const PRIVATE_DEPLOYMENT_UPDATE_MESSAGE =
 
 export function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null,
-  _options: { serverUrl?: string } = {},
+  options: {
+    serverUrl?: string;
+    /** Kept for backwards compatibility with older callers. */
+    enabled?: boolean;
+    /** Optional per-build channel, used by the Lechun distribution. */
+    channel?: string;
+  } = {},
 ): void {
   // 2026-08-27 coder(lq): Desktop releases are published to the configured
   // public GitHub repository, so private deployments can safely use the same
   // updater without embedding credentials or falling back to upstream.
-  const updatesAvailable = true;
+  const updatesAvailable = options.enabled !== false;
+  if (options.channel) {
+    // Setting a custom channel also enables allowDowngrade in
+    // electron-updater. That side effect is useful when switching between
+    // prerelease channels, but not for the official/Lechun distribution
+    // split: a newer package must never be replaced by an older one merely
+    // because the channel changed.
+    autoUpdater.channel = options.channel;
+    autoUpdater.allowDowngrade = false;
+  }
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
   let automaticUpdatesEnabled =
     updatesAvailable && DEFAULT_UPDATER_PREFERENCES.automaticUpdates;

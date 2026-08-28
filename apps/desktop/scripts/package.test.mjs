@@ -12,6 +12,7 @@ import {
   parsePackageArgs,
   resolveBuildMatrix,
   stripLeadingSeparator,
+  updateChannelForTarget,
 } from "./package.mjs";
 
 describe("normalizeGitVersion", () => {
@@ -267,6 +268,50 @@ describe("resolveBuildMatrix", () => {
 });
 
 describe("builderArgsForTarget", () => {
+  it("maps each Lechun architecture to a non-official feed", () => {
+    expect(updateChannelForTarget({ platform: "mac", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+    expect(updateChannelForTarget({ platform: "mac", arch: "x64" }, "lechun")).toBe(
+      "latest-lechun-x64",
+    );
+    expect(updateChannelForTarget({ platform: "win", arch: "x64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+    expect(updateChannelForTarget({ platform: "win", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun-arm64",
+    );
+    expect(updateChannelForTarget({ platform: "linux", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+  });
+
+  it("uses a separate Lechun update namespace", () => {
+    expect(
+      builderArgsForTarget(
+        { platform: "win", arch: "x64" },
+        {
+          allPlatforms: false,
+          sharedArgs: ["--publish", "always"],
+          platformTargets: { mac: [], win: ["nsis"], linux: [] },
+          requestedPlatforms: ["win"],
+          requestedArchs: ["x64"],
+        },
+        "1.2.3",
+        { hostPlatform: "win32", useScopedOutputDir: true, variant: "lechun" },
+      ),
+    ).toEqual([
+      "-c.extraMetadata.version=1.2.3",
+      "--win",
+      "nsis",
+      "--x64",
+      "--publish",
+      "always",
+      "-c.directories.output=dist/win-x64",
+      "-c.publish.channel=latest-lechun",
+    ]);
+  });
+
   it("adds scoped output directories for multi-target builds", () => {
     expect(
       builderArgsForTarget(
@@ -475,5 +520,20 @@ describe("electron-builder.yml packaging config", () => {
     const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
+  });
+
+  it("keeps the Lechun packaging overrides in a separate config", () => {
+    const lechunConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun.yml"),
+      resolve(process.cwd(), "apps/desktop/electron-builder.lechun.yml"),
+    ].find((candidate) => existsSync(candidate));
+    expect(lechunConfigPath, "Lechun electron-builder config not found").toBeTruthy();
+    if (!lechunConfigPath) return;
+    const config = readFileSync(lechunConfigPath, "utf-8");
+    expect(config).toContain("extends: electron-builder.yml");
+    expect(config).toContain("appId: ai.multica.desktop.lechun");
+    expect(config).toContain("productName: Multica Lechun");
+    expect(config).toContain("channel: latest-lechun");
+    expect(config).toContain("multica-lechun");
   });
 });

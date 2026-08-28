@@ -133,7 +133,12 @@ The host must authenticate the request and inject an
 `DingTalkOAuthProvider` implements the existing OAuth application flow, and
 `DingTalkProvider` implements P2P and Bot group sends with token caching,
 401 refresh, 429/5xx/timeout classification, and the documented DingTalk
-Open API payloads.
+Open API payloads. Notifications with a task reply URL use the single-button
+`sampleActionCard` message type (`title`, `text`, `singleTitle`, and
+`singleURL`). Messages without a reply URL continue to use `sampleMarkdown`.
+If an older robot explicitly rejects `sampleActionCard`, the provider retries
+that message as `sampleMarkdown`; other failures retain their normal retry
+classification.
 
 `migrations/001_dingtalk_notify.sql` creates only module tables. The ready
 queue index is in `002_dingtalk_notify_outbox_ready_idx.sql` because the

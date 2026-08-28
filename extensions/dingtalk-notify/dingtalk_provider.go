@@ -15,6 +15,11 @@ import (
 
 const dingtalkAPIBase = "https://api.dingtalk.com"
 
+const (
+	msgKeyMarkdown   = "sampleMarkdown"
+	msgKeyActionCard = "sampleActionCard"
+)
+
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
@@ -132,7 +137,13 @@ func (p *DingTalkProvider) Send(ctx context.Context, message Message) error {
 	if message.ChannelType == "group" && message.ChannelID == "" {
 		return errors.New("DingTalk group message channel is required")
 	}
-	body := map[string]any{"robotCode": robotCode, "msgKey": "sampleMarkdown", "msgParam": mustMarkdownParam(message.Text)}
+	msgKey := msgKeyMarkdown
+	msgParam := mustMarkdownParam(message.Text)
+	if cardParam, ok := mustActionCardParam(message.Text); ok {
+		msgKey = msgKeyActionCard
+		msgParam = cardParam
+	}
+	body := map[string]any{"robotCode": robotCode, "msgKey": msgKey, "msgParam": msgParam}
 	path := "/v1.0/robot/oToMessages/batchSend"
 	if message.ChannelType == "p2p" {
 		body["userIds"] = []string{message.DingUserID}
@@ -140,6 +151,22 @@ func (p *DingTalkProvider) Send(ctx context.Context, message Message) error {
 		path = "/v1.0/robot/groupMessages/send"
 		body["openConversationId"] = message.ChannelID
 	}
+	if err := p.sendWithRefresh(ctx, path, body); err != nil {
+		// Action cards are supported by the current DingTalk robot API, but some
+		// older robot installations only accept sampleMarkdown. Fall back only
+		// for an explicit unsupported-message-type response so transient failures
+		// are still retried by the outbox worker instead of sending duplicates.
+		if msgKey == msgKeyActionCard && isUnsupportedActionCardError(err) {
+			body["msgKey"] = msgKeyMarkdown
+			body["msgParam"] = mustMarkdownParam(message.Text)
+			return p.sendWithRefresh(ctx, path, body)
+		}
+		return err
+	}
+	return nil
+}
+
+func (p *DingTalkProvider) sendWithRefresh(ctx context.Context, path string, body map[string]any) error {
 	if err := p.sendJSON(ctx, path, body, false); err != nil {
 		var httpErr *DingTalkHTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusUnauthorized {
@@ -152,30 +179,83 @@ func (p *DingTalkProvider) Send(ctx context.Context, message Message) error {
 }
 
 func mustMarkdownParam(text string) string {
-	title, body := splitMarkdownMessage(text)
-	b, _ := json.Marshal(map[string]string{"title": title, "text": body})
+	b, _ := json.Marshal(map[string]string{"title": markdownMessageTitle(text), "text": text})
 	return string(b)
 }
 
-func splitMarkdownMessage(text string) (string, string) {
-	trimmed := strings.TrimSpace(text)
-	lines := strings.Split(trimmed, "\n")
-	first := -1
+// mustActionCardParam converts the notification format into DingTalk's
+// single-button ActionCard payload. The persisted notification text remains
+// the source of truth, so queued messages created before this feature can also
+// be sent as cards without an outbox schema migration.
+func mustActionCardParam(text string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	first, last := -1, -1
 	for i, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			first = i
-			break
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
+		if first == -1 {
+			first = i
+		}
+		last = i
 	}
 	if first == -1 {
-		return "Multica 通知", ""
+		return "", false
 	}
-	title := markdownMessageTitle(lines[first])
-	if !strings.HasPrefix(strings.TrimSpace(lines[first]), "🔔") {
-		return title, trimmed
+
+	title := markdownMessageTitle(text)
+	markdownLines := append([]string(nil), lines[first+1:last+1]...)
+	if len(markdownLines) == 0 {
+		return "", false
 	}
-	body := strings.TrimSpace(strings.Join(lines[first+1:], "\n"))
-	return title, body
+	lastLine := strings.TrimSpace(markdownLines[len(markdownLines)-1])
+	const buttonPrefix = "[打开任务并回复]("
+	lastLine = strings.TrimPrefix(lastLine, "**")
+	lastLine = strings.TrimSuffix(lastLine, "**")
+	if !strings.HasPrefix(lastLine, buttonPrefix) || !strings.HasSuffix(lastLine, ")") {
+		return "", false
+	}
+	actionURL := strings.TrimSuffix(strings.TrimPrefix(lastLine, buttonPrefix), ")")
+	if actionURL == "" {
+		return "", false
+	}
+	markdownLines = markdownLines[:len(markdownLines)-1]
+	markdown := strings.TrimSpace(strings.Join(markdownLines, "\n"))
+	if markdown == "" {
+		return "", false
+	}
+	b, err := json.Marshal(map[string]string{
+		"title":       title,
+		"markdown":    markdown,
+		"singleTitle": "打开任务并回复",
+		"singleURL":   actionURL,
+	})
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+func isUnsupportedActionCardError(err error) bool {
+	var apiErr *DingTalkHTTPError
+	if !errors.As(err, &apiErr) || apiErr.Status < 400 || apiErr.Status >= 500 {
+		return false
+	}
+	detail := strings.ToLower(strings.Join([]string{apiErr.Code, apiErr.Message, apiErr.Body}, " "))
+	if !strings.Contains(detail, "actioncard") &&
+		!strings.Contains(detail, "msgkey") &&
+		!strings.Contains(detail, "unsupported") &&
+		!strings.Contains(detail, "not support") &&
+		!strings.Contains(detail, "不支持") &&
+		!strings.Contains(detail, "消息类型") {
+		return false
+	}
+	return strings.Contains(detail, "unsupported") ||
+		strings.Contains(detail, "not support") ||
+		strings.Contains(detail, "not_support") ||
+		strings.Contains(detail, "invalid") ||
+		strings.Contains(detail, "不支持") ||
+		strings.Contains(detail, "消息类型")
 }
 
 // markdownMessageTitle is used by DingTalk's push preview. Derive it from the

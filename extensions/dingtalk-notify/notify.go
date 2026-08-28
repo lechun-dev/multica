@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -212,7 +211,6 @@ func skipped(event MentionCreated, target MentionTarget, reason string) Delivery
 
 func FormatText(event MentionCreated) string {
 	text := sanitizeText(event.Text)
-	text = normalizeDingTalkMentions(text)
 	if runes := []rune(text); len(runes) > 2000 {
 		text = string(runes[:2000]) + "…"
 	}
@@ -226,26 +224,39 @@ func FormatText(event MentionCreated) string {
 		}
 	}
 
-	// Keep the first line as an internal title marker. The DingTalk provider
-	// removes this line from the body and sends it through sampleMarkdown's
-	// dedicated title field, so the title is never rendered twice.
-	sections := []string{fmt.Sprintf("🔔 %s 在 Multica 中提到了你", escapeMarkdown(actor))}
-	if workspace := strings.TrimSpace(event.WorkspaceName); workspace != "" {
-		sections = append(sections, "来源："+escapeMarkdown(workspace))
-	}
-	if project := strings.TrimSpace(event.ProjectName); project != "" {
-		sections = append(sections, "项目："+escapeMarkdown(project))
+	sections := []string{fmt.Sprintf("🔔 **%s 在 Multica 中提到了你**", escapeMarkdown(actor))}
+	metadata := make([]string, 0, 2)
+	if source := notificationSource(event); source != "" {
+		metadata = append(metadata, "***来源："+source+"***")
 	}
 	if task := notificationTask(event); task != "" {
-		sections = append(sections, "任务："+task)
+		metadata = append(metadata, "***任务："+task+"***")
+	}
+	if len(metadata) > 0 {
+		// DingTalk's sampleMarkdown renderer collapses a single newline inside a
+		// paragraph. Keep a blank line between metadata rows so they render as
+		// separate lines.
+		sections = append(sections, strings.Join(metadata, "\n\n"))
 	}
 	if text != "" {
-		sections = append(sections, text)
+		sections = append(sections, quoteMarkdown(text))
 	}
 	if event.SourceURL != "" {
-		sections = append(sections, "[打开任务并回复]("+event.SourceURL+")")
+		sections = append(sections, "**[打开任务并回复]("+event.SourceURL+")**")
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func notificationSource(event MentionCreated) string {
+	workspace := strings.TrimSpace(event.WorkspaceName)
+	project := strings.TrimSpace(event.ProjectName)
+	if workspace == "" {
+		return escapeMarkdown(project)
+	}
+	if project == "" {
+		return escapeMarkdown(workspace)
+	}
+	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
 }
 
 func notificationTask(event MentionCreated) string {
@@ -264,44 +275,12 @@ func notificationTask(event MentionCreated) string {
 	return "[" + label + "](" + event.SourceURL + ")"
 }
 
-var dingtalkMentionLinkPattern = regexp.MustCompile(`\[((?:\\.|[^\]])+)\]\(mention://(?:member|agent|squad|all)/[^)]+\)`)
-
-// normalizeDingTalkMentions removes Multica's internal mention:// links before
-// sending sampleMarkdown. DingTalk does not understand that scheme, so it
-// renders the target as a misleading blue hyperlink instead of a mention.
-func normalizeDingTalkMentions(text string) string {
-	return dingtalkMentionLinkPattern.ReplaceAllStringFunc(text, func(match string) string {
-		closeBracket := strings.Index(match, "](")
-		if closeBracket <= 1 {
-			return match
-		}
-		label := unescapeMarkdownLabel(match[1:closeBracket])
-		if strings.HasPrefix(label, "@") {
-			return label
-		}
-		return "@" + label
-	})
-}
-
-func unescapeMarkdownLabel(label string) string {
-	var b strings.Builder
-	escaped := false
-	for _, r := range label {
-		if escaped {
-			b.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' {
-			escaped = true
-			continue
-		}
-		b.WriteRune(r)
+func quoteMarkdown(text string) string {
+	parts := strings.Split(text, "\n")
+	for i, part := range parts {
+		parts[i] = "> " + part
 	}
-	if escaped {
-		b.WriteByte('\\')
-	}
-	return b.String()
+	return strings.Join(parts, "\n")
 }
 
 // escapeMarkdown protects display-only values (names and titles). The body is

@@ -316,6 +316,7 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		(%s.project_id IS NOT NULL AND (
 			%s
 			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
+			OR EXISTS (SELECT 1 FROM issue_permissions ip WHERE ip.issue_id = %s.id AND ip.user_id = %s::uuid)
 		))
 		OR (%s.project_id IS NULL AND (
 			EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner')
@@ -328,7 +329,7 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
 			))
 		))
-	)`, issueAlias, ownerProjectClause, issueAlias, userRef,
+	)`, issueAlias, ownerProjectClause, issueAlias, userRef, issueAlias, userRef,
 		issueAlias, workspaceRef, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, userRef,

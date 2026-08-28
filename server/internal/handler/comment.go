@@ -3370,8 +3370,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
-	// 2026-08-27 coder(lq): A member mention grants project-level viewer access,
-	// so persist the edited body and its inherited project role as one outcome.
+	// 2026-08-28 coder(lq): Mentions in comments are task-scoped grants.
 	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid
 	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit) || promoteMentionAccess
 	if transactionalEdit {
@@ -3411,7 +3410,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil && promoteMentionAccess {
-			err = promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(issue.ProjectID), req.Content)
+			err = promoteIssueMentionedMembersWithExecutor(r.Context(), tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), req.Content)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
