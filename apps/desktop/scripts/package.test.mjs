@@ -148,6 +148,20 @@ describe("deriveVersion (real git describe)", () => {
     expect(deriveVersion(dir)).toBe("1.4.2");
   });
 
+  it("prefers the explicit release tag when multiple tags point at one commit", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v0.4.51");
+    run("tag", "v0.4.52");
+    run("tag", "v0.4.53");
+    expect(deriveVersion(dir, "v0.4.53")).toBe("0.4.53");
+  });
+
+  it("ignores an invalid release tag and falls back to git describe", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v1.4.2");
+    expect(deriveVersion(dir, "release_iteration/Sprint_0705")).toBe("1.4.2");
+  });
+
   it("selects the semver tag even when a nearer non-semver tag exists", () => {
     // A release-train tag like `release_iteration/…` sitting closer to HEAD
     // must not become the version. With the match pattern correctly reaching
