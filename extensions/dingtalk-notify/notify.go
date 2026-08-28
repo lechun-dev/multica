@@ -227,24 +227,23 @@ func FormatText(event MentionCreated) string {
 	sections := []string{fmt.Sprintf("🔔 **%s 在 Multica 中提到了你**", escapeMarkdown(actor))}
 	metadata := make([]string, 0, 2)
 	if source := notificationSource(event); source != "" {
-		metadata = append(metadata, "📍 **来源** "+source)
+		metadata = append(metadata, "来源："+source)
 	}
 	if task := notificationTask(event); task != "" {
-		metadata = append(metadata, "📋 **任务** "+task)
+		metadata = append(metadata, "任务："+task)
 	}
 	if len(metadata) > 0 {
 		// Keep the source and task rows compact so the useful context is easy to
-		// scan in DingTalk's relatively spacious Markdown renderer.
+		// scan in DingTalk's Markdown renderer.
 		sections = append(sections, strings.Join(metadata, "\n"))
 	}
 	if text != "" {
-		sections = append(sections, "💬 **消息**\n"+quoteMarkdown(text))
+		sections = append(sections, quoteMarkdown(text))
 	}
 	if event.SourceURL != "" {
-		// Keep the reply action visually separate from the quoted message. A
-		// heading gives DingTalk's Markdown renderer a larger, more discoverable
-		// action label while the arrow makes it clear that this is a link.
-		sections = append(sections, "---\n\n### 👉 [打开任务并回复]("+event.SourceURL+")")
+		// Keep the reply action visually separate from the quoted message while
+		// avoiding a large heading that overwhelms the notification content.
+		sections = append(sections, "**[打开任务并回复]("+event.SourceURL+")**")
 	}
 	return strings.Join(sections, "\n\n")
 }
