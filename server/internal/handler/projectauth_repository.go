@@ -91,7 +91,20 @@ func (r *projectAuthRepository) queryRolePermissions(ctx context.Context, worksp
 
 func projectPermissionSchemaMissing(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	// 2026-08-28 coder(lq): Treat missing tables and columns as the same
+	// migration-state problem. A partially applied 439 can create one overlay
+	// table while leaving a required column absent, which otherwise surfaces as
+	// the generic report error and gives self-hosted operators no next step.
+	switch pgErr.Code {
+	case "42P01", // undefined_table
+		"42703": // undefined_column
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *projectAuthRepository) ListRoleDefinitions(ctx context.Context, workspaceID string) ([]projectauth.RoleDefinition, error) {

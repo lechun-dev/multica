@@ -1,253 +1,180 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ApiError, api } from "@multica/core/api";
+import { useMemo, useState } from "react";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects";
 import { useAuthStore } from "@multica/core/auth";
-import type {
-  ProjectPermissionReportPermission,
-  ProjectPermissionReportRole,
-} from "@multica/core/types";
-import { Button } from "@multica/ui/components/ui/button";
+import type { ProjectPermissionRole } from "@multica/core/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
+import { toast } from "sonner";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 import { useT } from "../../i18n";
 
-const ALL = "__all__";
-const PAGE_SIZE = 50;
-const REPORT_ROLES: ProjectPermissionReportRole[] = ["owner", "admin", "manager", "member", "viewer"];
-const REPORT_PERMISSIONS: ProjectPermissionReportPermission[] = [
-  "project.view",
-  "project.edit",
-  "project.issue.create",
-  "project.issue.manage",
-  "project.agent.use",
-  "project.member.manage",
-  "project.settings.manage",
-];
+const NO_ACCESS = "__no_project_access__";
+const BUILTIN_ROLES = ["owner", "manager", "member", "viewer"];
 
-// 2026-08-27 coder(lq): Keep report controls local to this tab so upstream
-// settings changes are less likely to conflict with the project permissions UI.
+function projectMembersKey(projectId: string) {
+  return ["project-members", projectId] as const;
+}
+
+// 2026-08-28 coder(lq): Compose this report from existing project/member
+// endpoints so the private authorization overlay remains low-conflict with
+// future upstream settings-page updates.
 export function ProjectPermissionsTab() {
   const { t } = useT("settings");
-  const wsId = useWorkspaceId();
+  const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const currentUser = useAuthStore((state) => state.user);
-  const [projectId, setProjectId] = useState("");
-  const [userId, setUserId] = useState("");
-  const [role, setRole] = useState<ProjectPermissionReportRole | "">("");
-  const [permission, setPermission] = useState<ProjectPermissionReportPermission | "">("");
-  const [offset, setOffset] = useState(0);
+  const [savingCell, setSavingCell] = useState<string | null>(null);
 
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: projects = [], isLoading: projectsLoading } = useQuery(projectListOptions(wsId));
+  const { data: members = [], isLoading: membersLoading } = useQuery(memberListOptions(workspaceId));
+  const { data: projects = [], isLoading: projectsLoading } = useQuery(projectListOptions(workspaceId));
   const { data: roleDefinitions } = useQuery({
-    queryKey: ["project-permission-roles", wsId],
+    queryKey: ["project-permission-roles", workspaceId],
     queryFn: () => api.listProjectPermissionRoles(),
-    enabled: !!wsId,
+    enabled: !!workspaceId,
   });
-  const reportRoles = useMemo(
-    () => Array.from(new Set([
-      ...REPORT_ROLES,
-      ...(roleDefinitions?.roles ?? []).map((definition) => definition.key),
-    ])),
-    [roleDefinitions?.roles],
-  );
-  const isWorkspaceOwner = members.some(
-    (member) => member.user_id === currentUser?.id && member.role === "owner",
-  );
-
-  // A non-owner must scope the report to one project. Selecting the first
-  // visible project keeps the report useful without requesting a forbidden
-  // workspace-wide report.
-  useEffect(() => {
-    if (!isWorkspaceOwner && !projectId && projects[0]) setProjectId(projects[0].id);
-  }, [isWorkspaceOwner, projectId, projects]);
-
-  const reportEnabled = isWorkspaceOwner || !!projectId;
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["project-permission-report", wsId, projectId, userId, role, permission, offset],
-    queryFn: () =>
-      api.listProjectPermissionReport({
-        project_id: projectId || undefined,
-        user_id: userId || undefined,
-        role: role || undefined,
-        permission: permission || undefined,
-        scope: "project",
-        limit: PAGE_SIZE,
-        offset,
-      }),
-    enabled: reportEnabled,
+  const projectMemberQueries = useQueries({
+    queries: projects.map((project) => ({
+      queryKey: projectMembersKey(project.id),
+      queryFn: () => api.listProjectMembers(project.id),
+      enabled: !!workspaceId && !!project.id,
+    })),
   });
 
-  const users = useMemo(
-    () => members
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((member) => ({ value: member.user_id, label: `${member.name} (${member.email})` })),
+  const roles = useMemo<ProjectPermissionRole[]>(() => {
+    const persisted = roleDefinitions?.roles ?? [];
+    const keys = new Set(persisted.map((role) => role.key));
+    const missing = BUILTIN_ROLES
+      .filter((key) => !keys.has(key))
+      .map((key) => ({
+        id: `system-${workspaceId}-${key}`,
+        workspace_id: workspaceId,
+        key,
+        name: key.charAt(0).toLocaleUpperCase() + key.slice(1),
+        description: "",
+        permissions: [],
+        is_system: true,
+      }));
+    return [...persisted, ...missing];
+  }, [roleDefinitions?.roles, workspaceId]);
+  const roleByKey = useMemo(() => new Map(roles.map((role) => [role.key, role])), [roles]);
+  const workspaceMemberByUser = useMemo(
+    () => new Map(members.map((member) => [member.user_id, member])),
     [members],
   );
-  const total = data?.total ?? 0;
-  const page = Math.floor(offset / PAGE_SIZE) + 1;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const isForbidden = error instanceof ApiError && error.status === 403;
-  const roleLabel = (value: ProjectPermissionReportRole) => {
-    const definition = roleDefinitions?.roles.find((item) => item.key === value);
-    if (definition?.name) return definition.name;
-    if (REPORT_ROLES.includes(value)) {
-      return t(($) => $.permission_report.roles[value as "owner" | "admin" | "manager" | "member" | "viewer"]);
+  const isWorkspaceOwner = workspaceMemberByUser.get(currentUser?.id ?? "")?.role === "owner";
+  const projectMembersByProject = useMemo(
+    () => new Map(projects.map((project, index) => [project.id, projectMemberQueries[index]?.data?.members ?? []])),
+    [projectMemberQueries, projects],
+  );
+  const canManageByProject = useMemo(
+    () => new Map(projects.map((project, index) => [project.id, projectMemberQueries[index]?.data?.can_manage ?? false])),
+    [projectMemberQueries, projects],
+  );
+  const loading = membersLoading || projectsLoading || projectMemberQueries.some((query) => query.isLoading);
+  const hasError = projectMemberQueries.some((query) => query.isError);
+
+  const roleLabel = (key: string) => {
+    const persistedName = roleByKey.get(key)?.name;
+    if (persistedName) return persistedName;
+    if (["owner", "admin", ...BUILTIN_ROLES].includes(key)) {
+      return t(($) => $.permission_report.roles[key as "owner" | "admin" | "manager" | "member" | "viewer"]);
     }
-    return value;
+    return key;
   };
-  const permissionLabel = (value: ProjectPermissionReportPermission) => t(($) => $.permission_report.permissions[value]);
-  const resetOffset = () => setOffset(0);
+  const userLabel = (userId: string) => {
+    const member = workspaceMemberByUser.get(userId);
+    return member?.name || member?.email || userId;
+  };
+
+  const saveCell = async (projectId: string, userId: string, value: string) => {
+    const cellKey = `${projectId}:${userId}`;
+    setSavingCell(cellKey);
+    try {
+      if (value === NO_ACCESS) await api.removeProjectMember(projectId, userId);
+      else await api.addProjectMember(projectId, { user_id: userId, role: value });
+      await queryClient.invalidateQueries({ queryKey: projectMembersKey(projectId) });
+      toast.success(t(($) => $.permission_report.saved));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t(($) => $.permission_report.save_failed));
+    } finally {
+      setSavingCell(null);
+    }
+  };
 
   return (
-    <SettingsTab
-      title={t(($) => $.permission_report.title)}
-      description={t(($) => $.permission_report.description)}
-    >
+    <SettingsTab title={t(($) => $.permission_report.title)} description={t(($) => $.permission_report.description)}>
       <SettingsSection>
         <SettingsCard>
-          <div className="flex flex-wrap items-end gap-3 border-b border-surface-border pb-4">
-            <div className="min-w-52 flex-1 space-y-1">
-              <label className="text-caption font-medium" htmlFor="permission-report-project">
-                {t(($) => $.permission_report.project_filter)}
-              </label>
-              <Select
-                items={[
-                  ...(isWorkspaceOwner ? [{ value: ALL, label: t(($) => $.permission_report.all_projects) }] : []),
-                  ...projects.map((project) => ({ value: project.id, label: project.title })),
-                ]}
-                value={projectId || (isWorkspaceOwner ? ALL : undefined)}
-                onValueChange={(value) => {
-                  setProjectId(value === ALL ? "" : value ?? "");
-                  resetOffset();
-                }}
-              >
-                <SelectTrigger id="permission-report-project" className="w-full">
-                  <SelectValue placeholder={t(($) => $.permission_report.select_project)} />
-                </SelectTrigger>
-                <SelectContent>
-                  {isWorkspaceOwner ? <SelectItem value={ALL}>{t(($) => $.permission_report.all_projects)}</SelectItem> : null}
-                  {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.title}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="min-w-52 flex-1 space-y-1">
-              <label className="text-caption font-medium" htmlFor="permission-report-user">
-                {t(($) => $.permission_report.person_filter)}
-              </label>
-              <Select
-                items={[{ value: ALL, label: t(($) => $.permission_report.all_people) }, ...users]}
-                value={userId || ALL}
-                onValueChange={(value) => {
-                  setUserId(value === ALL ? "" : value ?? "");
-                  resetOffset();
-                }}
-              >
-                <SelectTrigger id="permission-report-user" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t(($) => $.permission_report.all_people)}</SelectItem>
-                  {users.map((user) => <SelectItem key={user.value} value={user.value}>{user.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="min-w-40 flex-1 space-y-1">
-              <label className="text-caption font-medium" htmlFor="permission-report-role">
-                {t(($) => $.permission_report.role_filter)}
-              </label>
-              <Select
-                items={[{ value: ALL, label: t(($) => $.permission_report.all_roles) }, ...reportRoles.map((value) => ({ value, label: roleLabel(value) }))]}
-                value={role || ALL}
-                onValueChange={(value) => {
-                  setRole(value === ALL ? "" : (value as ProjectPermissionReportRole) ?? "");
-                  resetOffset();
-                }}
-              >
-                <SelectTrigger id="permission-report-role" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t(($) => $.permission_report.all_roles)}</SelectItem>
-                  {reportRoles.map((value) => <SelectItem key={value} value={value}>{roleLabel(value)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="min-w-56 flex-1 space-y-1">
-              <label className="text-caption font-medium" htmlFor="permission-report-permission">
-                {t(($) => $.permission_report.permission_filter)}
-              </label>
-              <Select
-                items={[{ value: ALL, label: t(($) => $.permission_report.all_permissions) }, ...REPORT_PERMISSIONS.map((value) => ({ value, label: permissionLabel(value) }))]}
-                value={permission || ALL}
-                onValueChange={(value) => {
-                  setPermission(value === ALL ? "" : (value as ProjectPermissionReportPermission) ?? "");
-                  resetOffset();
-                }}
-              >
-                <SelectTrigger id="permission-report-permission" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t(($) => $.permission_report.all_permissions)}</SelectItem>
-                  {REPORT_PERMISSIONS.map((value) => <SelectItem key={value} value={value}>{permissionLabel(value)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {projectsLoading ? (
+          {loading ? (
             <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.loading)}</p>
-          ) : !isWorkspaceOwner && !projectId ? (
-            <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.select_project_hint)}</p>
-          ) : isLoading ? (
-            <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.loading)}</p>
-          ) : error ? (
-            <p className="py-6 text-caption text-destructive">
-              {isForbidden ? t(($) => $.permission_report.forbidden) : t(($) => $.permission_report.load_failed)}
-            </p>
-          ) : data?.rows.length ? (
-            <>
-              <div className="overflow-auto">
-                <table className="w-full min-w-[52rem] text-body">
-                  <thead>
-                    <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
-                      <th className="p-2">{t(($) => $.permission_report.project_column)}</th>
-                      <th className="p-2">{t(($) => $.permission_report.person_column)}</th>
-                      <th className="p-2">{t(($) => $.permission_report.workspace_role_column)}</th>
-                      <th className="p-2">{t(($) => $.permission_report.project_role_column)}</th>
-                      <th className="p-2">{t(($) => $.permission_report.permission_column)}</th>
-                      <th className="p-2">{t(($) => $.permission_report.source_column)}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.rows.map((row) => (
-                      <tr key={`${row.project_id}:${row.user_id}:${row.permission}:${row.source}`} className="border-b border-surface-border/60">
-                        <td className="max-w-56 truncate p-2" title={row.project_title}>{row.project_title}</td>
-                        <td className="p-2"><div>{row.user_name}</div><div className="text-caption text-muted-foreground">{row.user_email}</div></td>
-                        <td className="p-2">{row.workspace_role ? roleLabel(row.workspace_role) : "—"}</td>
-                        <td className="p-2">{row.project_role ? roleLabel(row.project_role) : "—"}</td>
-                        <td className="p-2">{permissionLabel(row.permission)}</td>
-                        <td className="p-2">{t(($) => $.permission_report.sources[row.source])}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-4 text-caption text-muted-foreground">
-                <span>{t(($) => $.permission_report.results_summary, { from: offset + 1, to: Math.min(offset + PAGE_SIZE, total), total })}</span>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>{t(($) => $.permission_report.previous)}</Button>
-                  <span>{t(($) => $.permission_report.page, { page, pages: pageCount })}</span>
-                  <Button variant="outline" size="sm" disabled={page >= pageCount} onClick={() => setOffset(offset + PAGE_SIZE)}>{t(($) => $.permission_report.next)}</Button>
-                </div>
-              </div>
-            </>
-          ) : (
+          ) : hasError ? (
+            <p className="py-6 text-caption text-destructive">{t(($) => $.permission_report.load_failed)}</p>
+          ) : members.length === 0 || projects.length === 0 ? (
             <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
+          ) : (
+            <div className="overflow-auto">
+              <table className="w-full min-w-[64rem] text-body">
+                <thead>
+                  <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
+                    <th className="sticky left-0 z-20 min-w-56 bg-surface p-2">{t(($) => $.permission_report.person_column)}</th>
+                    <th className="sticky left-56 z-20 min-w-32 bg-surface p-2">{t(($) => $.permission_report.workspace_role_column)}</th>
+                    {projects.map((project) => <th key={project.id} className="min-w-36 p-2" title={project.title}>{project.title}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map((member) => (
+                    <tr key={member.user_id} className="border-b border-surface-border/60">
+                      <td className="sticky left-0 z-10 min-w-56 bg-surface p-2">
+                        <div>{userLabel(member.user_id)}</div>
+                        {member.email && <div className="text-caption text-muted-foreground">{member.email}</div>}
+                      </td>
+                      <td className="sticky left-56 z-10 min-w-32 bg-surface p-2">{roleLabel(member.role)}</td>
+                      {projects.map((project) => {
+                        const projectMembers = projectMembersByProject.get(project.id) ?? [];
+                        const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
+                        const inheritedOwner = !explicit && member.role === "owner";
+                        const value = explicit?.role ?? (inheritedOwner ? "owner" : NO_ACCESS);
+                        const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
+                        const cellKey = `${project.id}:${member.user_id}`;
+                        // 2026-08-28 coder(lq): Workspace owners remain globally
+                        // authorized even when the project row is inherited;
+                        // keep their cells editable for explicit role metadata.
+                        const disabled = !canManage || savingCell === cellKey;
+                        return (
+                          <td key={project.id} className="p-2 align-middle">
+                            <Select
+                              items={[{ value: NO_ACCESS, label: t(($) => $.permission_report.no_access) }, ...roles.map((role) => ({ value: role.key, label: roleLabel(role.key) }))]}
+                              value={value}
+                              onValueChange={(next) => next && void saveCell(project.id, member.user_id, next)}
+                              disabled={disabled}
+                            >
+                              <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`} title={inheritedOwner ? t(($) => $.permission_report.inherited_owner) : undefined}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_ACCESS}>{t(($) => $.permission_report.no_access)}</SelectItem>
+                                {roles.map((role) => <SelectItem key={role.key} value={role.key}>{roleLabel(role.key)}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
+          <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
+            <span>{t(($) => $.permission_report.people_projects)}</span>
+            <span>·</span>
+            <span>{t(($) => $.permission_report.read_only_hint)}</span>
+          </div>
         </SettingsCard>
       </SettingsSection>
     </SettingsTab>

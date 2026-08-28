@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -13,7 +14,7 @@ import (
 // authorization and effective-permission rules remain in projectauth.Service.
 func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
-		writeError(w, http.StatusNotFound, "permission report not found")
+		writeErrorCode(w, http.StatusNotFound, "project_permission_disabled", "project permission report is disabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -67,13 +68,30 @@ func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, projectauth.ErrInvalidReportFilter):
-			writeError(w, http.StatusBadRequest, "invalid permission report filter")
+			writeErrorCode(w, http.StatusBadRequest, "invalid_permission_report_filter", "invalid permission report filter")
 		case errors.Is(err, projectauth.ErrForbidden):
-			writeError(w, http.StatusForbidden, "insufficient project permissions")
+			writeErrorCode(w, http.StatusForbidden, "project_permission_report_forbidden", "insufficient project permissions")
 		case errors.Is(err, projectauth.ErrNotWorkspaceMember), errors.Is(err, projectauth.ErrNoProjectAccess), errors.Is(err, projectauth.ErrCrossWorkspace):
-			writeError(w, http.StatusNotFound, "project not found")
+			writeErrorCode(w, http.StatusNotFound, "project_not_found", "project not found")
+		case projectPermissionSchemaMissing(err):
+			// 2026-08-28 coder(lq): Older self-hosted instances can enable the
+			// feature flag before migration 439 has run. Return an actionable
+			// response instead of the generic report failure message.
+			slog.Warn("project permission report requires migration 439",
+				"workspace_id", workspaceID,
+				"project_id", filter.ProjectID,
+				"error", err,
+			)
+			writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_migration_required", "project permission migration 439 is required")
 		default:
-			writeError(w, http.StatusInternalServerError, "failed to load permission report")
+			slog.Error("failed to load permission report",
+				"workspace_id", workspaceID,
+				"project_id", filter.ProjectID,
+				"user_id", filter.UserID,
+				"scope", filter.Scope,
+				"error", err,
+			)
+			writeErrorCode(w, http.StatusInternalServerError, "project_permission_report_failed", "failed to load permission report")
 		}
 		return
 	}

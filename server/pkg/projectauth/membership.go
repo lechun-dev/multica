@@ -117,10 +117,10 @@ func (s *Service) ListMembers(ctx context.Context, actor Subject, projectID stri
 	if s == nil || !s.enabled {
 		return nil, nil
 	}
-	// 2026-08-27 coder(lq): Authorization details are sensitive project
-	// metadata; only project owners and workspace owners may inspect them.
-	// This keeps the list endpoint aligned with Add/Update/Remove membership.
-	if err := s.Require(ctx, actor, projectID, MemberManage); err != nil {
+	// 2026-08-28 coder(lq): The settings matrix is read-only for ordinary
+	// project members, so membership rows must be visible with project.view;
+	// can_manage remains a separate capability returned by the HTTP handler.
+	if err := s.Require(ctx, actor, projectID, View); err != nil {
 		return nil, err
 	}
 	mr, ok := s.repo.(MemberRepository)

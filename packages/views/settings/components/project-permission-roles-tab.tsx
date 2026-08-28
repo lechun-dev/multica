@@ -22,6 +22,37 @@ const PERMISSIONS: ProjectPermissionReportPermission[] = [
   "project.agent.use", "project.member.manage", "project.settings.manage",
 ];
 
+// 2026-08-28 coder(lq): Keep the built-in catalog visible while an older
+// deployment is still migrating the role tables or while the catalog request
+// is temporarily unavailable. Database rows always override these defaults,
+// so saved system-role customizations remain authoritative.
+const SYSTEM_ROLE_DEFAULTS: Array<{
+  key: "owner" | "manager" | "member" | "viewer";
+  name: string;
+  permissions: ProjectPermissionReportPermission[];
+}> = [
+  {
+    key: "owner",
+    name: "Owner",
+    permissions: [...PERMISSIONS],
+  },
+  {
+    key: "manager",
+    name: "Manager",
+    permissions: ["project.view", "project.edit", "project.issue.create", "project.issue.manage", "project.agent.use"],
+  },
+  {
+    key: "member",
+    name: "Member",
+    permissions: ["project.view", "project.issue.create", "project.agent.use"],
+  },
+  {
+    key: "viewer",
+    name: "Viewer",
+    permissions: ["project.view"],
+  },
+];
+
 // 2026-08-28 coder(lq): Keep role editing in its own settings surface so
 // upstream project/member UI changes do not conflict with role policy work.
 export function ProjectPermissionRolesTab() {
@@ -34,14 +65,29 @@ export function ProjectPermissionRolesTab() {
     enabled: !!workspaceId,
   });
   const rolesQuery = useQuery({
-    queryKey: ["project-permission-roles"],
+    queryKey: ["project-permission-roles", workspaceId],
     queryFn: () => api.listProjectPermissionRoles(),
+    enabled: !!workspaceId,
   });
   const [editing, setEditing] = useState<ProjectPermissionRole | null>(null);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState({ key: "", name: "", description: "", permissions: [] as string[] });
-  const roles = rolesQuery.data?.roles ?? [];
+  const roles = useMemo(() => {
+    const persisted = rolesQuery.data?.roles ?? [];
+    const persistedByKey = new Map(persisted.map((role) => [role.key, role]));
+    const builtIns = SYSTEM_ROLE_DEFAULTS.map((fallback) => persistedByKey.get(fallback.key) ?? {
+      id: `system-${workspaceId}-${fallback.key}`,
+      workspace_id: workspaceId,
+      key: fallback.key,
+      name: fallback.name,
+      description: "",
+      is_system: true,
+      permissions: fallback.permissions,
+    });
+    const customRoles = persisted.filter((role) => !SYSTEM_ROLE_DEFAULTS.some((fallback) => fallback.key === role.key));
+    return [...builtIns, ...customRoles];
+  }, [rolesQuery.data?.roles, workspaceId]);
   const canManage = workspaceMembers.some(
     (member) => member.user_id === currentUser?.id && (member.role === "owner" || member.role === "admin"),
   );
@@ -100,8 +146,6 @@ export function ProjectPermissionRolesTab() {
       toast.error(error instanceof Error ? error.message : t(($) => $.permission_roles.delete_failed));
     }
   };
-  const groupedRoles = useMemo(() => roles, [roles]);
-
   return (
     <SettingsTab title={t(($) => $.permission_roles.title)} description={t(($) => $.permission_roles.description)}>
       <SettingsSection>
@@ -112,12 +156,23 @@ export function ProjectPermissionRolesTab() {
           </div>
           {rolesQuery.isLoading ? <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_roles.loading)}</p> : (
             <div className="divide-y divide-surface-border">
-              {groupedRoles.map((role) => (
-                <div key={role.key} className="flex items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1"><div className="font-medium">{roleLabel(role)} {role.is_system ? <span className="text-caption text-muted-foreground">({t(($) => $.permission_roles.system)})</span> : null}</div><div className="text-caption text-muted-foreground">{role.description || role.key}</div></div>
-                  <div className="hidden max-w-[45%] flex-wrap justify-end gap-1 md:flex">{role.permissions.map((permission) => <span key={permission} className="rounded bg-muted px-1.5 py-0.5 text-caption">{permissionLabel(permission)}</span>)}</div>
-                  {canManage ? <Button variant="outline" size="sm" onClick={() => openEdit(role)}>{t(($) => $.permission_roles.edit)}</Button> : null}
-                  {canManage ? <Button variant="ghost" size="icon-sm" disabled={role.is_system} aria-label={t(($) => $.permission_roles.delete)} onClick={() => void remove(role)}><Trash2 className="size-4" /></Button> : null}
+              {roles.map((role) => (
+                <div key={role.key} className="flex min-w-0 items-start gap-3 py-3 sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">
+                      {roleLabel(role)} {role.is_system ? <span className="text-caption text-muted-foreground">({t(($) => $.permission_roles.system)})</span> : null}
+                    </div>
+                    <div className="text-caption text-muted-foreground">{role.description || role.key}</div>
+                  </div>
+                  <div className="hidden min-w-0 flex-1 flex-wrap justify-end gap-1 md:flex">
+                    {role.permissions.map((permission) => <span key={permission} className="rounded bg-muted px-1.5 py-0.5 text-caption">{permissionLabel(permission)}</span>)}
+                  </div>
+                  {canManage ? (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => openEdit(role)}>{t(($) => $.permission_roles.edit)}</Button>
+                      <Button variant="ghost" size="icon-sm" disabled={role.is_system} aria-label={t(($) => $.permission_roles.delete)} onClick={() => void remove(role)}><Trash2 className="size-4" /></Button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

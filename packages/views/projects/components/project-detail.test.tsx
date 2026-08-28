@@ -219,6 +219,14 @@ vi.mock("./project-resources-section", () => ({
   ProjectResourcesSection: () => null,
 }));
 
+vi.mock("./project-permissions-panel", () => ({
+  ProjectPermissionsPanel: ({ projectId }: { projectId: string }) => (
+    <button type="button" aria-label={`Manage permissions for ${projectId}`}>
+      Project permissions
+    </button>
+  ),
+}));
+
 vi.mock("./project-start-date-picker", () => ({
   ProjectStartDatePicker: () => null,
 }));
@@ -332,5 +340,15 @@ describe("ProjectDetail project deletion", () => {
     expect(
       screen.queryByRole("button", { name: "Delete project" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("ProjectDetail project permissions", () => {
+  it("shows the project permissions entry in the details sidebar", () => {
+    renderProjectDetail();
+
+    expect(
+      screen.getByRole("button", { name: "Manage permissions for project-1" }),
+    ).toBeInTheDocument();
   });
 });
