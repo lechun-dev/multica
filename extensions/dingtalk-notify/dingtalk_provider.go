@@ -152,30 +152,8 @@ func (p *DingTalkProvider) Send(ctx context.Context, message Message) error {
 }
 
 func mustMarkdownParam(text string) string {
-	title, body := splitMarkdownMessage(text)
-	b, _ := json.Marshal(map[string]string{"title": title, "text": body})
+	b, _ := json.Marshal(map[string]string{"title": markdownMessageTitle(text), "text": text})
 	return string(b)
-}
-
-func splitMarkdownMessage(text string) (string, string) {
-	trimmed := strings.TrimSpace(text)
-	lines := strings.Split(trimmed, "\n")
-	first := -1
-	for i, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			first = i
-			break
-		}
-	}
-	if first == -1 {
-		return "Multica 通知", ""
-	}
-	title := markdownMessageTitle(lines[first])
-	if !strings.HasPrefix(strings.TrimSpace(lines[first]), "🔔") {
-		return title, trimmed
-	}
-	body := strings.TrimSpace(strings.Join(lines[first+1:], "\n"))
-	return title, body
 }
 
 // markdownMessageTitle is used by DingTalk's push preview. Derive it from the
