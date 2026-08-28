@@ -1,0 +1,29 @@
+# Lechun's distributable desktop build. Keep the upstream configuration as
+# the base so future Multica updates remain easy to merge; this file contains
+# only values that must differ from the official application.
+extends: electron-builder.yml
+
+appId: ai.multica.desktop.lechun
+productName: Multica Lechun
+
+extraMetadata:
+  productName: Multica Lechun
+  multicaDesktopVariant: lechun
+
+protocols:
+  - name: Multica Lechun
+    schemes:
+      - multica-lechun
+
+mac:
+  artifactName: multica-lechun-${version}-mac-${arch}.${ext}
+
+linux:
+  artifactName: multica-lechun-${version}-linux-${arch}.${ext}
+  executableName: multica-lechun
+  desktop:
+    entry:
+      StartupWMClass: Multica Lechun
+
+win:
+  artifactName: multica-lechun-${version}-windows-${arch}.${ext}

@@ -1,4 +1,8 @@
-export type DingTalkOAuthClient = "web" | "desktop" | "desktop-dev";
+export type DingTalkOAuthClient =
+  | "web"
+  | "desktop"
+  | "desktop-dev"
+  | "desktop-lechun";
 
 export function buildDingTalkLoginURL(
   apiBaseURL: string,
@@ -23,10 +27,18 @@ export function buildDingTalkLoginURL(
 }
 
 export function isDesktopDingTalkState(state: string): boolean {
-  return state.endsWith(".desktop") || state.endsWith(".desktop-dev");
+  return (
+    state.endsWith(".desktop") ||
+    state.endsWith(".desktop-dev") ||
+    state.endsWith(".desktop-lechun")
+  );
 }
 
 /** Return the deep-link protocol for a verified desktop DingTalk state. */
-export function dingtalkCallbackProtocol(state: string): "multica" | "multica-dev" {
-  return state.endsWith(".desktop-dev") ? "multica-dev" : "multica";
+export function dingtalkCallbackProtocol(
+  state: string,
+): "multica" | "multica-dev" | "multica-lechun" {
+  if (state.endsWith(".desktop-dev")) return "multica-dev";
+  if (state.endsWith(".desktop-lechun")) return "multica-lechun";
+  return "multica";
 }

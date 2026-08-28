@@ -24,6 +24,14 @@ describe("DingTalk OAuth helpers", () => {
     );
   });
 
+  it("marks Lechun desktop flows separately from the official app", () => {
+    expect(
+      buildDingTalkLoginURL("https://multica.example.test", "desktop-lechun"),
+    ).toBe(
+      "https://multica.example.test/auth/dingtalk/start?client=desktop-lechun",
+    );
+  });
+
   it("uses the page origin for a relative or empty browser API base", () => {
     expect(
       buildDingTalkLoginURL("/api", "web", "https://app.example.test"),
@@ -33,9 +41,11 @@ describe("DingTalk OAuth helpers", () => {
   it("recognizes only the verified desktop state suffix", () => {
     expect(isDesktopDingTalkState("random.desktop")).toBe(true);
     expect(isDesktopDingTalkState("random.desktop-dev")).toBe(true);
+    expect(isDesktopDingTalkState("random.desktop-lechun")).toBe(true);
     expect(isDesktopDingTalkState("random.web")).toBe(false);
     expect(isDesktopDingTalkState("desktop.random")).toBe(false);
     expect(dingtalkCallbackProtocol("random.desktop")).toBe("multica");
     expect(dingtalkCallbackProtocol("random.desktop-dev")).toBe("multica-dev");
+    expect(dingtalkCallbackProtocol("random.desktop-lechun")).toBe("multica-lechun");
   });
 });

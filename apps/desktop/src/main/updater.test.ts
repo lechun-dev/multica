@@ -187,6 +187,20 @@ describe("setupAutoUpdater", () => {
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the Lechun build from consuming the official update feed", async () => {
+    setupAutoUpdater(() => null, {
+      serverUrl: "https://api.multica.ai",
+      enabled: false,
+    });
+
+    await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
+      automaticUpdates: false,
+      updatesAvailable: false,
+    });
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 5_000);
+    expect(ctx.checkForUpdates).not.toHaveBeenCalled();
+  });
+
   it("skips startup and periodic checks when automatic updates are disabled", async () => {
     writeFileSync(
       updaterPreferencesPath(ctx.userDataPath),

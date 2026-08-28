@@ -14,9 +14,10 @@ var ErrInvalidLoginState = errors.New("oauth state is invalid or expired")
 type LoginClient string
 
 const (
-	LoginClientWeb        LoginClient = "web"
-	LoginClientDesktop    LoginClient = "desktop"
-	LoginClientDesktopDev LoginClient = "desktop-dev"
+	LoginClientWeb           LoginClient = "web"
+	LoginClientDesktop       LoginClient = "desktop"
+	LoginClientDesktopDev    LoginClient = "desktop-dev"
+	LoginClientDesktopLechun LoginClient = "desktop-lechun"
 )
 
 func ParseLoginClient(value string) (LoginClient, error) {
@@ -27,6 +28,8 @@ func ParseLoginClient(value string) (LoginClient, error) {
 		return LoginClientDesktop, nil
 	case LoginClientDesktopDev:
 		return LoginClientDesktopDev, nil
+	case LoginClientDesktopLechun:
+		return LoginClientDesktopLechun, nil
 	default:
 		return "", errors.New("unsupported OAuth client")
 	}
@@ -38,6 +41,9 @@ func ParseLoginClient(value string) (LoginClient, error) {
 func LoginClientFromState(state string) LoginClient {
 	if strings.HasSuffix(state, "."+string(LoginClientDesktopDev)) {
 		return LoginClientDesktopDev
+	}
+	if strings.HasSuffix(state, "."+string(LoginClientDesktopLechun)) {
+		return LoginClientDesktopLechun
 	}
 	if strings.HasSuffix(state, "."+string(LoginClientDesktop)) {
 		return LoginClientDesktop

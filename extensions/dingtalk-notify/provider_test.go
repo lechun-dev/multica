@@ -54,6 +54,62 @@ func TestDingTalkProviderRefreshesTokenAfterUnauthorized(t *testing.T) {
 	}
 }
 
+func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
+	text := "🔔 **张畅 在 Multica 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试\n\n**[打开任务并回复](https://example.test/task)**"
+	param, ok := mustActionCardParam(text)
+	if !ok {
+		t.Fatal("expected action card payload")
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(param), &got); err != nil {
+		t.Fatalf("decode action card payload: %v", err)
+	}
+	if got["title"] != "🔔 张畅 在 Multica 中提到了你" {
+		t.Fatalf("title=%q", got["title"])
+	}
+	if got["text"] != "***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
+		t.Fatalf("text=%q", got["text"])
+	}
+	if got["singleTitle"] != "打开任务并回复" || got["singleURL"] != "https://example.test/task" {
+		t.Fatalf("button=%q url=%q", got["singleTitle"], got["singleURL"])
+	}
+}
+
+func TestDingTalkProviderFallsBackToMarkdownWhenActionCardUnsupported(t *testing.T) {
+	var messageKeys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "accessToken") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "token", "expireIn": 7200})
+			return
+		}
+		var body struct {
+			MsgKey string `json:"msgKey"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		messageKeys = append(messageKeys, body.MsgKey)
+		if body.MsgKey == msgKeyActionCard {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"UnsupportedMsgKey","message":"msgKey actionCard is not supported"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
+	err := p.Send(context.Background(), Message{
+		ChannelType: "p2p", DingUserID: "user",
+		Text: "🔔 **张畅 在 Multica 中提到了你**\n\n> hello\n\n**[打开任务并回复](https://example.test/task)**",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(messageKeys, ",") != "sampleActionCard,sampleMarkdown" {
+		t.Fatalf("message keys=%v", messageKeys)
+	}
+}
+
 func TestDingTalkProviderClassifiesRateLimitAsRetryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "accessToken") {

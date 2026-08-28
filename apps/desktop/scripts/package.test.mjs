@@ -476,4 +476,18 @@ describe("electron-builder.yml packaging config", () => {
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
   });
+
+  it("keeps the Lechun packaging overrides in a separate config", () => {
+    const lechunConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun.yml"),
+      resolve(process.cwd(), "apps/desktop/electron-builder.lechun.yml"),
+    ].find((candidate) => existsSync(candidate));
+    expect(lechunConfigPath, "Lechun electron-builder config not found").toBeTruthy();
+    if (!lechunConfigPath) return;
+    const config = readFileSync(lechunConfigPath, "utf-8");
+    expect(config).toContain("extends: electron-builder.yml");
+    expect(config).toContain("appId: ai.multica.desktop.lechun");
+    expect(config).toContain("productName: Multica Lechun");
+    expect(config).toContain("multica-lechun");
+  });
 });

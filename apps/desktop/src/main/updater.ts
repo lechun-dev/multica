@@ -114,12 +114,12 @@ const PRIVATE_DEPLOYMENT_UPDATE_MESSAGE =
 
 export function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null,
-  _options: { serverUrl?: string } = {},
+  options: { serverUrl?: string; enabled?: boolean } = {},
 ): void {
   // 2026-08-27 coder(lq): Desktop releases are published to the configured
   // public GitHub repository, so private deployments can safely use the same
   // updater without embedding credentials or falling back to upstream.
-  const updatesAvailable = true;
+  const updatesAvailable = options.enabled !== false;
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
   let automaticUpdatesEnabled =
     updatesAvailable && DEFAULT_UPDATER_PREFERENCES.automaticUpdates;

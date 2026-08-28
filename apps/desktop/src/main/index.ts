@@ -60,6 +60,7 @@ import {
   NotificationGate,
   parseNativeNotificationPayload,
 } from "./notification-gate";
+import { resolveDesktopIdentity } from "../shared/desktop-identity";
 
 // Guards against registering the will-download handler more than once on the
 // same session. window.webContents.session is shared, and createWindow() can
@@ -117,10 +118,18 @@ if (process.platform !== "win32") {
   process.env.PATH = `${fallbackPaths.join(":")}:${process.env.PATH ?? ""}`;
 }
 
-// Keep local Electron development isolated from the installed production app.
-// Both apps use the same callback host, so sharing `multica://` lets macOS
-// route a development login back to the official app.
-const PROTOCOL = is.dev ? "multica-dev" : "multica";
+const viteBuildEnv = import.meta.env as ImportMetaEnv & {
+  readonly VITE_MULTICA_DESKTOP_VARIANT?: string;
+};
+const DESKTOP_IDENTITY = resolveDesktopIdentity({
+  isDev: is.dev,
+  variant: viteBuildEnv.VITE_MULTICA_DESKTOP_VARIANT,
+});
+
+// Keep each Electron build isolated from the others. The protocol is also
+// used by the OAuth callback, so registration and deep-link handling must
+// always derive from the same identity.
+const PROTOCOL = DESKTOP_IDENTITY.protocol;
 const devLog = is.dev ? createBestEffortDevLog() : undefined;
 
 // Where the main process parks a freeze/crash breadcrumb until the next
@@ -564,7 +573,7 @@ if (is.dev) {
   // to "Multica", but anchoring it here makes WM_CLASS ↔ StartupWMClass
   // (declared in electron-builder.yml) survive a regression in
   // productName / the build pipeline. Must run before requestSingleInstanceLock().
-  app.setName("Multica");
+  app.setName(DESKTOP_IDENTITY.productName);
 }
 
 // --- Protocol registration -----------------------------------------------
@@ -630,9 +639,7 @@ if (!gotTheLock) {
       },
     });
 
-    electronApp.setAppUserModelId(
-      is.dev ? "ai.multica.desktop.dev" : "ai.multica.desktop",
-    );
+    electronApp.setAppUserModelId(DESKTOP_IDENTITY.appId);
 
     // macOS: replace the default Electron dock icon with the bundled logo
     // so the Canary dev build is visually distinct from a stock Electron
@@ -836,6 +843,7 @@ if (!gotTheLock) {
       serverUrl: runtimeConfigResult.ok
         ? runtimeConfigResult.config.apiUrl
         : "",
+      enabled: DESKTOP_IDENTITY.variant !== "lechun",
     });
     setupDaemonManager(() => mainWindow);
     setupLocalDirectory(() => mainWindow);

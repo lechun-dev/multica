@@ -2,6 +2,7 @@ import { DingTalkFirstLoginFrame, LoginPage } from "@multica/views/auth";
 import { DragStrip } from "@multica/views/platform";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { buildDingTalkLoginURL } from "@multica/core/auth";
+import { resolveDesktopIdentity } from "../../../shared/desktop-identity";
 
 function requireRuntimeApiUrl(): string {
   const runtimeConfig = window.desktopAPI.runtimeConfig;
@@ -16,8 +17,13 @@ function requireRuntimeApiUrl(): string {
 export function DesktopLoginPage() {
   const apiUrl = requireRuntimeApiUrl();
   const handleDingTalkLogin = () => {
-    const client = import.meta.env.DEV ? "desktop-dev" : "desktop";
-    window.desktopAPI.openExternal(buildDingTalkLoginURL(apiUrl, client));
+    const identity = resolveDesktopIdentity({
+      isDev: import.meta.env.DEV,
+      variant: import.meta.env.VITE_MULTICA_DESKTOP_VARIANT,
+    });
+    window.desktopAPI.openExternal(
+      buildDingTalkLoginURL(apiUrl, identity.oauthClient),
+    );
   };
 
   return (
