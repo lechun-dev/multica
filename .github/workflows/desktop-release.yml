@@ -11,9 +11,9 @@ on:
         required: true
         type: string
 
-# 2026-08-26 coder(lq): Build desktop installers in GitHub Actions and attach
-# them to the private fork's Release so the landing page and desktop package
-# consume the same source of truth.
+# 2026-08-26 coder(lq): Build the isolated Lechun desktop installers in
+# GitHub Actions and attach them to the private fork's Release so macOS,
+# Windows, and Linux consume the same source of truth.
 permissions:
   contents: write
   packages: write
@@ -46,6 +46,12 @@ jobs:
           - platform: windows
             arch: x64
             runner: windows-latest
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-latest
 
     runs-on: ${{ matrix.runner }}
     steps:
@@ -73,12 +79,16 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
+      - name: Install rpmbuild
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build desktop installer
         run: >-
-          pnpm --filter @multica/desktop package --
+          pnpm --filter @multica/desktop package:lechun --
           --${{ matrix.platform == 'windows' && 'win' || matrix.platform }}
           --${{ matrix.arch }}
           --publish never
@@ -126,8 +136,8 @@ jobs:
               while IFS= read -r -d '' file; do
                 base=${file##*/}
                 case "$base" in
-                  multica-desktop-*.dmg|multica-desktop-*.zip|multica-desktop-*.exe|\
-                  multica-desktop-*.AppImage|multica-desktop-*.deb|multica-desktop-*.rpm|\
+                  multica-lechun-*.dmg|multica-lechun-*.zip|multica-lechun-*.exe|\
+                  multica-lechun-*.AppImage|multica-lechun-*.deb|multica-lechun-*.rpm|\
                   latest*.yml|builder-debug.yml|*.blockmap|LICENSE.electron.txt|LICENSES.chromium.html)
                     printf '%s\0' "$file"
                     ;;
@@ -152,8 +162,8 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
-              --title "Multica $RELEASE_TAG" \
-              --notes "Desktop installers for the private Multica distribution." \
+              --title "Multica Lechun $RELEASE_TAG" \
+              --notes "Multica Lechun desktop installers for macOS, Windows, and Linux." \
               --latest
           else
             echo "Reusing existing Release $RELEASE_TAG"
