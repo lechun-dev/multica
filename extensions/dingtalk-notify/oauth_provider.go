@@ -271,6 +271,9 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserI
 	if detail.Result.AvatarURL == "" {
 		detail.Result.AvatarURL = detail.Result.Avatar
 	}
+	slog.InfoContext(ctx, "dingtalk login: enterprise user profile loaded",
+		"has_department_list", detail.Result.DeptIDList != nil,
+		"department_id_count", departmentIDCount(detail.Result.DeptIDList))
 	identity := OAuthUser{
 		DingUserID: detail.Result.UserID,
 		UnionID:    detail.Result.UnionID,
@@ -281,13 +284,27 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserI
 	if detail.Result.DeptIDList != nil {
 		departments, err := p.loadDepartments(ctx, token.AccessToken, *detail.Result.DeptIDList)
 		if err != nil {
-			slog.WarnContext(ctx, "dingtalk login: department profile unavailable", "error", err)
+			slog.WarnContext(ctx, "dingtalk login: department profile unavailable",
+				"department_id_count", len(*detail.Result.DeptIDList), "error", err)
 		} else {
 			identity.Departments = departments
 			identity.DepartmentsSynced = true
+			slog.InfoContext(ctx, "dingtalk login: department profile synchronized",
+				"department_count", len(departments))
 		}
+	} else {
+		slog.WarnContext(ctx, "dingtalk login: enterprise profile did not include department list")
 	}
 	return identity, nil
+}
+
+// departmentIDCount is intentionally limited to a count so diagnostics never
+// emit DingTalk department identifiers.
+func departmentIDCount(ids *[]dingTalkID) int {
+	if ids == nil {
+		return 0
+	}
+	return len(*ids)
 }
 
 type dingTalkID string
