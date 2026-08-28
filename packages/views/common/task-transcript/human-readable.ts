@@ -1,6 +1,5 @@
 import type {
   TraceCallStep,
-  TraceGroupRow,
   TraceMessageStep,
   TraceRow,
 } from "./build-steps";

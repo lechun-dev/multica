@@ -270,6 +270,7 @@ vi.mock("../../layout/animated-right-sidebar", () => ({
 const PROJECT: Project = {
   id: "project-1",
   workspace_id: "workspace-1",
+  created_by: null,
   title: "Launch Plan",
   description: null,
   icon: null,
