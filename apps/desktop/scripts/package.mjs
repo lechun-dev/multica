@@ -306,6 +306,29 @@ function formatTarget(target) {
   return `${PLATFORM_CONFIG[target.platform].label} ${target.arch}`;
 }
 
+/**
+ * Return the update metadata channel for a custom desktop distribution.
+ *
+ * electron-builder includes the platform in macOS metadata names but not in
+ * Windows names, and it only includes an architecture suffix for Linux. The
+ * explicit Lechun namespace plus the two additional architecture suffixes
+ * therefore keeps every Lechun feed separate from both the official feed and
+ * another Lechun architecture.
+ */
+export function updateChannelForTarget(
+  target,
+  variant = process.env.VITE_MULTICA_DESKTOP_VARIANT,
+) {
+  if (variant !== "lechun") return null;
+  if (target.platform === "mac" && target.arch === "x64") {
+    return "latest-lechun-x64";
+  }
+  if (target.platform === "win" && target.arch === "arm64") {
+    return "latest-lechun-arm64";
+  }
+  return "latest-lechun";
+}
+
 export function builderArgsForTarget(
   target,
   parsed,
@@ -314,6 +337,7 @@ export function builderArgsForTarget(
     disableMacNotarize = false,
     hostPlatform = process.platform,
     useScopedOutputDir = false,
+    variant = process.env.VITE_MULTICA_DESKTOP_VARIANT,
   } = {},
 ) {
   const builderArgs = [];
@@ -342,18 +366,26 @@ export function builderArgsForTarget(
   }
   // electron-builder only adds an architecture suffix to Linux update
   // metadata. Windows x64/arm64 would both publish `latest.yml`, while macOS
-  // arm64/x64 would both publish `latest-mac.yml`. Keep the established x64
-  // Windows and arm64 macOS feeds unchanged for installed clients, and route
-  // the additional architectures to explicit channels. updater.ts pins the
-  // matching channel at runtime.
-  if (target.platform === "win" && target.arch === "arm64") {
-    builderArgs.push("-c.publish.channel=latest-arm64");
-  }
+  // arm64/x64 would both publish `latest-mac.yml`. Keep the established
+  // official feeds unchanged, and route the additional architectures to
+  // explicit channels. The Lechun build gets its own namespace so it cannot
+  // consume or overwrite official metadata.
   if (target.platform === "mac" && target.arch === "x64") {
     // Scope the Electron 39 platform floor to the new Intel package so this
     // change does not rewrite established Apple Silicon bundle metadata.
     builderArgs.push("-c.mac.minimumSystemVersion=12.0.0");
-    builderArgs.push("-c.publish.channel=latest-x64");
+  }
+
+  const customUpdateChannel = updateChannelForTarget(target, variant);
+  if (customUpdateChannel) {
+    builderArgs.push(`-c.publish.channel=${customUpdateChannel}`);
+  } else {
+    if (target.platform === "win" && target.arch === "arm64") {
+      builderArgs.push("-c.publish.channel=latest-arm64");
+    }
+    if (target.platform === "mac" && target.arch === "x64") {
+      builderArgs.push("-c.publish.channel=latest-x64");
+    }
   }
   return builderArgs;
 }

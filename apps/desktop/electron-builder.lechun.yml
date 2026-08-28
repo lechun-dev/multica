@@ -10,6 +10,11 @@ extraMetadata:
   productName: Multica Lechun
   multicaDesktopVariant: lechun
 
+# Keep direct electron-builder invocations on the Lechun feed as well. The
+# package script adds architecture-specific suffixes where required.
+publish:
+  channel: latest-lechun
+
 protocols:
   - name: Multica Lechun
     schemes:

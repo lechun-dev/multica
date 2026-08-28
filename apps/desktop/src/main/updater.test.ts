@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, WebContents } from "electron";
+import { autoUpdater } from "electron-updater";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,6 +168,8 @@ describe("setupAutoUpdater", () => {
     ctx.downloadUpdate.mockClear();
     ctx.quitAndInstall.mockClear();
     ctx.getVersion.mockClear();
+    autoUpdater.channel = null;
+    autoUpdater.allowDowngrade = false;
   });
 
   afterEach(() => {
@@ -187,18 +190,20 @@ describe("setupAutoUpdater", () => {
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the Lechun build from consuming the official update feed", async () => {
+  it("keeps the Lechun build on its own update feed", async () => {
     setupAutoUpdater(() => null, {
       serverUrl: "https://api.multica.ai",
-      enabled: false,
+      channel: "latest-lechun",
     });
 
     await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
-      automaticUpdates: false,
-      updatesAvailable: false,
+      automaticUpdates: true,
+      updatesAvailable: true,
     });
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 5_000);
-    expect(ctx.checkForUpdates).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(autoUpdater.channel).toBe("latest-lechun");
+    expect(autoUpdater.allowDowngrade).toBe(false);
   });
 
   it("skips startup and periodic checks when automatic updates are disabled", async () => {
