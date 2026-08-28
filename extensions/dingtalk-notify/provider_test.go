@@ -155,10 +155,21 @@ func TestDingTalkOAuthProviderLoadsMultipleDepartmentsWithoutExposingIDsAsNames(
 		case "/oauth-token":
 			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
 		case "/me":
-			return jsonResponse(http.StatusOK, `{"userId":"u1","unionId":"union-1","openId":"open-1","nick":"Alice","email":"alice@example.com","avatarUrl":"https://example.test/alice.png"}`), nil
+			return jsonResponse(http.StatusOK, `{"userId":"oauth-user","unionId":"union-1","openId":"open-1","nick":"Alice","email":"alice@example.com","avatarUrl":"https://example.test/alice.png"}`), nil
 		case "/app-token":
 			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/union":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
 		case "/detail":
+			var payload struct {
+				UserID string `json:"userid"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				return nil, err
+			}
+			if payload.UserID != "u1" {
+				return jsonResponse(http.StatusBadRequest, `{}`), nil
+			}
 			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","name":"Alice","dept_id_list":[42,"43",42]}}`), nil
 		case "/department":
 			var payload struct {
@@ -184,6 +195,7 @@ func TestDingTalkOAuthProviderLoadsMultipleDepartmentsWithoutExposingIDsAsNames(
 		TokenURL:            "https://example.test/oauth-token",
 		UserURL:             "https://example.test/me",
 		AppTokenURL:         "https://example.test/app-token",
+		UnionLookupURL:      "https://example.test/union",
 		UserDetailURL:       "https://example.test/detail",
 		DepartmentDetailURL: "https://example.test/department",
 		ClientID:            "id",

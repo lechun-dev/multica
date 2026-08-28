@@ -203,7 +203,11 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserI
 		return OAuthUser{}, errors.New("DingTalk application token response missing accessToken")
 	}
 
-	if dingUserID == "" {
+	// The OAuth `userId` value is not guaranteed to be the enterprise
+	// directory userid (some OAuth tenants return an openId-shaped value).
+	// When unionId is available, resolve it first so the subsequent user detail
+	// request — and its dept_id_list — always targets the real directory user.
+	if unionID != "" {
 		unionURL := p.UnionLookupURL
 		if unionURL == "" {
 			unionURL = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
@@ -217,15 +221,24 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserI
 			} `json:"result"`
 		}
 		if err := p.postAppJSON(ctx, unionURL, token.AccessToken, unionPayload, &lookup); err != nil {
-			return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: %w", err)
+			if dingUserID == "" {
+				return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: %w", err)
+			}
+			slog.WarnContext(ctx, "dingtalk login: union id lookup unavailable", "error", err)
+		} else if lookup.ErrCode != 0 || lookup.Result.UserID == "" {
+			if dingUserID == "" {
+				if lookup.ErrCode != 0 {
+					return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: DingTalk error %d", lookup.ErrCode)
+				}
+				return OAuthUser{}, errors.New("DingTalk union id response missing userid")
+			}
+			slog.WarnContext(ctx, "dingtalk login: union id response did not include directory userid", "errcode", lookup.ErrCode)
+		} else {
+			dingUserID = lookup.Result.UserID
 		}
-		if lookup.ErrCode != 0 {
-			return OAuthUser{}, fmt.Errorf("resolve DingTalk union id: DingTalk error %d", lookup.ErrCode)
-		}
-		if lookup.Result.UserID == "" {
-			return OAuthUser{}, errors.New("DingTalk union id response missing userid")
-		}
-		dingUserID = lookup.Result.UserID
+	}
+	if dingUserID == "" {
+		return OAuthUser{}, errors.New("DingTalk enterprise user id is required")
 	}
 
 	detailURL := p.UserDetailURL
@@ -258,6 +271,9 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserI
 	if detail.Result.AvatarURL == "" {
 		detail.Result.AvatarURL = detail.Result.Avatar
 	}
+	slog.InfoContext(ctx, "dingtalk login: enterprise user profile loaded",
+		"has_department_list", detail.Result.DeptIDList != nil,
+		"department_id_count", departmentIDCount(detail.Result.DeptIDList))
 	identity := OAuthUser{
 		DingUserID: detail.Result.UserID,
 		UnionID:    detail.Result.UnionID,
@@ -268,13 +284,27 @@ func (p DingTalkOAuthProvider) enterpriseIdentity(ctx context.Context, dingUserI
 	if detail.Result.DeptIDList != nil {
 		departments, err := p.loadDepartments(ctx, token.AccessToken, *detail.Result.DeptIDList)
 		if err != nil {
-			slog.WarnContext(ctx, "dingtalk login: department profile unavailable", "error", err)
+			slog.WarnContext(ctx, "dingtalk login: department profile unavailable",
+				"department_id_count", len(*detail.Result.DeptIDList), "error", err)
 		} else {
 			identity.Departments = departments
 			identity.DepartmentsSynced = true
+			slog.InfoContext(ctx, "dingtalk login: department profile synchronized",
+				"department_count", len(departments))
 		}
+	} else {
+		slog.WarnContext(ctx, "dingtalk login: enterprise profile did not include department list")
 	}
 	return identity, nil
+}
+
+// departmentIDCount is intentionally limited to a count so diagnostics never
+// emit DingTalk department identifiers.
+func departmentIDCount(ids *[]dingTalkID) int {
+	if ids == nil {
+		return 0
+	}
+	return len(*ids)
 }
 
 type dingTalkID string
