@@ -11,9 +11,9 @@ on:
         required: true
         type: string
 
-# 2026-08-26 coder(lq): Build the isolated Lechun desktop installers in
-# GitHub Actions and attach them to the private fork's Release so macOS,
-# Windows, and Linux consume the same source of truth.
+# 2026-08-28 coder(lq): Build the isolated Lechun desktop installers in
+# GitHub Actions and attach the three supported macOS/Windows packages to the
+# private fork's Release so desktop downloads consume one source of truth.
 permissions:
   contents: write
   packages: write
@@ -46,12 +46,6 @@ jobs:
           - platform: windows
             arch: x64
             runner: windows-latest
-          - platform: linux
-            arch: x64
-            runner: ubuntu-latest
-          - platform: linux
-            arch: arm64
-            runner: ubuntu-latest
 
     runs-on: ${{ matrix.runner }}
     steps:
@@ -163,7 +157,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --title "Multica Lechun $RELEASE_TAG" \
-              --notes "Multica Lechun desktop installers for macOS, Windows, and Linux." \
+              --notes "Multica Lechun desktop installers for macOS and Windows." \
               --latest
           else
             echo "Reusing existing Release $RELEASE_TAG"
