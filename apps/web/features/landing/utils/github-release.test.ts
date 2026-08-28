@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchLatestRelease } from "./github-release";
 
-/** The eleven desktop artifacts a finished private release carries. */
+/** The supported five-package desktop release; Linux is retired. */
 function completeAssets(version: string) {
   return [
     `multica-lechun-${version}-mac-arm64.dmg`,
@@ -10,19 +10,13 @@ function completeAssets(version: string) {
     `multica-lechun-${version}-mac-x64.dmg`,
     `multica-lechun-${version}-mac-x64.zip`,
     `multica-lechun-${version}-windows-x64.exe`,
-    `multica-lechun-${version}-linux-x86_64.AppImage`,
-    `multica-lechun-${version}-linux-amd64.deb`,
-    `multica-lechun-${version}-linux-x86_64.rpm`,
-    `multica-lechun-${version}-linux-arm64.AppImage`,
-    `multica-lechun-${version}-linux-arm64.deb`,
-    `multica-lechun-${version}-linux-aarch64.rpm`,
   ].map((name) => ({
     name,
     browser_download_url: `https://github.test/download/v${version}/${name}`,
   }));
 }
 
-/** What a release looks like before the Windows/Linux jobs upload. */
+/** What a release looks like before the Windows job uploads. */
 function macOnlyAssets(version: string) {
   return completeAssets(version).filter((a) => a.name.includes("-mac-"));
 }
@@ -88,7 +82,7 @@ describe("fetchLatestRelease", () => {
     expect(result.version).toBe("v0.4.27");
     expect(result.htmlUrl).toContain("v0.4.27");
     expect(result.assets.winX64Exe).toContain("0.4.27");
-    expect(result.assets.linuxArm64Rpm).toContain("0.4.27");
+    expect(result.assets.linuxArm64Rpm).toBeUndefined();
   });
 
   // The old implementation only stepped back for the first hour after

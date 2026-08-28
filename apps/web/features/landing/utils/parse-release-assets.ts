@@ -98,10 +98,15 @@ export function hasAnyAsset(assets: DownloadAssets): boolean {
 }
 
 /**
- * The eleven desktop artifacts a finished release carries: four Mac,
- * one Windows, six Linux. Listed explicitly rather than counted, so
- * adding an optional key to `DownloadAssets` later (a universal Mac
- * build, say) can't silently redefine what "complete" means.
+ * The five desktop artifacts currently published by the private release
+ * workflow: four Mac and one Windows. Linux assets remain parseable for
+ * older releases, but are optional because the Lechun workflow no longer
+ * builds Linux packages. Listed explicitly rather than counted, so adding an
+ * optional key to `DownloadAssets` later cannot redefine "complete".
+ *
+ * 2026-08-28 coder(lq): Keep completeness aligned with the supported release
+ * matrix; otherwise a newer five-package release is incorrectly hidden
+ * behind an older eleven-package release that still includes Linux.
  */
 const REQUIRED_ASSET_KEYS: (keyof DownloadAssets)[] = [
   "macArm64Dmg",
@@ -109,12 +114,6 @@ const REQUIRED_ASSET_KEYS: (keyof DownloadAssets)[] = [
   "macX64Dmg",
   "macX64Zip",
   "winX64Exe",
-  "linuxAmd64AppImage",
-  "linuxAmd64Deb",
-  "linuxAmd64Rpm",
-  "linuxArm64AppImage",
-  "linuxArm64Deb",
-  "linuxArm64Rpm",
 ];
 
 /**

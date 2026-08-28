@@ -51,13 +51,23 @@ const ALL_ARTIFACT_NAMES = [
 ];
 
 describe("hasCompleteAssetSet", () => {
-  it("accepts a release carrying all eleven private desktop artifacts", () => {
+  it("accepts a release carrying the supported Mac and Windows artifacts", () => {
     const assets = parseReleaseAssets(ALL_ARTIFACT_NAMES.map(asset));
     expect(hasCompleteAssetSet(assets)).toBe(true);
   });
 
-  it("rejects a release missing any single artifact", () => {
-    for (const dropped of ALL_ARTIFACT_NAMES) {
+  it("does not require retired Linux artifacts", () => {
+    const assets = parseReleaseAssets(
+      ALL_ARTIFACT_NAMES.filter((n) => !n.includes("-linux-")).map(asset),
+    );
+    expect(hasCompleteAssetSet(assets)).toBe(true);
+  });
+
+  it("rejects a release missing any supported artifact", () => {
+    const supportedArtifacts = ALL_ARTIFACT_NAMES.filter(
+      (n) => !n.includes("-linux-"),
+    );
+    for (const dropped of supportedArtifacts) {
       const assets = parseReleaseAssets(
         ALL_ARTIFACT_NAMES.filter((n) => n !== dropped).map(asset),
       );
