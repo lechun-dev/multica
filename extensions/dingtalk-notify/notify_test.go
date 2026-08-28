@@ -99,7 +99,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 	}
 
 	got := FormatText(event)
-	want := "🔔 **张畅 在 Multica 中提到了你**\n\n来源：乐纯工作区 / 钉钉通知\n\n任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n消息：\n> 请 [@李群](mention://member/member-id) 周五前确认\n\n---\n\n### ↗️ [打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
+	want := "🔔 **张畅 在 Multica 中提到了你**\n\n📍 **来源** 乐纯工作区 / 钉钉通知\n📋 **任务** [MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n💬 **消息**\n> 请 [@李群](mention://member/member-id) 周五前确认\n\n---\n\n### 👉 [打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}
@@ -107,7 +107,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 
 func TestFormatTextDoesNotExposeActorIDWhenNameMissing(t *testing.T) {
 	got := FormatText(MentionCreated{Actor: Actor{ID: "secret-user-id", Kind: "member"}, Text: "hello"})
-	if got != "🔔 **一位 Multica 成员 在 Multica 中提到了你**\n\n消息：\n> hello" {
+	if got != "🔔 **一位 Multica 成员 在 Multica 中提到了你**\n\n💬 **消息**\n> hello" {
 		t.Fatalf("formatted notification exposed an opaque actor id or changed fallback: %q", got)
 	}
 }
@@ -120,7 +120,7 @@ func TestFormatTextEscapesDisplayContext(t *testing.T) {
 		IssueTitle:      "Fix `notify`",
 		Text:            "done",
 	})
-	if got != "🔔 **A\\*lice 在 Multica 中提到了你**\n\n来源：Acme\\_\\[研发\\]\n\n任务：MUL-1 · Fix \\`notify\\`\n\n消息：\n> done" {
+	if got != "🔔 **A\\*lice 在 Multica 中提到了你**\n\n📍 **来源** Acme\\_\\[研发\\]\n📋 **任务** MUL-1 · Fix \\`notify\\`\n\n💬 **消息**\n> done" {
 		t.Fatalf("formatted notification did not escape display fields: %q", got)
 	}
 }
