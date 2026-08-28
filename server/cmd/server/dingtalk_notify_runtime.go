@@ -33,6 +33,11 @@ type dingtalkNotifyRuntime struct {
 	pool           *pgxpool.Pool
 	workerInterval time.Duration
 	maxAttempts    int
+	// agentOwner resolves a user Agent's owner. Keeping this callback on the
+	// host bridge avoids coupling the standalone notification module to the
+	// Multica database model and makes the routing easy to test.
+	agentOwner         func(context.Context, string, string) (string, error)
+	agentOwnerMentions bool
 }
 
 const (
@@ -40,8 +45,8 @@ const (
 	dingtalkNotifyWorkerRetryMax = 30 * time.Second
 )
 
-// registerDingTalkNotifyRuntime wires member mentions only. Agent targets are
-// intentionally left disabled by notify.BuildMessages' default options. The
+// registerDingTalkNotifyRuntime wires member mentions and, when enabled,
+// explicit Agent mentions to the Agent owner's existing member binding. The
 // runtime starts automatically once the global DingTalk application credentials
 // are complete; no feature flag or BYO robot encryption key is involved.
 func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
@@ -78,13 +83,15 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
 		RobotCode:    strings.TrimSpace(config.DingTalkRobotCode),
 	}}
 	runtime := &dingtalkNotifyRuntime{
-		store:          store,
-		resolver:       dingtalkMentionResolver{pool: pool},
-		provider:       provider,
-		audit:          notify.SQLAuditSink{DB: sqlDB},
-		pool:           pool,
-		workerInterval: config.WorkerInterval,
-		maxAttempts:    config.MaxAttempts,
+		store:              store,
+		resolver:           dingtalkMentionResolver{pool: pool},
+		provider:           provider,
+		audit:              notify.SQLAuditSink{DB: sqlDB},
+		pool:               pool,
+		workerInterval:     config.WorkerInterval,
+		maxAttempts:        config.MaxAttempts,
+		agentOwner:         dingtalkAgentOwnerResolver(pool),
+		agentOwnerMentions: config.AgentOwnerMentions,
 	}
 	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
 	go runtime.run(context.Background())
@@ -169,21 +176,41 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 	if commentID == "" || content == "" || actorType == "system" {
 		return
 	}
-	mentions := util.ParseMentions(content)
-	targets := make([]notify.MentionTarget, 0, len(mentions))
-	for _, mention := range mentions {
-		if mention.Type == "member" {
-			targets = append(targets, notify.MentionTarget{ID: mention.ID, Kind: "member"})
-		}
-	}
-	if len(targets) == 0 {
-		return
-	}
 	if actorType == "" {
 		actorType = e.ActorType
 	}
 	if actorID == "" {
 		actorID = e.ActorID
+	}
+	mentions := util.ParseMentions(content)
+	targets := make([]notify.MentionTarget, 0, len(mentions))
+	actorOwnerID := actorID
+	if actorType == "agent" {
+		actorOwnerID = r.resolveAgentOwner(e.WorkspaceID, actorID)
+	}
+	for _, mention := range mentions {
+		switch mention.Type {
+		case "member":
+			targets = append(targets, notify.MentionTarget{ID: mention.ID, Kind: "member"})
+		case "agent":
+			if !r.agentOwnerMentions {
+				continue
+			}
+			ownerID := r.resolveAgentOwner(e.WorkspaceID, mention.ID)
+			if ownerID == "" {
+				slog.Info("dingtalk notify: agent owner unavailable", "workspace_id", e.WorkspaceID)
+				continue
+			}
+			if ownerID == actorOwnerID {
+				// The owner is already the person (or Agent) performing the
+				// work; do not notify them about their own Agent usage.
+				continue
+			}
+			targets = append(targets, notify.MentionTarget{ID: ownerID, Kind: "member"})
+		}
+	}
+	if len(targets) == 0 {
+		return
 	}
 	mention := notify.CommentMention{
 		EventID: commentID, WorkspaceID: e.WorkspaceID,
@@ -215,7 +242,40 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 		slog.Warn("dingtalk notify: enqueue failed", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages), "error", err)
 		return
 	}
-	slog.Info("dingtalk notify: member mentions enqueued", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
+	slog.Info("dingtalk notify: mentions enqueued", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
+}
+
+func dingtalkAgentOwnerResolver(pool *pgxpool.Pool) func(context.Context, string, string) (string, error) {
+	return func(ctx context.Context, workspaceID, agentID string) (string, error) {
+		if pool == nil {
+			return "", errors.New("DingTalk agent owner resolver database is unavailable")
+		}
+		var ownerID *string
+		err := pool.QueryRow(ctx, `
+			SELECT owner_id::text
+			FROM agent
+			WHERE id = $1 AND workspace_id = $2 AND kind = 'user'
+			  AND archived_at IS NULL`, agentID, workspaceID).Scan(&ownerID)
+		if errors.Is(err, pgx.ErrNoRows) || ownerID == nil {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(*ownerID), nil
+	}
+}
+
+func (r *dingtalkNotifyRuntime) resolveAgentOwner(workspaceID, agentID string) string {
+	if r == nil || r.agentOwner == nil || strings.TrimSpace(agentID) == "" {
+		return ""
+	}
+	ownerID, err := r.agentOwner(context.Background(), workspaceID, agentID)
+	if err != nil {
+		slog.Warn("dingtalk notify: resolve agent owner failed", "workspace_id", workspaceID, "error", err)
+		return ""
+	}
+	return strings.TrimSpace(ownerID)
 }
 
 type dingtalkMentionContext struct {

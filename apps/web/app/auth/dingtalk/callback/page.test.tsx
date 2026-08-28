@@ -113,4 +113,35 @@ describe("DingTalkCallbackPage", () => {
       });
     }
   });
+
+  it("hands a successful local desktop login back through multica-dev", async () => {
+    mockSearchParams.set("state", "trusted-random.desktop-dev");
+    mockDingTalkLogin.mockResolvedValue({ token: "desktop-dev-jwt" });
+    const hrefSetter = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        ...originalLocation,
+        set href(value: string) {
+          hrefSetter(value);
+        },
+      },
+    });
+
+    try {
+      render(<CallbackPage />, { wrapper: Wrapper });
+
+      await waitFor(() => {
+        expect(hrefSetter).toHaveBeenCalledWith(
+          "multica-dev://auth/callback?token=desktop-dev-jwt",
+        );
+      });
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: originalLocation,
+      });
+    }
+  });
 });

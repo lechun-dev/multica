@@ -14,8 +14,9 @@ var ErrInvalidLoginState = errors.New("oauth state is invalid or expired")
 type LoginClient string
 
 const (
-	LoginClientWeb     LoginClient = "web"
-	LoginClientDesktop LoginClient = "desktop"
+	LoginClientWeb        LoginClient = "web"
+	LoginClientDesktop    LoginClient = "desktop"
+	LoginClientDesktopDev LoginClient = "desktop-dev"
 )
 
 func ParseLoginClient(value string) (LoginClient, error) {
@@ -24,6 +25,8 @@ func ParseLoginClient(value string) (LoginClient, error) {
 		return LoginClientWeb, nil
 	case LoginClientDesktop:
 		return LoginClientDesktop, nil
+	case LoginClientDesktopDev:
+		return LoginClientDesktopDev, nil
 	default:
 		return "", errors.New("unsupported OAuth client")
 	}
@@ -33,6 +36,9 @@ func ParseLoginClient(value string) (LoginClient, error) {
 // already been verified and consumed by Complete. The random prefix never
 // contains a dot because randomState uses base64url without padding.
 func LoginClientFromState(state string) LoginClient {
+	if strings.HasSuffix(state, "."+string(LoginClientDesktopDev)) {
+		return LoginClientDesktopDev
+	}
 	if strings.HasSuffix(state, "."+string(LoginClientDesktop)) {
 		return LoginClientDesktop
 	}

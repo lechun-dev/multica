@@ -16,7 +16,8 @@ function requireRuntimeApiUrl(): string {
 export function DesktopLoginPage() {
   const apiUrl = requireRuntimeApiUrl();
   const handleDingTalkLogin = () => {
-    window.desktopAPI.openExternal(buildDingTalkLoginURL(apiUrl, "desktop"));
+    const client = import.meta.env.DEV ? "desktop-dev" : "desktop";
+    window.desktopAPI.openExternal(buildDingTalkLoginURL(apiUrl, client));
   };
 
   return (
@@ -25,6 +26,7 @@ export function DesktopLoginPage() {
       <DingTalkFirstLoginFrame>
         <LoginPage
           logo={<MulticaIcon bordered size="lg" />}
+          hideEmailLogin
           onSuccess={() => {
             // Auth store update triggers AppContent re-render → shows DesktopShell.
             // Initial workspace navigation happens in routes.tsx via IndexRedirect.

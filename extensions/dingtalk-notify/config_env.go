@@ -27,9 +27,21 @@ func ConfigFromEnv(getenv func(string) string) Config {
 		DingTalkRobotCode:    getenv("DINGTALK_ROBOT_CODE"),
 		DingTalkAPIBaseURL:   getenv("DINGTALK_API_BASE_URL"),
 		DingTalkOAuthAuthURL: getenv("DINGTALK_OAUTH_AUTH_URL"),
+		AgentOwnerMentions:   envBoolDefault(getenv("DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS"), true),
 		WorkerInterval:       envDuration(getenv("DINGTALK_NOTIFY_WORKER_INTERVAL")),
 		MaxAttempts:          envInt(getenv("DINGTALK_NOTIFY_MAX_ATTEMPTS")),
 	}
+}
+
+func envBoolDefault(value string, fallback bool) bool {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func envDuration(value string) time.Duration {

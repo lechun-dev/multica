@@ -117,7 +117,10 @@ if (process.platform !== "win32") {
   process.env.PATH = `${fallbackPaths.join(":")}:${process.env.PATH ?? ""}`;
 }
 
-const PROTOCOL = "multica";
+// Keep local Electron development isolated from the installed production app.
+// Both apps use the same callback host, so sharing `multica://` lets macOS
+// route a development login back to the official app.
+const PROTOCOL = is.dev ? "multica-dev" : "multica";
 const devLog = is.dev ? createBestEffortDevLog() : undefined;
 
 // Where the main process parks a freeze/crash breadcrumb until the next

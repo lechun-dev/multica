@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/chattitle"
+	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
@@ -43,6 +44,9 @@ type TaskService struct {
 	Analytics analytics.Client
 	Metrics   *obsmetrics.BusinessMetrics
 	Wakeup    TaskWakeupNotifier
+	// Entitlements supplies Cloud's workspace-scoped issue-count instruction.
+	// Nil keeps self-hosted and isolated test services unlimited.
+	Entitlements entitlement.Provider
 	// SourceContextStorage is used only by the bounded 30-day cleanup pass for
 	// terminal quick-create captures. Nil disables it where storage is absent.
 	SourceContextStorage SourceContextObjectStore
@@ -1522,6 +1526,9 @@ func (s *TaskService) EnqueueQuickCreateTaskWithSourceContext(ctx context.Contex
 }
 
 func (s *TaskService) enqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt, priority, dueDate string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID, capture *SourceContextCapture) (db.AgentTaskQueue, error) {
+	if err := CheckIssueCreateCapacity(ctx, s.Queries, s.Entitlements, workspaceID); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("preflight quick-create issue capacity: %w", err)
+	}
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
@@ -1691,6 +1698,9 @@ func (s *TaskService) RetrySourceContextQuickCreate(ctx context.Context, workspa
 	}
 	if canInvoke != nil && !canInvoke(agent) {
 		return nil, ErrRerunInvokeNotAllowed
+	}
+	if err := CheckIssueCreateCapacity(ctx, s.Queries, s.Entitlements, workspaceID); err != nil {
+		return nil, fmt.Errorf("preflight quick-create issue capacity: %w", err)
 	}
 	overlay := s.buildRuntimeMCPOverlay(ctx, requesterID, agent)
 
@@ -3175,10 +3185,11 @@ func (s *TaskService) RebroadcastCancelledTask(ctx context.Context, taskID pgtyp
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
 }
 
-func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID pgtype.UUID) {
+func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID pgtype.UUID) bool {
 	var (
 		task    db.AgentTaskQueue
 		payload protocol.ChatCancelFinalizedPayload
+		changed bool
 		settled bool
 	)
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
@@ -3211,6 +3222,7 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 		if err != nil {
 			return fmt.Errorf("claim deferred chat finalize: %w", err)
 		}
+		changed = true
 		task = claimed
 		if sessionGone {
 			// The session cascaded away (its FK NULLs the column below anyway):
@@ -3308,12 +3320,13 @@ func (s *TaskService) FinalizeDeferredCancelledChat(ctx context.Context, taskID 
 			"task_id", util.UUIDToString(taskID),
 			"error", err,
 		)
-		return
+		return false
 	}
 	if !settled || payload.Outcome == "" {
-		return
+		return changed
 	}
 	s.broadcastChatCancelFinalized(ctx, task, payload)
+	return changed
 }
 
 func (s *TaskService) broadcastChatCancelFinalized(ctx context.Context, task db.AgentTaskQueue, payload protocol.ChatCancelFinalizedPayload) {
@@ -5717,6 +5730,7 @@ const (
 // replays from terminally exhausted outbox entries so operators never mistake
 // a bounded stop for a successful replay.
 type DelegatedFailureRecoverySweepResult struct {
+	Scanned   int
 	Replayed  int
 	Exhausted int
 }
@@ -6193,6 +6207,7 @@ func (s *TaskService) RecoverPendingDelegatedFailures(ctx context.Context, maxPe
 	if err != nil {
 		return result, fmt.Errorf("list pending delegated failure recoveries: %w", err)
 	}
+	result.Scanned = len(pending)
 
 	errs := make([]error, 0)
 	for _, comment := range pending {
@@ -6736,7 +6751,7 @@ func (s *TaskService) broadcastIssueUpdated(ctx context.Context, issue db.Issue,
 		ActorType:   "system",
 		ActorID:     "",
 		Payload: map[string]any{
-			"issue":          IssueToMapWithCategory(ctx, s.Queries, issue, prefix),
+			"issue":          IssueToMapResolved(ctx, s.Queries, issue, prefix),
 			"status_changed": prevStatus != issue.Status,
 			"prev_status":    prevStatus,
 		},
@@ -6897,13 +6912,19 @@ func builtInStatusCategory(status string) string {
 	return ""
 }
 
-// IssueToMapWithCategory is IssueToMap with an AUTHORITATIVE status_category,
-// resolved through the catalog so a custom status is not emitted with a blank
-// one. Background events go through here; clients treat this payload as a
-// complete issue and bucket it by category. (MUL-6243)
-func IssueToMapWithCategory(ctx context.Context, q issuestatus.Querier, issue db.Issue, issuePrefix string) map[string]any {
+// IssueToMapResolved is IssueToMap with an AUTHORITATIVE status_category and
+// status_name, both resolved through the catalog so a custom status is not
+// emitted with blanks. Background events go through here; clients treat this
+// payload as a complete issue and bucket it by category. (MUL-6243)
+//
+// Both fields come from ONE catalog read. Resolving them separately would
+// double the query on every event carrying a custom status, and the HTTP
+// rendering already shares a single read through its Resolver. (MUL-6749)
+func IssueToMapResolved(ctx context.Context, q issuestatus.Querier, issue db.Issue, issuePrefix string) map[string]any {
 	m := IssueToMap(issue, issuePrefix)
-	m["status_category"] = issuestatus.Effective(ctx, q, issue.WorkspaceID, issue.Status)
+	category, name := issuestatus.EffectiveAndName(ctx, q, issue.WorkspaceID, issue.Status)
+	m["status_category"] = category
+	m["status_name"] = name
 	return m
 }
 
@@ -6919,7 +6940,12 @@ func IssueToMap(issue db.Issue, issuePrefix string) map[string]any {
 		// Mirrors handler.IssueResponse.StatusCategory: a built-in status IS
 		// its own category, so this resolves with no catalog lookup. Empty for
 		// a custom status, which consumers resolve via the catalog. (MUL-6243)
-		"status_category":  builtInStatusCategory(issue.Status),
+		"status_category": builtInStatusCategory(issue.Status),
+		// Mirrors handler.IssueResponse.StatusName. A built-in carries no name
+		// — clients localize those from the key — and a CUSTOM one is filled in
+		// by IssueToMapResolved, which has the catalog. Emitted unconditionally
+		// so this rendering cannot lose a key the HTTP one carries. (MUL-6749)
+		"status_name":      "",
 		"priority":         issue.Priority,
 		"assignee_type":    util.TextToPtr(issue.AssigneeType),
 		"assignee_id":      util.UUIDToPtr(issue.AssigneeID),

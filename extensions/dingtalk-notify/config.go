@@ -24,8 +24,12 @@ type Config struct {
 	DingTalkRobotCode    string
 	DingTalkAPIBaseURL   string
 	DingTalkOAuthAuthURL string
-	WorkerInterval       time.Duration
-	MaxAttempts          int
+	// AgentOwnerMentions enables P2P notices to an Agent's owner when another
+	// member explicitly mentions that Agent. It defaults to enabled so existing
+	// deployments get the additive behavior without an environment change.
+	AgentOwnerMentions bool
+	WorkerInterval     time.Duration
+	MaxAttempts        int
 }
 
 // MissingNotificationSettings reports the application credentials required by
