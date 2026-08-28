@@ -24,6 +24,7 @@
     "status": "상태",
     "progress": "진행률",
     "lead": "리드",
+    "my_role": "내 역할",
     "created": "생성일",
     "issues": "태스크 수"
   },
@@ -202,6 +203,7 @@
     "direction_asc": "오름차순",
     "direction_desc": "내림차순",
     "section_columns": "열",
-    "view": "보기"
+    "view": "보기",
+    "show_workspace_owned_items": "워크스페이스 소유 프로젝트 표시"
   }
 }

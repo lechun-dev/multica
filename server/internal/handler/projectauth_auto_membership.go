@@ -128,7 +128,29 @@ func promoteMentionedMembersWithExecutor(ctx context.Context, executor dbExecuto
 	return nil
 }
 
-func promoteIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, projectID pgtype.UUID, assigneeType pgtype.Text, assigneeID pgtype.UUID, description pgtype.Text) error {
+// 2026-08-28 coder(lq): Mention grants are task-scoped; project descriptions
+// continue using the legacy project-level helper above.
+func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, content string) error {
+	for _, mention := range util.ParseMentions(content) {
+		userID := mention.ID
+		if mention.Type == "agent" {
+			var err error
+			userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+			if err != nil {
+				return err
+			}
+		}
+		if mention.Type != "member" && mention.Type != "agent" || userID == "" {
+			continue
+		}
+		if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,'project.view',$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func promoteIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID pgtype.UUID, projectID pgtype.UUID, assigneeType pgtype.Text, assigneeID pgtype.UUID, description pgtype.Text) error {
 	if !projectID.Valid {
 		return nil
 	}
@@ -147,12 +169,14 @@ func promoteIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, pr
 		default:
 			assigneeUserID = ""
 		}
-		if err := promoteProjectMemberWithExecutor(ctx, executor, projectIDString, assigneeUserID, projectauth.ProjectMember); err != nil {
-			return err
+		if assigneeUserID != "" {
+			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,'project.edit',$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, assigneeUserID); err != nil {
+				return err
+			}
 		}
 	}
 	if description.Valid {
-		return promoteMentionedMembersWithExecutor(ctx, executor, projectIDString, description.String)
+		return promoteIssueMentionedMembersWithExecutor(ctx, executor, uuidToString(issueID), projectIDString, description.String)
 	}
 	return nil
 }
@@ -164,7 +188,7 @@ func (h *Handler) issueAccessBeforeCommit() func(context.Context, pgx.Tx, db.Iss
 		return nil
 	}
 	return func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
-		return promoteIssueAccessWithExecutor(ctx, tx, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description)
+		return promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description)
 	}
 }
 
@@ -198,7 +222,7 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	if err != nil {
 		return db.Issue{}, err
 	}
-	if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+	if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
 		return db.Issue{}, fmt.Errorf("promote issue project access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

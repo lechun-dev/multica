@@ -173,6 +173,7 @@ export type {
   ProjectPriority,
   CreateProjectRequest,
   UpdateProjectRequest,
+  ListProjectsParams,
   ListProjectsResponse,
   ProjectPermissionReportRole,
   ProjectPermissionRole,

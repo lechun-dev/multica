@@ -24,6 +24,7 @@
     "status": "状态",
     "progress": "进度",
     "lead": "负责人",
+    "my_role": "我的角色",
     "created": "创建时间",
     "issues": "任务数"
   },
@@ -202,6 +203,7 @@
     "direction_asc": "升序",
     "direction_desc": "降序",
     "section_columns": "列",
-    "view": "视图"
+    "view": "视图",
+    "show_workspace_owned_items": "显示空间权限项目"
   }
 }

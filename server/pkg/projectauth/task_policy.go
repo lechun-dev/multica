@@ -17,5 +17,11 @@ func (s *Service) CheckIssue(ctx context.Context, subject Subject, issueID, proj
 	if issueID == "" || projectID == "" {
 		return ErrNoProjectAccess
 	}
+	if reader, ok := s.repo.(IssuePermissionReader); ok {
+		allowed, err := reader.IssuePermission(ctx, issueID, subject.UserID, permission)
+		if err == nil && allowed {
+			return nil
+		}
+	}
 	return s.Check(ctx, subject, projectID, permission)
 }

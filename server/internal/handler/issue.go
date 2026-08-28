@@ -1349,7 +1349,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userID)))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
 	}
 
 	if len(statusCategoriesFilter) > 0 {
@@ -1841,7 +1842,8 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userID)))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
 	}
 
 	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
@@ -3533,7 +3535,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
 			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
 		}
 	}

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     sortDirection: "asc",
     hiddenColumns: [] as string[],
     filters: { statuses: [], priorities: [], leads: [] },
+    showWorkspaceOwnedItems: true,
     setViewMode: vi.fn(),
     toggleSort: vi.fn(),
     setSortField: vi.fn(),
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
     toggleColumn: vi.fn(),
     toggleFilter: vi.fn(),
     clearFilters: vi.fn(),
+    setShowWorkspaceOwnedItems: vi.fn(),
   },
 }));
 
@@ -199,6 +201,7 @@ const PROJECT: Project = {
   issue_count: 3,
   done_count: 1,
   resource_count: 0,
+  current_user_role: "viewer",
 };
 
 function makeAdapter(
@@ -250,6 +253,12 @@ beforeEach(() => {
 });
 
 describe("ProjectsPage compact row navigation", () => {
+  it("shows the signed-in user's project role in the table", () => {
+    renderProjects();
+
+    expect(within(projectRow()).getByText("Viewer")).toBeInTheDocument();
+  });
+
   it("renders the project name as text, not a title link", () => {
     renderProjects();
 
