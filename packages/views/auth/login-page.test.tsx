@@ -418,6 +418,24 @@ describe("LoginPage", () => {
     expect(onDingTalkLogin).toHaveBeenCalledOnce();
   });
 
+  it("hides email login when the DingTalk-only option is enabled", () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        onDingTalkLogin={vi.fn()}
+        hideEmailLogin
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /continue with dingtalk/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /continue$/i }),
+    ).not.toBeInTheDocument();
+  });
+
   // -------------------------------------------------------------------------
   // CLI callback — existing session
   // -------------------------------------------------------------------------

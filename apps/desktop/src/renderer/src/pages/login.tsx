@@ -25,6 +25,7 @@ export function DesktopLoginPage() {
       <DingTalkFirstLoginFrame>
         <LoginPage
           logo={<MulticaIcon bordered size="lg" />}
+          hideEmailLogin
           onSuccess={() => {
             // Auth store update triggers AppContent re-render → shows DesktopShell.
             // Initial workspace navigation happens in routes.tsx via IndexRedirect.

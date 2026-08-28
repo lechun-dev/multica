@@ -169,7 +169,19 @@ func TestConfigFromEnvUsesInjectedValues(t *testing.T) {
 		"DINGTALK_NOTIFY_MAX_ATTEMPTS":    "7",
 	}
 	config := ConfigFromEnv(func(key string) string { return values[key] })
-	if config.DingTalkClientID != "app" || config.WorkerInterval != 3*time.Second || config.MaxAttempts != 7 {
+	if config.DingTalkClientID != "app" || config.WorkerInterval != 3*time.Second || config.MaxAttempts != 7 || !config.AgentOwnerMentions {
 		t.Fatalf("unexpected config: %+v", config)
+	}
+}
+
+func TestConfigFromEnvCanDisableAgentOwnerMentions(t *testing.T) {
+	config := ConfigFromEnv(func(key string) string {
+		if key == "DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS" {
+			return "false"
+		}
+		return ""
+	})
+	if config.AgentOwnerMentions {
+		t.Fatal("agent owner mentions should be disabled")
 	}
 }

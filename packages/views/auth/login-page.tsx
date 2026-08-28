@@ -58,6 +58,8 @@ interface LoginPageProps {
   onGoogleLogin?: () => void;
   /** Starts DingTalk OAuth in the platform-provided browser flow. */
   onDingTalkLogin?: () => void;
+  /** Hide the email-code form on login surfaces that require DingTalk. */
+  hideEmailLogin?: boolean;
   /** Slot rendered at the bottom of the sign-in card, below the
    *  Google button. The web shell uses it for a "Prefer the desktop
    *  app?" prompt; desktop omits it (a download prompt inside the app
@@ -107,6 +109,7 @@ export function LoginPage({
   onTokenObtained,
   onGoogleLogin,
   onDingTalkLogin,
+  hideEmailLogin = false,
   extra,
 }: LoginPageProps) {
   const { t } = useT("auth");
@@ -121,6 +124,9 @@ export function LoginPage({
   // Tracks how the existing session was detected so handleCliAuthorize
   // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
+  // CLI authorization still needs the email-code flow as a fallback, even
+  // when the surrounding Web login surface is DingTalk-only.
+  const dingtalkOnly = hideEmailLogin && !cliCallback;
 
   // Check for existing session when CLI callback is present.
   // Prioritises cookie auth (= current browser session) to avoid authorising
@@ -399,6 +405,36 @@ export function LoginPage({
             >
               {t(($) => $.common.back)}
             </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    );
+  }
+
+  if (dingtalkOnly) {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            {logo && <div className="mx-auto mb-4">{logo}</div>}
+            <CardTitle className="text-display-sm">
+              {t(($) => $.signin.title)}
+            </CardTitle>
+          </CardHeader>
+          <CardFooter className="flex flex-col gap-3">
+            {onDingTalkLogin && (
+              <Button
+                type="button"
+                variant="outline"
+                className="dingtalk-login-button w-full"
+                size="lg"
+                onClick={onDingTalkLogin}
+                disabled={loading}
+              >
+                {t(($) => $.signin.dingtalk)}
+              </Button>
+            )}
+            {extra && <div className="w-full pt-1 text-center">{extra}</div>}
           </CardFooter>
         </Card>
       </div>
