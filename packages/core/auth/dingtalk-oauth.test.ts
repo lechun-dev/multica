@@ -1,7 +1,11 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import { buildDingTalkLoginURL, isDesktopDingTalkState } from "./dingtalk-oauth";
+import {
+  buildDingTalkLoginURL,
+  dingtalkCallbackProtocol,
+  isDesktopDingTalkState,
+} from "./dingtalk-oauth";
 
 describe("DingTalk OAuth helpers", () => {
   it("starts a desktop-aware flow on an absolute API origin", () => {
@@ -9,6 +13,14 @@ describe("DingTalk OAuth helpers", () => {
       buildDingTalkLoginURL("https://multica.example.test", "desktop"),
     ).toBe(
       "https://multica.example.test/auth/dingtalk/start?client=desktop",
+    );
+  });
+
+  it("marks local desktop flows separately from the production app", () => {
+    expect(
+      buildDingTalkLoginURL("https://multica.example.test", "desktop-dev"),
+    ).toBe(
+      "https://multica.example.test/auth/dingtalk/start?client=desktop-dev",
     );
   });
 
@@ -20,7 +32,10 @@ describe("DingTalk OAuth helpers", () => {
 
   it("recognizes only the verified desktop state suffix", () => {
     expect(isDesktopDingTalkState("random.desktop")).toBe(true);
+    expect(isDesktopDingTalkState("random.desktop-dev")).toBe(true);
     expect(isDesktopDingTalkState("random.web")).toBe(false);
     expect(isDesktopDingTalkState("desktop.random")).toBe(false);
+    expect(dingtalkCallbackProtocol("random.desktop")).toBe("multica");
+    expect(dingtalkCallbackProtocol("random.desktop-dev")).toBe("multica-dev");
   });
 });

@@ -48,7 +48,7 @@ describe("DesktopLoginPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue with DingTalk" }));
 
     expect(openExternal).toHaveBeenCalledWith(
-      "https://multica.example.test/auth/dingtalk/start?client=desktop",
+      "https://multica.example.test/auth/dingtalk/start?client=desktop-dev",
     );
   });
 });

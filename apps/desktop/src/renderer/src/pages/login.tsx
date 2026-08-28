@@ -16,7 +16,8 @@ function requireRuntimeApiUrl(): string {
 export function DesktopLoginPage() {
   const apiUrl = requireRuntimeApiUrl();
   const handleDingTalkLogin = () => {
-    window.desktopAPI.openExternal(buildDingTalkLoginURL(apiUrl, "desktop"));
+    const client = import.meta.env.DEV ? "desktop-dev" : "desktop";
+    window.desktopAPI.openExternal(buildDingTalkLoginURL(apiUrl, client));
   };
 
   return (

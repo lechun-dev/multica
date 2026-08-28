@@ -66,6 +66,18 @@ func TestLoginOAuthServiceCarriesDesktopClientInVerifiedState(t *testing.T) {
 	}
 }
 
+func TestLoginOAuthServiceCarriesDevelopmentDesktopClientInVerifiedState(t *testing.T) {
+	now := time.Unix(100, 0)
+	svc := &LoginOAuthService{Provider: oauthStub{}, Now: func() time.Time { return now }}
+	auth, err := svc.BeginForClient(context.Background(), "https://example.test/auth/dingtalk/callback", LoginClientDesktopDev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := LoginClientFromState(auth.State); got != LoginClientDesktopDev {
+		t.Fatalf("client=%q, want %q", got, LoginClientDesktopDev)
+	}
+}
+
 func TestLoginOAuthServiceRejectsUnsupportedClient(t *testing.T) {
 	svc := &LoginOAuthService{Provider: oauthStub{}}
 	if _, err := svc.BeginForClient(context.Background(), "https://example.test/auth/dingtalk/callback", LoginClient("mobile")); err == nil {
