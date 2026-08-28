@@ -2,7 +2,9 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,15 +101,30 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 	}
 
 	got := FormatText(event)
-	want := "🔔 **张畅 在 Multica 中提到了你**\n\n来源：乐纯工作区 / 钉钉通知\n任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n> 请 [@李群](mention://member/member-id) 周五前确认\n\n**[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)**"
+	want := "🔔 张畅 在 Multica 中提到了你\n\n来源：乐纯工作区\n\n项目：钉钉通知\n\n任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n请 @李群 周五前确认\n\n[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
+	}
+
+	var param map[string]string
+	if err := json.Unmarshal([]byte(mustMarkdownParam(got)), &param); err != nil {
+		t.Fatalf("decode sampleMarkdown params: %v", err)
+	}
+	if param["title"] != "🔔 张畅 在 Multica 中提到了你" {
+		t.Fatalf("sampleMarkdown title = %q", param["title"])
+	}
+	if strings.Contains(param["text"], "mention://") || strings.Contains(param["text"], "🔔") {
+		t.Fatalf("sampleMarkdown body contains internal title or mention URL: %q", param["text"])
+	}
+	wantBody := "来源：乐纯工作区\n\n项目：钉钉通知\n\n任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n请 @李群 周五前确认\n\n[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
+	if param["text"] != wantBody {
+		t.Fatalf("sampleMarkdown body = %q, want %q", param["text"], wantBody)
 	}
 }
 
 func TestFormatTextDoesNotExposeActorIDWhenNameMissing(t *testing.T) {
 	got := FormatText(MentionCreated{Actor: Actor{ID: "secret-user-id", Kind: "member"}, Text: "hello"})
-	if got != "🔔 **一位 Multica 成员 在 Multica 中提到了你**\n\n> hello" {
+	if got != "🔔 一位 Multica 成员 在 Multica 中提到了你\n\nhello" {
 		t.Fatalf("formatted notification exposed an opaque actor id or changed fallback: %q", got)
 	}
 }
@@ -120,8 +137,15 @@ func TestFormatTextEscapesDisplayContext(t *testing.T) {
 		IssueTitle:      "Fix `notify`",
 		Text:            "done",
 	})
-	if got != "🔔 **A\\*lice 在 Multica 中提到了你**\n\n来源：Acme\\_\\[研发\\]\n任务：MUL-1 · Fix \\`notify\\`\n\n> done" {
+	if got != "🔔 A\\*lice 在 Multica 中提到了你\n\n来源：Acme\\_\\[研发\\]\n\n任务：MUL-1 · Fix \\`notify\\`\n\ndone" {
 		t.Fatalf("formatted notification did not escape display fields: %q", got)
+	}
+}
+
+func TestNormalizeDingTalkMentionsPreservesRegularMarkdownLinks(t *testing.T) {
+	got := normalizeDingTalkMentions(`[@张\[研发\]](mention://member/member-id) 见 [任务](https://example.test/task)`)
+	if got != "@张[研发] 见 [任务](https://example.test/task)" {
+		t.Fatalf("normalized mentions = %q", got)
 	}
 }
 

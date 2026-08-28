@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -211,6 +212,7 @@ func skipped(event MentionCreated, target MentionTarget, reason string) Delivery
 
 func FormatText(event MentionCreated) string {
 	text := sanitizeText(event.Text)
+	text = normalizeDingTalkMentions(text)
 	if runes := []rune(text); len(runes) > 2000 {
 		text = string(runes[:2000]) + "…"
 	}
@@ -224,40 +226,26 @@ func FormatText(event MentionCreated) string {
 		}
 	}
 
-	sections := []string{fmt.Sprintf("🔔 **%s 在 Multica 中提到了你**", escapeMarkdown(actor))}
-	metadata := make([]string, 0, 2)
-	if source := notificationSource(event); source != "" {
-		metadata = append(metadata, "来源："+source)
+	// Keep the first line as an internal title marker. The DingTalk provider
+	// removes this line from the body and sends it through sampleMarkdown's
+	// dedicated title field, so the title is never rendered twice.
+	sections := []string{fmt.Sprintf("🔔 %s 在 Multica 中提到了你", escapeMarkdown(actor))}
+	if workspace := strings.TrimSpace(event.WorkspaceName); workspace != "" {
+		sections = append(sections, "来源："+escapeMarkdown(workspace))
+	}
+	if project := strings.TrimSpace(event.ProjectName); project != "" {
+		sections = append(sections, "项目："+escapeMarkdown(project))
 	}
 	if task := notificationTask(event); task != "" {
-		metadata = append(metadata, "任务："+task)
-	}
-	if len(metadata) > 0 {
-		// Keep the source and task rows compact so the useful context is easy to
-		// scan in DingTalk's Markdown renderer.
-		sections = append(sections, strings.Join(metadata, "\n"))
+		sections = append(sections, "任务："+task)
 	}
 	if text != "" {
-		sections = append(sections, quoteMarkdown(text))
+		sections = append(sections, text)
 	}
 	if event.SourceURL != "" {
-		// Keep the reply action visually separate from the quoted message while
-		// avoiding a large heading that overwhelms the notification content.
-		sections = append(sections, "**[打开任务并回复]("+event.SourceURL+")**")
+		sections = append(sections, "[打开任务并回复]("+event.SourceURL+")")
 	}
 	return strings.Join(sections, "\n\n")
-}
-
-func notificationSource(event MentionCreated) string {
-	workspace := strings.TrimSpace(event.WorkspaceName)
-	project := strings.TrimSpace(event.ProjectName)
-	if workspace == "" {
-		return escapeMarkdown(project)
-	}
-	if project == "" {
-		return escapeMarkdown(workspace)
-	}
-	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
 }
 
 func notificationTask(event MentionCreated) string {
@@ -276,17 +264,48 @@ func notificationTask(event MentionCreated) string {
 	return "[" + label + "](" + event.SourceURL + ")"
 }
 
-func quoteMarkdown(text string) string {
-	parts := strings.Split(text, "\n")
-	for i, part := range parts {
-		parts[i] = "> " + part
-	}
-	return strings.Join(parts, "\n")
+var dingtalkMentionLinkPattern = regexp.MustCompile(`\[((?:\\.|[^\]])+)\]\(mention://(?:member|agent|squad|all)/[^)]+\)`)
+
+// normalizeDingTalkMentions removes Multica's internal mention:// links before
+// sending sampleMarkdown. DingTalk does not understand that scheme, so it
+// renders the target as a misleading blue hyperlink instead of a mention.
+func normalizeDingTalkMentions(text string) string {
+	return dingtalkMentionLinkPattern.ReplaceAllStringFunc(text, func(match string) string {
+		closeBracket := strings.Index(match, "](")
+		if closeBracket <= 1 {
+			return match
+		}
+		label := unescapeMarkdownLabel(match[1:closeBracket])
+		if strings.HasPrefix(label, "@") {
+			return label
+		}
+		return "@" + label
+	})
 }
 
-// escapeMarkdown protects display-only values (names and titles). The body
-// intentionally remains Markdown because Multica mention links are useful in
-// the DingTalk card and are rendered as the human-readable mention label.
+func unescapeMarkdownLabel(label string) string {
+	var b strings.Builder
+	escaped := false
+	for _, r := range label {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if escaped {
+		b.WriteByte('\\')
+	}
+	return b.String()
+}
+
+// escapeMarkdown protects display-only values (names and titles). The body is
+// normalized separately so DingTalk receives only Markdown it understands.
 func escapeMarkdown(text string) string {
 	var b strings.Builder
 	for _, r := range text {
