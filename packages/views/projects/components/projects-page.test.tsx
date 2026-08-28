@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   deleteProject: vi.fn(),
   createPin: vi.fn(),
   deletePin: vi.fn(),
+  listProjectMembers: vi.fn(),
   openModal: vi.fn(),
   projectViewState: {
     viewMode: "compact",
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey?.[0];
     if (key === "projects") {
@@ -50,7 +52,20 @@ vi.mock("@tanstack/react-query", () => ({
     if (key === "pins") {
       return { data: mocks.pins, isLoading: false };
     }
+    if (key === "project-members") {
+      return {
+        data: { members: [], total: 0, can_manage: true },
+        isLoading: false,
+      };
+    }
     return { data: [], isLoading: false };
+  },
+}));
+
+vi.mock("@multica/core/api", () => ({
+  api: {
+    listProjectMembers: mocks.listProjectMembers,
+    listProjectPermissionRoles: vi.fn().mockResolvedValue({ roles: [] }),
   },
 }));
 
@@ -246,6 +261,7 @@ beforeEach(() => {
   mocks.deleteProject.mockClear();
   mocks.createPin.mockClear();
   mocks.deletePin.mockClear();
+  mocks.listProjectMembers.mockClear();
   mocks.openModal.mockClear();
   mocks.projectViewState.viewMode = "compact";
   mocks.projectViewState.sortField = "name";
@@ -295,6 +311,15 @@ describe("ProjectsPage compact row navigation", () => {
     await user.click(within(row).getByRole("button", { name: "—" }));
 
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("opens the project authorization dialog from row actions", async () => {
+    const user = userEvent.setup();
+    renderProjects();
+
+    await user.click(screen.getByRole("button", { name: "Access" }));
+
+    expect(await screen.findByRole("dialog", { name: "Project access" })).toBeInTheDocument();
   });
 
   it("uses the rowLink modifier and middle-click paths when openInNewTab is available", () => {

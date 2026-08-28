@@ -118,8 +118,11 @@ type IssueTriggerPreviewRequest struct {
 	IssueIDs []string `json:"issue_ids"`
 	// IsCreate previews a not-yet-persisted issue from AssigneeType/ID/Status.
 	IsCreate bool `json:"is_create"`
-	// ProjectID is required for create previews when project permissions are
-	// enabled, matching the write path's project binding constraint.
+	// 2026-08-28 coder(lq): Keep project selection optional while preserving
+	// project-level authorization whenever a project is supplied.
+	// ProjectID is optional for create previews. When provided, the write path
+	// still applies the project's IssueCreate permission; when omitted, the
+	// caller must only be a member of the workspace.
 	ProjectID    *string `json:"project_id,omitempty"`
 	AssigneeType *string `json:"assignee_type"`
 	AssigneeID   *string `json:"assignee_id"`
@@ -221,9 +224,6 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid project_id")
 				return
 			}
-		} else if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-			writeError(w, http.StatusBadRequest, "project_id is required")
-			return
 		}
 		// 2026-08-27 coder(lq): Create previews must use the same project
 		// IssueCreate gate as CreateIssue. Otherwise a member without access

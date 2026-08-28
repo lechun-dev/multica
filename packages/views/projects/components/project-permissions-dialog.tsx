@@ -28,6 +28,15 @@ import { toast } from "sonner";
 import { useT } from "../../i18n";
 
 type ProjectRole = string;
+
+// 2026-08-28 coder(lq): Support controlled opens so list actions can reuse this
+// dialog without mounting a second authorization implementation.
+type ProjectPermissionsDialogProps = {
+  projectId: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+};
 const BUILTIN_PROJECT_ROLES = ["owner", "manager", "member", "viewer"];
 
 function projectMembersKey(projectId: string) {
@@ -36,16 +45,27 @@ function projectMembersKey(projectId: string) {
 
 // 2026-08-27 coder(lq): Keep the private authorization experience in one
 // component so the shared upstream issues header only owns one additive hook.
-export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
+export function ProjectPermissionsDialog({
+  projectId,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
+}: ProjectPermissionsDialogProps) {
   const { t } = useT("projects");
   const workspaceId = useWorkspaceId();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [role, setRole] = useState<ProjectRole>("member");
   const [granting, setGranting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (nextOpen: boolean) => {
+    onOpenChange?.(nextOpen);
+    if (controlledOpen === undefined) setInternalOpen(nextOpen);
+  };
 
   const projectMembersQuery = useQuery({
     queryKey: projectMembersKey(projectId),
@@ -194,10 +214,12 @@ export function ProjectPermissionsDialog({ projectId }: { projectId: string }) {
 
   return (
     <>
-      <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setOpen(true)}>
-        <ShieldCheck className="size-3.5" />
-        {t(($) => $.permissions.authorize)}
-      </Button>
+      {!hideTrigger && (
+        <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setOpen(true)}>
+          <ShieldCheck className="size-3.5" />
+          {t(($) => $.permissions.authorize)}
+        </Button>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>

@@ -15,6 +15,7 @@ import {
   Plus,
   Rows3,
   Search,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -109,6 +110,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
+import { ProjectPermissionsDialog } from "./project-permissions-dialog";
 import { PAGE_GUTTER, PAGE_TOOLBAR } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -242,6 +244,7 @@ function ProjectRowActions({
   const deletePin = useDeletePin();
   const deleteProject = useDeleteProject();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
 
   const togglePin = () => {
     if (pinned) deletePin.mutate({ itemType: "project", itemId: project.id });
@@ -284,6 +287,11 @@ function ProjectRowActions({
             )}
             {pinned ? t(($) => $.page.unpin) : t(($) => $.page.pin)}
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setPermissionsOpen(true)}>
+            <ShieldCheck className="size-3.5" />
+            {t(($) => $.permissions.authorize)}
+          </DropdownMenuItem>
           {canDelete && (
             <>
               <DropdownMenuSeparator />
@@ -298,6 +306,16 @@ function ProjectRowActions({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* 2026-08-28 coder(lq): Keep the list action on the same authorization dialog as project detail. */}
+      {permissionsOpen && (
+        <ProjectPermissionsDialog
+          projectId={project.id}
+          open={permissionsOpen}
+          onOpenChange={setPermissionsOpen}
+          hideTrigger
+        />
+      )}
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="sm:max-w-md">

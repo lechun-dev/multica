@@ -1155,8 +1155,11 @@ func (h *Handler) requireNewIssueProjectPermission(w http.ResponseWriter, r *htt
 		return true
 	}
 	if !projectID.Valid {
-		writeError(w, http.StatusBadRequest, "project_id is required")
-		return false
+		// 2026-08-28 coder(lq): Projectless issues are workspace-scoped. Keep
+		// membership as the boundary while allowing callers to omit a project;
+		// project-bound issues continue through the project permission policy.
+		_, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
+		return ok
 	}
 	return h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, permission)
 }
