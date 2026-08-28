@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockDingTalkLogin,
   mockEnsureQueryData,
+  mockSetQueryData,
   mockLoginWithDingTalk,
   mockPush,
   mockReplace,
@@ -16,6 +17,7 @@ const {
 } = vi.hoisted(() => ({
   mockDingTalkLogin: vi.fn(),
   mockEnsureQueryData: vi.fn(),
+  mockSetQueryData: vi.fn(),
   mockLoginWithDingTalk: vi.fn(),
   mockPush: vi.fn(),
   mockReplace: vi.fn(),
@@ -28,7 +30,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQueryClient: () => ({ ensureQueryData: mockEnsureQueryData }),
+  useQueryClient: () => ({
+    ensureQueryData: mockEnsureQueryData,
+    setQueryData: mockSetQueryData,
+  }),
 }));
 
 vi.mock("@multica/core/auth", async () => {
