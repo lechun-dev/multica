@@ -16,6 +16,13 @@ import { useT } from "../../i18n";
 const NO_ACCESS = "__no_project_access__";
 const BUILTIN_ROLES = ["owner", "manager", "member", "viewer"];
 
+// 2026-08-28 coder(lq): Project cells represent explicit project membership;
+// workspace-level roles are shown separately and must not be copied here.
+export function projectPermissionCellValue(explicitRole?: string | null): string {
+  const role = explicitRole?.trim();
+  return role || NO_ACCESS;
+}
+
 function projectMembersKey(projectId: string) {
   return ["project-members", projectId] as const;
 }
@@ -137,13 +144,9 @@ export function ProjectPermissionsTab() {
                       {projects.map((project) => {
                         const projectMembers = projectMembersByProject.get(project.id) ?? [];
                         const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
-                        const inheritedOwner = !explicit && member.role === "owner";
-                        const value = explicit?.role ?? (inheritedOwner ? "owner" : NO_ACCESS);
+                        const value = projectPermissionCellValue(explicit?.role);
                         const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
                         const cellKey = `${project.id}:${member.user_id}`;
-                        // 2026-08-28 coder(lq): Workspace owners remain globally
-                        // authorized even when the project row is inherited;
-                        // keep their cells editable for explicit role metadata.
                         const disabled = !canManage || savingCell === cellKey;
                         return (
                           <td key={project.id} className="p-2 align-middle">
@@ -153,7 +156,7 @@ export function ProjectPermissionsTab() {
                               onValueChange={(next) => next && void saveCell(project.id, member.user_id, next)}
                               disabled={disabled}
                             >
-                              <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`} title={inheritedOwner ? t(($) => $.permission_report.inherited_owner) : undefined}>
+                              <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`}>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
