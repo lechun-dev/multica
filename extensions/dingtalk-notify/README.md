@@ -107,12 +107,17 @@ login identities in the module tables, subscribes to `comment:created`, resolves
 member bindings from the module-owned identity table, and sends through the
 deployment-wide DingTalk application. This member path does not depend on
 `MULTICA_DINGTALK_SECRET_KEY`, `channel_installation`, or an Agent-owned Bot.
-Agent targets remain disabled by default. Production workers use `SQLStore`;
-tests may use `MemoryStore`.
+Agent-owned notifications are routed by the host bridge to the owner's member
+binding when enabled. Production workers use `SQLStore`; tests may use
+`MemoryStore`.
 The login app needs DingTalk permission to resolve a user's `unionId` to the
 enterprise `userId` and read the enterprise member profile/email. Production
 OAuth callbacks must use the exact HTTPS URL registered in DingTalk, for
 example `https://multica.example.com/auth/dingtalk/callback`.
+
+The host bridge reads `DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS` (default `true`)
+to enable or disable P2P notices when another member explicitly mentions an
+Agent. The Agent owner's own member or Agent comments are suppressed.
 
 The module includes host-neutral HTTP handlers for the remaining management
 surface:
