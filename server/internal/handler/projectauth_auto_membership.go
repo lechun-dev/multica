@@ -252,7 +252,7 @@ func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.I
 	if err != nil {
 		return db.CreateCommentRow{}, err
 	}
-	if err := promoteMentionedMembersWithExecutor(ctx, tx, uuidToString(issue.ProjectID), params.Content); err != nil {
+	if err := promoteIssueMentionedMembersWithExecutor(ctx, tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), params.Content); err != nil {
 		return db.CreateCommentRow{}, fmt.Errorf("promote comment mention project access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
