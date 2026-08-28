@@ -279,6 +279,38 @@ describe("setupAutoUpdater", () => {
     });
   });
 
+  it("reports a successful update installation through IPC", async () => {
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
+
+    await expect(invokeIpc("updater:install")).resolves.toEqual({
+      success: true,
+    });
+    expect(ctx.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it("returns update installation failures through IPC", async () => {
+    ctx.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error("installer is unavailable");
+    });
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
+
+    await expect(invokeIpc("updater:install")).resolves.toEqual({
+      success: false,
+      error: "installer is unavailable",
+    });
+  });
+
+  it("forwards asynchronous updater errors to a live renderer", () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => win, { serverUrl: "https://api.multica.ai" });
+
+    emitUpdater("error", new Error("downloaded package is missing"));
+
+    expect(send).toHaveBeenCalledWith("updater:update-error", {
+      message: "downloaded package is missing",
+    });
+  });
+
   it("skips update progress when the BrowserWindow has already been destroyed", () => {
     setupAutoUpdater(() => makeDestroyedWindow(), {
       serverUrl: "https://api.multica.ai",

@@ -4,10 +4,10 @@
  * manifests, checksums) and the CLI tarballs — only desktop
  * installer artifacts are relevant on the /download page.
  *
- * Desktop artifact naming (see apps/desktop/electron-builder.yml):
- *   multica-desktop-{version}-mac-{arch}.{dmg|zip}
- *   multica-desktop-{version}-windows-{arch}.exe
- *   multica-desktop-{version}-linux-{arch}.{AppImage|deb|rpm}
+ * Desktop artifact naming (see apps/desktop/electron-builder.lechun.yml):
+ *   multica-lechun-{version}-mac-{arch}.{dmg|zip}
+ *   multica-lechun-{version}-windows-{arch}.exe
+ *   multica-lechun-{version}-linux-{arch}.{AppImage|deb|rpm}
  *
  * Linux arch appears as amd64 / x86_64 / arm64 / aarch64 depending
  * on the format; we normalize to amd64 and arm64.
@@ -24,7 +24,6 @@ export interface DownloadAssets {
   macX64Dmg?: string;
   macX64Zip?: string;
   winX64Exe?: string;
-  winArm64Exe?: string;
   linuxAmd64AppImage?: string;
   linuxAmd64Deb?: string;
   linuxAmd64Rpm?: string;
@@ -34,7 +33,7 @@ export interface DownloadAssets {
 }
 
 const DESKTOP_ARTIFACT_RE =
-  /^multica-desktop-[^-]+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
+  /^multica-lechun-[^-]+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
 
 function normalizeLinuxArch(arch: string): "amd64" | "arm64" | null {
   const a = arch.toLowerCase();
@@ -75,7 +74,6 @@ export function parseReleaseAssets(raw: GitHubAsset[]): DownloadAssets {
     } else if (platform === "windows") {
       if (extLower !== "exe") continue;
       if (archLower === "x64") out.winX64Exe = url;
-      else if (archLower === "arm64") out.winArm64Exe = url;
     } else if (platform === "linux") {
       const normalized = normalizeLinuxArch(arch);
       if (!normalized) continue;
@@ -100,8 +98,8 @@ export function hasAnyAsset(assets: DownloadAssets): boolean {
 }
 
 /**
- * The twelve desktop artifacts a finished release carries: four Mac,
- * two Windows, six Linux. Listed explicitly rather than counted, so
+ * The eleven desktop artifacts a finished release carries: four Mac,
+ * one Windows, six Linux. Listed explicitly rather than counted, so
  * adding an optional key to `DownloadAssets` later (a universal Mac
  * build, say) can't silently redefine what "complete" means.
  */
@@ -111,7 +109,6 @@ const REQUIRED_ASSET_KEYS: (keyof DownloadAssets)[] = [
   "macX64Dmg",
   "macX64Zip",
   "winX64Exe",
-  "winArm64Exe",
   "linuxAmd64AppImage",
   "linuxAmd64Deb",
   "linuxAmd64Rpm",

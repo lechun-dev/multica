@@ -53,5 +53,6 @@ describe("AllPlatforms", () => {
       "href",
       "https://downloads.test/mac-x64.zip",
     );
+    expect(screen.queryByText("Windows · ARM64")).not.toBeInTheDocument();
   });
 });

@@ -2,21 +2,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchLatestRelease } from "./github-release";
 
-/** The twelve desktop artifacts a finished release carries. */
+/** The eleven desktop artifacts a finished private release carries. */
 function completeAssets(version: string) {
   return [
-    `multica-desktop-${version}-mac-arm64.dmg`,
-    `multica-desktop-${version}-mac-arm64.zip`,
-    `multica-desktop-${version}-mac-x64.dmg`,
-    `multica-desktop-${version}-mac-x64.zip`,
-    `multica-desktop-${version}-windows-x64.exe`,
-    `multica-desktop-${version}-windows-arm64.exe`,
-    `multica-desktop-${version}-linux-x86_64.AppImage`,
-    `multica-desktop-${version}-linux-amd64.deb`,
-    `multica-desktop-${version}-linux-x86_64.rpm`,
-    `multica-desktop-${version}-linux-arm64.AppImage`,
-    `multica-desktop-${version}-linux-arm64.deb`,
-    `multica-desktop-${version}-linux-aarch64.rpm`,
+    `multica-lechun-${version}-mac-arm64.dmg`,
+    `multica-lechun-${version}-mac-arm64.zip`,
+    `multica-lechun-${version}-mac-x64.dmg`,
+    `multica-lechun-${version}-mac-x64.zip`,
+    `multica-lechun-${version}-windows-x64.exe`,
+    `multica-lechun-${version}-linux-x86_64.AppImage`,
+    `multica-lechun-${version}-linux-amd64.deb`,
+    `multica-lechun-${version}-linux-x86_64.rpm`,
+    `multica-lechun-${version}-linux-arm64.AppImage`,
+    `multica-lechun-${version}-linux-arm64.deb`,
+    `multica-lechun-${version}-linux-aarch64.rpm`,
   ].map((name) => ({
     name,
     browser_download_url: `https://github.test/download/v${version}/${name}`,

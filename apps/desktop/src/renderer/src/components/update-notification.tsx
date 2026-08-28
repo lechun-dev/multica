@@ -8,20 +8,27 @@ type UpdateState =
   | { status: "idle" }
   | { status: "ready"; version: string };
 
-function changelogUrl(version: string): string {
-  return `https://multica.ai/changelog#release-${version.replace(/\./g, "-")}`;
-}
-
 export function UpdateNotification() {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
   const [dismissed, setDismissed] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
     const cleanup = window.updater.onUpdateDownloaded((info) => {
       setState({ status: "ready", version: info.version });
       setDismissed(false);
+      setInstalling(false);
+      setInstallError(null);
     });
-    return cleanup;
+    const cleanupError = window.updater.onUpdateError((error) => {
+      setInstalling(false);
+      setInstallError(error.message);
+    });
+    return () => {
+      cleanup();
+      cleanupError();
+    };
   }, []);
 
   if (state.status === "idle") return null;
@@ -42,26 +49,38 @@ export function UpdateNotification() {
           <RefreshCw className="size-4 text-success" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-body font-medium">Update ready</p>
+          <p className="text-body font-medium">Multica Lechun Update ready</p>
           <p className="text-caption text-muted-foreground mt-0.5">
             v{state.version} will be applied on next launch.
           </p>
+          {installError && (
+            <p role="alert" className="text-caption text-destructive mt-1">
+              Update failed: {installError}
+            </p>
+          )}
           <div className="mt-2 flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() =>
-                window.desktopAPI.openExternal(changelogUrl(state.version))
-              }
-              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-caption font-medium text-foreground hover:bg-accent transition-colors"
-            >
-              See changelog
-            </button>
-            <button
-              type="button"
-              onClick={() => window.updater.installUpdate()}
+              disabled={installing}
+              onClick={async () => {
+                setInstalling(true);
+                setInstallError(null);
+                try {
+                  const result = await window.updater.installUpdate();
+                  if (result && !result.success) {
+                    setInstalling(false);
+                    setInstallError(result.error);
+                  }
+                } catch (error) {
+                  setInstalling(false);
+                  setInstallError(
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              }}
               className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-caption font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              Restart now
+              {installing ? "Restarting…" : "Restart now"}
             </button>
           </div>
         </div>

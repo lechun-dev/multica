@@ -4,6 +4,10 @@ export interface UpdaterPreferences {
   updatesAvailable?: boolean;
 }
 
+export type InstallUpdateResult =
+  | { success: true }
+  | { success: false; error: string };
+
 export type ManualUpdateCheckResult =
   | {
       ok: true;

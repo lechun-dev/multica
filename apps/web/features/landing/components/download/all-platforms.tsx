@@ -78,17 +78,6 @@ export function AllPlatforms({
             unavailable={d.unavailable}
           />
           <Row
-            icon={<WindowsIcon className="text-[#0a0d12]" />}
-            label={d.winArm64Label}
-            formats={[
-              {
-                label: d.formatExe,
-                href: assets.winArm64Exe,
-              },
-            ]}
-            unavailable={d.unavailable}
-          />
-          <Row
             icon={<LinuxIcon className="text-[#0a0d12]" />}
             label={d.linuxX64Label}
             formats={[

@@ -1,6 +1,7 @@
 import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { app, type BrowserWindow, ipcMain } from "electron";
 import type {
+  InstallUpdateResult,
   ManualUpdateCheckResult,
   UpdaterPreferences,
 } from "../shared/updater-types";
@@ -57,7 +58,8 @@ const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 type RendererChannel =
   | "updater:update-available"
   | "updater:download-progress"
-  | "updater:update-downloaded";
+  | "updater:update-downloaded"
+  | "updater:update-error";
 
 function isDestroyedObjectError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("Object has been destroyed");
@@ -219,6 +221,9 @@ export function setupAutoUpdater(
 
   autoUpdater.on("error", (err) => {
     console.error("Auto-updater error:", err);
+    sendToLiveRenderer(getMainWindow(), "updater:update-error", {
+      message: err instanceof Error ? err.message : String(err),
+    });
   });
 
   // Retained for IPC back-compat with older renderer bundles. With
@@ -227,8 +232,17 @@ export function setupAutoUpdater(
     return autoUpdater.downloadUpdate();
   });
 
-  ipcMain.handle("updater:install", () => {
-    autoUpdater.quitAndInstall(false, true);
+  ipcMain.handle("updater:install", (): InstallUpdateResult => {
+    try {
+      autoUpdater.quitAndInstall(false, true);
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // 2026-08-28 coder(lq): Return installation failures to the renderer so
+      // the update prompt does not silently ignore a failed restart.
+      console.error("Failed to install update:", err);
+      return { success: false, error: message };
+    }
   });
 
   ipcMain.handle(
