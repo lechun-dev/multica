@@ -99,16 +99,10 @@ function sendToLiveRenderer(
 /** 2026-08-29 coder(lq): Use electron-updater's network stack for the custom
  * macOS archive download so system proxy/VPN settings are honored consistently
  * with metadata requests. */
-function requestMacUpdateWithElectron(
-  url: URL,
-  redirects = 0,
-): Promise<IncomingMessage> {
-  if (redirects > 5) {
-    return Promise.reject(new Error("Too many redirects while downloading update"));
-  }
+function requestMacUpdateWithElectron(url: URL): Promise<IncomingMessage> {
   return new Promise((resolveRequest, reject) => {
     let settled = false;
-    let followingRedirect = false;
+    let redirectCount = 0;
     const request = net.request({
       url: url.toString(),
       method: "GET",
@@ -127,6 +121,19 @@ function requestMacUpdateWithElectron(
       clearTimeout(connectionTimeout);
       reject(error);
     };
+    request.on("redirect", (_statusCode, _method, _redirectUrl) => {
+      if (redirectCount >= 5) {
+        rejectOnce(new Error("Too many redirects while downloading update"));
+        request.abort();
+        return;
+      }
+      redirectCount += 1;
+      // 2026-08-29 coder(lq): Electron cancels a manual redirect unless
+      // followRedirect() is called synchronously from this event. Calling it
+      // from the response handler races Chromium's cancellation and surfaces
+      // "Redirect was cancelled" to the update UI.
+      request.followRedirect();
+    });
     const connectionTimeout = setTimeout(() => {
       rejectOnce(new Error("Update download timed out"));
       request.abort();
@@ -134,20 +141,6 @@ function requestMacUpdateWithElectron(
     request.on("response", (response) => {
       clearTimeout(connectionTimeout);
       const status = response.statusCode ?? 0;
-      const location = response.headers.location;
-      if (status >= 300 && status < 400 && location) {
-        followingRedirect = true;
-        response.on("data", () => undefined);
-        // 2026-08-29 coder(lq): Drain the manual redirect response instead of
-        // aborting it; abort emits an error that can race the redirected request.
-        void requestMacUpdateWithElectron(
-          new URL(Array.isArray(location) ? location[0] : location, url),
-          redirects + 1,
-        )
-          .then(resolveOnce)
-          .catch(rejectOnce);
-        return;
-      }
       if (status < 200 || status >= 300) {
         response.on("data", () => undefined);
         rejectOnce(new Error(`Update download failed with HTTP ${status}`));
@@ -158,7 +151,7 @@ function requestMacUpdateWithElectron(
       resolveOnce(response as unknown as IncomingMessage);
     });
     request.on("error", (error) => {
-      if (!followingRedirect) rejectOnce(error);
+      rejectOnce(error);
     });
     request.end();
   });
