@@ -2332,7 +2332,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 
 		var projectCtx claimProjectContext
 		var projectErr error
-		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// 2026-08-29 coder(lq): Projectless Issues are valid Agent tasks. Keep
+		// the strict resolver for an explicitly project-bound Issue so stale or
+		// cross-workspace references still fail closed, while a NULL project_id
+		// receives the workspace context fallback.
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid {
 			projectCtx, projectErr = h.resolveRequiredIssueClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
 		} else {
 			projectCtx, projectErr = h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)

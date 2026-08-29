@@ -154,6 +154,60 @@ func TestClaimTask_IssueProjectInForeignWorkspace_CancelsTask(t *testing.T) {
 	}
 }
 
+// 2026-08-29 coder(lq): Project permissions must not make a projectless Issue
+// unclaimable. The daemon should preserve the native workspace repository
+// fallback when project_id is NULL, while still enforcing strict validation for
+// explicit project references.
+func TestClaimTask_ProjectlessIssueUsesWorkspaceRepos(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{"url": localFallbackRepoURL, "description": "workspace fallback"},
+	})
+
+	var agentID, runtimeID string
+	dbfx.QueryRow(t,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID)
+	if agentID == "" || runtimeID == "" {
+		t.Fatal("setup: expected a workspace agent with a runtime")
+	}
+
+	issueID := dbfx.Issue(t, "projectless issue can run", testutil.Cols{
+		"priority": "medium",
+	})
+	dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID,
+		"issue_id":   issueID,
+	})
+
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil,
+		testWorkspaceID, "test-claim-projectless-issue")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusOK)
+
+	var resp struct {
+		Task *claimProjectFields `json:"task"`
+	}
+	w.JSON(&resp)
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if resp.Task.ProjectID != "" {
+		t.Errorf("projectless issue project_id = %q, want empty", resp.Task.ProjectID)
+	}
+	if len(resp.Task.ProjectResources) != 0 {
+		t.Errorf("projectless issue project_resources = %+v, want none", resp.Task.ProjectResources)
+	}
+	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != localFallbackRepoURL {
+		t.Fatalf("projectless issue repos = %+v, want workspace fallback repo", resp.Task.Repos)
+	}
+}
+
 // The quick-create branch resolves its project from the task context JSONB
 // rather than an issue row, and used the same unscoped GetProject. It needs its
 // own assertion: a requester who edits the stored project_id must not be able to

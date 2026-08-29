@@ -69,6 +69,41 @@ const STARTUP_CHECK_DELAY_MS = 5_000;
 const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const ELECTRON_UPDATE_SESSION = "electron-updater";
 
+const MAX_UPDATE_ERROR_LENGTH = 240;
+
+/**
+ * 2026-08-29 coder(lq): Keep provider internals out of the user-facing
+ * notification. GitHub's private-release errors can include long URLs,
+ * headers, and stack traces; they are useful in the main-process log but are
+ * too noisy (and potentially sensitive) for the renderer.
+ */
+export function formatUpdaterError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = raw.replace(/\s+/g, " ").trim();
+  if (!message) return "Unknown update error";
+
+  if (
+    /(?:HTTP|status(?: code)?)[ :]*404|cannot find .*latest[^ ]*\.yml|authentication token/i.test(
+      message,
+    )
+  ) {
+    return "Update files are temporarily unavailable. Please try again later.";
+  }
+
+  if (
+    /(?:HTTP|status(?: code)?)[ :]*(?:401|403)|timed out|timeout|econnreset|enotfound|network/i.test(
+      message,
+    )
+  ) {
+    return "Unable to reach the update server. We’ll retry automatically.";
+  }
+
+  if (message.length > MAX_UPDATE_ERROR_LENGTH) {
+    return `${message.slice(0, MAX_UPDATE_ERROR_LENGTH - 1)}…`;
+  }
+  return message;
+}
+
 type RendererChannel =
   | "updater:update-available"
   | "updater:download-progress"
@@ -327,7 +362,7 @@ export function setupAutoUpdater(
       })().catch((err) => {
         console.error("Failed to download macOS update:", err);
         sendToLiveRenderer(getMainWindow(), "updater:update-error", {
-          message: err instanceof Error ? err.message : String(err),
+          message: formatUpdaterError(err),
         });
       });
     }
@@ -356,7 +391,7 @@ export function setupAutoUpdater(
   autoUpdater.on("error", (err) => {
     console.error("Auto-updater error:", err);
     sendToLiveRenderer(getMainWindow(), "updater:update-error", {
-      message: err instanceof Error ? err.message : String(err),
+      message: formatUpdaterError(err),
     });
   });
 

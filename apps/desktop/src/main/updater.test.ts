@@ -55,9 +55,40 @@ vi.mock("electron", () => ({
 
 import {
   configureMacX64UpdateChannel,
+  formatUpdaterError,
   setupAutoUpdater,
 } from "./updater";
 import { updaterPreferencesPath } from "./updater-preferences";
+
+describe("updater error formatting", () => {
+  it("turns transient private-release 404s into a short retryable message", () => {
+    expect(
+      formatUpdaterError(
+        new Error(
+          'Cannot find latest-lechun-mac.yml in the latest release artifacts (https://github.com/lechun-dev/multica/releases/download/v0.4.66/latest-lechun-mac.yml): HttpError: 404 Headers: {"x-github-request-id":"redacted"}',
+        ),
+      ),
+    ).toBe("Update files are temporarily unavailable. Please try again later.");
+  });
+
+  it("turns network failures into an actionable retry message", () => {
+    expect(formatUpdaterError(new Error("Update download timed out"))).toBe(
+      "Unable to reach the update server. We’ll retry automatically.",
+    );
+  });
+
+  it("keeps short non-provider errors intact", () => {
+    expect(formatUpdaterError(new Error("downloaded package is missing"))).toBe(
+      "downloaded package is missing",
+    );
+  });
+
+  it("truncates unexpectedly verbose errors", () => {
+    const result = formatUpdaterError(new Error("x".repeat(500)));
+    expect(result).toHaveLength(240);
+    expect(result.endsWith("…")).toBe(true);
+  });
+});
 
 describe("macOS x64 update channel", () => {
   it("does not touch established architecture paths", () => {
