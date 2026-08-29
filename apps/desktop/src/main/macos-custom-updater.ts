@@ -14,11 +14,39 @@ export interface MacUpdateFile {
 
 export interface MacUpdateInfo {
   version: string;
+  /** 2026-08-29 coder(lq): GitHubProvider adds this runtime-only release tag. */
+  tag?: string;
   files?: MacUpdateFile[];
   path?: string;
   sha512?: string;
   releaseNotes?: unknown;
 }
+
+const PRIVATE_RELEASE_DOWNLOAD_BASE =
+  "https://github.com/lechun-dev/multica/releases/download";
+
+/** 2026-08-29 coder(lq): Resolve GitHub metadata filenames for private builds.
+ *
+ * Resolve the file URL from electron-updater's GitHub metadata.
+ *
+ * GitHubProvider normally resolves `files[].url` before downloading, but the
+ * macOS ad-hoc-signing path intentionally downloads the selected file itself.
+ * Release metadata commonly contains only a filename, so resolve that name
+ * against the private release tag here instead of passing it to `new URL()`.
+ */
+export function resolveMacUpdateUrl(value: string, releaseTag?: string): string {
+  if (/^https?:\/\//i.test(value)) return value;
+  if (!releaseTag) {
+    throw new Error("GitHub Release metadata does not contain a release tag");
+  }
+  const fileName = value.replace(/^\/+/, "");
+  return new URL(
+    fileName,
+    `${PRIVATE_RELEASE_DOWNLOAD_BASE}/${encodeURIComponent(releaseTag)}/`,
+  ).toString();
+}
+
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface DownloadedMacUpdate {
   version: string;
@@ -56,6 +84,9 @@ function request(url: URL, redirects = 0): Promise<import("node:http").IncomingM
   const get = url.protocol === "http:" ? httpGet : httpsGet;
   return new Promise((resolveRequest, reject) => {
     const req = get(url, (response) => {
+      response.setTimeout(UPDATE_DOWNLOAD_TIMEOUT_MS, () => {
+        response.destroy(new Error("Update download timed out"));
+      });
       const status = response.statusCode ?? 0;
       if (status >= 300 && status < 400 && response.headers.location) {
         response.resume();
@@ -70,6 +101,9 @@ function request(url: URL, redirects = 0): Promise<import("node:http").IncomingM
         return;
       }
       resolveRequest(response);
+    });
+    req.setTimeout(UPDATE_DOWNLOAD_TIMEOUT_MS, () => {
+      req.destroy(new Error("Update download timed out"));
     });
     req.on("error", reject);
   });

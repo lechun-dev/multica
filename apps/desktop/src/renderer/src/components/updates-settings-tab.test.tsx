@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   getPreferences: vi.fn(),
@@ -23,6 +23,7 @@ const translations = {
       check_section_description: "Check manually",
       up_to_date: "Up to date",
       downloading: "Downloading v{{version}}",
+      downloaded: "Downloaded v{{version}}",
       check_now: "Check now",
       checking: "Checking",
     },
@@ -73,9 +74,25 @@ describe("UpdatesSettingsTab", () => {
         getPreferences: mocks.getPreferences,
         setAutomaticUpdates: mocks.setAutomaticUpdates,
         checkForUpdates: mocks.checkForUpdates,
+        onUpdateAvailable: (listener: (info: { version: string }) => void) => {
+          updateAvailable = listener;
+          return vi.fn();
+        },
+        onUpdateDownloaded: (listener: (info: { version: string }) => void) => {
+          updateDownloaded = listener;
+          return vi.fn();
+        },
+        onUpdateError: (listener: (error: { message: string }) => void) => {
+          updateError = listener;
+          return vi.fn();
+        },
       },
     });
   });
+
+  let updateAvailable: (info: { version: string }) => void;
+  let updateDownloaded: (info: { version: string }) => void;
+  let updateError: (error: { message: string }) => void;
 
   it("loads the persisted preference and saves changes from the switch", async () => {
     mocks.getPreferences.mockResolvedValue({ automaticUpdates: false });
@@ -100,5 +117,19 @@ describe("UpdatesSettingsTab", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Settings saved", {
       id: "settings-auto-save",
     });
+  });
+
+  it("reflects background download completion and errors", async () => {
+    render(<UpdatesSettingsTab />);
+    await waitFor(() => expect(mocks.getPreferences).toHaveBeenCalled());
+
+    act(() => updateAvailable({ version: "1.2.4" }));
+    expect(screen.getByText("Downloading v1.2.4")).toBeInTheDocument();
+
+    act(() => updateDownloaded({ version: "1.2.4" }));
+    expect(screen.getByText("Downloaded v1.2.4")).toBeInTheDocument();
+
+    act(() => updateError({ message: "download timed out" }));
+    expect(screen.getByText("download timed out")).toBeInTheDocument();
   });
 });

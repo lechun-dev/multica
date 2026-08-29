@@ -11,6 +11,7 @@ type CheckState =
   | { status: "checking" }
   | { status: "up-to-date" }
   | { status: "available"; latestVersion: string }
+  | { status: "downloaded"; version: string }
   | { status: "error"; message: string };
 
 export function UpdatesSettingsTab() {
@@ -50,6 +51,24 @@ export function UpdatesSettingsTab() {
 
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const cleanupAvailable = window.updater.onUpdateAvailable((info) => {
+      setState({ status: "available", latestVersion: info.version });
+    });
+    const cleanupDownloaded = window.updater.onUpdateDownloaded((info) => {
+      setState({ status: "downloaded", version: info.version });
+    });
+    const cleanupError = window.updater.onUpdateError((error) => {
+      setState({ status: "error", message: error.message });
+    });
+
+    return () => {
+      cleanupAvailable();
+      cleanupDownloaded();
+      cleanupError();
     };
   }, []);
 
@@ -126,6 +145,14 @@ export function UpdatesSettingsTab() {
                   <ArrowDownToLine className="size-3.5 text-primary" />
                   {t(($) => $.desktop.updates.downloading, {
                     version: state.latestVersion,
+                  })}
+                </p>
+              )}
+              {state.status === "downloaded" && (
+                <p className="mt-2 inline-flex items-center gap-1.5">
+                  <Check className="size-3.5 text-success" />
+                  {t(($) => $.desktop.updates.downloaded, {
+                    version: state.version,
                   })}
                 </p>
               )}

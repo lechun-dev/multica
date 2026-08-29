@@ -1153,6 +1153,7 @@
       "check_section_description": "无论是否开启自动更新，都立即检查新版本。可用的更新会在后台下载，就绪时弹出重启提示。",
       "up_to_date": "已是最新版本。",
       "downloading": "v{{version}} 正在后台下载——准备好安装时会通知你。",
+      "downloaded": "v{{version}} 已下载完成，重启应用即可完成安装。",
       "check_now": "立即检查",
       "checking": "检查中..."
     }

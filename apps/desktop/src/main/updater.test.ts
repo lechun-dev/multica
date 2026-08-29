@@ -81,7 +81,7 @@ describe("macOS x64 update channel", () => {
     configureMacX64UpdateChannel(updater, "darwin", "x64");
 
     expect(updater).toEqual({
-      channel: "latest-x64",
+      channel: "latest-lechun-x64",
       allowDowngrade: false,
     });
   });

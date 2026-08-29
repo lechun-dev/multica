@@ -83,4 +83,16 @@ describe("UpdateNotification", () => {
       "Update failed: downloaded package is missing",
     );
   });
+
+  it("shows a download error even when no package was downloaded", () => {
+    render(<UpdateNotification />);
+    act(() => updateError({ message: "download timed out" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Update failed: download timed out",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Restart now" }),
+    ).not.toBeInTheDocument();
+  });
 });

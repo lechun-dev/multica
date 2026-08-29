@@ -6,7 +6,8 @@ import { RefreshCw, X } from "lucide-react";
 // downloaded and waiting for a restart.
 type UpdateState =
   | { status: "idle" }
-  | { status: "ready"; version: string };
+  | { status: "ready"; version: string }
+  | { status: "error"; message: string };
 
 export function UpdateNotification() {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
@@ -22,8 +23,10 @@ export function UpdateNotification() {
       setInstallError(null);
     });
     const cleanupError = window.updater.onUpdateError((error) => {
+      setState({ status: "error", message: error.message });
+      setDismissed(false);
       setInstalling(false);
-      setInstallError(error.message);
+      setInstallError(null);
     });
     return () => {
       cleanup();
@@ -49,40 +52,53 @@ export function UpdateNotification() {
           <RefreshCw className="size-4 text-success" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-body font-medium">Multica Lechun Update ready</p>
-          <p className="text-caption text-muted-foreground mt-0.5">
-            v{state.version} will be applied on next launch.
-          </p>
-          {installError && (
+          {state.status === "error" ? (
+            <>
+              <p className="text-body font-medium">Multica Lechun Update failed</p>
+              <p role="alert" className="text-caption text-destructive mt-1">
+                Update failed: {state.message}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-body font-medium">Multica Lechun Update ready</p>
+              <p className="text-caption text-muted-foreground mt-0.5">
+                v{state.version} will be applied on next launch.
+              </p>
+            </>
+          )}
+          {state.status === "ready" && installError && (
             <p role="alert" className="text-caption text-destructive mt-1">
               Update failed: {installError}
             </p>
           )}
-          <div className="mt-2 flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={installing}
-              onClick={async () => {
-                setInstalling(true);
-                setInstallError(null);
-                try {
-                  const result = await window.updater.installUpdate();
-                  if (result && !result.success) {
+          {state.status === "ready" && (
+            <div className="mt-2 flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={installing}
+                onClick={async () => {
+                  setInstalling(true);
+                  setInstallError(null);
+                  try {
+                    const result = await window.updater.installUpdate();
+                    if (result && !result.success) {
+                      setInstalling(false);
+                      setInstallError(result.error);
+                    }
+                  } catch (error) {
                     setInstalling(false);
-                    setInstallError(result.error);
+                    setInstallError(
+                      error instanceof Error ? error.message : String(error),
+                    );
                   }
-                } catch (error) {
-                  setInstalling(false);
-                  setInstallError(
-                    error instanceof Error ? error.message : String(error),
-                  );
-                }
-              }}
-              className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-caption font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-            >
-              {installing ? "Restarting…" : "Restart now"}
-            </button>
-          </div>
+                }}
+                className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-caption font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                {installing ? "Restarting…" : "Restart now"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

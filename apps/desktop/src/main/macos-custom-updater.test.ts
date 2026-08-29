@@ -1,6 +1,23 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { selectMacUpdateFile } from "./macos-custom-updater";
+import { resolveMacUpdateUrl, selectMacUpdateFile } from "./macos-custom-updater";
+
+describe("resolveMacUpdateUrl", () => {
+  it("resolves GitHub metadata filenames against the private release", () => {
+    expect(resolveMacUpdateUrl("multica-lechun-0.4.57-mac-arm64.zip", "v0.4.57")).toBe(
+      "https://github.com/lechun-dev/multica/releases/download/v0.4.57/multica-lechun-0.4.57-mac-arm64.zip",
+    );
+  });
+
+  it("keeps an already-resolved URL unchanged", () => {
+    const url = "https://github.com/lechun-dev/multica/releases/download/v0.4.57/update.zip";
+    expect(resolveMacUpdateUrl(url, "v0.4.57")).toBe(url);
+  });
+
+  it("requires a release tag for relative metadata paths", () => {
+    expect(() => resolveMacUpdateUrl("update.zip")).toThrow("release tag");
+  });
+});
 
 describe("selectMacUpdateFile", () => {
   it("selects the architecture-specific GitHub Release ZIP", () => {

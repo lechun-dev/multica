@@ -15,6 +15,7 @@ import {
 import {
   installMacUpdate,
   prepareMacUpdate,
+  resolveMacUpdateUrl,
   selectMacUpdateFile,
   type DownloadedMacUpdate,
   type MacUpdateInfo,
@@ -34,7 +35,7 @@ autoUpdater.autoInstallOnAppQuit = !useMacCustomUpdater;
 // arches would otherwise collide on the same file in the GitHub Release.
 // See scripts/package.mjs (builderArgsForTarget) for the publish-side half
 // of this pact. Pin the channel here so arm64 clients fetch
-// `latest-arm64.yml` instead of the x64 metadata.
+// `latest-lechun-arm64.yml` instead of the x64 metadata.
 if (process.platform === "win32" && process.arch === "arm64") {
   autoUpdater.channel = "latest-arm64";
 }
@@ -54,12 +55,12 @@ export function configureMacX64UpdateChannel(
   // AppUpdater.channel enables allowDowngrade as a side effect. This channel
   // isolates a CPU architecture, not a release train, so preserve normal
   // monotonic version behavior after selecting the architecture feed.
-  updater.channel = "latest-x64";
+  updater.channel = "latest-lechun-x64";
   updater.allowDowngrade = false;
 }
 
 // electron-builder does not architecture-suffix macOS update metadata.
-// package.mjs publishes macOS x64 as `latest-x64-mac.yml`; the established
+// package.mjs publishes macOS x64 as `latest-lechun-x64-mac.yml`; the established
 // arm64 feed and runtime path remain unchanged.
 configureMacX64UpdateChannel(autoUpdater);
 
@@ -158,8 +159,12 @@ export function setupAutoUpdater(
   const downloadMacUpdateOnce = (info: MacUpdateInfo): Promise<DownloadedMacUpdate> => {
     if (macDownloadPromise) return macDownloadPromise;
     const file = selectMacUpdateFile(info, process.arch);
+    const resolvedFile = {
+      ...file,
+      url: resolveMacUpdateUrl(file.url, info.tag),
+    };
     const promise = prepareMacUpdate(
-      file,
+      resolvedFile,
       macUpdateCacheDirectory,
       info.version,
       process.arch,
