@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
+import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
 
 // Downloads run silently in the background (main process has
 // autoDownload=true). The renderer only renders UI once the package is fully
@@ -54,14 +55,14 @@ export function UpdateNotification() {
         <div className="flex-1 min-w-0">
           {state.status === "error" ? (
             <>
-              <p className="text-body font-medium">Multica Lechun Update failed</p>
+              <p className="text-body font-medium">{DESKTOP_PRODUCT_NAME} Update failed</p>
               <p role="alert" className="text-caption text-destructive mt-1">
                 Update failed: {state.message}
               </p>
             </>
           ) : (
             <>
-              <p className="text-body font-medium">Multica Lechun Update ready</p>
+              <p className="text-body font-medium">{DESKTOP_PRODUCT_NAME} Update ready</p>
               <p className="text-caption text-muted-foreground mt-0.5">
                 v{state.version} will be applied on next launch.
               </p>

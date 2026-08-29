@@ -23,7 +23,7 @@ describe("resolveDesktopIdentity", () => {
       resolveDesktopIdentity({ isDev: false, variant: "lechun" }),
     ).toEqual({
       variant: "lechun",
-      productName: "Multica Lechun",
+      productName: "Mission",
       userDataDirectoryName: "Multica Lechun",
       appId: "ai.multica.desktop.lechun",
       protocol: "multica-lechun",

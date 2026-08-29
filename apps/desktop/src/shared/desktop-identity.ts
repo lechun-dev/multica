@@ -44,7 +44,7 @@ export function resolveDesktopIdentity({
   if (variant === "lechun") {
     return {
       variant: "lechun",
-      productName: "Multica Lechun",
+      productName: "Mission",
       userDataDirectoryName: "Multica Lechun",
       appId: "ai.multica.desktop.lechun",
       protocol: "multica-lechun",

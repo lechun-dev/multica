@@ -133,6 +133,7 @@ export function createElectronReloadPrompt(
     message: string;
     detail: string;
   }) => Promise<{ response: number }>,
+  productName = "Multica",
 ) {
   return async (payload: ReloadPromptPayload): Promise<ReloadPromptResult> => {
     const result = await showMessageBox({
@@ -140,9 +141,9 @@ export function createElectronReloadPrompt(
       buttons: ["Reload", "Dismiss"],
       defaultId: 0,
       cancelId: 1,
-      title: "Multica needs to reload",
+      title: `${productName} needs to reload`,
       message: rendererRecoveryMessage(payload.kind),
-      detail: rendererRecoveryDetail(payload),
+      detail: rendererRecoveryDetail(payload, productName),
     });
     return result.response === 0 ? "reload" : "dismiss";
   };
@@ -171,15 +172,15 @@ function rendererRecoveryMessage(kind: ReloadPromptPayload["kind"]) {
   }
 }
 
-function rendererRecoveryDetail(payload: ReloadPromptPayload) {
+function rendererRecoveryDetail(payload: ReloadPromptPayload, productName: string) {
   const guidance = [
-    "Click Reload to refresh this window and keep using Multica.",
+    `Click Reload to refresh this window and keep using ${productName}.`,
     "If this keeps happening, please tell us what you were doing right before this message appeared and whether Reload recovered the window.",
   ];
 
   if (payload.kind === "unresponsive") {
     guidance.push(
-      "For macOS reports, an Activity Monitor sample of the Multica Helper (Renderer) process helps us find what blocked the app.",
+      `For macOS reports, an Activity Monitor sample of the ${productName} Helper (Renderer) process helps us find what blocked the app.`,
     );
   }
 

@@ -5,6 +5,7 @@ import { Switch } from "@multica/ui/components/ui/switch";
 import { useT } from "@multica/views/i18n";
 import { SettingsCard, SettingsRow, SettingsTab } from "@multica/views/settings";
 import { toast } from "sonner";
+import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
 
 type CheckState =
   | { status: "idle" }
@@ -37,7 +38,7 @@ export function UpdatesSettingsTab() {
             setState({
               status: "error",
               message:
-                "Updates are managed by your private Multica deployment administrator.",
+                `Updates are managed by your private ${DESKTOP_PRODUCT_NAME} deployment administrator.`,
             });
           }
         }

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UpdateNotification } from "./update-notification";
+import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
 
 const mocks = vi.hoisted(() => ({
   installUpdate: vi.fn(),
@@ -39,7 +40,9 @@ describe("UpdateNotification", () => {
     render(<UpdateNotification />);
     act(() => updateDownloaded({ version: "0.4.27" }));
 
-    expect(screen.getByText("Multica Lechun Update ready")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${DESKTOP_PRODUCT_NAME} Update ready`),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "See changelog" }),
     ).not.toBeInTheDocument();
