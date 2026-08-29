@@ -15,11 +15,11 @@ export type RuntimeConfigResult =
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   schemaVersion: 1,
-  // 2026-08-26 coder(lq): Private distribution defaults to the self-hosted
-  // deployment. A user's ~/.multica/desktop.json can still override this.
-  apiUrl: "https://multica.lechun.cc",
-  wsUrl: "wss://multica.lechun.cc/ws",
-  appUrl: "https://multica.lechun.cc",
+  // 2026-08-29 coder(lq): Mission private deployment moved to its production host.
+  // A user's ~/.multica/desktop.json can still override this.
+  apiUrl: "https://mission.lechun.cc",
+  wsUrl: "wss://mission.lechun.cc/ws",
+  appUrl: "https://mission.lechun.cc",
 });
 
 /** 2026-08-25 coder(lq): Public releases only update Multica Cloud installs. */

@@ -47,9 +47,9 @@ describe("loadRuntimeConfig", () => {
       ok: true,
       config: {
         schemaVersion: 1,
-        apiUrl: "https://multica.lechun.cc",
-        wsUrl: "wss://multica.lechun.cc/ws",
-        appUrl: "https://multica.lechun.cc",
+        apiUrl: "https://mission.lechun.cc",
+        wsUrl: "wss://mission.lechun.cc/ws",
+        appUrl: "https://mission.lechun.cc",
       },
     });
   });

@@ -22,9 +22,9 @@ describe("runtime config", () => {
   it("uses private deployment defaults without a desktop.json file", () => {
     expect(DEFAULT_RUNTIME_CONFIG).toEqual({
       schemaVersion: 1,
-      apiUrl: "https://multica.lechun.cc",
-      wsUrl: "wss://multica.lechun.cc/ws",
-      appUrl: "https://multica.lechun.cc",
+      apiUrl: "https://mission.lechun.cc",
+      wsUrl: "wss://mission.lechun.cc/ws",
+      appUrl: "https://mission.lechun.cc",
     });
   });
 
