@@ -1,5 +1,6 @@
 import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { app, type BrowserWindow, ipcMain } from "electron";
+import { join } from "node:path";
 import type {
   InstallUpdateResult,
   ManualUpdateCheckResult,
@@ -11,12 +12,22 @@ import {
   saveUpdaterPreferences,
   updaterPreferencesPath,
 } from "./updater-preferences";
+import {
+  installMacUpdate,
+  prepareMacUpdate,
+  selectMacUpdateFile,
+  type DownloadedMacUpdate,
+  type MacUpdateInfo,
+} from "./macos-custom-updater";
 
 // Silent background updates: electron-updater downloads on its own as soon
 // as `update-available` fires; we only surface UI when the package is fully
 // downloaded and ready to install on next quit.
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
+// macOS uses a local replacement flow below because Squirrel.Mac rejects
+// ad-hoc signed private builds before they can be installed.
+const useMacCustomUpdater = process.platform === "darwin" && app.isPackaged === true;
+autoUpdater.autoDownload = !useMacCustomUpdater;
+autoUpdater.autoInstallOnAppQuit = !useMacCustomUpdater;
 
 // Windows arm64 ships its own update metadata channel because
 // electron-builder's `latest.yml` is not arch-suffixed on Windows — both
@@ -138,6 +149,37 @@ export function setupAutoUpdater(
     autoUpdater.allowDowngrade = false;
   }
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
+  const macUpdateCacheDirectory = join(app.getPath("userData"), "updates", "macos");
+  let macUpdateInfo: MacUpdateInfo | null = null;
+  let downloadedMacUpdate: DownloadedMacUpdate | null = null;
+  let macDownloadPromise: Promise<DownloadedMacUpdate> | null = null;
+  // 2026-08-29 coder(lq): Coalesce event-driven and manual downloads so two
+  // renderer actions cannot overwrite the same verified update archive.
+  const downloadMacUpdateOnce = (info: MacUpdateInfo): Promise<DownloadedMacUpdate> => {
+    if (macDownloadPromise) return macDownloadPromise;
+    const file = selectMacUpdateFile(info, process.arch);
+    const promise = prepareMacUpdate(
+      file,
+      macUpdateCacheDirectory,
+      info.version,
+      process.arch,
+      (percent) =>
+        sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
+          percent,
+        }),
+    ).then((update) => {
+      update.releaseNotes = info.releaseNotes;
+      downloadedMacUpdate = update;
+      return update;
+    });
+    macDownloadPromise = promise;
+    void promise
+      .finally(() => {
+        if (macDownloadPromise === promise) macDownloadPromise = null;
+      })
+      .catch(() => undefined);
+    return promise;
+  };
   let automaticUpdatesEnabled =
     updatesAvailable && DEFAULT_UPDATER_PREFERENCES.automaticUpdates;
   let startupCheckElapsed = false;
@@ -204,6 +246,28 @@ export function setupAutoUpdater(
       version: info.version,
       releaseNotes: info.releaseNotes,
     });
+    if (useMacCustomUpdater) {
+      macUpdateInfo = info;
+      void (async () => {
+        await downloadMacUpdateOnce(info);
+        sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
+          version: info.version,
+          releaseNotes: info.releaseNotes,
+        });
+      })().catch((err) => {
+        console.error("Failed to download macOS update:", err);
+        sendToLiveRenderer(getMainWindow(), "updater:update-error", {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    if (useMacCustomUpdater) {
+      macUpdateInfo = null;
+      downloadedMacUpdate = null;
+    }
   });
 
   autoUpdater.on("download-progress", (progress) => {
@@ -226,14 +290,39 @@ export function setupAutoUpdater(
     });
   });
 
-  // Retained for IPC back-compat with older renderer bundles. With
-  // autoDownload=true the renderer no longer triggers this path.
-  ipcMain.handle("updater:download", () => {
-    return autoUpdater.downloadUpdate();
+  // Retained for IPC back-compat with older renderer bundles. On macOS this
+  // also provides an explicit retry for the custom download path.
+  ipcMain.handle("updater:download", async () => {
+    if (!useMacCustomUpdater) return autoUpdater.downloadUpdate();
+    if (!macUpdateInfo) throw new Error("No macOS update is available to download");
+    const update = await downloadMacUpdateOnce(macUpdateInfo);
+    sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
+      version: macUpdateInfo.version,
+      releaseNotes: macUpdateInfo.releaseNotes,
+    });
+    return [update.archivePath];
   });
 
-  ipcMain.handle("updater:install", (): InstallUpdateResult => {
+  ipcMain.handle("updater:install", async (): Promise<InstallUpdateResult> => {
     try {
+      if (useMacCustomUpdater) {
+        if (!downloadedMacUpdate) {
+          throw new Error("The macOS update has not finished downloading");
+        }
+        const executablePath = process.execPath;
+        const bundleMarker = ".app/";
+        const bundleIndex = executablePath.indexOf(bundleMarker);
+        if (bundleIndex < 0) throw new Error("Unable to locate the current macOS app bundle");
+        const currentAppPath = executablePath.slice(0, bundleIndex + ".app".length);
+        await installMacUpdate(
+          downloadedMacUpdate,
+          currentAppPath,
+          process.pid,
+          macUpdateCacheDirectory,
+        );
+        app.quit();
+        return { success: true };
+      }
       autoUpdater.quitAndInstall(false, true);
       return { success: true };
     } catch (err) {
