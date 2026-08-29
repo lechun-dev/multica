@@ -71,6 +71,10 @@ export function useRowLink() {
       };
       return {
         onClick: (e: React.MouseEvent) => {
+          // 2026-08-29 coder(lq): Portal content remains in the React event
+          // tree but is not a DOM descendant of the row; ignore those events
+          // so closing a dialog cannot navigate the background row.
+          if (!e.currentTarget.contains(e.target as Node)) return;
           // A child control already handled this click (controls call
           // stopPropagation and never reach here; defaultPrevented guards
           // any that preventDefault instead).
@@ -78,6 +82,7 @@ export function useRowLink() {
           open(resolveClickIntent(e));
         },
         onAuxClick: (e: React.MouseEvent) => {
+          if (!e.currentTarget.contains(e.target as Node)) return;
           if (e.defaultPrevented || e.button !== 1) return; // middle click
           e.preventDefault();
           open("background-tab");

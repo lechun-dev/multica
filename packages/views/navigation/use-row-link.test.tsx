@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { NavigationProvider } from "./context";
 import { rowLinkInteractiveProps, useRowLink } from "./use-row-link";
 import type { NavigationAdapter } from "./types";
@@ -221,5 +222,33 @@ describe("useRowLink", () => {
     expect(aux.defaultPrevented).toBe(false);
     expect(push).not.toHaveBeenCalled();
     expect(openInNewTab).not.toHaveBeenCalled();
+  });
+
+  it("ignores clicks from portal content rendered by a row action", () => {
+    const push = vi.fn();
+    const adapter = makeAdapter({ push });
+
+    function PortalProbe() {
+      const rowLink = useRowLink();
+      return (
+        <div role="row" {...rowLink("/acme/projects/p1")}>
+          row
+          {createPortal(
+            <button type="button">Close dialog</button>,
+            document.body,
+          )}
+        </div>
+      );
+    }
+
+    render(
+      <NavigationProvider value={adapter}>
+        <PortalProbe />
+      </NavigationProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+
+    expect(push).not.toHaveBeenCalled();
   });
 });

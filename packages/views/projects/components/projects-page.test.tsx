@@ -336,6 +336,17 @@ describe("ProjectsPage compact row navigation", () => {
     expect(await screen.findByRole("dialog", { name: "Project access" })).toBeInTheDocument();
   });
 
+  it("does not navigate when the project authorization dialog is closed", async () => {
+    const user = userEvent.setup();
+    const push = vi.fn();
+    renderProjects(makeAdapter({ push }));
+
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("uses the rowLink modifier and middle-click paths when openInNewTab is available", () => {
     const push = vi.fn();
     const openInNewTab = vi.fn();
