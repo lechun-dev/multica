@@ -5,6 +5,10 @@ import { spawn } from "node:child_process";
 import { get as httpsGet } from "node:https";
 import { get as httpGet } from "node:http";
 
+type MacUpdateResponse = import("node:http").IncomingMessage;
+export type MacUpdateRequester = (url: URL) => Promise<MacUpdateResponse>;
+type MacUpdateRetryDelay = (attempt: number) => Promise<void>;
+
 export interface MacUpdateFile {
   url?: string;
   path?: string;
@@ -46,7 +50,13 @@ export function resolveMacUpdateUrl(value: string, releaseTag?: string): string 
   ).toString();
 }
 
-const UPDATE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+// 2026-08-29 coder(lq): Bound both stalled connections and repeated CDN failures.
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 60 * 1000;
+const UPDATE_DOWNLOAD_MAX_ATTEMPTS = 3;
+
+function waitBeforeDownloadRetry(attempt: number): Promise<void> {
+  return new Promise((resolveRetry) => setTimeout(resolveRetry, attempt * 1000));
+}
 
 export interface DownloadedMacUpdate {
   version: string;
@@ -79,7 +89,7 @@ export function selectMacUpdateFile(
   return { ...file, url, sha512 };
 }
 
-function request(url: URL, redirects = 0): Promise<import("node:http").IncomingMessage> {
+function request(url: URL, redirects = 0): Promise<MacUpdateResponse> {
   if (redirects > 5) return Promise.reject(new Error("Too many redirects while downloading update"));
   const get = url.protocol === "http:" ? httpGet : httpsGet;
   return new Promise((resolveRequest, reject) => {
@@ -113,36 +123,76 @@ export async function downloadMacUpdate(
   file: { url: string; sha512: string; size?: number },
   destination: string,
   onProgress?: (percent: number) => void,
+  requester: MacUpdateRequester = (url) => request(url),
+  retryDelay: MacUpdateRetryDelay = waitBeforeDownloadRetry,
 ): Promise<void> {
   await fs.mkdir(dirname(destination), { recursive: true });
   const temporary = `${destination}.download`;
-  await fs.rm(temporary, { force: true });
-  const response = await request(new URL(file.url));
-  const total = Number(response.headers["content-length"] ?? file.size ?? 0);
-  const hash = createHash("sha512");
-  let received = 0;
-  try {
-    await new Promise<void>((resolveDownload, reject) => {
-      const output = createWriteStream(temporary);
-      response.on("data", (chunk: Buffer) => {
-        received += chunk.length;
-        hash.update(chunk);
-        if (total > 0) onProgress?.((received / total) * 100);
-      });
-      response.on("error", reject);
-      output.on("error", reject);
-      output.on("finish", resolveDownload);
-      response.pipe(output);
-    });
-    const actual = hash.digest("base64");
-    if (actual !== file.sha512) {
-      throw new Error("Downloaded update checksum does not match GitHub Release metadata");
-    }
-    await fs.rename(temporary, destination);
-  } catch (error) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= UPDATE_DOWNLOAD_MAX_ATTEMPTS; attempt += 1) {
     await fs.rm(temporary, { force: true });
-    throw error;
+    try {
+      const response = await requester(new URL(file.url));
+      const total = Number(response.headers["content-length"] ?? file.size ?? 0);
+      const hash = createHash("sha512");
+      let received = 0;
+      await new Promise<void>((resolveDownload, reject) => {
+        const output = createWriteStream(temporary);
+        let timeout: ReturnType<typeof setTimeout>;
+        let settled = false;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          if (error) {
+            // 2026-08-29 coder(lq): Stop both sides of the pipe after a failed
+            // attempt so late stream events cannot race the next retry.
+            response.unpipe(output);
+            if (!response.destroyed) response.destroy();
+            if (!output.destroyed) output.destroy();
+            reject(error);
+          } else {
+            resolveDownload();
+          }
+        };
+        const armTimeout = () => {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => {
+            finish(new Error("Update download timed out"));
+          }, UPDATE_DOWNLOAD_TIMEOUT_MS);
+        };
+        armTimeout();
+        response.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          received += chunk.length;
+          hash.update(chunk);
+          if (total > 0) onProgress?.((received / total) * 100);
+          // 2026-08-29 coder(lq): Reset the inactivity timer after each chunk.
+          armTimeout();
+        });
+        response.once("aborted", () => finish(new Error("Update download was interrupted")));
+        response.once("error", (error) => finish(error));
+        output.once("error", (error) => finish(error));
+        output.once("finish", () => finish());
+        response.pipe(output);
+      });
+      const actual = hash.digest("base64");
+      if (actual !== file.sha512) {
+        throw new Error("Downloaded update checksum does not match GitHub Release metadata");
+      }
+      await fs.rename(temporary, destination);
+      onProgress?.(100);
+      return;
+    } catch (error) {
+      lastError = error;
+      await fs.rm(temporary, { force: true });
+      if (attempt < UPDATE_DOWNLOAD_MAX_ATTEMPTS) {
+        onProgress?.(0);
+        await retryDelay(attempt);
+      }
+    }
   }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function run(command: string, args: string[]): Promise<void> {
@@ -175,9 +225,10 @@ export async function prepareMacUpdate(
   version: string,
   arch: string,
   onProgress?: (percent: number) => void,
+  requester?: MacUpdateRequester,
 ): Promise<DownloadedMacUpdate> {
   const archivePath = join(cacheDirectory, `multica-${version}-${arch}.zip`);
-  await downloadMacUpdate(file, archivePath, onProgress);
+  await downloadMacUpdate(file, archivePath, onProgress, requester);
   const extractionDirectory = join(cacheDirectory, `extract-${version}-${arch}`);
   await fs.rm(extractionDirectory, { recursive: true, force: true });
   await fs.mkdir(extractionDirectory, { recursive: true });

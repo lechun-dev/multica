@@ -17,6 +17,7 @@ type CheckState =
 export function UpdatesSettingsTab() {
   const { t } = useT("settings");
   const [state, setState] = useState<CheckState>({ status: "idle" });
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [automaticUpdates, setAutomaticUpdates] = useState(true);
   const [updatesAvailable, setUpdatesAvailable] = useState(true);
   const [preferencesReady, setPreferencesReady] = useState(false);
@@ -56,17 +57,24 @@ export function UpdatesSettingsTab() {
 
   useEffect(() => {
     const cleanupAvailable = window.updater.onUpdateAvailable((info) => {
+      setDownloadProgress(0);
       setState({ status: "available", latestVersion: info.version });
     });
+    const cleanupProgress = window.updater.onDownloadProgress((progress) => {
+      setDownloadProgress(Math.max(0, Math.min(100, progress.percent)));
+    });
     const cleanupDownloaded = window.updater.onUpdateDownloaded((info) => {
+      setDownloadProgress(100);
       setState({ status: "downloaded", version: info.version });
     });
     const cleanupError = window.updater.onUpdateError((error) => {
+      setDownloadProgress(null);
       setState({ status: "error", message: error.message });
     });
 
     return () => {
       cleanupAvailable();
+      cleanupProgress();
       cleanupDownloaded();
       cleanupError();
     };
@@ -92,6 +100,7 @@ export function UpdatesSettingsTab() {
 
   const handleCheck = useCallback(async () => {
     setState({ status: "checking" });
+    setDownloadProgress(null);
     const result = await window.updater.checkForUpdates();
     if (!result.ok) {
       setState({ status: "error", message: result.error });
@@ -102,6 +111,7 @@ export function UpdatesSettingsTab() {
         ? { status: "available", latestVersion: result.latestVersion }
         : { status: "up-to-date" },
     );
+    if (!result.available) setDownloadProgress(null);
   }, []);
 
   return (
@@ -146,6 +156,9 @@ export function UpdatesSettingsTab() {
                   {t(($) => $.desktop.updates.downloading, {
                     version: state.latestVersion,
                   })}
+                  {downloadProgress !== null && (
+                    <span className="tabular-nums">({Math.round(downloadProgress)}%)</span>
+                  )}
                 </p>
               )}
               {state.status === "downloaded" && (

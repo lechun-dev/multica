@@ -78,6 +78,10 @@ describe("UpdatesSettingsTab", () => {
           updateAvailable = listener;
           return vi.fn();
         },
+        onDownloadProgress: (listener: (progress: { percent: number }) => void) => {
+          updateProgress = listener;
+          return vi.fn();
+        },
         onUpdateDownloaded: (listener: (info: { version: string }) => void) => {
           updateDownloaded = listener;
           return vi.fn();
@@ -91,6 +95,7 @@ describe("UpdatesSettingsTab", () => {
   });
 
   let updateAvailable: (info: { version: string }) => void;
+  let updateProgress: (progress: { percent: number }) => void;
   let updateDownloaded: (info: { version: string }) => void;
   let updateError: (error: { message: string }) => void;
 
@@ -125,6 +130,9 @@ describe("UpdatesSettingsTab", () => {
 
     act(() => updateAvailable({ version: "1.2.4" }));
     expect(screen.getByText("Downloading v1.2.4")).toBeInTheDocument();
+
+    act(() => updateProgress({ percent: 37.4 }));
+    expect(screen.getByText("(37%)")).toBeInTheDocument();
 
     act(() => updateDownloaded({ version: "1.2.4" }));
     expect(screen.getByText("Downloaded v1.2.4")).toBeInTheDocument();

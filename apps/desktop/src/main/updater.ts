@@ -1,5 +1,6 @@
 import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
-import { app, type BrowserWindow, ipcMain } from "electron";
+import { app, net, session, type BrowserWindow, ipcMain } from "electron";
+import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import type {
   InstallUpdateResult,
@@ -66,6 +67,7 @@ configureMacX64UpdateChannel(autoUpdater);
 
 const STARTUP_CHECK_DELAY_MS = 5_000;
 const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const ELECTRON_UPDATE_SESSION = "electron-updater";
 
 type RendererChannel =
   | "updater:update-available"
@@ -92,6 +94,74 @@ function sendToLiveRenderer(
     if (isDestroyedObjectError(err)) return;
     throw err;
   }
+}
+
+/** 2026-08-29 coder(lq): Use electron-updater's network stack for the custom
+ * macOS archive download so system proxy/VPN settings are honored consistently
+ * with metadata requests. */
+function requestMacUpdateWithElectron(
+  url: URL,
+  redirects = 0,
+): Promise<IncomingMessage> {
+  if (redirects > 5) {
+    return Promise.reject(new Error("Too many redirects while downloading update"));
+  }
+  return new Promise((resolveRequest, reject) => {
+    let settled = false;
+    let followingRedirect = false;
+    const request = net.request({
+      url: url.toString(),
+      method: "GET",
+      redirect: "manual",
+      session: session.fromPartition(ELECTRON_UPDATE_SESSION, { cache: false }),
+    });
+    const resolveOnce = (response: IncomingMessage) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectionTimeout);
+      resolveRequest(response);
+    };
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectionTimeout);
+      reject(error);
+    };
+    const connectionTimeout = setTimeout(() => {
+      rejectOnce(new Error("Update download timed out"));
+      request.abort();
+    }, 60 * 1000);
+    request.on("response", (response) => {
+      clearTimeout(connectionTimeout);
+      const status = response.statusCode ?? 0;
+      const location = response.headers.location;
+      if (status >= 300 && status < 400 && location) {
+        followingRedirect = true;
+        response.on("data", () => undefined);
+        // 2026-08-29 coder(lq): Drain the manual redirect response instead of
+        // aborting it; abort emits an error that can race the redirected request.
+        void requestMacUpdateWithElectron(
+          new URL(Array.isArray(location) ? location[0] : location, url),
+          redirects + 1,
+        )
+          .then(resolveOnce)
+          .catch(rejectOnce);
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.on("data", () => undefined);
+        rejectOnce(new Error(`Update download failed with HTTP ${status}`));
+        return;
+      }
+      // 2026-08-29 coder(lq): Electron's response is Node stream-compatible,
+      // although Electron does not expose the Node declaration directly.
+      resolveOnce(response as unknown as IncomingMessage);
+    });
+    request.on("error", (error) => {
+      if (!followingRedirect) rejectOnce(error);
+    });
+    request.end();
+  });
 }
 
 // Single-flight guard around checkForUpdates(). With autoDownload=true the
@@ -163,6 +233,7 @@ export function setupAutoUpdater(
       ...file,
       url: resolveMacUpdateUrl(file.url, info.tag),
     };
+    sendToLiveRenderer(getMainWindow(), "updater:download-progress", { percent: 0 });
     const promise = prepareMacUpdate(
       resolvedFile,
       macUpdateCacheDirectory,
@@ -172,6 +243,7 @@ export function setupAutoUpdater(
         sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
           percent,
         }),
+      requestMacUpdateWithElectron,
     ).then((update) => {
       update.releaseNotes = info.releaseNotes;
       downloadedMacUpdate = update;
