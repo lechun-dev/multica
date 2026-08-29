@@ -95,6 +95,10 @@ vi.mock("@multica/core/paths", () => ({
   }),
 }));
 
+vi.mock("../../settings/components/project-permissions-tab", () => ({
+  ProjectPermissionsTab: () => <div>Project Permissions Content</div>,
+}));
+
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (state: unknown) => unknown) =>
     selector({ user: { id: "user-1" } }),
@@ -271,6 +275,16 @@ beforeEach(() => {
 });
 
 describe("ProjectsPage compact row navigation", () => {
+  it("opens project permissions in a dialog", async () => {
+    const user = userEvent.setup();
+    renderProjects();
+
+    await user.click(screen.getByRole("button", { name: "Project Permissions" }));
+
+    expect(await screen.findByRole("dialog", { name: "Project Permissions" })).toBeInTheDocument();
+    expect(screen.getByText("Project Permissions Content")).toBeInTheDocument();
+  });
+
   it("shows the signed-in user's project role in the table", () => {
     renderProjects();
 
