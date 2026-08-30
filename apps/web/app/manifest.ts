@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 /**
  * Web app manifest — what makes the mobile web app installable and lets it run
@@ -33,8 +34,8 @@ export const PWA_START_URL = "/inbox";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Multica",
-    short_name: "Multica",
+    name: PRODUCT_NAME,
+    short_name: PRODUCT_NAME,
     description:
       "Assign tasks to coding agents, track progress, and keep your team's work in one place.",
     start_url: PWA_START_URL,

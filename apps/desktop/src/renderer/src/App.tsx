@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
+import { brandLocaleResources } from "@multica/core/i18n/branding";
 import { useAuthStore } from "@multica/core/auth";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -418,7 +419,8 @@ export default function App() {
   );
   const locale = useMemo(() => pickLocale(localeAdapter), [localeAdapter]);
   const resources = useMemo(
-    () => ({ [locale]: RESOURCES[locale] }),
+    () =>
+      brandLocaleResources({ [locale]: RESOURCES[locale] }, DESKTOP_PRODUCT_NAME),
     [locale],
   );
 

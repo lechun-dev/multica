@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { ContactSalesPageClient } from "@/features/landing/components/contact-sales-page-client";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 export const metadata: Metadata = {
   title: "Contact Sales",
   description:
-    "Talk to the Multica team about rolling out human + agent workflows at your company.",
+    `Talk to the ${PRODUCT_NAME} team about rolling out human + agent workflows at your company.`,
   openGraph: {
-    title: "Contact Sales — Multica",
+    title: `Contact Sales — ${PRODUCT_NAME}`,
     description:
       "Tell us about your team. We’ll respond within three business days.",
     url: "/contact-sales",

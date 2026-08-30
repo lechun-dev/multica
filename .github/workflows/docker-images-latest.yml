@@ -88,6 +88,7 @@ jobs:
             COMMIT=${{ github.sha }}
             DATE=${{ github.run_started_at }}
             NEXT_PUBLIC_APP_VERSION=latest
+            NEXT_PUBLIC_PRODUCT_NAME=MissionOS
 
   deploy:
     # 2026-08-26 coder(lq): Do not let production pull a stale `latest` tag;

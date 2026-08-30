@@ -94,7 +94,7 @@ async function extractArchive(archive: string, dest: string): Promise<void> {
 async function installFresh(serverUrl?: string): Promise<string> {
   if (!isOfficialCloudServerUrl(serverUrl ?? "")) {
     throw new Error(
-      "CLI auto-install is disabled for private Multica deployments; install a CLI built for this server or bundle it with the desktop app",
+      "CLI auto-install is disabled for private deployments; install a CLI built for this server or bundle it with the desktop app",
     );
   }
   const target = managedCliPath();

@@ -182,28 +182,10 @@ export function resolveContent(
     };
   }
 
-  // Linux — same principle: trust the arm64 signal, surface a hint
-  // when we're not confident. Linux ARM has no binary emulation so
-  // the hint matters more here than on Windows.
-  const isArmLinux = detected.arch === "arm64";
-  const primaryUrl = isArmLinux
-    ? assets.linuxArm64AppImage
-    : assets.linuxAmd64AppImage;
-  return {
-    title: d.linux.title,
-    sub: d.linux.sub,
-    primary: primaryUrl
-      ? {
-          href: primaryUrl,
-          label: d.linux.primary,
-          disabled: false,
-        }
-      : versionUnavailable
-        ? { href: "#", label: d.linux.primary, disabled: true }
-        : undefined,
-    alt: { href: "#all-platforms", label: d.linux.altFormats },
-    hint: detected.archConfident ? undefined : d.archFallbackHint,
-  };
+  // 2026-08-30 coder(lq): The private release currently ships macOS and
+  // Windows installers only, so do not expose stale Linux assets from an
+  // older upstream release.
+  return { title: d.unknown.title, sub: d.unknown.sub };
 }
 
 // ------------------------------------------------------------

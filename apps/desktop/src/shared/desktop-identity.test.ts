@@ -10,7 +10,7 @@ describe("resolveDesktopIdentity", () => {
   it("keeps local development isolated", () => {
     expect(resolveDesktopIdentity({ isDev: true })).toEqual({
       variant: "official",
-      productName: "Multica Canary",
+      productName: "MissionOS Canary",
       userDataDirectoryName: "Multica Canary",
       appId: "ai.multica.desktop.dev",
       protocol: "multica-dev",
@@ -23,7 +23,7 @@ describe("resolveDesktopIdentity", () => {
       resolveDesktopIdentity({ isDev: false, variant: "lechun" }),
     ).toEqual({
       variant: "lechun",
-      productName: "Mission",
+      productName: "MissionOS",
       userDataDirectoryName: "Multica Lechun",
       appId: "ai.multica.desktop.lechun",
       protocol: "multica-lechun",
@@ -34,7 +34,7 @@ describe("resolveDesktopIdentity", () => {
   it("falls back to the official production identity", () => {
     expect(resolveDesktopIdentity({ isDev: false })).toEqual({
       variant: "official",
-      productName: "Multica",
+      productName: "MissionOS",
       userDataDirectoryName: "Multica",
       appId: "ai.multica.desktop",
       protocol: "multica",

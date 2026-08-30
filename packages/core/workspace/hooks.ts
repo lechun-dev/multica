@@ -13,6 +13,7 @@ import {
 import { resolvePublicFileUrl } from "./avatar-url";
 import { useFeatureEnabled } from "../config";
 import { PLUGINS_V1_FLAG } from "../feature-flags";
+import { DEFAULT_PRODUCT_NAME } from "../i18n/branding";
 import { pluginInstallationsOptions } from "../plugins";
 
 // Stable empties for the still-loading directory queries. A fresh `= []`
@@ -86,7 +87,7 @@ export function buildActorNameResolver(directories: {
     // would be a lie the audit trail cannot undo. An id that no longer
     // resolves means the plugin was uninstalled — the row stays readable.
     if (type === "plugin") return pluginNames.get(id) ?? "Plugin";
-    if (type === "system") return "Multica";
+    if (type === "system") return DEFAULT_PRODUCT_NAME;
     return "System";
   };
 }

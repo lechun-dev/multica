@@ -2752,7 +2752,7 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         archFallbackHint: "아키텍처가 맞지 않나요? 아래에서 모든 형식을 확인하세요.",
       },
       allPlatforms: {
-        title: "모든 플랫폼",
+        title: "데스크톱 설치 파일",
         macArm64Label: "macOS · Apple Silicon",
         macX64Label: "macOS · Intel",
         winX64Label: "Windows · x64",

@@ -7,6 +7,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useLocale } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
 import { headerButtonClassName } from "./shared";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 export function LandingHeader({
   variant = "dark",
@@ -39,11 +40,11 @@ export function LandingHeader({
             />
             <span
               className={cn(
-                "text-title font-semibold tracking-[0.04em] lowercase sm:text-title-lg",
+                "text-title font-semibold tracking-[0.04em] sm:text-title-lg",
                 variant === "dark" ? "text-white/92" : "text-[#0a0d12]",
               )}
             >
-              multica
+              {PRODUCT_NAME}
             </span>
           </Link>
 

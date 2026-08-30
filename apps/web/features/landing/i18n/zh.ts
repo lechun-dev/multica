@@ -3225,7 +3225,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       archFallbackHint: "架构不对？下方是所有可选格式。",
     },
     allPlatforms: {
-      title: "所有平台",
+      title: "桌面端安装包",
       macArm64Label: "macOS · Apple Silicon",
       macX64Label: "macOS · Intel",
       winX64Label: "Windows · x64",

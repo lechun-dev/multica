@@ -11,6 +11,7 @@ import { isWorkspaceDeletePending } from "@multica/core/workspace/pending-delete
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
 import { WelcomeAfterOnboarding } from "@multica/views/workspace/welcome-after-onboarding";
+import { DESKTOP_PRODUCT_NAME } from "@/desktop-brand";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { SourceBackfillModal } from "@multica/views/onboarding";
 import { useTabStore } from "@/stores/tab-store";
@@ -186,7 +187,9 @@ export function WorkspaceRouteLayout() {
        *  Once the overlay closes the hook re-evaluates and pops the
        *  Modal — unless the store signal has already been consumed, in
        *  which case the hook renders null. */}
-      {!overlayActive && <WelcomeAfterOnboarding />}
+      {!overlayActive && (
+        <WelcomeAfterOnboarding productName={DESKTOP_PRODUCT_NAME} />
+      )}
       {/* Source-attribution backfill: same Dialog the web shell mounts
        *  inside DashboardLayout. Desktop's WorkspaceRouteLayout doesn't
        *  wrap DashboardLayout, so the modal has to be wired in directly

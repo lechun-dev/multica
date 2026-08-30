@@ -1,13 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { LandingHeader } from "@/features/landing/components/landing-header";
-import { LandingFooter } from "@/features/landing/components/landing-footer";
 import { DownloadHero } from "@/features/landing/components/download/hero";
 import { AllPlatforms } from "@/features/landing/components/download/all-platforms";
-import { CliSection } from "@/features/landing/components/download/cli-section";
-import { CloudSection } from "@/features/landing/components/download/cloud-section";
 import { useLocale } from "@/features/landing/i18n";
 import {
   detectOS,
@@ -30,8 +26,6 @@ export function DownloadClient({ release }: { release: LatestRelease }) {
     };
   }, []);
 
-  const releaseHtmlUrl = release.htmlUrl ?? release.allReleasesUrl;
-
   return (
     <>
       {/* Positioning context for the dark-variant LandingHeader —
@@ -49,73 +43,24 @@ export function DownloadClient({ release }: { release: LatestRelease }) {
         />
       </div>
 
-      <AllPlatforms
-        assets={release.assets}
-        fallbackHref={release.allReleasesUrl}
-      />
-      <CliSection />
-      <CloudSection />
-      <VersionInfoFooter
-        version={release.version}
-        releaseHtmlUrl={releaseHtmlUrl}
-        allReleasesUrl={release.allReleasesUrl}
-      />
-      <LandingFooter />
+      {/* 2026-08-30 coder(lq): Keep the private deployment download page
+          focused on the three supported desktop platform builds. */}
+      <AllPlatforms assets={release.assets} />
+      <VersionInfoFooter version={release.version} />
     </>
   );
 }
 
-function VersionInfoFooter({
-  version,
-  releaseHtmlUrl,
-  allReleasesUrl,
-}: {
-  version: string | null;
-  releaseHtmlUrl: string;
-  allReleasesUrl: string;
-}) {
+function VersionInfoFooter({ version }: { version: string | null }) {
   const { t } = useLocale();
   const d = t.download.footer;
 
   return (
     <section className="bg-white pb-16 text-[#0a0d12] sm:pb-20">
-      <div className="mx-auto flex max-w-[920px] flex-wrap items-center gap-x-6 gap-y-2 border-t border-[#0a0d12]/8 px-4 pt-8 text-label text-[#0a0d12]/60 sm:px-6 lg:px-8">
-        {version ? (
-          <>
-            <span>
-              {d.currentVersion.replace("{version}", version)}
-            </span>
-            <span aria-hidden className="text-[#0a0d12]/25">
-              ·
-            </span>
-            <Link
-              href={releaseHtmlUrl}
-              className="underline decoration-[#0a0d12]/30 underline-offset-4 hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70"
-              target="_blank"
-              rel="noreferrer"
-            >
-              {d.releaseNotes.replace("{version}", version)}
-            </Link>
-            <span aria-hidden className="text-[#0a0d12]/25">
-              ·
-            </span>
-          </>
-        ) : (
-          <>
-            <span>{d.versionUnavailable}</span>
-            <span aria-hidden className="text-[#0a0d12]/25">
-              ·
-            </span>
-          </>
-        )}
-        <Link
-          href={allReleasesUrl}
-          className="underline decoration-[#0a0d12]/30 underline-offset-4 hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70"
-          target="_blank"
-          rel="noreferrer"
-        >
-          {d.allReleases}
-        </Link>
+      <div className="mx-auto max-w-[920px] border-t border-[#0a0d12]/8 px-4 pt-8 text-label text-[#0a0d12]/60 sm:px-6 lg:px-8">
+        {version
+          ? d.currentVersion.replace("{version}", version)
+          : d.versionUnavailable}
       </div>
     </section>
   );

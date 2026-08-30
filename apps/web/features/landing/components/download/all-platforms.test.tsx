@@ -12,8 +12,6 @@ vi.mock("../../i18n", () => ({
           macX64Label: "macOS · Intel",
           winX64Label: "Windows · x64",
           winArm64Label: "Windows · ARM64",
-          linuxX64Label: "Linux · x64",
-          linuxArm64Label: "Linux · ARM64",
           formatDmg: ".dmg",
           formatZip: ".zip",
           formatExe: ".exe",
@@ -38,7 +36,6 @@ describe("AllPlatforms", () => {
           macX64Dmg: "https://downloads.test/mac-x64.dmg",
           macX64Zip: "https://downloads.test/mac-x64.zip",
         }}
-        fallbackHref="https://github.test/releases"
       />,
     );
 
@@ -54,5 +51,7 @@ describe("AllPlatforms", () => {
       "https://downloads.test/mac-x64.zip",
     );
     expect(screen.queryByText("Windows · ARM64")).not.toBeInTheDocument();
+    expect(screen.queryByText("Linux · x64")).not.toBeInTheDocument();
+    expect(screen.queryByText("Linux · ARM64")).not.toBeInTheDocument();
   });
 });

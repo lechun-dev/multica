@@ -860,6 +860,7 @@ if (!gotTheLock) {
         ? runtimeConfigResult.config.apiUrl
         : "",
       channel: DESKTOP_UPDATE_CHANNEL ?? undefined,
+      productName: DESKTOP_IDENTITY.productName,
     });
     setupDaemonManager(() => mainWindow);
     setupLocalDirectory(() => mainWindow);

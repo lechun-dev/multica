@@ -133,7 +133,7 @@ export function createElectronReloadPrompt(
     message: string;
     detail: string;
   }) => Promise<{ response: number }>,
-  productName = "Multica",
+  productName = "MissionOS",
 ) {
   return async (payload: ReloadPromptPayload): Promise<ReloadPromptResult> => {
     const result = await showMessageBox({

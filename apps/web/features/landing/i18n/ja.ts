@@ -2731,7 +2731,7 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         archFallbackHint: "アーキテクチャが合いませんか? 下ですべての形式を確認してください。",
       },
       allPlatforms: {
-        title: "すべてのプラットフォーム",
+        title: "デスクトップアプリ",
         macArm64Label: "macOS · Apple Silicon",
         macX64Label: "macOS · Intel",
         winX64Label: "Windows · x64",

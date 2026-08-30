@@ -4,10 +4,10 @@
 extends: electron-builder.yml
 
 appId: ai.multica.desktop.lechun
-productName: Mission
+productName: MissionOS
 
 extraMetadata:
-  productName: Mission
+  productName: MissionOS
   multicaDesktopVariant: lechun
 
 # Keep direct electron-builder invocations on the Lechun feed as well. The
@@ -16,7 +16,7 @@ publish:
   channel: latest-lechun
 
 protocols:
-  - name: Mission
+  - name: MissionOS
     schemes:
       - multica-lechun
 
@@ -34,13 +34,13 @@ linux:
   executableName: multica-lechun
   desktop:
     entry:
-      StartupWMClass: Mission
+      StartupWMClass: MissionOS
 
 win:
   artifactName: multica-lechun-${version}-windows-${arch}.${ext}
 
 # Linux package managers require a machine-safe package name. Keep this
-# separate from productName so the installed app still displays "Mission" while
+# separate from productName so the installed app still displays "MissionOS" while
 # deb/rpm metadata uses a valid identifier without spaces.
 deb:
   packageName: multica-lechun

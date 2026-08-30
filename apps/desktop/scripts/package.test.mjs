@@ -561,7 +561,7 @@ describe("electron-builder.yml packaging config", () => {
     const config = readFileSync(lechunConfigPath, "utf-8");
     expect(config).toContain("extends: electron-builder.yml");
     expect(config).toContain("appId: ai.multica.desktop.lechun");
-    expect(config).toContain("productName: Mission");
+    expect(config).toContain("productName: MissionOS");
     expect(config).toContain("deb:\n  packageName: multica-lechun");
     expect(config).toContain("rpm:\n  packageName: multica-lechun");
     expect(config).toContain("channel: latest-lechun");

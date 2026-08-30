@@ -3230,7 +3230,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       archFallbackHint: "Wrong architecture? See all formats below.",
     },
     allPlatforms: {
-      title: "All platforms",
+      title: "Desktop installers",
       macArm64Label: "macOS · Apple Silicon",
       macX64Label: "macOS · Intel",
       winX64Label: "Windows · x64",

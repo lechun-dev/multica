@@ -6,6 +6,7 @@ import { Download } from "lucide-react";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { useLocale } from "../i18n";
 import { heroButtonClassName } from "./shared";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 /**
  * Local app-entry landing page for the self-hosted Multica deployment.
@@ -30,10 +31,10 @@ export function MulticaAppEntry() {
 
       <div className="relative z-10 flex min-h-full flex-col">
         <header className="mx-auto flex h-[76px] w-full max-w-[1320px] items-center px-4 sm:px-6 lg:px-8">
-          <Link href="/" className="flex items-center gap-3" aria-label="multica">
+          <Link href="/" className="flex items-center gap-3" aria-label={PRODUCT_NAME}>
             <MulticaIcon className="size-5 text-white" noSpin />
-            <span className="text-title font-semibold lowercase tracking-[0.04em] text-white/92 sm:text-title-lg">
-              multica
+            <span className="text-title font-semibold tracking-[0.04em] text-white/92 sm:text-title-lg">
+              {PRODUCT_NAME}
             </span>
           </Link>
         </header>

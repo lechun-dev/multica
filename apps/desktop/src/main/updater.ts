@@ -221,9 +221,6 @@ function checkForUpdatesOnce(): Promise<unknown> {
   return p;
 }
 
-const PRIVATE_DEPLOYMENT_UPDATE_MESSAGE =
-  "Updates are managed by your private Multica deployment administrator.";
-
 export function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null,
   options: {
@@ -232,8 +229,11 @@ export function setupAutoUpdater(
     enabled?: boolean;
     /** Optional per-build channel, used by the Lechun distribution. */
     channel?: string;
+    /** Display name used in user-facing update errors. */
+    productName?: string;
   } = {},
 ): void {
+  const privateDeploymentUpdateMessage = `Updates are managed by your private ${options.productName ?? "deployment"} deployment administrator.`;
   // 2026-08-27 coder(lq): Desktop releases are published to the configured
   // public GitHub repository, so private deployments can safely use the same
   // updater without embedding credentials or falling back to upstream.
@@ -456,7 +456,7 @@ export function setupAutoUpdater(
 
       await preferencesReady;
       if (!updatesAvailable && enabled) {
-        throw new Error(PRIVATE_DEPLOYMENT_UPDATE_MESSAGE);
+        throw new Error(privateDeploymentUpdateMessage);
       }
       const wasEnabled = automaticUpdatesEnabled;
       const preferences = { automaticUpdates: enabled };
@@ -480,7 +480,7 @@ export function setupAutoUpdater(
 
   ipcMain.handle("updater:check", async (): Promise<ManualUpdateCheckResult> => {
     if (!updatesAvailable) {
-      return { ok: false, error: PRIVATE_DEPLOYMENT_UPDATE_MESSAGE };
+      return { ok: false, error: privateDeploymentUpdateMessage };
     }
     try {
       const result = (await checkForUpdatesOnce()) as

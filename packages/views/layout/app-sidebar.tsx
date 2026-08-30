@@ -1,6 +1,7 @@
 "use client";
 
 import { issueStatusCategory } from "@multica/core/issues";
+import { DEFAULT_PRODUCT_NAME } from "@multica/core/i18n/branding";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
@@ -412,6 +413,8 @@ function PinSkeleton() {
 }
 
 interface AppSidebarProps {
+  /** 2026-08-30 coder(lq): Product name shown while the workspace loads. */
+  productName?: string;
   /** Rendered above SidebarHeader (e.g. desktop traffic light spacer) */
   topSlot?: React.ReactNode;
   /** Rendered in the header between workspace switcher and new-issue button (e.g. search trigger) */
@@ -422,7 +425,13 @@ interface AppSidebarProps {
   headerStyle?: React.CSSProperties;
 }
 
-export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
+export function AppSidebar({
+  productName = DEFAULT_PRODUCT_NAME,
+  topSlot,
+  searchSlot,
+  headerClassName,
+  headerStyle,
+}: AppSidebarProps = {}) {
   const { t } = useT("layout");
   const { pathname, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
@@ -613,7 +622,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         )}
                       </span>
                       <span className="flex-1 truncate font-medium">
-                        {workspace?.name ?? "Multica"}
+                        {workspace?.name ?? productName}
                       </span>
                       <ChevronDown className="size-3 text-muted-foreground" />
                     </SidebarMenuButton>

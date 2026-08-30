@@ -1,26 +1,17 @@
-import Link from "next/link";
 import { useLocale } from "../../i18n";
-import {
-  hasCompleteAssetSet,
-  type DownloadAssets,
-} from "../../utils/parse-release-assets";
-import { AppleIcon, LinuxIcon, WindowsIcon } from "./os-icons";
+import type { DownloadAssets } from "../../utils/parse-release-assets";
+import { AppleIcon, WindowsIcon } from "./os-icons";
 
 interface Props {
   assets: DownloadAssets;
-  /** Link to GitHub releases page, used when individual asset URLs
-   *  couldn't be resolved (API down / parse failure). */
-  fallbackHref: string;
 }
 
 /**
- * Full matrix of platform + arch + format links. Always visible
- * regardless of which platform the Hero resolved to — lets power
- * users grab any build directly.
+ * The private deployment release matrix. Keep this limited to the three
+ * desktop platform variants that are built and supported for MissionOS.
  */
 export function AllPlatforms({
   assets,
-  fallbackHref,
 }: Props) {
   const { t } = useLocale();
   const d = t.download.allPlatforms;
@@ -76,62 +67,9 @@ export function AllPlatforms({
               },
             ]}
             unavailable={d.unavailable}
-          />
-          <Row
-            icon={<LinuxIcon className="text-[#0a0d12]" />}
-            label={d.linuxX64Label}
-            formats={[
-              {
-                label: d.formatAppImage,
-                href: assets.linuxAmd64AppImage,
-              },
-              {
-                label: d.formatDeb,
-                href: assets.linuxAmd64Deb,
-              },
-              {
-                label: d.formatRpm,
-                href: assets.linuxAmd64Rpm,
-              },
-            ]}
-            unavailable={d.unavailable}
-          />
-          <Row
-            icon={<LinuxIcon className="text-[#0a0d12]" />}
-            label={d.linuxArm64Label}
-            formats={[
-              {
-                label: d.formatAppImage,
-                href: assets.linuxArm64AppImage,
-              },
-              {
-                label: d.formatDeb,
-                href: assets.linuxArm64Deb,
-              },
-              {
-                label: d.formatRpm,
-                href: assets.linuxArm64Rpm,
-              },
-            ]}
-            unavailable={d.unavailable}
             isLast
           />
         </div>
-
-        {/* Some row is missing its link — surface the GitHub fallback so
-            users on an orphaned row still have a way out. */}
-        {!hasCompleteAssetSet(assets) ? (
-          <p className="mt-6 text-label text-[#0a0d12]/60">
-            <Link
-              href={fallbackHref}
-              className="underline decoration-[#0a0d12]/30 underline-offset-4 hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70"
-              target="_blank"
-              rel="noreferrer"
-            >
-              {t.download.footer.allReleases}
-            </Link>
-          </p>
-        ) : null}
       </div>
     </section>
   );

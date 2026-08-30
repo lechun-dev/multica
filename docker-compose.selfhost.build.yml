@@ -19,3 +19,4 @@ services:
       dockerfile: Dockerfile.web
       args:
         NEXT_PUBLIC_APP_VERSION: dev
+        NEXT_PUBLIC_PRODUCT_NAME: MissionOS
