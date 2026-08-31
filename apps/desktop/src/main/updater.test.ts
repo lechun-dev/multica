@@ -77,6 +77,15 @@ describe("updater error formatting", () => {
     );
   });
 
+  it("hides Chromium network error codes from users", () => {
+    expect(formatUpdaterError(new Error("net::ERR_INTERNET_DISCONNECTED"))).toBe(
+      "Unable to reach the update server. We’ll retry automatically.",
+    );
+    expect(formatUpdaterError(new Error("net::ERR_CONNECTION_RESET"))).toBe(
+      "Unable to reach the update server. We’ll retry automatically.",
+    );
+  });
+
   it("keeps short non-provider errors intact", () => {
     expect(formatUpdaterError(new Error("downloaded package is missing"))).toBe(
       "downloaded package is missing",

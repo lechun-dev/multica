@@ -91,7 +91,7 @@ export function formatUpdaterError(error: unknown): string {
   }
 
   if (
-    /(?:HTTP|status(?: code)?)[ :]*(?:401|403)|timed out|timeout|econnreset|enotfound|network/i.test(
+    /(?:HTTP|status(?: code)?)[ :]*(?:401|403)|timed out|timeout|econnreset|enotfound|network|ERR_(?:INTERNET_DISCONNECTED|CONNECTION_RESET|CONNECTION_TIMED_OUT|NAME_NOT_RESOLVED)|offline/i.test(
       message,
     )
   ) {
