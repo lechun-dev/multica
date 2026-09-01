@@ -40,6 +40,34 @@ type fakeRepo struct {
 	workspace, project, projectWorkspace string
 	projects                             []string
 	workspaceErr, projectErr             error
+	issueWorkspace, issueProject         string
+	issueErr                             error
+}
+
+// The in-memory test adapter models the post-migration repository contract.
+// A separate legacyOnlyRepo in grant_test.go is used when a test needs to
+// prove that enabled authorization rejects an adapter without unified grants.
+func (f fakeRepo) ListAccessGrants(_ context.Context, _, projectID, _ string) ([]AccessGrant, error) {
+	if f.projectErr != nil || f.project == "" {
+		return nil, nil
+	}
+	return []AccessGrant{{
+		ProjectID:   projectID,
+		SubjectType: SubjectUser,
+		SubjectID:   "u-1",
+		Role:        ProjectRole(f.project),
+		Source:      GrantSourceMigration,
+	}}, nil
+}
+
+func (f fakeRepo) ListUserOrganizations(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+
+func (f fakeRepo) UpsertAccessGrant(context.Context, AccessGrant) error { return nil }
+
+func (f fakeRepo) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, ProjectRole, Permission) error {
+	return nil
 }
 
 func (f fakeRepo) WorkspaceRole(context.Context, string, string) (WorkspaceRole, error) {
@@ -53,6 +81,19 @@ func (f fakeRepo) ProjectWorkspace(context.Context, string) (string, error) {
 }
 func (f fakeRepo) VisibleProjectIDs(context.Context, string, string) ([]string, error) {
 	return f.projects, nil
+}
+
+// 2026-09-01 coder(lq): Model the canonical issue-to-project lookup required
+// once task authorization is enabled; tests must not accidentally exercise a
+// legacy adapter that can pair an issue with an arbitrary project ID.
+func (f fakeRepo) IssueProject(context.Context, string) (string, string, error) {
+	if f.issueErr != nil {
+		return "", "", f.issueErr
+	}
+	if f.issueWorkspace == "" {
+		f.issueWorkspace = f.projectWorkspace
+	}
+	return f.issueWorkspace, f.issueProject, nil
 }
 
 func TestPolicyInheritanceAndRoles(t *testing.T) {
@@ -170,7 +211,7 @@ func TestRemoveMemberProtectsLastOwner(t *testing.T) {
 		members:  []ProjectMemberRecord{{ProjectID: "p-1", UserID: "u-1", Role: ProjectOwner}},
 	}
 	s := New(repo, true)
-	err := s.RemoveMember(context.Background(), Subject{UserID: "u-2", WorkspaceID: "ws-1"}, "p-1", "u-1")
+	err := s.RemoveMember(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", "u-1")
 	if err != ErrLastOwner {
 		t.Fatalf("got %v, want %v", err, ErrLastOwner)
 	}

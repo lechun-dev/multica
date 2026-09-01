@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 // An unknown project status must fail fast with a 400 and the valid list, not
@@ -60,6 +62,29 @@ func TestCreateProjectValidStatusReturns201(t *testing.T) {
 	})
 	if project.Status != "in_progress" {
 		t.Errorf("expected status in_progress, got %q", project.Status)
+	}
+}
+
+func TestCreateProjectPermissionEnabledWithoutTransactionSupportReturns500(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test database is unavailable")
+	}
+
+	h := *testHandler
+	h.ProjectAuth = projectauth.New(nil, true)
+	h.TxStarter = nil
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "transaction support required project",
+	})
+	h.CreateProject(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when permissions are enabled without transaction support, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "transaction support") {
+		t.Fatalf("expected transaction support error, got %s", w.Body.String())
 	}
 }
 

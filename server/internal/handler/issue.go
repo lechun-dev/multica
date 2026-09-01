@@ -3273,7 +3273,11 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		LabelIDs:       labelIDs,
 		AllowDuplicate: req.AllowDuplicate,
 	}, service.IssueCreateOpts{
-		ActorID:          actualCreatorID,
+		ActorID: actualCreatorID,
+		// 2026-09-01 coder(lq): Keep the project binding invariant at the
+		// service boundary as well as the HTTP permission guard so alternate
+		// callers cannot create projectless tasks while the overlay is enabled.
+		RequireProject:   h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BeforeCommit:     h.issueAccessBeforeCommit(),
@@ -3311,8 +3315,16 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 		return
 	}
+	if errors.Is(err, service.ErrParentProjectMismatch) {
+		writeError(w, http.StatusBadRequest, "parent issue belongs to a different project")
+		return
+	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return
+	}
+	if errors.Is(err, service.ErrProjectRequired) {
+		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
 		return
 	}
 	if errors.Is(err, service.ErrIssueLabelNotFound) {
@@ -3558,7 +3570,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+		if err := syncIssueAccessWithExecutor(ctx, tx, &current, issue); err != nil {
 			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
 		}
 	}

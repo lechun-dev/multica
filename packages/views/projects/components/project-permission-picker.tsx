@@ -16,10 +16,13 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { PillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
+import { ProjectPermissionOrganizationSelect } from "./project-permission-organization-select";
 
 export interface ProjectPermissionSelection {
-  userId: string;
-  role: string;
+  subjectType: "user" | "role" | "organization" | "everyone";
+  subjectId?: string;
+  role?: string;
+  permission?: string;
 }
 
 const BUILTIN_PROJECT_ROLES: Array<{ key: string; labelKey: "role_owner" | "role_manager" | "role_member" | "role_viewer" }> = [
@@ -29,6 +32,16 @@ const BUILTIN_PROJECT_ROLES: Array<{ key: string; labelKey: "role_owner" | "role
   { key: "viewer", labelKey: "role_viewer" },
 ];
 
+const PROJECT_PERMISSIONS = [
+  { key: "project.view", label: "View project" },
+  { key: "project.edit", label: "Edit project" },
+  { key: "project.issue.create", label: "Create issues" },
+  { key: "project.issue.manage", label: "Manage issues" },
+  { key: "project.agent.use", label: "Use agents" },
+  { key: "project.member.manage", label: "Manage members" },
+  { key: "project.settings.manage", label: "Manage project settings" },
+] as const;
+
 type ProjectPermissionPickerProps = {
   members: MemberWithUser[];
   workspaceId: string;
@@ -36,9 +49,9 @@ type ProjectPermissionPickerProps = {
   onChange: (value: ProjectPermissionSelection[]) => void;
 };
 
-// 2026-08-28 coder(lq): Keep creation-time authorization local until the
-// project exists; the parent persists these selections through the existing
-// project-member API after the create request succeeds.
+// 2026-09-01 coder(lq): Keep creation-time authorization local until the
+// project exists; the parent sends these provider-neutral subjects in the
+// atomic create request (user, organization, or everyone).
 export function ProjectPermissionPicker({
   members,
   workspaceId,
@@ -50,6 +63,9 @@ export function ProjectPermissionPicker({
   const [search, setSearch] = useState("");
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [selectedRole, setSelectedRole] = useState("member");
+  const [selectedPermission, setSelectedPermission] = useState<string>("project.view");
+  const [subjectType, setSubjectType] = useState<"user" | "role" | "organization" | "everyone">("user");
+  const [subjectId, setSubjectId] = useState("");
 
   const rolesQuery = useQuery({
     queryKey: ["project-permission-roles", workspaceId],
@@ -81,7 +97,10 @@ export function ProjectPermissionPicker({
   );
   const roleLabel = (role: ProjectPermissionRole) => role.name || roleLabels.get(role.key) || role.key;
   const roleByKey = useMemo(() => new Map(roles.map((role) => [role.key, role])), [roles]);
-  const selectedByUser = useMemo(() => new Map(value.map((item) => [item.userId, item])), [value]);
+  const selectedByUser = useMemo(
+    () => new Set(value.filter((item) => item.subjectType === "user").map((item) => item.subjectId)),
+    [value],
+  );
   const filteredMembers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
     return members
@@ -112,20 +131,39 @@ export function ProjectPermissionPicker({
   };
 
   const addPending = () => {
-    if (pendingIds.size === 0) return;
-    const additions = [...pendingIds].map((userId) => ({ userId, role: selectedRole }));
-    onChange([...value, ...additions]);
+    const assignment = subjectType === "role"
+      ? { permission: selectedPermission }
+      : { role: selectedRole };
+    if (subjectType === "everyone") {
+      if (!value.some((item) => item.subjectType === "everyone")) {
+        onChange([...value, { subjectType, ...assignment }]);
+      }
+    } else if (subjectType === "organization" || subjectType === "role") {
+      const normalizedSubjectId = subjectId.trim();
+      if (!normalizedSubjectId) return;
+      if (!value.some((item) => item.subjectType === subjectType && item.subjectId === normalizedSubjectId && item.role === assignment.role && item.permission === assignment.permission)) {
+        onChange([...value, { subjectType, subjectId: normalizedSubjectId, ...assignment }]);
+      }
+    } else {
+      if (pendingIds.size === 0) return;
+      const additions = [...pendingIds].map((subjectId) => ({ subjectType, subjectId, ...assignment }));
+      onChange([...value, ...additions]);
+    }
     setPendingIds(new Set());
+    setSubjectId("");
   };
 
-  const removeSelection = (userId: string) => {
-    onChange(value.filter((item) => item.userId !== userId));
+  const removeSelection = (selection: ProjectPermissionSelection) => {
+    onChange(value.filter((item) => item !== selection));
   };
 
   const resetTransientState = () => {
     setSearch("");
     setPendingIds(new Set());
     setSelectedRole("member");
+    setSelectedPermission("project.view");
+    setSubjectType("user");
+    setSubjectId("");
   };
 
   return (
@@ -157,18 +195,26 @@ export function ProjectPermissionPicker({
           <div className="space-y-1 border-b pb-2">
             <div className="text-caption font-medium text-muted-foreground">{t(($) => $.permissions.current_access)}</div>
             {value.map((selection) => {
-              const member = members.find((item) => item.user_id === selection.userId);
-              const name = member?.name || member?.email || selection.userId;
-              const role = roleByKey.get(selection.role);
+              const member = selection.subjectType === "user"
+                ? members.find((item) => item.user_id === selection.subjectId)
+                : undefined;
+              const name = selection.subjectType === "everyone"
+                ? t(($) => $.permissions.everyone)
+                : selection.subjectType === "organization"
+                  ? t(($) => $.permissions.organization_prefix, { name: selection.subjectId })
+                  : selection.subjectType === "role"
+                    ? t(($) => $.permissions.role_prefix, { name: selection.subjectId })
+                    : member?.name || member?.email || selection.subjectId;
+              const role = selection.role ? roleByKey.get(selection.role) : undefined;
               return (
-                <div key={selection.userId} className="flex items-center gap-2 text-caption">
+                <div key={`${selection.subjectType}:${selection.subjectId ?? "everyone"}`} className="flex items-center gap-2 text-caption">
                   <span className="min-w-0 flex-1 truncate">{name}</span>
-                  <span className="text-muted-foreground">{role ? roleLabel(role) : selection.role}</span>
+                  <span className="text-muted-foreground">{selection.permission || (role ? roleLabel(role) : selection.role)}</span>
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-foreground"
                     aria-label={`${t(($) => $.permissions.remove_aria)} ${name}`}
-                    onClick={() => removeSelection(selection.userId)}
+                    onClick={() => removeSelection(selection)}
                   >
                     <UserMinus className="size-3" />
                   </button>
@@ -194,6 +240,65 @@ export function ProjectPermissionPicker({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
+                <Button type="button" variant="outline" size="sm" className="min-w-24 justify-between text-caption">
+                  {subjectType === "user"
+                    ? t(($) => $.permissions.user)
+                    : subjectType === "role"
+                      ? t(($) => $.permissions.role)
+                      : subjectType === "organization"
+                        ? t(($) => $.permissions.organization)
+                        : t(($) => $.permissions.everyone)}
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setSubjectType("user")}>{t(($) => $.permissions.user)}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSubjectType("role")}>{t(($) => $.permissions.role)}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSubjectType("organization")}>{t(($) => $.permissions.organization)}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSubjectType("everyone")}>{t(($) => $.permissions.everyone)}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {subjectType === "role" ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button type="button" variant="outline" size="sm" className="min-w-28 justify-between text-caption">
+                    {roleByKey.get(subjectId) ? roleLabel(roleByKey.get(subjectId)!) : t(($) => $.permissions.role)}
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="start">
+                {roles.map((item) => (
+                  <DropdownMenuItem key={item.key} onClick={() => setSubjectId(item.key)}>
+                    {roleLabel(item)}
+                    {item.key === subjectId && <Check className="ml-auto size-3.5" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+          {subjectType === "role" ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button type="button" variant="outline" size="sm" className="min-w-32 justify-between text-caption">
+                    {PROJECT_PERMISSIONS.find((item) => item.key === selectedPermission)?.label || selectedPermission}
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="start">
+                {PROJECT_PERMISSIONS.map((item) => (
+                  <DropdownMenuItem key={item.key} onClick={() => setSelectedPermission(item.key)}>
+                    {item.label}
+                    {item.key === selectedPermission && <Check className="ml-auto size-3.5" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+          {subjectType !== "role" ? <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
                 <Button type="button" variant="outline" size="sm" className="min-w-28 justify-between text-caption">
                   {roleByKey.get(selectedRole) ? roleLabel(roleByKey.get(selectedRole)!) : roleLabels.get(selectedRole) || selectedRole}
                 </Button>
@@ -207,13 +312,25 @@ export function ProjectPermissionPicker({
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
-          </DropdownMenu>
-          <Button type="button" size="sm" onClick={addPending} disabled={pendingIds.size === 0}>
+          </DropdownMenu> : null}
+          <Button type="button" size="sm" onClick={addPending} disabled={subjectType === "user" ? pendingIds.size === 0 : subjectType === "everyone" ? false : !subjectId.trim()}>
             {t(($) => $.permissions.add_members)}
           </Button>
         </div>
 
-        <div className="max-h-44 space-y-1 overflow-y-auto">
+        {subjectType === "organization" ? (
+          <ProjectPermissionOrganizationSelect
+            workspaceId={workspaceId}
+            open={open}
+            value={subjectId}
+            onValueChange={setSubjectId}
+            ariaLabel={t(($) => $.permissions.organization)}
+            placeholder={t(($) => $.permissions.select_organization)}
+            emptyLabel={t(($) => $.permissions.no_organizations)}
+          />
+        ) : null}
+
+        {subjectType === "user" && <div className="max-h-44 space-y-1 overflow-y-auto">
           {filteredMembers.length === 0 ? (
             <div className="py-4 text-center text-caption text-muted-foreground">{t(($) => $.permissions.no_results)}</div>
           ) : (
@@ -238,7 +355,7 @@ export function ProjectPermissionPicker({
               </div>
             ))
           )}
-        </div>
+        </div>}
       </PopoverContent>
     </Popover>
   );
