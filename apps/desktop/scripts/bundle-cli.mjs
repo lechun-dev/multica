@@ -14,6 +14,7 @@
 // Go compile error is fatal — you want that to block dev, not hide.
 
 import { access, chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { constants } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
@@ -60,7 +61,7 @@ function normalizeRuntimeArch(arch) {
 }
 
 function binaryNameForPlatform(platform) {
-  return platform === "win32" ? "multica.exe" : "multica";
+  return platform === "win32" ? "missionos.exe" : "missionos";
 }
 
 const targetPlatform = normalizeRuntimePlatform(
@@ -70,7 +71,10 @@ const targetArch = normalizeRuntimeArch(runtimeArchFromArgs(process.argv.slice(2
 const goos = PLATFORM_TO_GOOS[targetPlatform];
 const goarch = targetArch === "x64" ? "amd64" : targetArch;
 const binName = binaryNameForPlatform(targetPlatform);
-const srcBinary = join(serverDir, "bin", `${goos}-${goarch}`, binName);
+let srcBinary = join(serverDir, "bin", `${goos}-${goarch}`, binName);
+if (!existsSync(srcBinary)) {
+  srcBinary = join(serverDir, "bin", `${goos}-${goarch}`, targetPlatform === "win32" ? "multica.exe" : "multica");
+}
 const destDir = join(repoRoot, "apps", "desktop", "resources", "bin");
 const destBinary = join(destDir, binName);
 

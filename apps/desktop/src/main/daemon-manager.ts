@@ -371,7 +371,9 @@ async function fetchHealth(): Promise<DaemonStatus> {
 }
 
 function findCliOnPath(): string | null {
-  const candidates = process.platform === "win32" ? ["multica.exe"] : ["multica"];
+  const candidates = process.platform === "win32"
+    ? ["missionos.exe", "multica.exe"]
+    : ["missionos", "multica"];
   const paths = (process.env["PATH"] ?? "").split(
     process.platform === "win32" ? ";" : ":",
   );
@@ -398,11 +400,12 @@ function findCliOnPath(): string | null {
  *   `app.asar.unpacked/`, so we swap the path segment to execute it.
  */
 function bundledCliPath(): string {
-  const binName = process.platform === "win32" ? "multica.exe" : "multica";
-  return join(app.getAppPath(), "resources", "bin", binName).replace(
-    "app.asar",
-    "app.asar.unpacked",
-  );
+  const names = process.platform === "win32" ? ["missionos.exe", "multica.exe"] : ["missionos", "multica"];
+  for (const binName of names) {
+    const candidate = join(app.getAppPath(), "resources", "bin", binName).replace("app.asar", "app.asar.unpacked");
+    if (existsSync(candidate)) return candidate;
+  }
+  return join(app.getAppPath(), "resources", "bin", names[0]).replace("app.asar", "app.asar.unpacked");
 }
 
 async function probeCliBinary(

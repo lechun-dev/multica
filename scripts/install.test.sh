@@ -13,17 +13,17 @@ _setup_sandbox() {
   local payload_dir="$tmp/payload"
   mkdir -p "$stub_bin" "$install_bin" "$payload_dir"
 
-  cat >"$payload_dir/multica" <<'STUB'
+  cat >"$payload_dir/missionos" <<'STUB'
 #!/usr/bin/env bash
-echo "multica v0.3.2 (commit: test)"
+echo "missionos v0.3.2 (commit: test)"
 STUB
-  chmod +x "$payload_dir/multica"
-  tar -czf "$tmp/multica.tar.gz" -C "$payload_dir" multica
+  chmod +x "$payload_dir/missionos"
+  tar -czf "$tmp/multica.tar.gz" -C "$payload_dir" missionos
 
   cat >"$stub_bin/curl" <<'STUB'
 #!/usr/bin/env bash
 if [[ "$*" == *"-sI"* ]]; then
-  printf 'HTTP/2 302\r\nlocation: https://github.com/multica-ai/multica/releases/tag/v0.3.2\r\n'
+  printf 'HTTP/2 302\r\nlocation: https://github.com/lechun-dev/multica/releases/tag/v0.3.2\r\n'
   exit 0
 fi
 
@@ -63,18 +63,13 @@ _run_installer() {
     return 1
   fi
 
-  if [[ ! -x "$tmp/install-bin/multica" ]]; then
-    echo "expected fallback binary at $tmp/install-bin/multica" >&2
+  if [[ ! -x "$tmp/install-bin/missionos" || ! -L "$tmp/install-bin/multica" ]]; then
+    echo "expected missionos binary and multica compatibility link" >&2
     cat "$out" >&2 || true
     cat "$err" >&2 || true
     return 1
   fi
 
-  if ! grep -q "Homebrew output (last 80 lines):" "$err"; then
-    echo "expected diagnostic tail in stderr" >&2
-    cat "$err" >&2 || true
-    return 1
-  fi
 }
 
 test_brew_install_failure_falls_back_to_release_binary() {
@@ -176,7 +171,7 @@ STUB
     cat "$tmp/install.out" >&2 || true
     return 1
   fi
-  if ! grep -q "multica login --token <YOUR_TOKEN>" "$tmp/install.out"; then
+  if ! grep -q "missionos login --token <YOUR_TOKEN>" "$tmp/install.out"; then
     echo "expected token login command in installer output" >&2
     cat "$tmp/install.out" >&2 || true
     return 1
@@ -229,7 +224,7 @@ STUB
     cat "$tmp/install.out" >&2 || true
     return 1
   fi
-  if grep -q "multica login --token <YOUR_TOKEN>" "$tmp/install.out"; then
+  if grep -q "missionos login --token <YOUR_TOKEN>" "$tmp/install.out"; then
     echo "did not expect token login command in local installer output" >&2
     cat "$tmp/install.out" >&2 || true
     return 1

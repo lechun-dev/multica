@@ -125,7 +125,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 	}
 
 	got := FormatText(event)
-	want := "🔔 **张畅 在 Multica 中提到了你**\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)***\n\n> 请 @李群 周五前确认\n\n**[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)**"
+	want := "🔔 **张畅 在 MissionOS 中提到了你**\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)***\n\n> 请 @李群 周五前确认\n\n**[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)**"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}
@@ -133,7 +133,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 
 func TestFormatTextStripsInternalMentionLinksButKeepsRegularLinks(t *testing.T) {
 	got := FormatText(MentionCreated{Text: "请 [@Agent](mention://agent/agent-id) 查看 [文档](https://example.test/doc)"})
-	want := "🔔 **一位 Multica 成员 在 Multica 中提到了你**\n\n> 请 @Agent 查看 [文档](https://example.test/doc)"
+	want := "🔔 **一位 MissionOS 成员 在 MissionOS 中提到了你**\n\n> 请 @Agent 查看 [文档](https://example.test/doc)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}
@@ -141,8 +141,29 @@ func TestFormatTextStripsInternalMentionLinksButKeepsRegularLinks(t *testing.T) 
 
 func TestFormatTextDoesNotExposeActorIDWhenNameMissing(t *testing.T) {
 	got := FormatText(MentionCreated{Actor: Actor{ID: "secret-user-id", Kind: "member"}, Text: "hello"})
-	if got != "🔔 **一位 Multica 成员 在 Multica 中提到了你**\n\n> hello" {
+	if got != "🔔 **一位 MissionOS 成员 在 MissionOS 中提到了你**\n\n> hello" {
 		t.Fatalf("formatted notification exposed an opaque actor id or changed fallback: %q", got)
+	}
+}
+
+func TestFormatTextTruncatesLongMentionPreview(t *testing.T) {
+	got := FormatText(MentionCreated{Actor: Actor{Name: "张畅"}, Text: "第一行\n第二行\n第三行\n第四行\n第五行\n第六行"})
+	if strings.Contains(got, "> 第五行") || strings.Contains(got, "> 第六行") {
+		t.Fatalf("long mention preview leaked lines beyond the compact limit: %q", got)
+	}
+	if !strings.Contains(got, "> …") {
+		t.Fatalf("long mention preview should end with an ellipsis: %q", got)
+	}
+}
+
+func TestFormatTextTruncatesLongSingleLineByRunes(t *testing.T) {
+	text := strings.Repeat("任务内容", 200)
+	got := FormatText(MentionCreated{Text: text})
+	if !strings.Contains(got, "…") {
+		t.Fatalf("long single-line mention preview should be truncated: %q", got)
+	}
+	if strings.Contains(got, "Multica") {
+		t.Fatalf("legacy brand leaked into notification: %q", got)
 	}
 }
 
@@ -154,7 +175,7 @@ func TestFormatTextEscapesDisplayContext(t *testing.T) {
 		IssueTitle:      "Fix `notify`",
 		Text:            "done",
 	})
-	if got != "🔔 **A\\*lice 在 Multica 中提到了你**\n\n***来源：Acme\\_\\[研发\\]***\n\n***任务：MUL-1 · Fix \\`notify\\`***\n\n> done" {
+	if got != "🔔 **A\\*lice 在 MissionOS 中提到了你**\n\n***来源：Acme\\_\\[研发\\]***\n\n***任务：MUL-1 · Fix \\`notify\\`***\n\n> done" {
 		t.Fatalf("formatted notification did not escape display fields: %q", got)
 	}
 }

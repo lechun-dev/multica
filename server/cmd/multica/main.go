@@ -24,16 +24,16 @@ var (
 var debugFlag bool
 
 var rootCmd = &cobra.Command{
-	Use:           "multica",
-	Short:         "Multica CLI — local agent runtime and management tool",
-	Long:          "Work seamlessly with Multica from the command line.",
+	Use:           "missionos",
+	Short:         "MissionOS CLI — local agent runtime and management tool",
+	Long:          "Work seamlessly with MissionOS from the command line.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
 
 func init() {
 	rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s)\ngo: %s, os/arch: %s/%s", version, commit, date, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-	rootCmd.SetVersionTemplate("multica {{.Version}}\n")
+	rootCmd.SetVersionTemplate("missionos {{.Version}}\n")
 
 	// Tag every CLI HTTP request with this binary's build version so the
 	// server can split logs/metrics by client version.

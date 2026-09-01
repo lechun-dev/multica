@@ -8,7 +8,7 @@ version: 0.1.0
 appVersion: "latest"
 home: https://multica.ai
 sources:
-  - https://github.com/multica-ai/multica
+  - https://github.com/lechun-dev/multica
 keywords:
   - multica
   - issue-tracker
