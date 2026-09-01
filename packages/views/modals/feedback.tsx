@@ -147,7 +147,7 @@ export function FeedbackModal({
           <p className="mt-1 text-caption text-muted-foreground">
             {t(($) => $.feedback.github_hint_prefix)}
             <a
-              href="https://github.com/multica-ai/multica/issues"
+              href="https://github.com/lechun-dev/multica/issues"
               target="_blank"
               rel="noopener noreferrer"
               className="text-brand underline decoration-brand/40 underline-offset-2 hover:decoration-brand"

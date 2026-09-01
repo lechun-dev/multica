@@ -22,18 +22,21 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   appUrl: "https://mission.lechun.cc",
 });
 
-/** 2026-08-25 coder(lq): Public releases only update Multica Cloud installs. */
-export function isOfficialCloudServerUrl(apiUrl: string): boolean {
+/** Return true when the server is allowed to consume MissionOS release assets. */
+export function isSupportedReleaseServerUrl(apiUrl: string): boolean {
   try {
     const url = new URL(apiUrl);
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
-      url.hostname.toLowerCase() === "api.multica.ai"
+      ["api.multica.ai", "mission.lechun.cc"].includes(url.hostname.toLowerCase())
     );
   } catch {
     return false;
   }
 }
+
+/** @deprecated Use isSupportedReleaseServerUrl. Kept for existing callers. */
+export const isOfficialCloudServerUrl = isSupportedReleaseServerUrl;
 
 const LOCAL_DEV_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   schemaVersion: 1,
