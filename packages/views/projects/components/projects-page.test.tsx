@@ -41,10 +41,10 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey?.[0];
     if (key === "projects") {
-      return { data: mocks.projects, isLoading: false };
+      return { data: mocks.projects, isLoading: false, isSuccess: true };
     }
     if (key === "members") {
-      return { data: mocks.members, isLoading: false };
+      return { data: mocks.members, isLoading: false, isSuccess: true };
     }
     if (key === "agents") {
       return { data: mocks.agents, isLoading: false };

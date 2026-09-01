@@ -184,12 +184,13 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := r.URL.Query().Get("status")
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		// 2026-08-28 coder(lq): Use the project-auth adapter for the whole
 		// workspace. The upstream creator-only query would hide projectless
 		// sessions owned by an Agent's user and sessions visible to workspace
 		// owners or project members who did not create them.
-		resp, err := h.listChatSessionsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), status == "all")
+		resp, err := h.listChatSessionsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), status == "all", includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
 			return
@@ -327,7 +328,7 @@ func (h *Handler) loadChatSessionForProjectViewer(w http.ResponseWriter, r *http
 		writeError(w, http.StatusNotFound, "chat session not found")
 		return db.ChatSession{}, false
 	}
-	visible, err := h.chatSessionVisibleByProjectPermission(r.Context(), session.ID, workspaceUUID, parseUUID(userID))
+	visible, err := h.chatSessionVisibleByProjectPermission(r.Context(), session.ID, workspaceUUID, parseUUID(userID), includeWorkspaceOwnedFromRequest(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve chat access")
 		return db.ChatSession{}, false
@@ -339,11 +340,15 @@ func (h *Handler) loadChatSessionForProjectViewer(w http.ResponseWriter, r *http
 	return session, true
 }
 
-func (h *Handler) chatSessionVisibleByProjectPermission(ctx context.Context, sessionID, workspaceID, userID pgtype.UUID) (bool, error) {
+func (h *Handler) chatSessionVisibleByProjectPermission(ctx context.Context, sessionID, workspaceID, userID pgtype.UUID, includeWorkspaceOwned ...bool) (bool, error) {
+	includeOwner := true
+	if len(includeWorkspaceOwned) > 0 {
+		includeOwner = includeWorkspaceOwned[0]
+	}
 	query := fmt.Sprintf(`SELECT EXISTS (
 		SELECT 1 FROM chat_session cs
 		WHERE cs.id = $1 AND cs.workspace_id = $2 AND %s
-	)`, chatProjectVisibilityPredicate("cs", "$2", "$3"))
+	)`, chatProjectVisibilityPredicateWithWorkspaceScope("cs", "$2", "$3", includeOwner))
 	var visible bool
 	err := h.DB.QueryRow(ctx, query, sessionID, workspaceID, userID).Scan(&visible)
 	return visible, err
@@ -1615,6 +1620,7 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -1648,7 +1654,7 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
 		return
 	}
-	rows, err = h.filterPendingChatTasksByProjectPermission(r.Context(), workspaceID, userID, rows)
+	rows, err = h.filterPendingChatTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, userID, rows, includeWorkspaceOwned)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
@@ -1696,6 +1702,7 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -1732,7 +1739,7 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to check pending chat tasks")
 			return
 		}
-		rows, err = h.filterPendingChatTasksByProjectPermission(r.Context(), workspaceID, userID, rows)
+		rows, err = h.filterPendingChatTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, userID, rows, includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 			return

@@ -37,6 +37,7 @@ import { resolveClickIntent, useOptionalNavigation } from "../../navigation";
 import { createLogger } from "@multica/core/logger";
 import { removeChatMessageFromCaches } from "@multica/core/realtime";
 import { useT } from "../../i18n";
+import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 
 const apiLogger = createLogger("chat.api");
 
@@ -96,6 +97,8 @@ export function ChatThreadList({
 }) {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   // Null-safe slug (not useWorkspacePaths, which throws): the list renders in
   // tests outside a workspace route; without a slug the web modifier-click
   // affordance simply stays off.
@@ -139,7 +142,10 @@ export function ChatThreadList({
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const queryClient = useQueryClient();
 
-  const { data: pending } = useQuery(pendingChatTasksOptions(wsId));
+  const { data: pending } = useQuery({
+    ...pendingChatTasksOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const pendingTaskBySessionId = useMemo(
     () => new Map((pending?.tasks ?? []).map((task) => [task.chat_session_id, task])),
     [pending],

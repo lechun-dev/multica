@@ -87,6 +87,16 @@ describe("UpdateNotification", () => {
     );
   });
 
+  it("hides transient network update errors", () => {
+    render(<UpdateNotification />);
+    act(() => updateError({ message: "net::ERR_INTERNET_DISCONNECTED" }));
+
+    expect(
+      screen.queryByText(`${DESKTOP_PRODUCT_NAME} Update failed`),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("shows a download error even when no package was downloaded", () => {
     render(<UpdateNotification />);
     act(() => updateError({ message: "download timed out" }));

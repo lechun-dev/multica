@@ -370,6 +370,42 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	return out, nil
 }
 
+func mergeWorkspaceSettings(existing []byte, incoming any) ([]byte, error) {
+	rawIncoming, err := json.Marshal(incoming)
+	if err != nil {
+		return nil, err
+	}
+	var incomingObject map[string]any
+	if err := json.Unmarshal(rawIncoming, &incomingObject); err != nil {
+		return rawIncoming, nil
+	}
+	var existingObject map[string]any
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &existingObject)
+	}
+	if existingObject == nil {
+		existingObject = map[string]any{}
+	}
+	mergeSettingsObject(existingObject, incomingObject)
+	return json.Marshal(existingObject)
+}
+
+func mergeSettingsObject(dst, src map[string]any) {
+	for key, value := range src {
+		srcObject, ok := value.(map[string]any)
+		if !ok {
+			dst[key] = value
+			continue
+		}
+		dstObject, _ := dst[key].(map[string]any)
+		if dstObject == nil {
+			dstObject = map[string]any{}
+			dst[key] = dstObject
+		}
+		mergeSettingsObject(dstObject, srcObject)
+	}
+}
+
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := workspaceIDFromURL(r, "id")
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
@@ -401,7 +437,15 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.Context = pgtype.Text{String: *req.Context, Valid: true}
 	}
 	if req.Settings != nil {
-		s, _ := json.Marshal(req.Settings)
+		var existingSettings []byte
+		if existing, fetchErr := h.Queries.GetWorkspace(r.Context(), idUUID); fetchErr == nil {
+			existingSettings = existing.Settings
+		}
+		s, err := mergeWorkspaceSettings(existingSettings, req.Settings)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid settings")
+			return
+		}
 		params.Settings = s
 	}
 	if req.Repos != nil {

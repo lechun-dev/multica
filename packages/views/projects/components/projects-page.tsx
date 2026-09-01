@@ -962,20 +962,27 @@ export function ProjectsPage() {
   const isCompact = viewMode === "compact";
   const isColVisible = (key: ProjectColumnKey) => !hiddenColumns.includes(key);
 
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const membersQuery = useQuery(memberListOptions(wsId));
+  const members = membersQuery.data ?? [];
+  const visibilityReady = membersQuery.isSuccess;
   const isWorkspaceOwner = useMemo(() => {
-    if (!currentUser) return false;
+    if (!visibilityReady || !currentUser) return false;
     const me = members.find((m: MemberWithUser) => m.user_id === currentUser.id);
     return me?.role === "owner";
-  }, [members, currentUser]);
-  // 2026-08-28 coder(lq): Keep the preference enabled until membership settles
-  // so the first request does not hide rows before identity is known.
-  const includeWorkspaceOwned = members.length === 0 || !isWorkspaceOwner
-    ? true
-    : showWorkspaceOwnedItems;
-  const { data: projects = [], isLoading } = useQuery(
-    projectListOptions(wsId, includeWorkspaceOwned),
-  );
+  }, [members, currentUser, visibilityReady]);
+  // 2026-09-01 coder(lq): Fail closed until workspace membership resolves so
+  // owner-only projects cannot flash into the list during the visibility check.
+  const includeWorkspaceOwned = visibilityReady
+    ? !isWorkspaceOwner || showWorkspaceOwnedItems
+    : false;
+  const {
+    data: projects = [],
+    isLoading: projectsLoading,
+  } = useQuery({
+    ...projectListOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
+  const isLoading = projectsLoading || !visibilityReady;
   const { data: pins = [] } = useQuery({
     ...pinListOptions(wsId, currentUser?.id ?? ""),
     enabled: !!wsId && !!currentUser?.id,

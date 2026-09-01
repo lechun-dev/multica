@@ -15,6 +15,7 @@ import {
 } from "@multica/ui/components/ui/command";
 import { StatusIcon } from "../issues/components/status-icon";
 import { useT } from "../i18n";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 interface IssuePickerModalProps {
   open: boolean;
@@ -34,6 +35,8 @@ export function IssuePickerModal({
   onSelect,
 }: IssuePickerModalProps) {
   const { t } = useT("modals");
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Issue[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -59,6 +62,7 @@ export function IssuePickerModal({
         return;
       }
 
+      if (!visibilityReady) return;
       setIsLoading(true);
       debounceRef.current = setTimeout(async () => {
         const controller = new AbortController();
@@ -68,6 +72,7 @@ export function IssuePickerModal({
             q: q.trim(),
             limit: 20,
             include_closed: true,
+            include_workspace_owned: includeWorkspaceOwned,
             signal: controller.signal,
           });
           if (!controller.signal.aborted) {
@@ -81,7 +86,7 @@ export function IssuePickerModal({
         }
       }, 300);
     },
-    [excludeIds],
+    [excludeIds, includeWorkspaceOwned, visibilityReady],
   );
 
   return (

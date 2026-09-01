@@ -33,6 +33,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { AppLink } from "../../../navigation";
 import { TranscriptButton } from "../../../common/task-transcript";
+import { useWorkspaceTaskVisibility } from "../../../issues/surface/visibility-context";
 import { AttributionBadge } from "../../../issues/components/attribution-badge";
 import { taskStatusConfig } from "../../config";
 import { cancelReasonLabel, failureReasonLabel } from "./task-failure";
@@ -71,14 +72,20 @@ interface ActivityTabProps {
  */
 export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps) {
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
 
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
+  const { data: snapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   // `isLoading` (pending + fetching, no cached data) is true only on the
   // very first fetch. Once the page has hydrated this cache elsewhere the
   // tab opens straight into data with no skeleton flash.
-  const { data: agentTasks = [], isLoading: isLoadingRecent } = useQuery(
-    agentTasksOptions(wsId, agent.id),
-  );
+  const { data: agentTasks = [], isLoading: isLoadingRecent } = useQuery({
+    ...agentTasksOptions(wsId, agent.id, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
   const activity = activityMap.get(agent.id);
 
@@ -160,7 +167,10 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
     [displayedTasks],
   );
   const issueQueries = useQueries({
-    queries: issueIds.map((id) => issueDetailOptions(wsId, id)),
+    queries: issueIds.map((id) => ({
+      ...issueDetailOptions(wsId, id, includeWorkspaceOwned),
+      enabled: visibilityReady,
+    })),
   });
   const issueMap = useMemo(() => {
     const m = new Map<string, Issue>();
@@ -197,9 +207,12 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
 export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const { data: agentTasks = [] } = useQuery(
-    agentTasksOptions(wsId, agent.id),
-  );
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
+  const { data: agentTasks = [] } = useQuery({
+    ...agentTasksOptions(wsId, agent.id, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
   const activity = activityMap.get(agent.id);
   const summary = summarizeActivityWindow(activity, 30);

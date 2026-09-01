@@ -119,6 +119,9 @@ the web image.
 When enabled:
 
 - Workspace owners can access and manage every project.
+- The owner bypass can be toggled from `.env` with
+  `PROJECT_OWNER_BYPASS_ENABLED`; set it to `false` to require explicit
+  project access for workspace owners too.
 - Project owners can manage that project's authorization entries.
 - Project creators and member leads are automatically granted the `owner` role;
   the migration also backfills owners for existing member-led projects.

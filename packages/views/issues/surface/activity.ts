@@ -5,6 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type { AgentTask } from "@multica/core/types";
+import {
+  useIssueSurfaceIncludeWorkspaceOwned,
+  useIssueSurfaceVisibilityReady,
+} from "./visibility-context";
 
 export interface IssueActivityState {
   isWorking: boolean;
@@ -94,6 +98,20 @@ export function deriveIssueSurfaceActivity(
 
 export function useIssueSurfaceActivity(): IssueSurfaceActivity {
   const wsId = useWorkspaceId();
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  return useMemo(() => deriveIssueSurfaceActivity(snapshot), [snapshot]);
+  const includeWorkspaceOwned = useIssueSurfaceIncludeWorkspaceOwned();
+  const visibilityReady = useIssueSurfaceVisibilityReady();
+  const options = includeWorkspaceOwned
+    ? agentTaskSnapshotOptions(wsId)
+    : agentTaskSnapshotOptions(wsId, false);
+  const { data: snapshot = [] } = useQuery({
+    ...options,
+    enabled: visibilityReady,
+  });
+  return useMemo(
+    () => (visibilityReady ? deriveIssueSurfaceActivity(snapshot) : {
+      activityByIssueId: new Map(),
+      runningIssueIds: new Set(),
+    }),
+    [snapshot, visibilityReady],
+  );
 }

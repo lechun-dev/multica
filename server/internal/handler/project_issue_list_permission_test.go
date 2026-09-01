@@ -19,6 +19,7 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "true")
 	memberID := createSecondWorkspaceMember(t)
 	adminID := createPlainMember(t, "project-list-admin")
 	if _, err := testPool.Exec(ctx, `UPDATE member SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, adminID); err != nil {
@@ -88,6 +89,14 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 		VALUES ($1, $2, 'viewer')
 	`, projectIDs[0], memberID); err != nil {
 		t.Fatalf("grant visible project: %v", err)
+	}
+	// 2026-09-01 coder(lq): Legacy task grants must not bypass the project
+	// boundary now that task visibility is inherited exclusively from projects.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by)
+		VALUES ($1, $2, $3, 'project.view', $3)
+	`, issueIDs[1], projectIDs[1], memberID); err != nil {
+		t.Fatalf("grant legacy issue permission: %v", err)
 	}
 
 	previous := testHandler.ProjectAuth
@@ -200,8 +209,8 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 		}
 	}
 	for _, issueID := range projectlessIssueIDs {
-		if !ownerIssuesWithoutWorkspaceScope[issueID] {
-			t.Fatalf("workspace owner lost projectless issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
+		if ownerIssuesWithoutWorkspaceScope[issueID] {
+			t.Fatalf("workspace owner can see projectless issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
 		}
 	}
 	if _, err := testPool.Exec(ctx, `
@@ -217,5 +226,18 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 	ownerIssuesWithoutWorkspaceScope = issueIDsFor(t, testUserID, false)
 	if !ownerIssuesWithoutWorkspaceScope[issueIDs[0]] || ownerIssuesWithoutWorkspaceScope[issueIDs[1]] {
 		t.Fatalf("workspace owner issues with explicit grant and workspace scope hidden = %v; want only %s", ownerIssuesWithoutWorkspaceScope, issueIDs[0])
+	}
+
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
+	ownerProjects = projectIDsFor(t, testUserID)
+	if !ownerProjects[projectIDs[0]] || ownerProjects[projectIDs[1]] {
+		t.Fatalf("workspace owner projects with bypass disabled = %v; want only explicit grant %s", ownerProjects, projectIDs[0])
+	}
+	ownerIssues = issueIDsFor(t, testUserID)
+	if !ownerIssues[issueIDs[0]] || ownerIssues[issueIDs[1]] {
+		t.Fatalf("workspace owner issues with bypass disabled = %v; want only explicit grant %s", ownerIssues, issueIDs[0])
+	}
+	if ownerIssues[projectlessIssueIDs[0]] || !ownerIssues[projectlessIssueIDs[1]] {
+		t.Fatalf("workspace owner projectless issues with bypass disabled = %v; want only creator-owned issue %s", ownerIssues, projectlessIssueIDs[1])
 	}
 }

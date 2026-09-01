@@ -613,6 +613,7 @@ function SwimLaneViewImpl({
   childProgressMap = EMPTY_PROGRESS_MAP,
   projectMap,
   projectId,
+  includeWorkspaceOwned = true,
   onCreateIssue,
   groupBranches,
 }: {
@@ -636,6 +637,8 @@ function SwimLaneViewImpl({
   ) => void;
   childProgressMap?: Map<string, ChildProgress>;
   projectMap?: Map<string, Project>;
+  /** Whether workspace-owner-only project visibility should be included. */
+  includeWorkspaceOwned?: boolean;
   /** Pre-fills `project_id` on the create form for the in-cell "+" button. */
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
@@ -726,7 +729,7 @@ function SwimLaneViewImpl({
   }, [groupBranches?.enabled, swimlaneGrouping, issues, childProgressMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: batchChildrenMap } = useQuery(
-    childrenByParentsOptions(wsId, batchParentIds, qc),
+    childrenByParentsOptions(wsId, batchParentIds, qc, includeWorkspaceOwned),
   );
 
   // Grows monotonically so lanes don't lose children when the batch key

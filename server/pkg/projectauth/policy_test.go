@@ -2,6 +2,7 @@ package projectauth
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -40,6 +41,16 @@ type fakeRepo struct {
 	workspace, project, projectWorkspace string
 	projects                             []string
 	workspaceErr, projectErr             error
+}
+
+type fakeWorkspaceOwnerBypassRepo struct {
+	fakeRepo
+	bypass    bool
+	bypassErr error
+}
+
+func (f fakeWorkspaceOwnerBypassRepo) WorkspaceOwnerBypassEnabled(context.Context, string) (bool, error) {
+	return f.bypass, f.bypassErr
 }
 
 func (f fakeRepo) WorkspaceRole(context.Context, string, string) (WorkspaceRole, error) {
@@ -85,6 +96,29 @@ func TestPolicyInheritanceAndRoles(t *testing.T) {
 				t.Fatalf("got %v, want allowed=%v", err, tc.ok)
 			}
 		})
+	}
+}
+
+func TestWorkspaceOwnerBypassCanBeDisabled(t *testing.T) {
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
+	s := New(fakeRepo{
+		workspace:        string(WorkspaceOwner),
+		project:          string(ProjectViewer),
+		projectWorkspace: "ws-1",
+	}, true)
+
+	if err := s.Check(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", View); err != nil {
+		t.Fatalf("owner should retain explicit project viewer access when bypass is disabled: %v", err)
+	}
+	if err := s.Check(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", Edit); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("owner bypass disabled should honor project role, got %v", err)
+	}
+}
+
+func TestWorkspaceOwnerBypassDefaultsEnabledForLegacyRepository(t *testing.T) {
+	s := New(fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, true)
+	if err := s.Check(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", SettingsManage); err != nil {
+		t.Fatalf("legacy repository should preserve owner bypass: %v", err)
 	}
 }
 

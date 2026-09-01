@@ -618,6 +618,13 @@ type searchResult struct {
 // Search patterns are lowercased in Go to avoid redundant LOWER() on the pattern side in SQL.
 // LIKE patterns are pre-built in Go (e.g. "%html%") so pg_bigm can extract bigrams from a single parameter value.
 func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string) (string, []any) {
+	return buildSearchQueryWithWorkspaceScope(phrase, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, true)
+}
+
+// 2026-09-01 coder(lq): Keep the legacy search builder default-inclusive for
+// older callers, while allowing the task page's workspace-owner toggle to
+// flow into the same SQL visibility predicate as list/table queries.
+func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string, includeWorkspaceOwned bool) (string, []any) {
 	// Lowercase in Go so SQL only needs LOWER() on the column side.
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
@@ -710,7 +717,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		whereClause = issueWindowPredicate("i", wsParam, limitRef) + " AND " + whereClause
 	}
 	if projectUserParam != "" {
-		whereClause = issueProjectVisibilityPredicate("i", wsParam, projectUserParam) + " AND " + whereClause
+		whereClause = issueProjectVisibilityPredicateWithWorkspaceScope("i", wsParam, projectUserParam, includeWorkspaceOwned) + " AND " + whereClause
 	}
 
 	// --- ORDER BY clause ---
@@ -914,6 +921,10 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeClosed := r.URL.Query().Get("include_closed") == "true"
+	// 2026-09-01 coder(lq): Search is another task-list read path. Honor the
+	// same owner-only visibility toggle used by /api/issues and the table API;
+	// otherwise workspace owners could still discover ungranted tasks by title.
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -935,7 +946,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID)
+	sqlQuery, args := buildSearchQueryWithWorkspaceScope(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, includeWorkspaceOwned)
 	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
 	args[3] = wsUUID
 	args[len(args)-2] = limit
@@ -1182,7 +1193,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnauthorized, "user not authenticated")
 				return
 			}
-			visible, scopeErr := h.visibleIssueIDsByProjectPermission(ctx, wsUUID, parseUUID(userID), openIDs)
+			includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+			visible, scopeErr := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(ctx, wsUUID, parseUUID(userID), openIDs, includeWorkspaceOwned)
 			if scopeErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to list issues")
 				return
@@ -2346,8 +2358,18 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		visible := children[:0]
+		childIDs := make([]pgtype.UUID, 0, len(children))
 		for _, child := range children {
-			if allowed, _ := h.issueProjectAllowed(r, child, projectauth.View); allowed {
+			childIDs = append(childIDs, child.ID)
+		}
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleIDs, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), issue.WorkspaceID, parseUUID(requestUserID(r)), childIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list child issues")
+			return
+		}
+		for _, child := range children {
+			if _, ok := visibleIDs[child.ID]; ok {
 				visible = append(visible, child)
 			}
 		}
@@ -2460,7 +2482,8 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		visibleParents, err := h.visibleIssueIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), parentIDs)
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleParents, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(userID), parentIDs, includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list child issues")
 			return
@@ -2488,8 +2511,18 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		visible := children[:0]
+		childIDs := make([]pgtype.UUID, 0, len(children))
 		for _, child := range children {
-			if allowed, _ := h.issueProjectAllowed(r, child, projectauth.View); allowed {
+			childIDs = append(childIDs, child.ID)
+		}
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleIDs, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), wsUUID, parseUUID(requestUserID(r)), childIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list child issues")
+			return
+		}
+		for _, child := range children {
+			if _, ok := visibleIDs[child.ID]; ok {
 				visible = append(visible, child)
 			}
 		}
@@ -2567,15 +2600,16 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		userRef := "$2"
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 		query := fmt.Sprintf(`SELECT i.parent_issue_id,
 			COUNT(*)::bigint AS total,
 			COUNT(*) FILTER (WHERE issue_effective_status(i.workspace_id, i.status) IN ('done', 'cancelled'))::bigint AS done
 		FROM issue i
 		JOIN issue p ON p.id = i.parent_issue_id AND p.workspace_id = i.workspace_id
 		WHERE i.workspace_id = $1
-		  AND %s
-		  AND %s
-		GROUP BY i.parent_issue_id`, issueProjectVisibilityPredicate("i", "$1", userRef), issueProjectVisibilityPredicate("p", "$1", userRef))
+			AND %s
+			AND %s
+		GROUP BY i.parent_issue_id`, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", userRef, includeWorkspaceOwned), issueProjectVisibilityPredicateWithWorkspaceScope("p", "$1", userRef, includeWorkspaceOwned))
 		rows, err := h.DB.Query(r.Context(), query, wsUUID, userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to get child issue progress")

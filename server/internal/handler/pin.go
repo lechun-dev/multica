@@ -68,6 +68,7 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectAuthEnabled := h.ProjectAuth != nil && h.ProjectAuth.Enabled()
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	visibleProjects := map[pgtype.UUID]struct{}(nil)
 	visibleIssues := map[pgtype.UUID]struct{}(nil)
 	if projectAuthEnabled {
@@ -82,7 +83,7 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 				issueIDs = append(issueIDs, p.ItemID)
 			}
 		}
-		visibleIssues, err = h.visibleIssueIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), issueIDs)
+		visibleIssues, err = h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(userID), issueIDs, includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list pins")
 			return

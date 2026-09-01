@@ -1,7 +1,7 @@
 import { normalizeStatusPatch } from "./status-category";
 import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "../api";
-import { issueKeys } from "./queries";
+import { issueKeys, issueListIncludesWorkspaceOwned } from "./queries";
 import { projectKeys } from "../projects/queries";
 import { inboxKeys } from "../inbox/queries";
 import {
@@ -85,7 +85,14 @@ function useIssueCreateMutation<TVariables>(
     mutationFn,
     onSuccess: (newIssue) => {
       for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
-        if (data) qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
+        if (!data) continue;
+        // 2026-09-01 coder(lq): Restricted caches must refetch so the server
+        // can decide whether the newly-created issue is visible.
+        if (!issueListIncludesWorkspaceOwned(key)) {
+          qc.invalidateQueries({ queryKey: key });
+          continue;
+        }
+        qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
       }
       // Surface the just-created issue in cmd+k's Recent list without
       // requiring the user to open it first.

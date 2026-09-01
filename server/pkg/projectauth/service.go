@@ -3,6 +3,7 @@ package projectauth
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -17,6 +18,16 @@ func New(repo Repository, enabled bool) *Service {
 }
 
 func (s *Service) Enabled() bool { return s != nil && s.enabled }
+
+// WorkspaceOwnerBypassEnabled resolves the workspace-level owner override.
+// The switch is deployment-scoped and now comes from the process environment
+// rather than workspace.settings, so operators can flip it without touching
+// page state.
+func (s *Service) WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID string) (bool, error) {
+	_ = ctx
+	_ = workspaceID
+	return os.Getenv("PROJECT_OWNER_BYPASS_ENABLED") != "false", nil
+}
 
 // CurrentProjectRoles returns the caller's effective role for visible projects
 // when the persistence adapter supports the optional batch read. A missing
@@ -36,6 +47,17 @@ func (s *Service) CurrentProjectRoles(ctx context.Context, workspaceID, userID s
 // 2026-08-24 coder(lq): Return nil only when the subject may perform the
 // permission; disabled deployments preserve legacy behavior during rollout.
 func (s *Service) Check(ctx context.Context, subject Subject, projectID string, permission Permission) error {
+	return s.checkWithWorkspaceScope(ctx, subject, projectID, permission, true)
+}
+
+// 2026-09-01 coder(lq): The workspace-owner visibility switch is a read
+// scope, not a new role. Callers can therefore request a restricted check
+// while preserving explicit project grants for workspace owners.
+func (s *Service) CheckWithWorkspaceScope(ctx context.Context, subject Subject, projectID string, permission Permission, includeWorkspaceOwned bool) error {
+	return s.checkWithWorkspaceScope(ctx, subject, projectID, permission, includeWorkspaceOwned)
+}
+
+func (s *Service) checkWithWorkspaceScope(ctx context.Context, subject Subject, projectID string, permission Permission, includeWorkspaceOwned bool) error {
 	if s == nil || !s.enabled {
 		return nil
 	}
@@ -56,7 +78,13 @@ func (s *Service) Check(ctx context.Context, subject Subject, projectID string, 
 		return ErrNotWorkspaceMember
 	}
 	if role == WorkspaceOwner {
-		return nil
+		bypassEnabled, bypassErr := s.WorkspaceOwnerBypassEnabled(ctx, subject.WorkspaceID)
+		if bypassErr != nil {
+			return ErrForbidden
+		}
+		if bypassEnabled && includeWorkspaceOwned {
+			return nil
+		}
 	}
 	projectRole, err := s.repo.ProjectRole(ctx, projectID, subject.UserID)
 	if err != nil {
@@ -217,6 +245,13 @@ func validCustomRoleKey(role ProjectRole) bool {
 // 2026-08-24 coder(lq): Keep the HTTP adapter on one authorization entry point.
 func (s *Service) Require(ctx context.Context, subject Subject, projectID string, permission Permission) error {
 	return s.Check(ctx, subject, projectID, permission)
+}
+
+// RequireWithWorkspaceScope is the HTTP-facing equivalent of CheckWithWorkspaceScope.
+// The restricted form is used by read paths when a workspace owner disabled
+// the global task visibility switch.
+func (s *Service) RequireWithWorkspaceScope(ctx context.Context, subject Subject, projectID string, permission Permission, includeWorkspaceOwned bool) error {
+	return s.CheckWithWorkspaceScope(ctx, subject, projectID, permission, includeWorkspaceOwned)
 }
 
 // 2026-08-24 coder(lq): Scope project lists to native admins or project_members.

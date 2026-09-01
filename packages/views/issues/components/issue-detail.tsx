@@ -137,6 +137,10 @@ import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
+import {
+  useIssueSurfaceIncludeWorkspaceOwned,
+  useIssueSurfaceVisibilityReady,
+} from "../surface/visibility-context";
 import { useInPageFind } from "../hooks/use-in-page-find";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
 import { FindBar } from "./find-bar";
@@ -1132,6 +1136,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const wsId = useWorkspaceId();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const includeWorkspaceOwned = useIssueSurfaceIncludeWorkspaceOwned();
+  const visibilityReady = useIssueSurfaceVisibilityReady();
   // Workspace owners and admins moderate any comment authored by anyone
   // (mirrors backend `comment.go:507-512`). Computed here so per-comment
   // rendering doesn't have to re-derive it for every row.
@@ -1139,7 +1145,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const { data: allIssues = [] } = useQuery({
+    ...issueListOptions(wsId, undefined, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // The glyph set is per CATEGORY (MUL-6243), so a status-change entry for a
@@ -1343,7 +1352,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Only seed when description is present; the list API omits it, so a partial
   // list row must not masquerade as a hydrated issue detail.
   const { data: issue = null, isLoading: issueLoading, refetch: refetchIssue } = useQuery({
-    ...issueDetailOptions(wsId, id),
+    ...issueDetailOptions(wsId, id, includeWorkspaceOwned),
+    enabled: visibilityReady,
     // List rows and issue-created realtime payloads intentionally omit the
     // detail-only source-context snapshot. They can still seed this query via
     // initialData, so always reconcile with the authoritative detail endpoint
@@ -1792,8 +1802,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Sub-issue queries
   const parentIssueId = issue?.parent_issue_id;
   const { data: parentIssue = null } = useQuery({
-    ...issueDetailOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...issueDetailOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
     initialData: () => allIssues.find((i) => i.id === parentIssueId),
   });
 
@@ -1809,8 +1819,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     isSuccess: childIssuesLoaded,
     isFetching: childIssuesFetching,
   } = useQuery({
-    ...childIssuesOptions(wsId, id),
-    enabled: !!issue,
+    ...childIssuesOptions(wsId, id, includeWorkspaceOwned),
+    enabled: visibilityReady && !!issue,
   });
   // Whether this issue has sub-issues, as opposed to "we have not looked yet".
   // childIssuesOptions sets refetchOnMount: "always", so a cached snapshot is
@@ -1822,15 +1832,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Parent's children — used to render the "x/y" progress next to the
   // "Sub-issue of …" breadcrumb under the title.
   const { data: parentChildIssues = [] } = useQuery({
-    ...childIssuesOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...childIssuesOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
   });
   // Workspace-wide parent→(done/total) map; lets each sub-issue row show its
   // OWN nested progress ring without opening it. Same query the list
   // surfaces use, so it's usually already cached.
   const { data: subIssueProgress } = useQuery({
-    ...childIssueProgressOptions(wsId),
-    enabled: childIssues.length > 0,
+    ...childIssueProgressOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady && childIssues.length > 0,
   });
   // User-level display preference for sub-issue rows (built-in field toggles
   // + opted-in workspace custom properties). `subIssueCustomProps` resolves

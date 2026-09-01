@@ -71,6 +71,7 @@ import {
   type ManualCreateField,
 } from "@multica/core/issues/stores/issue-create-settings-store";
 import { issueDetailOptions, childIssuesOptions } from "@multica/core/issues/queries";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 import {
   useCreateCommentSubIssue,
   useCreateIssue,
@@ -325,17 +326,19 @@ export function ManualCreatePanel({
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const { categoryOf: draftStatusCategory } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   const { data: parentIssue } = useQuery({
-    ...issueDetailOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...issueDetailOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
   });
   // Sibling stages under the chosen parent, so the Stage picker can offer the
   // already-used max stage (and one beyond) instead of flooring at Stage 1–3.
   const { data: parentChildren = [] } = useQuery({
-    ...childIssuesOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...childIssuesOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
   });
 
   // Set the persisted draft's active mode so a later reopen (and any reader of

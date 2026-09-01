@@ -149,6 +149,7 @@ import {
 import type { ChildProgress } from "./list-row";
 import { ListLoadMoreFooter } from "./list-load-more-footer";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { useIssueSurfaceVisibilityReady } from "../surface/visibility-context";
 
 // Enough placeholder rows to cover a typical viewport; the virtualizer only
 // mounts what fits, so overshooting costs nothing.
@@ -1295,6 +1296,7 @@ export function TableView({
   const paths = useWorkspacePaths();
   const actions = useIssueSurfaceActionsOptional();
   const selection = useIssueSurfaceSelection();
+  const visibilityReady = useIssueSurfaceVisibilityReady();
   const { getActorName } = useActorName();
   const {
     data: properties = [],
@@ -1399,7 +1401,7 @@ export function TableView({
       serverQuery,
       serverGroupsRequestGroup,
     ),
-    enabled: usesServerGrouping,
+    enabled: usesServerGrouping && visibilityReady,
   });
   const {
     data: serverGroupsData,
@@ -1497,7 +1499,9 @@ export function TableView({
     () =>
       serverBranchPageTargets.map(({ branch, cursor }) => {
         const placeholder =
-          cursor === null
+          cursor === null &&
+          visibilityReady &&
+          serverQuery.filters.include_workspace_owned !== false
             ? serverBranchPlaceholderRef.current.get(
                 `${serverStructureIdentity}:${branch.key}`,
               )
@@ -1526,6 +1530,7 @@ export function TableView({
           // receives, so the two forms are equivalent (MUL-5477).
           ...(placeholder ? { placeholderData: placeholder } : {}),
           enabled:
+            visibilityReady &&
             (branch.groupKey === null ||
               !collapsedGroupSet.has(branch.groupKey)) &&
             !branch.ancestorIds.some((id) => collapsedParentSet.has(id)),
@@ -1539,6 +1544,7 @@ export function TableView({
       serverQuery,
       serverStructureIdentity,
       tableHierarchy,
+      visibilityReady,
       wsId,
     ],
   );

@@ -76,6 +76,7 @@ vi.mock("@tanstack/react-query", async () => {
 });
 
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
+import { IssueSurfaceVisibilityProvider } from "../surface/visibility-context";
 
 function makeAgent(
   overrides: Partial<WorkspaceWorkingAgent> = {},
@@ -148,5 +149,19 @@ describe("SubIssuesAgentWorkingChip", () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it("passes the task-surface visibility preference to the server query", () => {
+    mockState.agents = [makeAgent()];
+
+    render(
+      <IssueSurfaceVisibilityProvider includeWorkspaceOwned={false}>
+        <SubIssuesAgentWorkingChip parentIssueId="parent-1" />
+      </IssueSurfaceVisibilityProvider>,
+    );
+
+    expect(mockState.optionsCalls).toEqual([
+      ["ws-1", "issue", undefined, "parent-1", false],
+    ]);
   });
 });

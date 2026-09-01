@@ -133,6 +133,40 @@ describe("useCreateCommentSubIssue", () => {
     expect(qc.getQueryState(listKey)?.isInvalidated).toBe(true);
     qc.clear();
   });
+
+  it("does not insert a created sub-issue into a restricted list cache", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const restrictedKey = [
+      ...issueKeys.listSorted(WS_ID, { sort_by: "position" }),
+      { includeWorkspaceOwned: false },
+    ] as const;
+    qc.setQueryData<ListIssuesCache>(restrictedKey, {
+      byStatus: { todo: { issues: [], total: 0 } },
+    });
+    const child = makeIssue(2, { parent_issue_id: "issue-1" });
+    setApiInstance({
+      createCommentSubIssue: vi.fn().mockResolvedValue(child),
+    } as unknown as ApiClient);
+    const { result } = renderHook(() => useCreateCommentSubIssue(), {
+      wrapper: createWrapper(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        anchorCommentId: "comment-1",
+        data: {
+          mode: "manual",
+          capture_token: "sha256:capture",
+          issue: { title: "Child" },
+        },
+      });
+    });
+
+    expect(
+      qc.getQueryData<ListIssuesCache>(restrictedKey)?.byStatus.todo?.issues,
+    ).toEqual([]);
+    qc.clear();
+  });
 });
 
 describe("useUpdateIssue — optimistic move keeps every bucketed board in sync", () => {

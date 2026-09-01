@@ -2464,12 +2464,20 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	if projectOverlay {
 		// 2026-08-27 coder(lq): An agent may own runs across several projects;
 		// member-level owners can only cancel rows in projects they manage.
-		// Workspace owners/admins retain the native cancel-all behavior.
+		// Admins retain the native cancel-all behavior. Workspace owners do so
+		// only while the workspace-owner bypass switch is enabled; once disabled,
+		// their cancellation is constrained by explicit project grants too.
 		member, memberOK := h.workspaceMember(w, r, uuidToString(agent.WorkspaceID))
 		if !memberOK {
 			return
 		}
-		if roleAllowed(member.Role, "owner", "admin") {
+		ownerBypassEnabled := false
+		if member.Role == "owner" {
+			ownerBypassEnabled, err = h.ProjectAuth.WorkspaceOwnerBypassEnabled(r.Context(), uuidToString(agent.WorkspaceID))
+		}
+		if err != nil {
+			// Keep the internal error for the common error response below.
+		} else if member.Role == "admin" || (member.Role == "owner" && ownerBypassEnabled) {
 			cancelled, err = h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
 		} else {
 			cancelled, err = h.cancelAgentTasksWithProjectPermission(r.Context(), parseUUID(id), requestUserID(r), uuidToString(agent.WorkspaceID))
@@ -2511,7 +2519,8 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
 		return
 	}
-	tasks, err = h.filterTasksByProjectPermission(r.Context(), workspaceID, requestUserID(r), tasks)
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+	tasks, err = h.filterTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, requestUserID(r), tasks, includeWorkspaceOwned)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
@@ -2568,6 +2577,7 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	workType := strings.TrimSpace(r.URL.Query().Get("type"))
 	switch workType {
@@ -2673,17 +2683,18 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 				}
 			}
 		}
-		visibleIssues, err = h.visibleIssueIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), issueIDs)
+		visibleIssues, err = h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), issueIDs, includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 			return
 		}
-		if workType == "" || workType == "chat" {
-			visibleWorkingAgents, err = h.visibleWorkingAgentIDsByProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), agentIDs)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to check project permissions")
-				return
-			}
+		// The aggregate row can contain issue, chat, autopilot, and projectless
+		// tasks. Check every running task, regardless of the requested type, so
+		// a hidden projectless task cannot leak an agent row or its count.
+		visibleWorkingAgents, err = h.visibleWorkingAgentIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), agentIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
 		}
 	}
 	for _, row := range rows {
@@ -2692,10 +2703,8 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-			if workType == "" || workType == "chat" {
-				if _, ok := visibleWorkingAgents[row.ID]; !ok {
-					continue
-				}
+			if _, ok := visibleWorkingAgents[row.ID]; !ok {
+				continue
 			}
 			// 2026-08-27 coder(lq): A workspace aggregate can mix tasks from
 			// multiple projects. Hide the whole row when any referenced issue is
@@ -2866,7 +2875,8 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
-	tasks, err = h.filterTasksByProjectPermission(r.Context(), workspaceID, requestUserID(r), tasks)
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+	tasks, err = h.filterTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, requestUserID(r), tasks, includeWorkspaceOwned)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return

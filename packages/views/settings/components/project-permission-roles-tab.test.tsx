@@ -24,6 +24,17 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
+  workspaceListOptions: () => ({ queryKey: ["workspaces"], queryFn: vi.fn() }),
+  workspaceKeys: { list: () => ["workspaces"] },
+}));
+
+vi.mock("@multica/core/paths", () => ({
+  useCurrentWorkspace: () => ({
+    id: "workspace-1",
+    slug: "workspace-1",
+    name: "Test workspace",
+    settings: {},
+  }),
 }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -37,6 +48,7 @@ vi.mock("@multica/core/api", () => ({
     createProjectPermissionRole: vi.fn(),
     updateProjectPermissionRole: vi.fn(),
     deleteProjectPermissionRole: vi.fn(),
+    updateWorkspace: vi.fn(),
   },
 }));
 

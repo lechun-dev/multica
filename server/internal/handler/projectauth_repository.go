@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -29,6 +30,15 @@ func (r *projectAuthRepository) WorkspaceRole(ctx context.Context, workspaceID, 
 	var role string
 	err := r.db.QueryRow(ctx, `SELECT role FROM member WHERE workspace_id = $1 AND user_id = $2`, workspaceID, userID).Scan(&role)
 	return projectauth.WorkspaceRole(role), err
+}
+
+// WorkspaceOwnerBypassEnabled reads the deployment-level project permission
+// switch from the process environment. Workspace settings no longer own this
+// decision, which keeps the toggle out of the editable page state.
+func (r *projectAuthRepository) WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID string) (bool, error) {
+	_ = ctx
+	_ = workspaceID
+	return os.Getenv("PROJECT_OWNER_BYPASS_ENABLED") != "false", nil
 }
 
 func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, userID string) (projectauth.ProjectRole, error) {
@@ -281,11 +291,11 @@ func (r *projectAuthRepository) VisibleProjectIDs(ctx context.Context, workspace
 func (r *projectAuthRepository) VisibleProjectIDsWithWorkspaceScope(ctx context.Context, workspaceID, userID string, includeWorkspaceOwned bool) ([]string, error) {
 	ownerClause := "FALSE"
 	if includeWorkspaceOwned {
-		ownerClause = `EXISTS (
+		ownerClause = fmt.Sprintf(`(%s) AND EXISTS (
 				SELECT 1 FROM member m
 				WHERE m.workspace_id = p.workspace_id AND m.user_id = $2
 				AND m.role = 'owner'
-			)`
+			)`, workspaceOwnerBypassPredicate("p.workspace_id"))
 	}
 	query := fmt.Sprintf(`
 		SELECT p.id::text

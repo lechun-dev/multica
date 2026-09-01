@@ -88,6 +88,7 @@ import {
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
 import { useAppForeground } from "../common/use-app-foreground";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 // Top-level nav items stay active when the user is on a child route
 // (e.g. "Projects" stays lit on /:slug/projects/:id). Pinned items keep
@@ -287,10 +288,12 @@ function PinRow({
   const isIssue = pin.item_type === "issue";
   const isView = pin.item_type === "view";
   const p = useWorkspacePaths();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const setActiveView = useActiveIssueViewStore((s) => s.setActive);
   const issueQuery = useQuery({
-    ...issueDetailOptions(wsId, pin.item_id),
-    enabled: isIssue,
+    ...issueDetailOptions(wsId, pin.item_id, includeWorkspaceOwned),
+    enabled: isIssue && visibilityReady,
   });
   const projectQuery = useQuery({
     ...projectDetailOptions(wsId, pin.item_id),
@@ -456,10 +459,14 @@ export function AppSidebar({
   }, [pathname, setOpenMobile]);
 
   const wsId = workspace?.id;
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const { data: inboxItems = EMPTY_INBOX } = useQuery({
-    queryKey: wsId ? inboxKeys.list(wsId) : ["inbox", "disabled"],
-    queryFn: () => api.listInbox(),
-    enabled: !!wsId,
+    queryKey: wsId
+      ? inboxKeys.list(wsId, includeWorkspaceOwned)
+      : ["inbox", "disabled"],
+    queryFn: () => api.listInbox(includeWorkspaceOwned),
+    enabled: !!wsId && visibilityReady,
   });
   const unreadCount = React.useMemo(
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
@@ -469,8 +476,8 @@ export function AppSidebar({
   // threads (countUnreadChatMessages is the shared definition — mobile's tab
   // badge derives from the same function, keeping the platforms in agreement).
   const { data: chatSessions = [] } = useQuery({
-    ...chatSessionsOptions(wsId ?? ""),
-    enabled: !!wsId,
+    ...chatSessionsOptions(wsId ?? "", includeWorkspaceOwned),
+    enabled: !!wsId && visibilityReady,
   });
   // The session the user is reading right now must not count: the thread list
   // renders its row badge as 0 (auto mark-read is about to clear it), and a
@@ -498,8 +505,8 @@ export function AppSidebar({
   // shared cache entry across workspaces; gated on an active workspace since
   // the endpoint resolves through the workspace-member middleware.
   const { data: unreadSummary = EMPTY_INBOX_SUMMARY } = useQuery({
-    ...inboxUnreadSummaryOptions(),
-    enabled: !!wsId,
+    ...inboxUnreadSummaryOptions(includeWorkspaceOwned),
+    enabled: !!wsId && visibilityReady,
   });
   const otherWorkspaceUnread = React.useMemo(
     () => hasOtherWorkspaceUnread(unreadSummary, wsId),
@@ -509,8 +516,8 @@ export function AppSidebar({
   // specific one(s) rather than just the aggregate avatar dot.
   const unreadWsIds = React.useMemo(() => unreadWorkspaceIds(unreadSummary), [unreadSummary]);
   const { data: pinnedItems = EMPTY_PINS } = useQuery({
-    ...pinListOptions(wsId ?? "", userId ?? ""),
-    enabled: !!wsId && !!userId,
+    ...pinListOptions(wsId ?? "", userId ?? "", includeWorkspaceOwned),
+    enabled: !!wsId && !!userId && visibilityReady,
   });
   const deletePin = useDeletePin();
   const reorderPins = useReorderPins();

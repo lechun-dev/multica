@@ -1054,11 +1054,14 @@ export class ApiClient {
     );
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; include_workspace_owned?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
+    if (params.include_workspace_owned !== undefined) {
+      search.set("include_workspace_owned", String(params.include_workspace_owned));
+    }
     const raw = await this.fetch<unknown>(
       `/api/issues/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,
@@ -1099,9 +1102,16 @@ export class ApiClient {
    * an ApiError 404, so `issueIdentifierOptions` propagates it instead of
    * caching it as "no such issue".
    */
-  async getIssue(id: string, options?: { signal?: AbortSignal }): Promise<Issue> {
+  async getIssue(
+    id: string,
+    options?: { signal?: AbortSignal; includeWorkspaceOwned?: boolean },
+  ): Promise<Issue> {
+    const query =
+      options?.includeWorkspaceOwned === false
+        ? "?include_workspace_owned=false"
+        : "";
     const raw = await this.fetch<unknown>(
-      `/api/issues/${encodeURIComponent(id)}`,
+      `/api/issues/${encodeURIComponent(id)}${query}`,
       options?.signal ? { signal: options.signal } : undefined,
     );
     const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
@@ -1247,8 +1257,9 @@ export class ApiClient {
     });
   }
 
-  async listChildIssues(id: string): Promise<{ issues: Issue[] }> {
-    const raw = await this.fetch<unknown>(`/api/issues/${id}/children`);
+  async listChildIssues(id: string, includeWorkspaceOwned = true): Promise<{ issues: Issue[] }> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/issues/${id}/children${query}`);
     return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
       endpoint: "GET /api/issues/:id/children",
     });
@@ -1258,19 +1269,21 @@ export class ApiClient {
    *  Avoids an N-request fan-out in Swimlane (one per visible parent lane).
    *  parentIds must be non-empty; pass a sorted, deduplicated list so the
    *  React Query cache key is stable across renders. */
-  async listChildrenByParents(parentIds: string[]): Promise<{ issues: Issue[] }> {
+  async listChildrenByParents(parentIds: string[], includeWorkspaceOwned = true): Promise<{ issues: Issue[] }> {
+    const scope = includeWorkspaceOwned ? "" : "&include_workspace_owned=false";
     const raw = await this.fetch<unknown>(
-      `/api/issues/children?parent_ids=${parentIds.join(",")}`,
+      `/api/issues/children?parent_ids=${parentIds.join(",")}${scope}`,
     );
     return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
       endpoint: "GET /api/issues/children",
     });
   }
 
-  async getChildIssueProgress(): Promise<{
+  async getChildIssueProgress(includeWorkspaceOwned = true): Promise<{
     progress: { parent_issue_id: string; total: number; done: number }[];
   }> {
-    const raw = await this.fetch<unknown>("/api/issues/child-progress");
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/issues/child-progress${query}`);
     return parseWithFallback(
       raw,
       ChildIssueProgressResponseSchema,
@@ -2367,8 +2380,9 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
   }
 
-  async listAgentTasks(agentId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/agents/${agentId}/tasks`);
+  async listAgentTasks(agentId: string, includeWorkspaceOwned = true): Promise<AgentTask[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/agents/${agentId}/tasks${query}`);
   }
 
   // Workspace-scoped agent task snapshot: every active task
@@ -2376,8 +2390,9 @@ export class ApiClient {
   // Powers the front-end's "active wins, else latest terminal" presence
   // derivation; one fetch backs every per-agent presence read in the app.
   // Workspace is resolved server-side from the X-Workspace-Slug header.
-  async getAgentTaskSnapshot(): Promise<AgentTask[]> {
-    return this.fetch(`/api/agent-task-snapshot`);
+  async getAgentTaskSnapshot(includeWorkspaceOwned = true): Promise<AgentTask[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/agent-task-snapshot${query}`);
   }
 
   // Independent workspace-level projection. Unlike the task snapshot, this
@@ -2392,6 +2407,7 @@ export class ApiClient {
     type?: WorkspaceWorkingAgentType,
     mineRelation?: WorkspaceWorkingAgentMineRelation,
     parentIssueId?: string,
+    includeWorkspaceOwned = true,
   ): Promise<WorkspaceWorkingAgent[]> {
     const search = new URLSearchParams();
     if (type) search.set("type", type);
@@ -2401,6 +2417,7 @@ export class ApiClient {
     } else if (parentIssueId) {
       search.set("parent", parentIssueId);
     }
+    if (!includeWorkspaceOwned) search.set("include_workspace_owned", "false");
     const query = search.toString();
     return this.fetch(`/api/working-agents${query ? `?${query}` : ""}`);
   }
@@ -2462,8 +2479,9 @@ export class ApiClient {
   }
 
   // Inbox
-  async listInbox(): Promise<InboxItem[]> {
-    const raw = await this.fetch<unknown>("/api/inbox");
+  async listInbox(includeWorkspaceOwned = true): Promise<InboxItem[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/inbox${query}`);
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox",
     });
@@ -2484,8 +2502,9 @@ export class ApiClient {
   // Archived notifications, backing the inbox's "Archived" sub-view. Capped
   // server-side (no pagination in v1). Schema-guarded so a contract drift
   // renders an empty archive instead of taking the inbox down with it.
-  async listArchivedInbox(): Promise<InboxItem[]> {
-    const raw = await this.fetch<unknown>("/api/inbox/archived");
+  async listArchivedInbox(includeWorkspaceOwned = true): Promise<InboxItem[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/inbox/archived${query}`);
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox/archived",
     });
@@ -2503,8 +2522,9 @@ export class ApiClient {
   // to that has unread inbox items. Backs the workspace-switcher dot for
   // OTHER workspaces. Schema-guarded so a contract drift hides the dot rather
   // than crashing the sidebar.
-  async getInboxUnreadSummary(): Promise<InboxWorkspaceUnread[]> {
-    const raw = await this.fetch<unknown>("/api/inbox/unread-summary");
+  async getInboxUnreadSummary(includeWorkspaceOwned = true): Promise<InboxWorkspaceUnread[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/inbox/unread-summary${query}`);
     return parseWithFallback(raw, InboxUnreadSummarySchema, EMPTY_INBOX_UNREAD_SUMMARY, {
       endpoint: "GET /api/inbox/unread-summary",
     });
@@ -3220,10 +3240,15 @@ export class ApiClient {
 
   // Chat Sessions
   async listChatSessions(
-    params?: { status?: string },
+    params?: { status?: string; includeWorkspaceOwned?: boolean },
     workspaceSlug?: string,
   ): Promise<ChatSession[]> {
-    const query = params?.status ? `?status=${params.status}` : "";
+    const queryParams = new URLSearchParams();
+    if (params?.status) queryParams.set("status", params.status);
+    if (params?.includeWorkspaceOwned === false) {
+      queryParams.set("include_workspace_owned", "false");
+    }
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
     const raw: unknown = await this.fetch(`/api/chat/sessions${query}`, {
       headers: workspaceHeader(workspaceSlug),
     });
@@ -3466,12 +3491,14 @@ export class ApiClient {
     });
   }
 
-  async listPendingChatTasks(): Promise<PendingChatTasksResponse> {
-    return this.fetch(`/api/chat/pending-tasks`);
+  async listPendingChatTasks(includeWorkspaceOwned = true): Promise<PendingChatTasksResponse> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/chat/pending-tasks${query}`);
   }
 
-  async hasAnyPendingChatTasks(): Promise<HasPendingChatTasksResponse> {
-    return this.fetch(`/api/chat/pending-tasks/has-any`);
+  async hasAnyPendingChatTasks(includeWorkspaceOwned = true): Promise<HasPendingChatTasksResponse> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/chat/pending-tasks/has-any${query}`);
   }
 
   async markChatSessionRead(sessionId: string): Promise<void> {
@@ -4101,11 +4128,12 @@ export class ApiClient {
   }
 
   // Pins
-  async listPins(): Promise<PinnedItem[]> {
+  async listPins(includeWorkspaceOwned = true): Promise<PinnedItem[]> {
     // include=view is the capability opt-in: the server withholds view pins
     // from clients that don't declare support (old builds treated any
     // non-issue pin as a project pin and auto-deleted it on 404).
-    return this.fetch("/api/pins?include=view");
+    const scope = includeWorkspaceOwned ? "" : "&include_workspace_owned=false";
+    return this.fetch(`/api/pins?include=view${scope}`);
   }
 
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {

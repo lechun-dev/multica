@@ -1222,7 +1222,7 @@
     "saved": "Role saved. Changes are active immediately.",
     "save_failed": "Could not save the role.",
     "deleted": "Role deleted.",
-    "delete_failed": "Could not delete the role. It may still be in use."
+    "delete_failed": "Could not delete the role. It may still be in use.",
   },
   "members": {
     "section_title": "Members ({{count}})",

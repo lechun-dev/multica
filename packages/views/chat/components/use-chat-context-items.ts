@@ -9,6 +9,7 @@ import { projectDetailOptions } from "@multica/core/projects/queries";
 import type { Issue, Project } from "@multica/core/types";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
 import { useNavigation } from "../../navigation";
+import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 
 const MAX_RECENT_MENTION_ITEMS = 8;
 
@@ -82,6 +83,8 @@ export function parseCurrentContextRoute(pathname: string, searchParams: URLSear
 
 export function useChatContextItems(wsId: string): MentionItem[] {
   const { pathname, searchParams } = useNavigation();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const currentRoute = parseCurrentContextRoute(pathname, searchParams);
   const recentEntries = useRecentContextStore(selectRecentContexts(wsId));
   const visibleRecentEntries = useMemo(
@@ -90,8 +93,12 @@ export function useChatContextItems(wsId: string): MentionItem[] {
   );
 
   const { data: currentIssue } = useQuery({
-    ...issueDetailOptions(wsId, currentRoute?.type === "issue" ? currentRoute.id : ""),
-    enabled: currentRoute?.type === "issue",
+    ...issueDetailOptions(
+      wsId,
+      currentRoute?.type === "issue" ? currentRoute.id : "",
+      includeWorkspaceOwned,
+    ),
+    enabled: visibilityReady && currentRoute?.type === "issue",
   });
 
   const { data: currentProject } = useQuery({
@@ -102,9 +109,10 @@ export function useChatContextItems(wsId: string): MentionItem[] {
   const recentQueries = useQueries({
     queries: visibleRecentEntries.map((entry) => ({
       ...(entry.type === "issue"
-        ? issueDetailOptions(wsId, entry.id)
+        ? issueDetailOptions(wsId, entry.id, includeWorkspaceOwned)
         : projectDetailOptions(wsId, entry.id)),
       staleTime: 30_000,
+      enabled: visibilityReady,
     })),
   });
 
@@ -122,4 +130,3 @@ export function useChatContextItems(wsId: string): MentionItem[] {
     return [...currentItems, ...recentItems];
   }, [currentIssue, currentProject, recentQueries, visibleRecentEntries]);
 }
-

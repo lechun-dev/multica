@@ -10,6 +10,15 @@ type UpdateState =
   | { status: "ready"; version: string }
   | { status: "error"; message: string };
 
+function isTransientUpdateError(message: string): boolean {
+  // 2026-09-02 coder(lq): Background update checks often fail when the app is
+  // offline or the private release host is temporarily unreachable; treat
+  // those as silent noise so only actionable install failures surface here.
+  return /Unable to reach the update server|Update files are temporarily unavailable|net::ERR_(?:INTERNET_DISCONNECTED|CONNECTION_RESET|CONNECTION_TIMED_OUT|NAME_NOT_RESOLVED)|offline/i.test(
+    message,
+  );
+}
+
 export function UpdateNotification() {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
   const [dismissed, setDismissed] = useState(false);
@@ -24,6 +33,9 @@ export function UpdateNotification() {
       setInstallError(null);
     });
     const cleanupError = window.updater.onUpdateError((error) => {
+      if (isTransientUpdateError(error.message)) {
+        return;
+      }
       setState({ status: "error", message: error.message });
       setDismissed(false);
       setInstalling(false);

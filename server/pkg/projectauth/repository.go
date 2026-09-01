@@ -11,6 +11,14 @@ type Repository interface {
 	VisibleProjectIDs(ctx context.Context, workspaceID, userID string) ([]string, error)
 }
 
+// WorkspaceOwnerBypassReader exposes the workspace-level switch that controls
+// whether workspace owners inherit access to every project. Repositories that
+// predate the switch may omit this optional interface and retain the legacy
+// enabled-by-default behavior.
+type WorkspaceOwnerBypassReader interface {
+	WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID string) (bool, error)
+}
+
 // IssuePermissionReader is an optional task-level grant lookup.
 type IssuePermissionReader interface {
 	IssuePermission(ctx context.Context, issueID, userID string, permission Permission) (bool, error)

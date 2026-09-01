@@ -105,6 +105,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -129,7 +130,7 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	var visible map[pgtype.UUID]struct{}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		visible, err = h.visibleIssueIDsByProjectPermission(r.Context(), wsUUID, parseUUID(userID), issueIDs)
+		visible, err = h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), wsUUID, parseUUID(userID), issueIDs, includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list inbox")
 			return
@@ -185,6 +186,7 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -209,7 +211,7 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	var visible map[pgtype.UUID]struct{}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		visible, err = h.visibleIssueIDsByProjectPermission(r.Context(), wsUUID, parseUUID(userID), issueIDs)
+		visible, err = h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), wsUUID, parseUUID(userID), issueIDs, includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list archived inbox")
 			return
@@ -391,11 +393,12 @@ func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 
 	var count int64
 	var err error
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	policy, windowEnabled := h.issueWindowPolicy(r.Context(), wsUUID)
 	if windowEnabled && policy.action == entitlement.ActionEnforce {
-		count, err = h.countUnreadInboxWithinWindow(r.Context(), wsUUID, parseUUID(userID), policy)
+		count, err = h.countUnreadInboxWithinWindow(r.Context(), wsUUID, parseUUID(userID), policy, includeWorkspaceOwned)
 	} else if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		count, err = h.countUnreadInboxWithinProjectPermissions(r.Context(), wsUUID, parseUUID(userID))
+		count, err = h.countUnreadInboxWithinProjectPermissions(r.Context(), wsUUID, parseUUID(userID), includeWorkspaceOwned)
 	} else {
 		count, err = h.Queries.CountUnreadInbox(r.Context(), db.CountUnreadInboxParams{
 			WorkspaceID:   wsUUID,
@@ -430,6 +433,7 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	rows, err := h.Queries.CountUnreadInboxByWorkspace(r.Context(), parseUUID(userID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to summarize unread inbox")
@@ -437,7 +441,7 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	projectCounts := map[pgtype.UUID]int64(nil)
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		projectCounts, err = h.unreadInboxCountsWithinProjectPermissions(r.Context(), parseUUID(userID))
+		projectCounts, err = h.unreadInboxCountsWithinProjectPermissions(r.Context(), parseUUID(userID), includeWorkspaceOwned)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to summarize unread inbox")
 			return
@@ -460,7 +464,7 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	windowedCounts := map[pgtype.UUID]int64{}
 	if len(workspaceIDs) > 0 {
-		windowedCounts, err = h.unreadInboxCountsWithinWindows(r.Context(), parseUUID(userID), workspaceIDs, limits)
+		windowedCounts, err = h.unreadInboxCountsWithinWindows(r.Context(), parseUUID(userID), workspaceIDs, limits, includeWorkspaceOwned)
 		if err != nil {
 			failClosed := false
 			for _, item := range policies {
@@ -506,7 +510,7 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, policy issueWindowPolicy) (int64, error) {
+func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, policy issueWindowPolicy, includeWorkspaceOwned bool) (int64, error) {
 	query := fmt.Sprintf(`SELECT COUNT(*)::bigint
 	FROM inbox_item i
 	WHERE i.workspace_id = $1
@@ -523,8 +527,8 @@ func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID,
 		  AND i.recipient_id = $2
 		  AND i.read = false
 		  AND i.archived = false
-		  AND %s
-		  AND (i.issue_id IS NULL OR %s)`, inboxIssueProjectVisibilityPredicate("i", "$1", "$2"), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+			  AND %s
+		  AND (i.issue_id IS NULL OR %s)`, inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
 	}
 	var count int64
 	err := h.DB.QueryRow(ctx, query, workspaceID, recipientID, policy.limit).Scan(&count)
@@ -534,7 +538,7 @@ func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID,
 // 2026-08-27 coder(lq): Keep unread badges consistent with the filtered inbox;
 // system notifications remain visible while issue notifications require the
 // recipient's project View permission.
-func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, workspaceID, recipientID pgtype.UUID) (int64, error) {
+func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, workspaceID, recipientID pgtype.UUID, includeWorkspaceOwned bool) (int64, error) {
 	query := fmt.Sprintf(`SELECT COUNT(*)::bigint
 		FROM inbox_item i
 		WHERE i.workspace_id = $1
@@ -542,7 +546,7 @@ func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, 
 		  AND i.recipient_id = $2
 		  AND i.read = false
 		  AND i.archived = false
-		  AND %s`, inboxIssueProjectVisibilityPredicate("i", "$1", "$2"))
+		  AND %s`, inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned))
 	var count int64
 	err := h.DB.QueryRow(ctx, query, workspaceID, recipientID).Scan(&count)
 	return count, err
@@ -552,10 +556,10 @@ func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, 
 // DISTINCT ON semantics while applying every enabled workspace policy in one
 // database round trip. Observe callers use the result only for telemetry; the
 // legacy response remains untouched.
-func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientID pgtype.UUID, workspaceIDs []pgtype.UUID, limits []int64) (map[pgtype.UUID]int64, error) {
+func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientID pgtype.UUID, workspaceIDs []pgtype.UUID, limits []int64, includeWorkspaceOwned bool) (map[pgtype.UUID]int64, error) {
 	visibility := ""
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		visibility = fmt.Sprintf(" AND %s", inboxIssueProjectVisibilityPredicate("i", "policy.workspace_id", "$3"))
+		visibility = fmt.Sprintf(" AND %s", inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "policy.workspace_id", "$3", includeWorkspaceOwned))
 	}
 	query := fmt.Sprintf(`WITH policies AS (
 	SELECT workspace_id, issue_limit
@@ -598,7 +602,7 @@ func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientI
 // 2026-08-27 coder(lq): Cross-workspace unread summaries must apply the same
 // project scope as the active-workspace inbox, otherwise the workspace switcher
 // can reveal hidden-project activity through its badge.
-func (h *Handler) unreadInboxCountsWithinProjectPermissions(ctx context.Context, recipientID pgtype.UUID) (map[pgtype.UUID]int64, error) {
+func (h *Handler) unreadInboxCountsWithinProjectPermissions(ctx context.Context, recipientID pgtype.UUID, includeWorkspaceOwned bool) (map[pgtype.UUID]int64, error) {
 	query := fmt.Sprintf(`SELECT newest.workspace_id, count(*)::bigint AS count
 		FROM (
 			SELECT DISTINCT ON (i.workspace_id, COALESCE(i.issue_id, i.id))
@@ -612,7 +616,7 @@ func (h *Handler) unreadInboxCountsWithinProjectPermissions(ctx context.Context,
 			ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
 		) newest
 		WHERE newest.read = false
-		GROUP BY newest.workspace_id`, inboxIssueProjectVisibilityPredicate("i", "i.workspace_id", "$1"))
+		GROUP BY newest.workspace_id`, inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "i.workspace_id", "$1", includeWorkspaceOwned))
 	rows, err := h.DB.Query(ctx, query, recipientID)
 	if err != nil {
 		return nil, err

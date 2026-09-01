@@ -11,17 +11,17 @@ import (
 // permissions), rather than receiving a View-only grant. Legacy
 // issue_permissions rows can never grant access.
 func (s *Service) CheckIssue(ctx context.Context, subject Subject, issueID, projectID string, permission Permission) error {
+	return s.CheckIssueWithWorkspaceScope(ctx, subject, issueID, projectID, permission, true)
+}
+
+// 2026-09-01 coder(lq): Keep direct issue checks aligned with list visibility
+// so a restricted workspace-owner request cannot open a hidden task by URL.
+func (s *Service) CheckIssueWithWorkspaceScope(ctx context.Context, subject Subject, issueID, projectID string, permission Permission, includeWorkspaceOwned bool) error {
 	if s == nil || !s.enabled {
 		return nil
 	}
 	if issueID == "" || projectID == "" {
 		return ErrNoProjectAccess
 	}
-	if reader, ok := s.repo.(IssuePermissionReader); ok {
-		allowed, err := reader.IssuePermission(ctx, issueID, subject.UserID, permission)
-		if err == nil && allowed {
-			return nil
-		}
-	}
-	return s.Check(ctx, subject, projectID, permission)
+	return s.CheckWithWorkspaceScope(ctx, subject, projectID, permission, includeWorkspaceOwned)
 }

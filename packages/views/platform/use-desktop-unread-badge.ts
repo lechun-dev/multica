@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useInboxUnreadCount } from "@multica/core/inbox/queries";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 type BadgeCapableAPI = {
   setUnreadBadge?: (count: number) => void;
@@ -16,7 +17,15 @@ function getDesktopAPI(): BadgeCapableAPI | undefined {
  * to 0, which clears any stale badge from a previous session).
  */
 export function useDesktopUnreadBadge(wsId: string | null | undefined): void {
-  const count = useInboxUnreadCount(wsId);
+  // 2026-09-01 coder(lq): Keep the OS badge on the same visibility scope as
+  // the Inbox page so a workspace owner cannot infer hidden task activity.
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
+  const count = useInboxUnreadCount(
+    wsId,
+    includeWorkspaceOwned,
+    visibilityReady,
+  );
   useEffect(() => {
     getDesktopAPI()?.setUnreadBadge?.(count);
   }, [count]);

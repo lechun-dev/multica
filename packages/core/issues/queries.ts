@@ -181,6 +181,17 @@ export const issueKeys = {
     ["source-context", "preview", wsId, anchorCommentId] as const,
 };
 
+/**
+ * 2026-09-01 coder(lq): Returns whether a cached workspace issue list includes
+ * workspace-owned issues. Older cache keys predate the scope marker and are
+ * treated as the inclusive view for backwards compatibility.
+ */
+export function issueListIncludesWorkspaceOwned(key: readonly unknown[]): boolean {
+  const scope = key[key.length - 1];
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) return true;
+  return (scope as Record<string, unknown>).includeWorkspaceOwned !== false;
+}
+
 export function sourceContextPreviewOptions(
   wsId: string,
   anchorCommentId: string | null | undefined,
@@ -255,10 +266,21 @@ export function flattenIssueBuckets(data: ListIssuesCache) {
   return out;
 }
 
-async function fetchFirstPages(filter: MyIssuesFilter = {}, sort?: IssueSortParam): Promise<ListIssuesCache> {
+async function fetchFirstPages(
+  filter: MyIssuesFilter = {},
+  sort?: IssueSortParam,
+  includeWorkspaceOwned = true,
+): Promise<ListIssuesCache> {
   const responses = await Promise.all(
     PAGINATED_CATEGORIES.map((category) =>
-      api.listIssues({ status_category: category, limit: ISSUE_PAGE_SIZE, offset: 0, ...sort, ...filter }),
+      api.listIssues({
+        status_category: category,
+        limit: ISSUE_PAGE_SIZE,
+        offset: 0,
+        ...sort,
+        ...filter,
+        ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }),
+      }),
     ),
   );
   const byStatus: ListIssuesCache["byStatus"] = {};
@@ -351,12 +373,19 @@ export function issueTableFacetsOptions(
  *
  * Fetches the first page of each paginated status in parallel.
  */
-export function issueListOptions(wsId: string, sort?: IssueSortParam) {
+export function issueListOptions(
+  wsId: string,
+  sort?: IssueSortParam,
+  includeWorkspaceOwned = true,
+) {
   return queryOptions({
-    queryKey: issueKeys.listSorted(wsId, sort),
-    queryFn: () => fetchFirstPages({}, sort),
+    queryKey: [...issueKeys.listSorted(wsId, sort), { includeWorkspaceOwned }] as const,
+    queryFn: () => fetchFirstPages({}, sort, includeWorkspaceOwned),
     select: flattenIssueBuckets,
-    placeholderData: keepPreviousData,
+    // Do not carry an inclusive cache into the restricted view. That would
+    // briefly expose workspace-owned tasks after the owner turns the toggle
+    // off while the restricted request is still in flight.
+    placeholderData: includeWorkspaceOwned ? keepPreviousData : undefined,
   });
 }
 
@@ -428,10 +457,16 @@ export function projectGanttIssuesOptions(
   });
 }
 
-export function issueDetailOptions(wsId: string, id: string) {
+export function issueDetailOptions(
+  wsId: string,
+  id: string,
+  includeWorkspaceOwned = true,
+) {
   return queryOptions({
-    queryKey: issueKeys.detail(wsId, id),
-    queryFn: () => api.getIssue(id),
+    queryKey: includeWorkspaceOwned
+      ? issueKeys.detail(wsId, id)
+      : ([...issueKeys.detail(wsId, id), { includeWorkspaceOwned }] as const),
+    queryFn: () => api.getIssue(id, { includeWorkspaceOwned }),
   });
 }
 
@@ -455,12 +490,18 @@ export function issueDetailOptions(wsId: string, id: string) {
  * so identical identifiers across the app share one request. Caller gates
  * `enabled` (identifier shape + workspace prefix).
  */
-export function issueIdentifierOptions(wsId: string, identifier: string) {
+export function issueIdentifierOptions(
+  wsId: string,
+  identifier: string,
+  includeWorkspaceOwned = true,
+) {
   return queryOptions({
-    queryKey: issueKeys.identifier(wsId, identifier),
+    queryKey: includeWorkspaceOwned
+      ? issueKeys.identifier(wsId, identifier)
+      : ([...issueKeys.identifier(wsId, identifier), { includeWorkspaceOwned }] as const),
     queryFn: async ({ signal }) => {
       try {
-        return await api.getIssue(identifier, { signal });
+        return await api.getIssue(identifier, { signal, includeWorkspaceOwned });
       } catch (err) {
         // Unknown identifier / wrong workspace prefix → render as plain text.
         // Any other failure (401/5xx/abort) must keep propagating so the query
@@ -475,10 +516,12 @@ export function issueIdentifierOptions(wsId: string, identifier: string) {
   });
 }
 
-export function childIssueProgressOptions(wsId: string) {
+export function childIssueProgressOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: issueKeys.childProgress(wsId),
-    queryFn: () => api.getChildIssueProgress(),
+    queryKey: includeWorkspaceOwned
+      ? issueKeys.childProgress(wsId)
+      : ([...issueKeys.childProgress(wsId), { includeWorkspaceOwned }] as const),
+    queryFn: () => api.getChildIssueProgress(includeWorkspaceOwned),
     select: (data) => {
       const map = new Map<string, { done: number; total: number }>();
       for (const entry of data.progress) {
@@ -489,10 +532,16 @@ export function childIssueProgressOptions(wsId: string) {
   });
 }
 
-export function childIssuesOptions(wsId: string, id: string) {
+export function childIssuesOptions(wsId: string, id: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: issueKeys.children(wsId, id),
-    queryFn: () => api.listChildIssues(id).then((r) => r.issues),
+    queryKey: includeWorkspaceOwned
+      ? issueKeys.children(wsId, id)
+      : ([...issueKeys.children(wsId, id), { includeWorkspaceOwned }] as const),
+    queryFn: () =>
+      (includeWorkspaceOwned
+        ? api.listChildIssues(id)
+        : api.listChildIssues(id, false)
+      ).then((r) => r.issues),
     // Child creation can happen while this workspace is not the active
     // realtime subscription (for example, an agent creates it while a
     // desktop tab is showing another workspace). The global Infinity
@@ -525,13 +574,20 @@ async function fetchAndHydrateChildrenByParents(
   qc: QueryClient,
   wsId: string,
   parentIds: readonly string[],
+  includeWorkspaceOwned: boolean,
 ) {
   // Chunk to respect the server cap (parallel, since chunks are independent).
   const chunks: string[][] = [];
   for (let i = 0; i < parentIds.length; i += CHILDREN_BY_PARENTS_CHUNK_SIZE) {
     chunks.push([...parentIds.slice(i, i + CHILDREN_BY_PARENTS_CHUNK_SIZE)]);
   }
-  const responses = await Promise.all(chunks.map((c) => api.listChildrenByParents(c)));
+  const responses = await Promise.all(
+    chunks.map((c) =>
+      includeWorkspaceOwned
+        ? api.listChildrenByParents(c)
+        : api.listChildrenByParents(c, false),
+    ),
+  );
   const grouped = new Map<string, Issue[]>();
   for (const response of responses) {
     for (const issue of response.issues) {
@@ -551,7 +607,10 @@ async function fetchAndHydrateChildrenByParents(
     // cache (not creating an empty one) — if that contract changes, batch
     // hydration here would silently stop seeding new lanes.
     const existing = qc.getQueryData<Issue[]>(issueKeys.children(wsId, parentId));
-    if (!existing || existing.length === 0) {
+    // Restricted snapshots must not populate the unscoped cache: a later
+    // detail view could otherwise reuse rows fetched with the owner bypass
+    // disabled, or vice versa. Swimlane consumes the grouped result directly.
+    if (includeWorkspaceOwned && (!existing || existing.length === 0)) {
       qc.setQueryData(issueKeys.children(wsId, parentId), children);
     }
   }
@@ -562,10 +621,11 @@ export function childrenByParentsOptions(
   wsId: string,
   parentIds: readonly string[],
   qc: QueryClient,
+  includeWorkspaceOwned = true,
 ) {
   return queryOptions({
-    queryKey: issueKeys.childrenByParents(wsId, parentIds),
-    queryFn: () => fetchAndHydrateChildrenByParents(qc, wsId, parentIds),
+    queryKey: [...issueKeys.childrenByParents(wsId, parentIds), { includeWorkspaceOwned }] as const,
+    queryFn: () => fetchAndHydrateChildrenByParents(qc, wsId, parentIds, includeWorkspaceOwned),
     enabled: parentIds.length > 0,
   });
 }

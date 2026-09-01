@@ -46,6 +46,7 @@ func TestProjectlessAgentOwnerVisibilityInDatabase(t *testing.T) {
 }
 
 func TestProjectlessVisibilityPredicatesIncludeAgentOwners(t *testing.T) {
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
 	for name, predicate := range map[string]string{
 		"issue": issueProjectVisibilityPredicate("i", "$1", "$2"),
 		"chat":  chatProjectVisibilityPredicate("c", "$1", "$2"),
@@ -57,6 +58,9 @@ func TestProjectlessVisibilityPredicatesIncludeAgentOwners(t *testing.T) {
 			}
 			if !strings.Contains(predicate, "owner_id") {
 				t.Fatalf("predicate does not resolve Agent owner: %s", predicate)
+			}
+			if !strings.Contains(predicate, "FALSE") {
+				t.Fatalf("predicate does not honor the env-driven owner bypass switch: %s", predicate)
 			}
 			if name == "chat" {
 				for _, fragment := range []string{"project_id IS NULL", "creator_id", "agent a"} {
@@ -122,6 +126,17 @@ func TestProjectlessIssuePermission(t *testing.T) {
 	}
 	if !projectlessIssuePermissionAllowedWithOwners(agentAssignee, assigneeID, projectauth.WorkspaceMember, projectauth.View, pgtype.UUID{}, assigneeID) {
 		t.Fatal("agent assignee owner should be able to view")
+	}
+}
+
+func TestProjectlessIssuePermissionOwnerBypass(t *testing.T) {
+	otherID := pgtype.UUID{Bytes: [16]byte{13}, Valid: true}
+	issue := db.Issue{CreatorType: "member", CreatorID: pgtype.UUID{Bytes: [16]byte{11}, Valid: true}}
+	if projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, otherID, projectauth.WorkspaceOwner, projectauth.View, false, pgtype.UUID{}, pgtype.UUID{}) {
+		t.Fatal("workspace owner must not see an unrelated projectless issue when bypass is disabled")
+	}
+	if !projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, otherID, projectauth.WorkspaceOwner, projectauth.View, true, pgtype.UUID{}, pgtype.UUID{}) {
+		t.Fatal("workspace owner should retain legacy projectless visibility when bypass is enabled")
 	}
 }
 
