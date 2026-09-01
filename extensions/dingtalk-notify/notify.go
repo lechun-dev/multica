@@ -228,21 +228,18 @@ func skipped(event MentionCreated, target MentionTarget, reason string) Delivery
 }
 
 func FormatText(event MentionCreated) string {
-	text := stripMentionLinks(sanitizeText(event.Text))
-	if runes := []rune(text); len(runes) > 2000 {
-		text = string(runes[:2000]) + "…"
-	}
+	text := truncateMentionPreview(stripMentionLinks(sanitizeText(event.Text)))
 
 	actor := strings.TrimSpace(event.Actor.Name)
 	if actor == "" {
 		if event.Actor.Kind == "agent" {
-			actor = "Multica Agent"
+			actor = "MissionOS Agent"
 		} else {
-			actor = "一位 Multica 成员"
+			actor = "一位 MissionOS 成员"
 		}
 	}
 
-	sections := []string{fmt.Sprintf("🔔 **%s 在 Multica 中提到了你**", escapeMarkdown(actor))}
+	sections := []string{fmt.Sprintf("🔔 **%s 在 MissionOS 中提到了你**", escapeMarkdown(actor))}
 	metadata := make([]string, 0, 2)
 	if source := notificationSource(event); source != "" {
 		metadata = append(metadata, "***来源："+source+"***")
@@ -316,7 +313,7 @@ func failedMentionTarget(eventID, workspaceID string, target MentionTarget, reas
 func FormatAgentCompletionText(event AgentCompleted) string {
 	agent := strings.TrimSpace(event.AgentName)
 	if agent == "" {
-		agent = "Multica Agent"
+		agent = "MissionOS Agent"
 	}
 	sections := []string{fmt.Sprintf("✅ 智能体「%s」已完成执行", escapeMarkdown(agent))}
 	metadata := make([]string, 0, 2)
@@ -422,6 +419,50 @@ func sanitizeText(text string) string {
 		}
 		return r
 	}, text)
+}
+
+const (
+	mentionPreviewMaxLines = 4
+	mentionPreviewMaxRunes = 480
+)
+
+// truncateMentionPreview keeps @ notifications compact in DingTalk while
+// preserving the full task in MissionOS. Empty lines are removed because the
+// surrounding Markdown formatter already adds spacing between sections.
+func truncateMentionPreview(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	kept := make([]string, 0, mentionPreviewMaxLines)
+	runeCount := 0
+	omitted := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(kept) >= mentionPreviewMaxLines {
+			omitted = true
+			continue
+		}
+		runes := []rune(line)
+		remaining := mentionPreviewMaxRunes - runeCount
+		if remaining <= 0 {
+			omitted = true
+			continue
+		}
+		if len(runes) > remaining {
+			kept = append(kept, string(runes[:remaining])+"…")
+			return strings.Join(kept, "\n")
+		}
+		kept = append(kept, line)
+		runeCount += len(runes)
+	}
+	if omitted && len(kept) > 0 {
+		kept = append(kept, "…")
+	}
+	return strings.Join(kept, "\n")
 }
 
 // stripMentionLinks removes Multica's internal mention:// links from the copy

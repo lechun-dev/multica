@@ -91,7 +91,7 @@ func (h OAuthHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "DingTalk account is not actively bound")
 			return
 		}
-		message := Message{EventID: "test-" + identity.MemberID + "-" + time.Now().UTC().Format("20060102150405.000000000"), WorkspaceID: identity.WorkspaceID, TargetID: identity.MemberID, TargetKind: "member", DingUserID: binding.DingUserID, ChannelType: "p2p", Text: "Multica 钉钉通知测试消息"}
+		message := Message{EventID: "test-" + identity.MemberID + "-" + time.Now().UTC().Format("20060102150405.000000000"), WorkspaceID: identity.WorkspaceID, TargetID: identity.MemberID, TargetKind: "member", DingUserID: binding.DingUserID, ChannelType: "p2p", Text: "MissionOS 钉钉通知测试消息"}
 		if err := h.TestProvider.Send(r.Context(), message); err != nil {
 			writeJSONError(w, http.StatusBadGateway, err.Error())
 			return

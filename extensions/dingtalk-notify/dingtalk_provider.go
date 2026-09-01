@@ -206,7 +206,7 @@ func mustActionCardParam(text string) (string, bool) {
 	// Keep the human-readable bell title in the card body. Some DingTalk
 	// clients hide the ActionCard `title` field, so relying on it alone loses
 	// the notification context on mobile.
-	const cardTitle = "Multica 通知"
+	const cardTitle = "MissionOS 通知"
 	textLines := append([]string(nil), lines[first:last+1]...)
 	if len(textLines) == 0 {
 		return "", false
@@ -275,7 +275,7 @@ func markdownMessageTitle(text string) string {
 	line = strings.NewReplacer("**", "", "__", "", "`", "").Replace(line)
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return "Multica 通知"
+		return "MissionOS 通知"
 	}
 	if runes := []rune(line); len(runes) > 64 {
 		return string(runes[:64]) + "…"

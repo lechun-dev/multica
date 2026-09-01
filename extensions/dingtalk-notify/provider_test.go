@@ -55,7 +55,7 @@ func TestDingTalkProviderRefreshesTokenAfterUnauthorized(t *testing.T) {
 }
 
 func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
-	text := "🔔 **张畅 在 Multica 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试\n\n**[打开任务并回复](https://example.test/task)**"
+	text := "🔔 **张畅 在 MissionOS 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试\n\n**[打开任务并回复](https://example.test/task)**"
 	param, ok := mustActionCardParam(text)
 	if !ok {
 		t.Fatal("expected action card payload")
@@ -64,10 +64,10 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 	if err := json.Unmarshal([]byte(param), &got); err != nil {
 		t.Fatalf("decode action card payload: %v", err)
 	}
-	if got["title"] != "Multica 通知" {
+	if got["title"] != "MissionOS 通知" {
 		t.Fatalf("title=%q", got["title"])
 	}
-	if got["text"] != "🔔 **张畅 在 Multica 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
+	if got["text"] != "🔔 **张畅 在 MissionOS 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
 		t.Fatalf("text=%q", got["text"])
 	}
 	if _, ok := got["markdown"]; ok {
@@ -103,7 +103,7 @@ func TestDingTalkProviderFallsBackToMarkdownWhenActionCardUnsupported(t *testing
 	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
 	err := p.Send(context.Background(), Message{
 		ChannelType: "p2p", DingUserID: "user",
-		Text: "🔔 **张畅 在 Multica 中提到了你**\n\n> hello\n\n**[打开任务并回复](https://example.test/task)**",
+		Text: "🔔 **张畅 在 MissionOS 中提到了你**\n\n> hello\n\n**[打开任务并回复](https://example.test/task)**",
 	})
 	if err != nil {
 		t.Fatal(err)
