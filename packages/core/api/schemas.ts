@@ -2953,6 +2953,7 @@ const RuntimeModelSchema = z.object({
   thinking: RuntimeModelThinkingSchema.nullable().optional()
     .transform((v) => v ?? undefined),
   service_tiers: z.array(RuntimeModelServiceTierSchema).optional(),
+  supports_explicit_standard_service_tier: z.boolean().optional(),
 }).loose();
 
 export const RuntimeModelListRequestSchema = z.object({
