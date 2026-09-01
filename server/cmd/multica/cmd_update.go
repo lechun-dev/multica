@@ -34,9 +34,9 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 	if !cli.IsSupportedReleaseServerURL(serverURL) {
 		if serverURL == "" {
-			return fmt.Errorf("updates are disabled because no MissionOS server is configured; set the server URL or upgrade from your organization's release channel")
+			return fmt.Errorf("official updates are disabled because no MissionOS server is configured; set the server URL or upgrade from your organization's release channel")
 		}
-		return fmt.Errorf("updates are disabled for unsupported MissionOS server %q; upgrade the CLI from your organization's release channel", serverURL)
+		return fmt.Errorf("official updates are disabled for unsupported MissionOS server %q; upgrade the CLI from your organization's release channel", serverURL)
 	}
 
 	fmt.Fprintf(os.Stderr, "Current version: %s (commit: %s, built: %s)\n", version, commit, date)
