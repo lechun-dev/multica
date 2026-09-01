@@ -92,14 +92,14 @@ func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
 	if messages[0].ChannelType != "p2p" || messages[0].DingUserID != "ding-user-1" {
 		t.Fatalf("unexpected completion routing: %+v", messages[0])
 	}
-	if got := messages[0].Text; got != "✅ 智能体「销售分析」已完成执行" || strings.Contains(got, "提到了你") {
+	if got := messages[0].Text; got != "✅ 智能体「销售分析」已完成执行\n\n任务已完成，可查看本次执行结果。" || strings.Contains(got, "提到了你") {
 		t.Fatalf("completion text=%q", got)
 	}
 }
 
 func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
-	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", SourceURL: "https://multica.test/task-1"})
-	want := "✅ 智能体「A\\*gent」已完成执行\n\n**[查看执行结果](https://multica.test/task-1)**"
+	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
+	want := "✅ 智能体「A\\*gent」已完成执行\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.test/task-1)***\n\n任务已完成，可查看本次执行结果。\n\n**[查看执行结果](https://multica.test/task-1)**"
 	if got != want {
 		t.Fatalf("formatted completion = %q, want %q", got, want)
 	}

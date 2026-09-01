@@ -138,13 +138,20 @@ func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
 	} else {
 		ownerID = r.resolveAgentOwner(e.WorkspaceID, agentID)
 	}
-	sourceURL := r.loadTaskSourceURL(context.Background(), e)
+	completionContext := r.loadTaskNotificationContext(context.Background(), e)
 	recipients := []string{ownerID, initiatorID}
 	if strings.TrimSpace(ownerID) == "" && strings.TrimSpace(initiatorID) == "" {
 		slog.Info("dingtalk notify: completed Agent has no human recipients", "workspace_id", e.WorkspaceID, "agent_id", agentID, "task_id", taskID)
 		return
 	}
-	event := notify.AgentCompleted{EventID: taskID, WorkspaceID: e.WorkspaceID, AgentID: agentID, AgentName: agentName, SourceURL: sourceURL, CompletedAt: time.Now().UTC()}
+	event := notify.AgentCompleted{EventID: taskID, WorkspaceID: e.WorkspaceID, AgentID: agentID, AgentName: agentName, CompletedAt: time.Now().UTC()}
+	if completionContext != nil {
+		event.WorkspaceName = completionContext.workspaceName
+		event.ProjectName = completionContext.projectName
+		event.IssueIdentifier = completionContext.issueIdentifier
+		event.IssueTitle = completionContext.issueTitle
+		event.SourceURL = completionContext.sourceURL
+	}
 	messages, failures, err := notify.BuildCompletionMessages(context.Background(), event, recipients, r.resolver)
 	if err != nil {
 		slog.Warn("dingtalk notify: route Agent completion failed", "task_id", taskID, "workspace_id", e.WorkspaceID, "error", err)
@@ -163,44 +170,65 @@ func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
 	slog.Info("dingtalk notify: Agent completion enqueued", "task_id", taskID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
 }
 
-// loadTaskSourceURL builds a best-effort link to the completed issue or chat.
-// Delivery remains valid without it when the row has already been removed or
-// the public application URL is not configured.
-func (r *dingtalkNotifyRuntime) loadTaskSourceURL(ctx context.Context, e events.Event) string {
+// loadTaskNotificationContext builds best-effort source/task metadata and a
+// link for the completed issue or chat. Delivery remains valid when the row
+// has already been removed or the public application URL is not configured.
+func (r *dingtalkNotifyRuntime) loadTaskNotificationContext(ctx context.Context, e events.Event) *dingtalkMentionContext {
 	if r == nil || r.pool == nil || strings.TrimSpace(e.WorkspaceID) == "" {
-		return ""
+		return nil
 	}
 	appURL := appURLFromEnv()
-	if appURL == "" {
-		return ""
-	}
 	payload, _ := e.Payload.(map[string]any)
 	issueID, _ := payload["issue_id"].(string)
 	chatSessionID, _ := payload["chat_session_id"].(string)
-	var slug string
-	if err := r.pool.QueryRow(ctx, `SELECT slug FROM workspace WHERE id = $1`, e.WorkspaceID).Scan(&slug); err != nil {
-		return ""
-	}
-	segment := strings.TrimSpace(slug)
-	if segment == "" {
-		segment = e.WorkspaceID
-	}
-	base := strings.TrimRight(appURL, "/") + "/" + url.PathEscape(segment)
+	out := &dingtalkMentionContext{}
 	if strings.TrimSpace(issueID) != "" {
-		var prefix string
+		var slug, prefix string
 		var number int32
-		if err := r.pool.QueryRow(ctx, `SELECT w.issue_prefix, i.number FROM issue i JOIN workspace w ON w.id = i.workspace_id WHERE i.id = $1 AND i.workspace_id = $2`, issueID, e.WorkspaceID).Scan(&prefix, &number); err == nil {
-			identifier := strings.TrimSpace(prefix) + "-" + strconv.Itoa(int(number))
-			if identifier == "-0" {
-				identifier = issueID
+		if err := r.pool.QueryRow(ctx, `
+			SELECT w.name, w.slug, w.issue_prefix, i.number, i.title, COALESCE(p.title, '')
+			FROM issue i
+			JOIN workspace w ON w.id = i.workspace_id
+			LEFT JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
+			WHERE i.id = $1 AND i.workspace_id = $2`, issueID, e.WorkspaceID).
+			Scan(&out.workspaceName, &slug, &prefix, &number, &out.issueTitle, &out.projectName); err == nil {
+			out.issueIdentifier = strings.TrimSpace(prefix) + "-" + strconv.Itoa(int(number))
+			if out.issueIdentifier == "-0" {
+				out.issueIdentifier = issueID
 			}
-			return base + "/issues/" + url.PathEscape(identifier)
+			if appURL != "" {
+				segment := strings.TrimSpace(slug)
+				if segment == "" {
+					segment = e.WorkspaceID
+				}
+				out.sourceURL = strings.TrimRight(appURL, "/") + "/" + url.PathEscape(segment) + "/issues/" + url.PathEscape(out.issueIdentifier)
+			}
+			return out
 		}
 	}
 	if strings.TrimSpace(chatSessionID) != "" {
-		return base + "/chat?session=" + url.QueryEscape(chatSessionID)
+		var slug string
+		if err := r.pool.QueryRow(ctx, `
+			SELECT w.name, w.slug, COALESCE(p.title, ''), COALESCE(cs.title, '')
+			FROM chat_session cs
+			JOIN workspace w ON w.id = cs.workspace_id
+			LEFT JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
+			WHERE cs.id = $1 AND cs.workspace_id = $2`, chatSessionID, e.WorkspaceID).
+			Scan(&out.workspaceName, &slug, &out.projectName, &out.issueTitle); err == nil {
+			if strings.TrimSpace(out.issueTitle) == "" {
+				out.issueTitle = "智能体对话任务"
+			}
+			if appURL != "" {
+				segment := strings.TrimSpace(slug)
+				if segment == "" {
+					segment = e.WorkspaceID
+				}
+				out.sourceURL = strings.TrimRight(appURL, "/") + "/" + url.PathEscape(segment) + "/chat?session=" + url.QueryEscape(chatSessionID)
+			}
+			return out
+		}
 	}
-	return ""
+	return nil
 }
 
 func (r *dingtalkNotifyRuntime) run(ctx context.Context) {

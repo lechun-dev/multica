@@ -44,12 +44,16 @@ type MentionCreated struct {
 // DingTalk recipient can distinguish "you were mentioned" from "your Agent
 // finished running" at a glance.
 type AgentCompleted struct {
-	EventID     string
-	WorkspaceID string
-	AgentID     string
-	AgentName   string
-	SourceURL   string
-	CompletedAt time.Time
+	EventID         string
+	WorkspaceID     string
+	AgentID         string
+	AgentName       string
+	WorkspaceName   string
+	ProjectName     string
+	IssueIdentifier string
+	IssueTitle      string
+	SourceURL       string
+	CompletedAt     time.Time
 }
 
 type MemberBinding struct {
@@ -315,10 +319,49 @@ func FormatAgentCompletionText(event AgentCompleted) string {
 		agent = "Multica Agent"
 	}
 	sections := []string{fmt.Sprintf("✅ 智能体「%s」已完成执行", escapeMarkdown(agent))}
+	metadata := make([]string, 0, 2)
+	if source := notificationSourceFromCompletion(event); source != "" {
+		metadata = append(metadata, "***来源："+source+"***")
+	}
+	if task := notificationTaskFromCompletion(event); task != "" {
+		metadata = append(metadata, "***任务："+task+"***")
+	}
+	if len(metadata) > 0 {
+		sections = append(sections, strings.Join(metadata, "\n\n"))
+	}
+	sections = append(sections, "任务已完成，可查看本次执行结果。")
 	if source := strings.TrimSpace(event.SourceURL); source != "" {
 		sections = append(sections, "**[查看执行结果]("+source+")**")
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func notificationSourceFromCompletion(event AgentCompleted) string {
+	workspace := strings.TrimSpace(event.WorkspaceName)
+	project := strings.TrimSpace(event.ProjectName)
+	if workspace == "" {
+		return escapeMarkdown(project)
+	}
+	if project == "" {
+		return escapeMarkdown(workspace)
+	}
+	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
+}
+
+func notificationTaskFromCompletion(event AgentCompleted) string {
+	identifier := strings.TrimSpace(event.IssueIdentifier)
+	title := strings.TrimSpace(event.IssueTitle)
+	if identifier == "" {
+		return escapeMarkdown(title)
+	}
+	label := escapeMarkdown(identifier)
+	if title != "" {
+		label += " · " + escapeMarkdown(title)
+	}
+	if event.SourceURL == "" {
+		return label
+	}
+	return "[" + label + "](" + event.SourceURL + ")"
 }
 
 func notificationSource(event MentionCreated) string {
