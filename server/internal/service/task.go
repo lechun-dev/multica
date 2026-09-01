@@ -6604,6 +6604,16 @@ func taskEvent(eventType, workspaceID string, task db.AgentTaskQueue, extra ...m
 		"issue_id": util.UUIDToString(task.IssueID),
 		"status":   task.Status,
 	}
+	if eventType == protocol.EventTaskCompleted {
+		initiatorUserID := util.UUIDToString(task.InitiatorUserID)
+		if initiatorUserID == "" {
+			// Most direct Web/issue tasks use originator_user_id as their human
+			// requester. Channel tasks additionally stamp initiator_user_id with the
+			// immediate sender. Publish one normalized field for completion consumers.
+			initiatorUserID = util.UUIDToString(task.OriginatorUserID)
+		}
+		payload["initiator_user_id"] = initiatorUserID
+	}
 	e := events.Event{
 		Type:        eventType,
 		WorkspaceID: workspaceID,

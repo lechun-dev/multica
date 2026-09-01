@@ -37,6 +37,7 @@ type dingtalkNotifyRuntime struct {
 	// host bridge avoids coupling the standalone notification module to the
 	// Multica database model and makes the routing easy to test.
 	agentOwner         func(context.Context, string, string) (string, error)
+	agentDetails       func(context.Context, string, string) (string, string, error)
 	agentOwnerMentions bool
 }
 
@@ -91,11 +92,115 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
 		workerInterval:     config.WorkerInterval,
 		maxAttempts:        config.MaxAttempts,
 		agentOwner:         dingtalkAgentOwnerResolver(pool),
+		agentDetails:       dingtalkAgentDetailsResolver(pool),
 		agentOwnerMentions: config.AgentOwnerMentions,
 	}
 	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
+	bus.Subscribe(protocol.EventTaskCompleted, runtime.handleTaskCompleted)
 	go runtime.run(context.Background())
 	slog.Info("dingtalk member notifications enabled")
+}
+
+// handleTaskCompleted sends a distinct completion message to both the Agent's
+// owner and the human who actually initiated this task. The task event carries
+// the initiator ID so delegated runs can notify the immediate caller rather
+// than only the top-level originator. Duplicate IDs are collapsed by the
+// extension, and unbound recipients are recorded as failed deliveries.
+func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
+	if r == nil || r.store == nil || r.resolver == nil || strings.TrimSpace(e.WorkspaceID) == "" {
+		return
+	}
+	taskID := strings.TrimSpace(e.TaskID)
+	agentID := ""
+	initiatorID := ""
+	if payload, ok := e.Payload.(map[string]any); ok {
+		if value, ok := payload["task_id"].(string); ok {
+			taskID = strings.TrimSpace(value)
+		}
+		if value, ok := payload["agent_id"].(string); ok {
+			agentID = strings.TrimSpace(value)
+		}
+		if value, ok := payload["initiator_user_id"].(string); ok {
+			initiatorID = strings.TrimSpace(value)
+		}
+	}
+	if taskID == "" || agentID == "" {
+		return
+	}
+	ownerID, agentName := "", ""
+	if r.agentDetails != nil {
+		var err error
+		ownerID, agentName, err = r.agentDetails(context.Background(), e.WorkspaceID, agentID)
+		if err != nil {
+			slog.Warn("dingtalk notify: resolve completed Agent details failed", "workspace_id", e.WorkspaceID, "agent_id", agentID, "error", err)
+			return
+		}
+	} else {
+		ownerID = r.resolveAgentOwner(e.WorkspaceID, agentID)
+	}
+	sourceURL := r.loadTaskSourceURL(context.Background(), e)
+	recipients := []string{ownerID, initiatorID}
+	if strings.TrimSpace(ownerID) == "" && strings.TrimSpace(initiatorID) == "" {
+		slog.Info("dingtalk notify: completed Agent has no human recipients", "workspace_id", e.WorkspaceID, "agent_id", agentID, "task_id", taskID)
+		return
+	}
+	event := notify.AgentCompleted{EventID: taskID, WorkspaceID: e.WorkspaceID, AgentID: agentID, AgentName: agentName, SourceURL: sourceURL, CompletedAt: time.Now().UTC()}
+	messages, failures, err := notify.BuildCompletionMessages(context.Background(), event, recipients, r.resolver)
+	if err != nil {
+		slog.Warn("dingtalk notify: route Agent completion failed", "task_id", taskID, "workspace_id", e.WorkspaceID, "error", err)
+		return
+	}
+	for _, failure := range failures {
+		slog.Info("dingtalk notify: completed Agent recipient skipped", "task_id", taskID, "target_id", failure.Message.TargetID, "status", failure.Status, "reason", failure.Error)
+	}
+	if len(messages) == 0 {
+		return
+	}
+	if err := notify.EnqueueMessages(context.Background(), r.store, messages, time.Now().UTC()); err != nil {
+		slog.Warn("dingtalk notify: enqueue Agent completion failed", "task_id", taskID, "workspace_id", e.WorkspaceID, "target_count", len(messages), "error", err)
+		return
+	}
+	slog.Info("dingtalk notify: Agent completion enqueued", "task_id", taskID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
+}
+
+// loadTaskSourceURL builds a best-effort link to the completed issue or chat.
+// Delivery remains valid without it when the row has already been removed or
+// the public application URL is not configured.
+func (r *dingtalkNotifyRuntime) loadTaskSourceURL(ctx context.Context, e events.Event) string {
+	if r == nil || r.pool == nil || strings.TrimSpace(e.WorkspaceID) == "" {
+		return ""
+	}
+	appURL := appURLFromEnv()
+	if appURL == "" {
+		return ""
+	}
+	payload, _ := e.Payload.(map[string]any)
+	issueID, _ := payload["issue_id"].(string)
+	chatSessionID, _ := payload["chat_session_id"].(string)
+	var slug string
+	if err := r.pool.QueryRow(ctx, `SELECT slug FROM workspace WHERE id = $1`, e.WorkspaceID).Scan(&slug); err != nil {
+		return ""
+	}
+	segment := strings.TrimSpace(slug)
+	if segment == "" {
+		segment = e.WorkspaceID
+	}
+	base := strings.TrimRight(appURL, "/") + "/" + url.PathEscape(segment)
+	if strings.TrimSpace(issueID) != "" {
+		var prefix string
+		var number int32
+		if err := r.pool.QueryRow(ctx, `SELECT w.issue_prefix, i.number FROM issue i JOIN workspace w ON w.id = i.workspace_id WHERE i.id = $1 AND i.workspace_id = $2`, issueID, e.WorkspaceID).Scan(&prefix, &number); err == nil {
+			identifier := strings.TrimSpace(prefix) + "-" + strconv.Itoa(int(number))
+			if identifier == "-0" {
+				identifier = issueID
+			}
+			return base + "/issues/" + url.PathEscape(identifier)
+		}
+	}
+	if strings.TrimSpace(chatSessionID) != "" {
+		return base + "/chat?session=" + url.QueryEscape(chatSessionID)
+	}
+	return ""
 }
 
 func (r *dingtalkNotifyRuntime) run(ctx context.Context) {
@@ -263,6 +368,28 @@ func dingtalkAgentOwnerResolver(pool *pgxpool.Pool) func(context.Context, string
 			return "", err
 		}
 		return strings.TrimSpace(*ownerID), nil
+	}
+}
+
+func dingtalkAgentDetailsResolver(pool *pgxpool.Pool) func(context.Context, string, string) (string, string, error) {
+	return func(ctx context.Context, workspaceID, agentID string) (string, string, error) {
+		if pool == nil {
+			return "", "", errors.New("DingTalk agent details resolver database is unavailable")
+		}
+		var ownerID *string
+		var name string
+		err := pool.QueryRow(ctx, `
+			SELECT owner_id::text, name
+			FROM agent
+			WHERE id = $1 AND workspace_id = $2 AND kind = 'user'
+			  AND archived_at IS NULL`, agentID, workspaceID).Scan(&ownerID, &name)
+		if errors.Is(err, pgx.ErrNoRows) || ownerID == nil {
+			return "", strings.TrimSpace(name), nil
+		}
+		if err != nil {
+			return "", "", err
+		}
+		return strings.TrimSpace(*ownerID), strings.TrimSpace(name), nil
 	}
 }
 

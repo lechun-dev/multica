@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,6 +77,31 @@ func TestBuildMessagesMarksUnboundAndDoesNotNotifyAgentOwner(t *testing.T) {
 	messages, failures, err := BuildMessages(context.Background(), event, resolverStub{found: false, channels: []AgentChannel{{AgentID: "a1", ChannelID: "c1", ChannelName: "固定群", Active: true}}})
 	if err != nil || len(messages) != 0 || len(failures) != 2 || failures[1].Status != StatusSkipped {
 		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+}
+
+func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
+	const recipient = "member-1"
+	event := AgentCompleted{EventID: "task-1", WorkspaceID: "workspace-1", AgentID: "agent-1", AgentName: "销售分析"}
+	messages, failures, err := BuildCompletionMessages(context.Background(), event, []string{recipient, recipient}, resolverStub{
+		member: MemberBinding{DingUserID: "ding-user-1", Active: true}, found: true,
+	})
+	if err != nil || len(failures) != 0 || len(messages) != 1 {
+		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+	if messages[0].ChannelType != "p2p" || messages[0].DingUserID != "ding-user-1" {
+		t.Fatalf("unexpected completion routing: %+v", messages[0])
+	}
+	if got := messages[0].Text; got != "✅ 智能体「销售分析」已完成执行" || strings.Contains(got, "提到了你") {
+		t.Fatalf("completion text=%q", got)
+	}
+}
+
+func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
+	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", SourceURL: "https://multica.test/task-1"})
+	want := "✅ 智能体「A\\*gent」已完成执行\n\n**[查看执行结果](https://multica.test/task-1)**"
+	if got != want {
+		t.Fatalf("formatted completion = %q, want %q", got, want)
 	}
 }
 

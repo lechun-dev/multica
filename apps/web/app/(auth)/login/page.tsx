@@ -28,7 +28,7 @@ import {
   CardContent,
 } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 import Link from "next/link";
 import {
@@ -257,15 +257,13 @@ function LoginPageContent() {
           );
         }}
         extra={
-          <div className="flex w-full flex-col gap-3">
-            <span className="text-caption text-muted-foreground">
-              {t(($) => $.web.prefer_desktop)}{" "}
-              <Link
-                href="/download"
-                className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
-              >
-                {t(($) => $.web.download)}
-              </Link>
+          <div className="download-prompt">
+            <Link href="/download" className="download-link">
+              <Download className="download-icon" aria-hidden="true" />
+              <span>{t(($) => $.web.download_desktop)}</span>
+            </Link>
+            <span className="download-supporting">
+              {t(($) => $.web.download_platforms)}
             </span>
           </div>
         }

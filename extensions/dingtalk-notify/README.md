@@ -119,6 +119,12 @@ The host bridge reads `DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS` (default `true`)
 to enable or disable P2P notices when another member explicitly mentions an
 Agent. The Agent owner's own member or Agent comments are suppressed.
 
+The host also publishes terminal `task:completed` events. Each completed Agent
+run is sent as a separate P2P completion notice to the Agent owner and the
+human who initiated that run; duplicate identities are collapsed, and missing
+DingTalk bindings are recorded as skipped deliveries. Completion notices use a
+different message title (`✅ 智能体「…」已完成执行`) from mention notices.
+
 The module includes host-neutral HTTP handlers for the remaining management
 surface:
 

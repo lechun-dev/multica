@@ -39,6 +39,19 @@ type MentionCreated struct {
 	CreatedAt       time.Time
 }
 
+// AgentCompleted describes a terminal Agent execution. Completion messages
+// intentionally use a separate event shape and formatter from mentions so a
+// DingTalk recipient can distinguish "you were mentioned" from "your Agent
+// finished running" at a glance.
+type AgentCompleted struct {
+	EventID     string
+	WorkspaceID string
+	AgentID     string
+	AgentName   string
+	SourceURL   string
+	CompletedAt time.Time
+}
+
 type MemberBinding struct {
 	WorkspaceID string
 	MemberID    string
@@ -244,6 +257,66 @@ func FormatText(event MentionCreated) string {
 	}
 	if event.SourceURL != "" {
 		sections = append(sections, "**[打开任务并回复]("+event.SourceURL+")**")
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+// BuildCompletionMessages resolves each requested human recipient to their
+// active DingTalk binding and creates a P2P completion notification. Duplicate
+// recipients are collapsed before resolving bindings, so an Agent owner who
+// also started the task receives one message rather than two.
+func BuildCompletionMessages(ctx context.Context, event AgentCompleted, recipientIDs []string, resolver Resolver) ([]Message, []Delivery, error) {
+	if strings.TrimSpace(event.EventID) == "" || strings.TrimSpace(event.WorkspaceID) == "" {
+		return nil, nil, errors.New("agent completion event_id and workspace_id are required")
+	}
+	if resolver == nil {
+		return nil, nil, errors.New("completion resolver is required")
+	}
+	seen := make(map[string]struct{}, len(recipientIDs))
+	messages := make([]Message, 0, len(recipientIDs))
+	failures := make([]Delivery, 0)
+	for _, recipientID := range recipientIDs {
+		recipientID = strings.TrimSpace(recipientID)
+		if recipientID == "" {
+			continue
+		}
+		if _, ok := seen[recipientID]; ok {
+			continue
+		}
+		seen[recipientID] = struct{}{}
+		binding, found, err := resolver.MemberBinding(ctx, event.WorkspaceID, recipientID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve completion recipient %s: %w", recipientID, err)
+		}
+		target := MentionTarget{ID: recipientID, Kind: "member"}
+		if !found || !binding.Active || strings.TrimSpace(binding.DingUserID) == "" {
+			failures = append(failures, failedMentionTarget(event.EventID, event.WorkspaceID, target, "member is not bound to DingTalk"))
+			continue
+		}
+		messages = append(messages, Message{
+			EventID: event.EventID, WorkspaceID: event.WorkspaceID,
+			TargetID: recipientID, TargetKind: "member", DingUserID: binding.DingUserID,
+			RobotCode: binding.RobotCode, ChannelType: "p2p", Text: FormatAgentCompletionText(event),
+		})
+	}
+	return messages, failures, nil
+}
+
+func failedMentionTarget(eventID, workspaceID string, target MentionTarget, reason string) Delivery {
+	return Delivery{Message: Message{EventID: eventID, WorkspaceID: workspaceID, TargetID: target.ID, TargetKind: target.Kind}, Status: "failed", Error: reason}
+}
+
+// FormatAgentCompletionText is deliberately not phrased as a mention. Keep
+// this wording stable because it is also used by queued messages after a
+// worker restart.
+func FormatAgentCompletionText(event AgentCompleted) string {
+	agent := strings.TrimSpace(event.AgentName)
+	if agent == "" {
+		agent = "Multica Agent"
+	}
+	sections := []string{fmt.Sprintf("✅ 智能体「%s」已完成执行", escapeMarkdown(agent))}
+	if source := strings.TrimSpace(event.SourceURL); source != "" {
+		sections = append(sections, "**[查看执行结果]("+source+")**")
 	}
 	return strings.Join(sections, "\n\n")
 }

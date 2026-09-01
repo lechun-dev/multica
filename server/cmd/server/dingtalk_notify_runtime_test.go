@@ -146,6 +146,63 @@ func TestDingTalkNotifyRuntimeDeduplicatesDirectAndAgentOwnerMention(t *testing.
 	}
 }
 
+func TestDingTalkNotifyRuntimeNotifiesCompletedAgentOwnerAndInitiator(t *testing.T) {
+	const (
+		workspaceID = "workspace-completion"
+		taskID      = "task-completion"
+		agentID     = "agent-completion"
+		ownerID     = "11111111-1111-1111-1111-111111111111"
+		initiatorID = "22222222-2222-2222-2222-222222222222"
+	)
+	store := notify.NewMemoryStore()
+	runtime := &dingtalkNotifyRuntime{
+		store: store,
+		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
+			ownerID:     {DingUserID: "ding-owner", Active: true},
+			initiatorID: {DingUserID: "ding-initiator", Active: true},
+		}},
+		agentOwner: agentOwnerStub(map[string]string{agentID: ownerID}),
+	}
+	runtime.handleTaskCompleted(events.Event{Type: "task:completed", TaskID: taskID, WorkspaceID: workspaceID, Payload: map[string]any{
+		"task_id": taskID, "agent_id": agentID, "initiator_user_id": initiatorID,
+	}})
+	items := store.Snapshot()
+	if len(items) != 2 {
+		t.Fatalf("completion recipients = %d, want 2: %+v", len(items), items)
+	}
+	want := map[string]string{ownerID: "ding-owner", initiatorID: "ding-initiator"}
+	for _, item := range items {
+		if want[item.Message.TargetID] != item.Message.DingUserID || item.Message.ChannelType != "p2p" {
+			t.Fatalf("unexpected completion message: %+v", item.Message)
+		}
+		if item.Message.Text != "✅ 智能体「Multica Agent」已完成执行" {
+			t.Fatalf("unexpected completion text: %q", item.Message.Text)
+		}
+		delete(want, item.Message.TargetID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing completion recipients: %+v", want)
+	}
+}
+
+func TestDingTalkNotifyRuntimeDeduplicatesCompletedOwnerAndInitiator(t *testing.T) {
+	const ownerID = "11111111-1111-1111-1111-111111111111"
+	store := notify.NewMemoryStore()
+	runtime := &dingtalkNotifyRuntime{
+		store: store,
+		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
+			ownerID: {DingUserID: "ding-owner", Active: true},
+		}},
+		agentOwner: agentOwnerStub(map[string]string{"agent-1": ownerID}),
+	}
+	runtime.handleTaskCompleted(events.Event{TaskID: "task-1", WorkspaceID: "workspace-1", Payload: map[string]any{
+		"task_id": "task-1", "agent_id": "agent-1", "initiator_user_id": ownerID,
+	}})
+	if items := store.Snapshot(); len(items) != 1 {
+		t.Fatalf("same owner/initiator should receive one completion message, items=%+v", items)
+	}
+}
+
 func TestSuperviseDingTalkNotifyWorkerRestartsAfterFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
