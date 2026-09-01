@@ -365,6 +365,11 @@ func TestParseSelfVersion(t *testing.T) {
 			want: "0.3.7",
 		},
 		{
+			name: "missionos release build template",
+			raw:  "missionos 0.3.7 (commit: abc1234, built: 2026-07-29T10:00:00Z)\ngo: go1.26.1, os/arch: darwin/arm64\n",
+			want: "0.3.7",
+		},
+		{
 			name: "dev build from git describe",
 			raw:  "multica v0.3.7-42-gabcdef0-dirty (commit: abcdef0, built: unknown)\n",
 			want: "v0.3.7-42-gabcdef0-dirty",
