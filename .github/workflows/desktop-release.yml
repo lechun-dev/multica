@@ -153,12 +153,22 @@ jobs:
           # Release before being interrupted by an upload/API limit. Reuse
           # that Release so reruns can finish attaching the remaining files.
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --title "Multica Lechun $RELEASE_TAG" \
-              --notes "Multica Lechun desktop installers for macOS and Windows." \
-              --latest
+            release_args=(
+              "$RELEASE_TAG"
+              --repo "$GITHUB_REPOSITORY"
+              --verify-tag
+              --title "MissionOS Lechun $RELEASE_TAG"
+              --notes "MissionOS Lechun desktop installers for macOS and Windows."
+            )
+            # A prerelease must never become GitHub's Latest release: the
+            # public download page and CLI updater intentionally consume the
+            # stable /releases/latest channel only.
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              release_args+=(--prerelease)
+            else
+              release_args+=(--latest)
+            fi
+            gh release create "${release_args[@]}"
           else
             echo "Reusing existing Release $RELEASE_TAG"
           fi

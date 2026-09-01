@@ -33,7 +33,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s)\ngo: %s, os/arch: %s/%s", version, commit, date, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-	rootCmd.SetVersionTemplate("missionos {{.Version}}\n")
+	rootCmd.SetVersionTemplate(commandDisplayName() + " {{.Version}}\n")
 
 	// Tag every CLI HTTP request with this binary's build version so the
 	// server can split logs/metrics by client version.

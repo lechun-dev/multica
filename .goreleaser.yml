@@ -2,6 +2,13 @@ version: 2
 
 project_name: multica
 
+# Keep semver prerelease tags (for example v0.4.70-beta.1) in GitHub's
+# prerelease channel. This prevents them from becoming the repository's
+# Latest release, so /releases/latest and the public download page continue
+# to resolve only stable versions.
+release:
+  prerelease: auto
+
 builds:
   - id: multica
     main: ./cmd/multica
