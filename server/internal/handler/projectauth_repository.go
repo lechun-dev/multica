@@ -43,18 +43,18 @@ func (r *projectAuthRepository) IssuePermission(ctx context.Context, issueID, us
 	return exists, err
 }
 
-// CurrentProjectRoles resolves workspace-owner inheritance and explicit
-// project grants in one query for the project list response.
-// 2026-08-28 coder(lq): Keep list role metadata in the Handler SQL adapter.
+// CurrentProjectRoles resolves explicit project grants in one query for the
+// project list response. Workspace-owner inheritance remains an access-control
+// rule, but it is intentionally not reported as a project role: the table's
+// "my role" column must describe the caller's membership on that project.
+// 2026-08-31 coder(lq): Keep effective workspace access separate from project
+// membership metadata so workspace owners do not appear as project owners.
 func (r *projectAuthRepository) CurrentProjectRoles(ctx context.Context, workspaceID, userID string) (map[string]projectauth.ProjectRole, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT p.id::text,
-		       CASE WHEN m.role = 'owner' THEN 'owner' ELSE pm.role END AS role
-		FROM project p
-		LEFT JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id = $2
-		LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
-		WHERE p.workspace_id = $1
-		  AND (m.role = 'owner' OR pm.user_id IS NOT NULL)`, workspaceID, userID)
+		SELECT pm.project_id::text, pm.role
+		FROM project_members pm
+		JOIN project p ON p.id = pm.project_id
+		WHERE p.workspace_id = $1 AND pm.user_id = $2`, workspaceID, userID)
 	if err != nil {
 		return nil, err
 	}

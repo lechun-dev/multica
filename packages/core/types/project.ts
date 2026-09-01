@@ -23,7 +23,7 @@ export interface Project {
   issue_count: number;
   done_count: number;
   resource_count: number;
-  /** Effective role for the signed-in user; omitted by legacy backends. */
+  /** Explicit role on this project for the signed-in user; omitted by legacy backends. */
   current_user_role?: string | null;
 }
 

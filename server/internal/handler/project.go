@@ -45,9 +45,11 @@ type ProjectResponse struct {
 	// payload to keep parent metadata and child collections separate; clients
 	// that need the list call ListProjectResources directly.
 	ResourceCount int64 `json:"resource_count"`
-	// CurrentUserRole includes workspace-owner inheritance and explicit project
-	// grants. It stays null for legacy deployments with permissions disabled.
-	// 2026-08-28 coder(lq): Surface the caller's effective project role.
+	// CurrentUserRole is the caller's explicit role on this project. Workspace
+	// owner inheritance is an access-control rule, not a project membership, so
+	// it is intentionally omitted from this display field. It stays null for
+	// legacy deployments with permissions disabled.
+	// 2026-08-31 coder(lq): Keep project-role display separate from workspace role.
 	CurrentUserRole *string `json:"current_user_role"`
 }
 
