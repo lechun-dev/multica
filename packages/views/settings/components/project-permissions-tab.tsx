@@ -211,23 +211,25 @@ export function ProjectPermissionsTab() {
               </div>
               {filteredProjects.length === 0 || filteredMembers.length === 0 ? (
                 <p className="py-6 text-center text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
-              ) : <div className="overflow-auto">
-              <table className="w-full min-w-[64rem] text-body">
+              ) : <div className="max-h-[60vh] overflow-auto">
+              {/* 2026-09-01 coder(lq): Keep filters and dialog chrome static while
+                  the permission matrix scrolls independently. */}
+              <table className="w-full min-w-[64rem] border-separate border-spacing-0 text-body">
                 <thead>
                   <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
-                    <th className="sticky left-0 z-20 min-w-56 bg-surface p-2">{t(($) => $.permission_report.person_column)}</th>
-                    <th className="sticky left-56 z-20 min-w-32 bg-surface p-2">{t(($) => $.permission_report.workspace_role_column)}</th>
-                    {filteredProjects.map((project) => <th key={project.id} className="min-w-36 p-2" title={project.title}>{project.title}</th>)}
+                    <th className="sticky left-0 top-0 z-30 min-w-56 border-r border-surface-border bg-surface p-2">{t(($) => $.permission_report.person_column)}</th>
+                    <th className="sticky top-0 z-20 min-w-32 bg-surface p-2">{t(($) => $.permission_report.workspace_role_column)}</th>
+                    {filteredProjects.map((project) => <th key={project.id} className="sticky top-0 z-20 min-w-36 bg-surface p-2" title={project.title}>{project.title}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredMembers.map((member) => (
                     <tr key={member.user_id} className="border-b border-surface-border/60">
-                      <td className="sticky left-0 z-10 min-w-56 bg-surface p-2">
+                      <td className="sticky left-0 z-10 min-w-56 border-r border-surface-border bg-surface p-2">
                         <div>{userLabel(member.user_id)}</div>
                         {member.email && <div className="text-caption text-muted-foreground">{member.email}</div>}
                       </td>
-                      <td className="sticky left-56 z-10 min-w-32 bg-surface p-2">{roleLabel(member.role)}</td>
+                      <td className="min-w-32 p-2">{roleLabel(member.role)}</td>
                       {filteredProjects.map((project) => {
                         const projectMembers = projectMembersByProject.get(project.id) ?? [];
                         const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
