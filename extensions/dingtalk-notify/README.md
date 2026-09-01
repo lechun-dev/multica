@@ -123,7 +123,9 @@ The host also publishes terminal `task:completed` events. Each completed Agent
 run is sent as a separate P2P completion notice to the Agent owner and the
 human who initiated that run; duplicate identities are collapsed, and missing
 DingTalk bindings are recorded as skipped deliveries. Completion notices use a
-different message title (`✅ 智能体「…」已完成执行`) from mention notices.
+different message title (`✅ 智能体「…」已完成执行`) from mention notices. The
+completion action uses the same `打开任务并回复` link as mention notices so
+users can open the task directly in DingTalk's side panel.
 
 The module includes host-neutral HTTP handlers for the remaining management
 surface:

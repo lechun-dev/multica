@@ -331,7 +331,7 @@ func FormatAgentCompletionText(event AgentCompleted) string {
 	}
 	sections = append(sections, "任务已完成，可查看本次执行结果。")
 	if source := strings.TrimSpace(event.SourceURL); source != "" {
-		sections = append(sections, "**[查看执行结果]("+source+")**")
+		sections = append(sections, "**[打开任务并回复]("+source+")**")
 	}
 	return strings.Join(sections, "\n\n")
 }

@@ -99,7 +99,7 @@ func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
 
 func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
 	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
-	want := "✅ 智能体「A\\*gent」已完成执行\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.test/task-1)***\n\n任务已完成，可查看本次执行结果。\n\n**[查看执行结果](https://multica.test/task-1)**"
+	want := "✅ 智能体「A\\*gent」已完成执行\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.test/task-1)***\n\n任务已完成，可查看本次执行结果。\n\n**[打开任务并回复](https://multica.test/task-1)**"
 	if got != want {
 		t.Fatalf("formatted completion = %q, want %q", got, want)
 	}
