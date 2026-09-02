@@ -51,6 +51,41 @@ export interface RuntimeConfigEnv {
   appUrl?: string;
 }
 
+/**
+ * Build-time defaults injected into packaged desktop apps.
+ *
+ * The packaged binary still prefers a user's ~/.multica/desktop.json when
+ * present, but prerelease/staging builds need a different fallback than the
+ * private production release. Returning null keeps the existing production
+ * default when the build does not set any explicit URLs.
+ */
+export function runtimeConfigFromBuildEnv(
+  env: RuntimeConfigEnv,
+): RuntimeConfig | null {
+  if (
+    env.apiUrl === undefined &&
+    env.wsUrl === undefined &&
+    env.appUrl === undefined
+  ) {
+    return null;
+  }
+
+  const apiUrl = normalizeHttpUrl(
+    env.apiUrl ?? DEFAULT_RUNTIME_CONFIG.apiUrl,
+    "VITE_API_URL",
+  );
+  return {
+    schemaVersion: 1,
+    apiUrl,
+    wsUrl: env.wsUrl
+      ? normalizeWsUrl(env.wsUrl, "VITE_WS_URL")
+      : deriveWsUrl(apiUrl),
+    appUrl: env.appUrl
+      ? normalizeHttpUrl(env.appUrl, "VITE_APP_URL")
+      : deriveAppUrl(apiUrl),
+  };
+}
+
 export function runtimeConfigFromDevEnv(env: RuntimeConfigEnv): RuntimeConfig {
   const apiUrl = normalizeHttpUrl(
     env.apiUrl || LOCAL_DEV_RUNTIME_CONFIG.apiUrl,

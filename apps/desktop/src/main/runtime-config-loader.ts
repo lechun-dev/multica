@@ -13,6 +13,7 @@ import {
 export async function loadRuntimeConfig(options: {
   isDev: boolean;
   env: RuntimeConfigEnv;
+  packagedConfig?: RuntimeConfig | null;
   configPath?: string;
 }): Promise<RuntimeConfigResult> {
   if (options.isDev) {
@@ -29,7 +30,10 @@ export async function loadRuntimeConfig(options: {
     return { ok: true, config: parseRuntimeConfig(raw) };
   } catch (err) {
     if (isMissingFileError(err)) {
-      return { ok: true, config: { ...DEFAULT_RUNTIME_CONFIG } };
+      return {
+        ok: true,
+        config: { ...(options.packagedConfig ?? DEFAULT_RUNTIME_CONFIG) },
+      };
     }
     return {
       ok: false,

@@ -54,7 +54,7 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handler) RemoveIssueReaction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		return
 	}
 

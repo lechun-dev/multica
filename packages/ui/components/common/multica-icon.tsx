@@ -27,9 +27,11 @@ const borderedSizes = {
 };
 
 /**
- * Pure CSS 8-pointed asterisk icon matching the Multica logo.
- * Uses currentColor so it adapts to light/dark themes automatically.
- * Clip-path polygon traced from the original SVG path coordinates.
+ * Shared Multica brand mark.
+ *
+ * 2026-09-02 coder(lq): Replaced the legacy asterisk with the supplied blue
+ * background and rounded cream M mark. Keeping the component/API stable lets
+ * Web and Electron adopt the brand without touching their call sites.
  */
 export function MulticaIcon({
   className,
@@ -46,15 +48,6 @@ export function MulticaIcon({
     const timer = setTimeout(() => setEntranceDone(true), 600);
     return () => clearTimeout(timer);
   }, [animate]);
-
-  const clipPath = `polygon(
-    45% 62.1%, 45% 100%, 55% 100%, 55% 62.1%,
-    81.8% 88.9%, 88.9% 81.8%, 62.1% 55%, 100% 55%,
-    100% 45%, 62.1% 45%, 88.9% 18.2%, 81.8% 11.1%,
-    55% 37.9%, 55% 0%, 45% 0%, 45% 37.9%,
-    18.2% 11.1%, 11.1% 18.2%, 37.9% 45%, 0% 45%,
-    0% 55%, 37.9% 55%, 11.1% 81.8%, 18.2% 88.9%
-  )`;
 
   if (bordered) {
     const sizeConfig = borderedSizes[size];
@@ -76,10 +69,7 @@ export function MulticaIcon({
             entranceDone && !noSpin && "hover:animate-spin"
           )}
         >
-          <span
-            className="block size-full bg-current"
-            style={{ clipPath }}
-          />
+          <BrandMark />
         </span>
       </span>
     );
@@ -96,10 +86,30 @@ export function MulticaIcon({
       aria-hidden="true"
       {...props}
     >
-      <span
-        className="block size-full bg-current"
-        style={{ clipPath }}
-      />
+      <BrandMark />
     </span>
+  );
+}
+
+/** The SVG is intentionally inline so the same mark renders in Next.js and Electron. */
+function BrandMark() {
+  return (
+    <svg
+      className="block size-full"
+      viewBox="0 0 600 600"
+      role="img"
+      aria-label="Multica"
+      focusable="false"
+    >
+      <rect width="600" height="600" fill="#496286" />
+      <path
+        d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216"
+        fill="none"
+        stroke="#fdf4e0"
+        strokeWidth="52"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

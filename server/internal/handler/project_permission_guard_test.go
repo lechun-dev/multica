@@ -10,9 +10,9 @@ import (
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
-// 2026-08-27 coder(lq): A project viewer may read an issue but must not mutate
-// its conversation; this regression test guards the task-permission boundary.
-func TestCreateCommentRequiresProjectEditPermission(t *testing.T) {
+// 2026-09-02 coder(lq): A project viewer may read an issue but must not mutate
+// its conversation; comments use the dedicated issue-comment permission.
+func TestCreateCommentRequiresProjectIssueCommentPermission(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}

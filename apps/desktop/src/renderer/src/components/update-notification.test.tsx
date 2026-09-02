@@ -77,33 +77,29 @@ describe("UpdateNotification", () => {
     expect(screen.getByRole("button", { name: "Restart now" })).toBeEnabled();
   });
 
-  it("shows asynchronous updater errors in the update prompt", () => {
+  it("keeps background updater errors quiet", () => {
     render(<UpdateNotification />);
     act(() => updateDownloaded({ version: "0.4.27" }));
     act(() => updateError({ message: "downloaded package is missing" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Update failed: downloaded package is missing",
-    );
-  });
-
-  it("hides transient network update errors", () => {
-    render(<UpdateNotification />);
-    act(() => updateError({ message: "net::ERR_INTERNET_DISCONNECTED" }));
 
     expect(
       screen.queryByText(`${DESKTOP_PRODUCT_NAME} Update failed`),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(`${DESKTOP_PRODUCT_NAME} Update ready`),
+    ).toBeInTheDocument();
   });
 
-  it("shows a download error even when no package was downloaded", () => {
+  it("does not show a prompt when a background update check cannot reach the server", () => {
     render(<UpdateNotification />);
-    act(() => updateError({ message: "download timed out" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Update failed: download timed out",
+    act(() =>
+      updateError({
+        message: "Unable to reach the update server. We’ll retry automatically.",
+      }),
     );
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Restart now" }),
     ).not.toBeInTheDocument();

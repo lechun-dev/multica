@@ -88,6 +88,13 @@ func (h *Handler) requireAttachmentProjectEdit(w http.ResponseWriter, r *http.Re
 	return h.requireAttachmentProjectPermission(w, r, workspaceID, issueID, commentID, projectauth.Edit)
 }
 
+// 2026-09-02 coder(lq): A comment attachment is part of the task conversation,
+// not project metadata. Keep its gate aligned with comment create/edit while
+// issue-owned attachments continue to require project.edit.
+func (h *Handler) requireAttachmentProjectComment(w http.ResponseWriter, r *http.Request, workspaceID string, commentID pgtype.UUID) bool {
+	return h.requireAttachmentProjectPermission(w, r, workspaceID, pgtype.UUID{}, commentID, projectauth.IssueComment)
+}
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
@@ -528,7 +535,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
 				return
 			}
-			if !h.requireAttachmentProjectEdit(w, r, workspaceID, pgtype.UUID{}, comment.ID) {
+			if !h.requireAttachmentProjectComment(w, r, workspaceID, comment.ID) {
 				return
 			}
 			params.CommentID = comment.ID
@@ -1473,7 +1480,14 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
-	if !h.requireAttachmentProjectEdit(w, r, workspaceID, att.IssueID, att.CommentID) {
+	// 2026-09-02 coder(lq): Comment attachments follow the conversation
+	// permission, while issue-owned attachments remain project-edit scoped.
+	// Keep the uploader/admin ownership check below as the second boundary.
+	if att.CommentID.Valid {
+		if !h.requireAttachmentProjectComment(w, r, workspaceID, att.CommentID) {
+			return
+		}
+	} else if !h.requireAttachmentProjectEdit(w, r, workspaceID, att.IssueID, pgtype.UUID{}) {
 		return
 	}
 

@@ -82,7 +82,7 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		return
 	}
 
@@ -171,7 +171,7 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		return
 	}
 

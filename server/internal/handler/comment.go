@@ -1717,9 +1717,9 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// 2026-08-27 coder(lq): Posting comments mutates the task conversation;
-	// project visibility alone must not let a viewer write to an issue.
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	// 2026-09-02 coder(lq): Commenting is a dedicated task-conversation
+	// permission; members may write comments without project edit access.
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		return
 	}
 
@@ -3243,7 +3243,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: existing.IssueID, WorkspaceID: existing.WorkspaceID})
-	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "comment not found")
 		}
@@ -3525,7 +3525,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
-	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "comment not found")
 		}
@@ -3753,7 +3753,7 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
-	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "comment not found")
 		}

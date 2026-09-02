@@ -86,6 +86,7 @@ export type ProjectPermissionReportPermission =
   | "project.view"
   | "project.edit"
   | "project.issue.create"
+  | "project.issue.comment"
   | "project.issue.manage"
   | "project.agent.use"
   | "project.member.manage"

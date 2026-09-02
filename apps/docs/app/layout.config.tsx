@@ -1,28 +1,15 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 import { ArrowUpRight } from "lucide-react";
 
-// Docs-local stateless Multica mark — matches @multica/ui's MulticaIcon
-// visually (same 8-pointed-asterisk clip-path), but without useState/
-// useEffect so it's safe to render from Server Components such as
-// layout.config.tsx / layout.tsx. Keep in sync with
-// packages/ui/components/common/multica-icon.tsx if the mark changes.
-const MULTICA_CLIP = `polygon(
-  45% 62.1%, 45% 100%, 55% 100%, 55% 62.1%,
-  81.8% 88.9%, 88.9% 81.8%, 62.1% 55%, 100% 55%,
-  100% 45%, 62.1% 45%, 88.9% 18.2%, 81.8% 11.1%,
-  55% 37.9%, 55% 0%, 45% 0%, 45% 37.9%,
-  18.2% 11.1%, 11.1% 18.2%, 37.9% 45%, 0% 45%,
-  0% 55%, 37.9% 55%, 11.1% 81.8%, 18.2% 88.9%
-)`;
+// Docs-local stateless Multica mark — matches @multica/ui's MulticaIcon.
+// It stays inline so this Server Component has no asset-loader dependency.
 
 function MulticaMark() {
   return (
-    <span className="inline-block size-[1em]" aria-hidden="true">
-      <span
-        className="block size-full bg-current"
-        style={{ clipPath: MULTICA_CLIP }}
-      />
-    </span>
+    <svg viewBox="0 0 600 600" className="inline-block size-[1em]" role="img" aria-label="Multica">
+      <rect width="600" height="600" fill="#496286" />
+      <path d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216" fill="none" stroke="#fdf4e0" strokeWidth="52" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -43,7 +30,7 @@ function GitHubMark() {
 }
 
 // External links shown at the top of the sidebar (and in the top nav on
-// desktop). Leading icon = brand identity (GitHub mark / Multica asterisk);
+// desktop). Leading icon = brand identity (GitHub mark / Multica M mark);
 // trailing ArrowUpRight = "opens externally" glyph, same pattern as
 // `packages/views/layout/help-launcher.tsx` from PR #1560.
 const externalLinkText = (label: string) => (

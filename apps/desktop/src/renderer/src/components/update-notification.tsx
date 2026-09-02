@@ -7,17 +7,7 @@ import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
 // downloaded and waiting for a restart.
 type UpdateState =
   | { status: "idle" }
-  | { status: "ready"; version: string }
-  | { status: "error"; message: string };
-
-function isTransientUpdateError(message: string): boolean {
-  // 2026-09-02 coder(lq): Background update checks often fail when the app is
-  // offline or the private release host is temporarily unreachable; treat
-  // those as silent noise so only actionable install failures surface here.
-  return /Unable to reach the update server|Update files are temporarily unavailable|net::ERR_(?:INTERNET_DISCONNECTED|CONNECTION_RESET|CONNECTION_TIMED_OUT|NAME_NOT_RESOLVED)|offline/i.test(
-    message,
-  );
-}
+  | { status: "ready"; version: string };
 
 export function UpdateNotification() {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
@@ -33,13 +23,10 @@ export function UpdateNotification() {
       setInstallError(null);
     });
     const cleanupError = window.updater.onUpdateError((error) => {
-      if (isTransientUpdateError(error.message)) {
-        return;
-      }
-      setState({ status: "error", message: error.message });
-      setDismissed(false);
-      setInstalling(false);
-      setInstallError(null);
+      // 2026-09-02 coder(lq): Background update errors are logged and retried
+      // by the main process; keep the desktop UI quiet unless the user starts
+      // an install and that explicit action fails below.
+      void error;
     });
     return () => {
       cleanup();
@@ -65,21 +52,12 @@ export function UpdateNotification() {
           <RefreshCw className="size-4 text-success" />
         </div>
         <div className="flex-1 min-w-0">
-          {state.status === "error" ? (
-            <>
-              <p className="text-body font-medium">{DESKTOP_PRODUCT_NAME} Update failed</p>
-              <p role="alert" className="text-caption text-destructive mt-1">
-                Update failed: {state.message}
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-body font-medium">{DESKTOP_PRODUCT_NAME} Update ready</p>
-              <p className="text-caption text-muted-foreground mt-0.5">
-                v{state.version} will be applied on next launch.
-              </p>
-            </>
-          )}
+          <>
+            <p className="text-body font-medium">{DESKTOP_PRODUCT_NAME} Update ready</p>
+            <p className="text-caption text-muted-foreground mt-0.5">
+              v{state.version} will be applied on next launch.
+            </p>
+          </>
           {state.status === "ready" && installError && (
             <p role="alert" className="text-caption text-destructive mt-1">
               Update failed: {installError}

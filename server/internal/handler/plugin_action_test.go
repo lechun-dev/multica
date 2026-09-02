@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
@@ -361,6 +362,60 @@ func TestPluginCommentIsAuthoredByTheUserAndMarkedWithThePlugin(t *testing.T) {
 	}
 	if viaPlugin == nil || *viaPlugin != installationID {
 		t.Fatalf("via_plugin_id = %v, want %s", viaPlugin, installationID)
+	}
+}
+
+// 2026-09-02 coder(lq): Plugin comments authored through a member session must
+// inherit the same project.issue.comment permission as the ordinary endpoint;
+// project visibility alone must not make a Viewer able to comment.
+func TestPluginCommentRequiresProjectIssueCommentPermission(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	viewerID := createSecondWorkspaceMember(t)
+	var projectID, issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, 'Plugin comment permission guard') RETURNING id
+	`, testWorkspaceID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner'), ($1, $3, 'viewer')
+	`, projectID, testUserID, viewerID); err != nil {
+		t.Fatalf("seed project members: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, project_id, title, status, priority, creator_type, creator_id, number, position)
+		VALUES ($1, $2, 'Plugin comment permission guard issue', 'todo', 'none', 'member', $3,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 100)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	previous := testHandler.ProjectAuth
+	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
+	t.Cleanup(func() { testHandler.ProjectAuth = previous })
+	installationID := installPluginForAction(t, []string{"issues:read", "comments:write"})
+
+	readReq := pluginActionRequest(http.MethodGet, "/issues", installationID, nil, map[string]string{"issue_ref": issueID})
+	readReq.Header.Set("X-User-ID", viewerID)
+	readRecorder := httptest.NewRecorder()
+	testHandler.GetPluginIssue(readRecorder, readReq)
+	if readRecorder.Code != http.StatusOK {
+		t.Fatalf("project viewer plugin issue read status=%d body=%s", readRecorder.Code, readRecorder.Body.String())
+	}
+
+	req := pluginActionRequest(http.MethodPost, "/comments", installationID,
+		map[string]any{"content": "viewer must not comment"}, map[string]string{"issue_ref": issueID})
+	req.Header.Set("X-User-ID", viewerID)
+	recorder := httptest.NewRecorder()
+	testHandler.CreatePluginComment(recorder, req)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("project viewer plugin comment status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

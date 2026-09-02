@@ -47,6 +47,8 @@ func TestCheckIssueDelegatesEveryPermissionToProject(t *testing.T) {
 		{"viewer can view", ProjectViewer, View, true},
 		{"viewer cannot edit", ProjectViewer, Edit, false},
 		{"member can create issues", ProjectMember, IssueCreate, true},
+		{"member can comment on issues", ProjectMember, IssueComment, true},
+		{"viewer cannot comment on issues", ProjectViewer, IssueComment, false},
 		{"member cannot manage issues", ProjectMember, IssueManage, false},
 		{"manager can manage issues", ProjectManager, IssueManage, true},
 		{"manager can use agents", ProjectManager, AgentUse, true},

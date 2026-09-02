@@ -32,14 +32,14 @@ func SystemRoleDefinitions() []RoleDefinition {
 func DefaultPolicy() Policy {
 	return Policy{roles: map[ProjectRole]map[Permission]bool{
 		ProjectOwner: {
-			View: true, Edit: true, IssueCreate: true, IssueManage: true,
+			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
 			AgentUse: true, MemberManage: true, SettingsManage: true,
 		},
 		ProjectManager: {
-			View: true, Edit: true, IssueCreate: true, IssueManage: true,
+			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
 			AgentUse: true,
 		},
-		ProjectMember: {View: true, IssueCreate: true, AgentUse: true},
+		ProjectMember: {View: true, IssueCreate: true, IssueComment: true, AgentUse: true},
 		ProjectViewer: {View: true},
 	}}
 }

@@ -32,9 +32,12 @@ type Subject struct {
 type Permission string
 
 const (
-	View           Permission = "project.view"
-	Edit           Permission = "project.edit"
-	IssueCreate    Permission = "project.issue.create"
+	View        Permission = "project.view"
+	Edit        Permission = "project.edit"
+	IssueCreate Permission = "project.issue.create"
+	// 2026-09-02 coder(lq): Keep task conversation writes separate from
+	// project metadata editing so members can comment without broad edit access.
+	IssueComment   Permission = "project.issue.comment"
 	IssueManage    Permission = "project.issue.manage"
 	AgentUse       Permission = "project.agent.use"
 	MemberManage   Permission = "project.member.manage"

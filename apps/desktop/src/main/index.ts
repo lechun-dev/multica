@@ -15,7 +15,10 @@ import { installNavigationGuard } from "./navigation-guard";
 import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
-import type { RuntimeConfigResult } from "../shared/runtime-config";
+import {
+  runtimeConfigFromBuildEnv,
+  type RuntimeConfigResult,
+} from "../shared/runtime-config";
 import {
   RENDERER_ROUTE_CONTEXT_CHANNEL,
   sanitizeRendererRouteContext,
@@ -642,6 +645,11 @@ if (!gotTheLock) {
       readonly VITE_WS_URL?: string;
       readonly VITE_APP_URL?: string;
     };
+    const packagedRuntimeConfig = runtimeConfigFromBuildEnv({
+      apiUrl: viteEnv.VITE_API_URL,
+      wsUrl: viteEnv.VITE_WS_URL,
+      appUrl: viteEnv.VITE_APP_URL,
+    });
 
     runtimeConfigResult = await loadRuntimeConfig({
       isDev: is.dev,
@@ -653,6 +661,7 @@ if (!gotTheLock) {
         wsUrl: viteEnv.VITE_WS_URL,
         appUrl: viteEnv.VITE_APP_URL,
       },
+      packagedConfig: packagedRuntimeConfig,
     });
 
     electronApp.setAppUserModelId(DESKTOP_IDENTITY.appId);

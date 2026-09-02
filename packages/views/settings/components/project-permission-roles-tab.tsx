@@ -18,7 +18,7 @@ import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 import { useT } from "../../i18n";
 
 const PERMISSIONS: ProjectPermissionReportPermission[] = [
-  "project.view", "project.edit", "project.issue.create", "project.issue.manage",
+  "project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage",
   "project.agent.use", "project.member.manage", "project.settings.manage",
 ];
 
@@ -39,12 +39,12 @@ const SYSTEM_ROLE_DEFAULTS: Array<{
   {
     key: "manager",
     name: "Manager",
-    permissions: ["project.view", "project.edit", "project.issue.create", "project.issue.manage", "project.agent.use"],
+    permissions: ["project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.agent.use"],
   },
   {
     key: "member",
     name: "Member",
-    permissions: ["project.view", "project.issue.create", "project.agent.use"],
+    permissions: ["project.view", "project.issue.create", "project.issue.comment", "project.agent.use"],
   },
   {
     key: "viewer",
