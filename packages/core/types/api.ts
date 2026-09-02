@@ -303,6 +303,8 @@ export type IssueTableScope =
   | { kind: "my"; relation: "assigned" | "created" | "involved" | "any" };
 
 export interface IssueTableFilters {
+  /** Issue lifecycle filter; omitted by older clients means active. */
+  archive_state?: "active" | "archived" | "all";
   /** 2026-08-28 coder(lq): Include workspace-owner-only issues in table results. */
   include_workspace_owned?: boolean;
   statuses?: IssueStatus[];

@@ -10,6 +10,8 @@ import { defaultStorage } from "../../platform/storage";
 
 export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane";
 export type GanttZoom = "day" | "week" | "month";
+/** Server-side lifecycle filter for issues. Active is the safe default. */
+export type IssueArchiveState = "active" | "archived" | "all";
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
  * groups columns by its options via the `property:<definitionId>` form.
@@ -119,6 +121,7 @@ export interface ActorFilterValue {
 /** The nine query-defining filter fields as one value — what a saved view
  *  fixes, and what resets restore. */
 export interface FilterSnapshot {
+  archiveState: IssueArchiveState;
   statusFilters: IssueStatus[];
   priorityFilters: IssuePriority[];
   assigneeFilters: ActorFilterValue[];
@@ -133,6 +136,7 @@ export interface FilterSnapshot {
 /** Filter-bar chip dimensions. Date is excluded: `dateFilter` lives outside
  *  the persisted slice and clears through `setDateFilter(null)`. */
 export type FilterDimension =
+  | "archive"
   | "status"
   | "priority"
   | "assignee"
@@ -198,6 +202,8 @@ export interface IssueViewState {
    * across definitions, mirroring the other filter groups.
    */
   propertyFilters: Record<string, PropertyFilterValue[]>;
+  /** Which issue lifecycle rows the surface should request. */
+  archiveState: IssueArchiveState;
   dateFilter: IssueDateFilter | null;
   // When true, the list only shows issues that currently have at least one
   // agent task in `running` status. Drives the workspace "agents working"
@@ -263,6 +269,7 @@ export interface IssueViewState {
    *  for text/number/date/url, which build the array including "__none__"). */
   setPropertyFilterValues: (propertyId: string, optionIds: PropertyFilterValue[]) => void;
   setDateFilter: (filter: IssueDateFilter | null) => void;
+  setArchiveState: (state: IssueArchiveState) => void;
   toggleAgentRunningFilter: () => void;
   hideStatus: (category: IssueStatusCategory) => void;
   showStatus: (category: IssueStatusCategory) => void;
@@ -308,6 +315,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   includeNoProject: false,
   labelFilters: [],
   propertyFilters: {},
+  archiveState: "active",
   dateFilter: null,
   agentRunningFilter: false,
   sortBy: "position",
@@ -417,6 +425,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       return { propertyFilters };
     }),
   setDateFilter: (filter) => set({ dateFilter: filter }),
+  setArchiveState: (archiveState) => set({ archiveState }),
   toggleAgentRunningFilter: () =>
     set((state) => ({ agentRunningFilter: !state.agentRunningFilter })),
   hideStatus: (category) =>
@@ -440,6 +449,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       includeNoProject: false,
       labelFilters: [],
       propertyFilters: {},
+      archiveState: "active",
       dateFilter: null,
       agentRunningFilter: false,
       // Reset restores every column, matching what it did when hiding a column
@@ -452,6 +462,8 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       switch (dimension) {
         case "status":
           return { statusFilters: [] };
+        case "archive":
+          return { archiveState: "active" };
         case "priority":
           return { priorityFilters: [] };
         case "assignee":
@@ -580,6 +592,7 @@ export const viewStorePersistOptions = (name: string) => ({
     includeNoProject: state.includeNoProject,
     labelFilters: state.labelFilters,
     propertyFilters: state.propertyFilters,
+    archiveState: state.archiveState,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,
     cardProperties: state.cardProperties,
