@@ -1,5 +1,6 @@
 import type { IssueSurfaceQueryPlan } from "./query-plan";
 import { projectGanttIssuesOptions } from "../queries";
+import type { ListIssuesParams } from "../../types";
 
 /**
  * Issue surface repository — resolves a {@link IssueSurfaceQueryPlan} to
@@ -13,11 +14,13 @@ export function issueSurfaceGanttOptions(
   projectId: string,
   plan: IssueSurfaceQueryPlan,
   includeWorkspaceOwned = true,
+  archiveState: ListIssuesParams["archive_state"] = "active",
 ) {
   return projectGanttIssuesOptions(
     wsId,
     projectId,
     plan.queryFilter.assignee_types,
     includeWorkspaceOwned,
+    archiveState,
   );
 }

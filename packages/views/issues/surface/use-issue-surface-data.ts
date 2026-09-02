@@ -100,6 +100,7 @@ export function useIssueSurfaceData({
   serverStatusBranches,
   serverGroupBranches,
   ganttShowCompleted,
+  archiveState,
   includeWorkspaceOwned,
   statusFilters,
   hiddenStatusCategories,
@@ -130,6 +131,7 @@ export function useIssueSurfaceData({
   /** Gantt's "show completed" display toggle. The canvas hides done/cancelled
    *  rows without it, so the working scope has to honour it too. */
   ganttShowCompleted: boolean;
+  archiveState: "active" | "archived" | "all";
   includeWorkspaceOwned: boolean;
   statusFilters: IssueStatus[];
   hiddenStatusCategories: IssueStatusCategory[];
@@ -152,7 +154,7 @@ export function useIssueSurfaceData({
   loadProjects: boolean;
 }): IssueSurfaceData {
   const ganttIssuesQuery = useQuery({
-    ...issueSurfaceGanttOptions(wsId, projectId ?? "", queryPlan, includeWorkspaceOwned),
+    ...issueSurfaceGanttOptions(wsId, projectId ?? "", queryPlan, includeWorkspaceOwned, archiveState),
     enabled: usesGantt && visibilityReady,
   });
   const workingFilterContext = useMemo(

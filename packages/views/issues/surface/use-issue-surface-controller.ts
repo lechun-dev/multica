@@ -248,6 +248,7 @@ export function useIssueSurfaceController({
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
+  const archiveState = useViewStore((s) => s.archiveState);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
   const showSubIssues = useViewStore((s) => s.showSubIssues);
   const ganttShowCompleted = useViewStore((s) => s.ganttShowCompleted);
@@ -502,6 +503,7 @@ export function useIssueSurfaceController({
     return {
       scope: queryScope,
       filters: {
+        ...(archiveState !== "active" ? { archive_state: archiveState } : {}),
         ...(statusFilters.length > 0 ? { statuses: statusFilters } : {}),
         ...(priorityFilters.length > 0 ? { priorities: priorityFilters } : {}),
         ...(assigneeFilters.length > 0 ? { assignees: assigneeFilters } : {}),
@@ -530,6 +532,7 @@ export function useIssueSurfaceController({
     };
   }, [
     agentRunningFilter,
+    archiveState,
     assigneeFilters,
     creatorFilters,
     dateParams,
@@ -716,6 +719,7 @@ export function useIssueSurfaceController({
   const membershipKey = useMemo(
     () =>
       JSON.stringify([
+        archiveState,
         statusFilters,
         priorityFilters,
         assigneeFilters,
@@ -732,6 +736,7 @@ export function useIssueSurfaceController({
         debouncedActiveSearch,
       ]),
     [
+      archiveState,
       agentRunningFilter,
       assigneeFilters,
       creatorFilters,
@@ -763,6 +768,7 @@ export function useIssueSurfaceController({
     serverStatusBranches,
     serverGroupBranches,
     ganttShowCompleted,
+    archiveState,
     includeWorkspaceOwned,
     statusFilters,
     hiddenStatusCategories,

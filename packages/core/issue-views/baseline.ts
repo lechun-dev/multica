@@ -1,4 +1,4 @@
-import type { ActorFilterValue, FilterSnapshot } from "../issues/stores/view-store";
+import type { ActorFilterValue, FilterSnapshot, IssueArchiveState } from "../issues/stores/view-store";
 import type { IssuePriority, IssueStatus, PropertyFilterValue } from "../types";
 import { isKnownPropertyFilterOp, isPropertyOperatorFilter, propertyFilterValueKey } from "../types";
 import { PRIORITY_DISPLAY_ORDER } from "../issues/config";
@@ -13,6 +13,7 @@ import { PRIORITY_DISPLAY_ORDER } from "../issues/config";
  * them; chips only show what the user layered on top.
  */
 export interface IssueViewBaseline {
+  archiveState: IssueArchiveState;
   status: Set<string>;
   priority: Set<string>;
   /** Actor keys as `${type}:${id}`. */
@@ -81,6 +82,10 @@ export function baselineFromQuery(query: Record<string, unknown>): IssueViewBase
   const labelFilters = stringArray(query.labelFilters);
   const includeNoAssignee = query.includeNoAssignee === true;
   const includeNoProject = query.includeNoProject === true;
+  const archiveState: IssueArchiveState =
+    query.archiveState === "archived" || query.archiveState === "all"
+      ? query.archiveState
+      : "active";
 
   const propertyFilters: Record<string, PropertyFilterValue[]> = {};
   const property = new Map<string, Set<string>>();
@@ -97,6 +102,7 @@ export function baselineFromQuery(query: Record<string, unknown>): IssueViewBase
   }
 
   return {
+    archiveState,
     status: new Set(statusFilters),
     priority: new Set(priorityFilters),
     assignee: new Set(assigneeFilters.map(actorFilterKey)),
@@ -107,6 +113,7 @@ export function baselineFromQuery(query: Record<string, unknown>): IssueViewBase
     label: new Set(labelFilters),
     property,
     raw: {
+      archiveState,
       statusFilters,
       priorityFilters,
       assigneeFilters,

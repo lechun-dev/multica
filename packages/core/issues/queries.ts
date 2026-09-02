@@ -109,11 +109,13 @@ export const issueKeys = {
     wsId: string,
     projectId: string,
     assigneeTypes?: IssueAssigneeType[],
+    archiveState?: ListIssuesParams["archive_state"],
   ) =>
     [
       ...issueKeys.projectGanttAll(wsId),
       projectId,
       assigneeTypes ?? null,
+      archiveState ?? "active",
     ] as const,
   detail: (wsId: string, id: string) =>
     [...issueKeys.all(wsId), "detail", id] as const,
@@ -408,6 +410,7 @@ async function fetchProjectGanttIssues(
   projectId: string,
   assigneeTypes?: IssueAssigneeType[],
   includeWorkspaceOwned = true,
+  archiveState: ListIssuesParams["archive_state"] = "active",
 ) {
   const issues = [];
   let offset = 0;
@@ -415,6 +418,7 @@ async function fetchProjectGanttIssues(
     const res = await api.listIssues({
       project_id: projectId,
       scheduled: true,
+      archive_state: archiveState,
       ...(assigneeTypes?.length ? { assignee_types: assigneeTypes } : {}),
       ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }),
       limit: PROJECT_GANTT_PAGE_LIMIT,
@@ -448,12 +452,13 @@ export function projectGanttIssuesOptions(
   // other mode — same scope, same single mapping upstream.
   assigneeTypes?: IssueAssigneeType[],
   includeWorkspaceOwned = true,
+  archiveState: ListIssuesParams["archive_state"] = "active",
 ) {
   return queryOptions({
     queryKey: includeWorkspaceOwned
-      ? issueKeys.projectGantt(wsId, projectId, assigneeTypes)
-      : [...issueKeys.projectGantt(wsId, projectId, assigneeTypes), false] as const,
-    queryFn: () => fetchProjectGanttIssues(projectId, assigneeTypes, includeWorkspaceOwned),
+      ? issueKeys.projectGantt(wsId, projectId, assigneeTypes, archiveState)
+      : [...issueKeys.projectGantt(wsId, projectId, assigneeTypes, archiveState), false] as const,
+    queryFn: () => fetchProjectGanttIssues(projectId, assigneeTypes, includeWorkspaceOwned, archiveState),
   });
 }
 
