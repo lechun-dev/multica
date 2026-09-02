@@ -54,6 +54,14 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	// private and upstream histories were merged. Preserve their recorded names
 	// so existing private deployments do not try to recreate project_members.
 	"404": {"404_agent_starter_prompts", "404_project_members"},
+	// 2026-09-02 coder(lq): The private release stream renumbered the upstream
+	// index migrations to make room for private project-permission migrations.
+	// These pairs were included in beta releases already, so keep both stems
+	// stable; changing either name would replay an already-applied migration.
+	"441": {"441_agent_runtime_online_last_seen_index", "441_runtime_profile_add_codearts"},
+	"442": {"442_agent_runtime_offline_last_seen_index", "442_vcs_reference_only_repair"},
+	"443": {"443_issue_project_status_index", "443_project_created_by"},
+	"444": {"444_comment_recovery_settled_at", "444_github_pr_head_sha_index"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
