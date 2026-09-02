@@ -31,6 +31,8 @@ import { rmSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { applyReleaseRuntimeConfig } from "./release-runtime-config.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
 const bundleCliScript = resolve(here, "bundle-cli.mjs");
@@ -412,6 +414,16 @@ function main() {
   console.log(
     `[package] build matrix → ${buildMatrix.map(formatTarget).join(", ")}`,
   );
+
+  // 2026-09-02 coder(lq): Resolve prerelease endpoints in the packaging
+  // entry point so every GitHub workflow and local tagged build shares the
+  // same staging guard before Vite embeds the values in the installer.
+  const releaseRuntimeConfig = applyReleaseRuntimeConfig();
+  if (releaseRuntimeConfig) {
+    console.log(
+      `[package] prerelease runtime → ${releaseRuntimeConfig.apiUrl}`,
+    );
+  }
 
   // Step 0: start every release from an empty output directory. Stale
   // artifacts from a prior run would otherwise be repacked into this run's
