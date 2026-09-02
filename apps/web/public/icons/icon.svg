@@ -1,5 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-label="Multica">
-  <!-- 2026-09-02 coder(lq): Shared source for the supplied Multica brand mark. -->
-  <rect width="600" height="600" fill="#496286"/>
-  <path d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216" fill="none" stroke="#fdf4e0" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 2026-09-02 coder(lq): Full-bleed source for launchers that apply their own mask. -->
+  <defs>
+    <linearGradient id="background" x1="104" y1="64" x2="496" y2="536" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5c78a2"/>
+      <stop offset="1" stop-color="#354b6a"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="300" y1="176" x2="300" y2="416" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff9e9"/>
+      <stop offset="1" stop-color="#f6e8c8"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="600" fill="url(#background)"/>
+  <path d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216" fill="none" stroke="url(#mark)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

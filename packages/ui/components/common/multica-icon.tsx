@@ -101,12 +101,23 @@ function BrandMark() {
       aria-label="Multica"
       focusable="false"
     >
-      <rect width="600" height="600" fill="#496286" />
+      <defs>
+        <linearGradient id="multica-icon-background" x1="104" y1="64" x2="496" y2="536" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#5c78a2" />
+          <stop offset="1" stopColor="#354b6a" />
+        </linearGradient>
+        <linearGradient id="multica-icon-mark" x1="300" y1="176" x2="300" y2="416" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#fff9e9" />
+          <stop offset="1" stopColor="#f6e8c8" />
+        </linearGradient>
+      </defs>
+      <rect x="18" y="18" width="564" height="564" rx="148" fill="url(#multica-icon-background)" />
+      <rect x="19.5" y="19.5" width="561" height="561" rx="146.5" fill="none" stroke="#ffffff" strokeOpacity=".16" strokeWidth="3" />
       <path
         d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216"
         fill="none"
-        stroke="#fdf4e0"
-        strokeWidth="52"
+        stroke="url(#multica-icon-mark)"
+        strokeWidth="54"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
