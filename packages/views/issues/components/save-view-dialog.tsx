@@ -584,6 +584,7 @@ export function SaveViewDialog({
             : null,
       definition_version: 1,
       query: {
+        archiveState: state.archiveState,
         statusFilters: state.statusFilters,
         priorityFilters: state.priorityFilters,
         assigneeFilters: state.assigneeFilters,

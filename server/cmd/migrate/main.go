@@ -273,7 +273,9 @@ var concurrentIndexCleanups = map[string]string{
 	"430_channel_outbound_message_binding_index":                "idx_channel_outbound_message_binding_route",
 	"441_agent_runtime_online_last_seen_index":                  "idx_agent_runtime_online_last_seen",
 	"442_agent_runtime_offline_last_seen_index":                 "idx_agent_runtime_offline_last_seen",
+	"443_issue_project_status_index":                            "idx_issue_project_status",
 	"444_github_pr_head_sha_index":                              "idx_github_pull_request_head_sha",
+	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

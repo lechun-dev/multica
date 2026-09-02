@@ -25,7 +25,9 @@ import { PRODUCT_NAME } from "@/config/product-brand";
  *
  * The two `any` icons come from the desktop app icon so an installed web app
  * and an installed desktop app show the same artwork; the maskable one is
- * full-bleed because Android crops it to the launcher's shape.
+ * full-bleed because Android crops it to the launcher's shape. The desktop
+ * source already contains transparent rounded corners for platforms that do
+ * not impose a mask of their own.
  */
 
 /** Launch path. Exported so manifest.test.ts can run it through the proxy. */

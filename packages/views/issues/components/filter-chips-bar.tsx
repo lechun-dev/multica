@@ -5,6 +5,7 @@ import { useStatusLabel } from "../utils/status-label";
 import { NO_PROPERTY_VALUE } from "../utils/filter";
 import { useMemo, type ReactNode } from "react";
 import {
+  Archive,
   CalendarDays,
   CircleDot,
   FolderKanban,
@@ -193,6 +194,7 @@ function useFilterChips(
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
+  const archiveState = useViewStore((s) => s.archiveState);
   const store = useViewStoreApi();
 
   const hasStoreFilters =
@@ -204,7 +206,8 @@ function useFilterChips(
     projectFilters.length > 0 ||
     includeNoProject ||
     labelFilters.length > 0 ||
-    Object.values(propertyFilters).some((selected) => selected.length > 0);
+    Object.values(propertyFilters).some((selected) => selected.length > 0) ||
+    archiveState !== "active";
   const showDateChip = !!onDateFilterChange && !!dateFilter;
 
   const enabled = hasStoreFilters;
@@ -266,6 +269,7 @@ function useFilterChips(
       includeNoProject: s.includeNoProject,
       labelFilters: s.labelFilters,
       propertyFilters: s.propertyFilters,
+      archiveState: s.archiveState,
     };
     switch (dimension) {
       case "status":
@@ -293,6 +297,9 @@ function useFilterChips(
         break;
       case "label":
         s.resetFiltersTo({ ...current, labelFilters: raw.labelFilters });
+        break;
+      case "archive":
+        s.resetFiltersTo({ ...current, archiveState: raw.archiveState });
         break;
       default: {
         const propertyId = dimension.slice("property:".length);
@@ -330,6 +337,13 @@ function useFilterChips(
   const deltaLabels = baseline
     ? labelFilters.filter((id) => !baseline.label.has(id))
     : labelFilters;
+  // Active is the safe default and therefore not rendered as a chip. A saved
+  // view's archived/all condition is part of the view itself, so it remains
+  // hidden until the user explicitly chooses a different state.
+  const deltaArchiveState =
+    archiveState !== "active" && archiveState !== baseline?.archiveState
+      ? archiveState
+      : null;
   const deltaProperties: Record<string, PropertyFilterValue[]> = {};
   for (const [id, selected] of Object.entries(propertyFilters)) {
     const fixed = baseline?.property.get(id);
@@ -340,6 +354,19 @@ function useFilterChips(
   }
 
   const chips: FilterChip[] = [];
+
+  if (deltaArchiveState) {
+    chips.push({
+      key: "archive",
+      icon: <Archive className={CHIP_ICON_CLASS} />,
+      label: t(($) => $.filters.section_archive),
+      value:
+        deltaArchiveState === "archived"
+          ? t(($) => $.filters.archive_archived)
+          : t(($) => $.filters.archive_all),
+      onRemove: () => clearDimension("archive"),
+    });
+  }
 
   const [onlyStatus] = deltaStatus;
   if (deltaStatus.length > 0) {
