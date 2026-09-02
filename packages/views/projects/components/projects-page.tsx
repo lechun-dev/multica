@@ -951,30 +951,23 @@ export function ProjectsPage() {
   const sortDirection = useProjectViewStore((s) => s.sortDirection);
   const hiddenColumns = useProjectViewStore((s) => s.hiddenColumns);
   const filters = useProjectViewStore((s) => s.filters);
-  const showWorkspaceOwnedItems = useProjectViewStore((s) => s.showWorkspaceOwnedItems);
   const toggleSort = useProjectViewStore((s) => s.toggleSort);
   const setSortField = useProjectViewStore((s) => s.setSortField);
   const setSortDirection = useProjectViewStore((s) => s.setSortDirection);
   const toggleColumn = useProjectViewStore((s) => s.toggleColumn);
   const toggleFilter = useProjectViewStore((s) => s.toggleFilter);
   const clearFilters = useProjectViewStore((s) => s.clearFilters);
-  const setShowWorkspaceOwnedItems = useProjectViewStore((s) => s.setShowWorkspaceOwnedItems);
   const isCompact = viewMode === "compact";
   const isColVisible = (key: ProjectColumnKey) => !hiddenColumns.includes(key);
 
   const membersQuery = useQuery(memberListOptions(wsId));
   const members = membersQuery.data ?? [];
   const visibilityReady = membersQuery.isSuccess;
-  const isWorkspaceOwner = useMemo(() => {
-    if (!visibilityReady || !currentUser) return false;
-    const me = members.find((m: MemberWithUser) => m.user_id === currentUser.id);
-    return me?.role === "owner";
-  }, [members, currentUser, visibilityReady]);
-  // 2026-09-01 coder(lq): Fail closed until workspace membership resolves so
-  // owner-only projects cannot flash into the list during the visibility check.
-  const includeWorkspaceOwned = visibilityReady
-    ? !isWorkspaceOwner || showWorkspaceOwnedItems
-    : false;
+  // 2026-09-02 coder(lq): Every caller is filtered by the backend project ACL;
+  // PROJECT_OWNER_BYPASS_ENABLED only controls the workspace owner's implicit
+  // all-project access. Keep the request scope fixed so a local view preference
+  // cannot be mistaken for an authorization setting.
+  const includeWorkspaceOwned = visibilityReady;
   const {
     data: projects = [],
     isLoading: projectsLoading,
@@ -1350,20 +1343,6 @@ export function ProjectsPage() {
                             </label>
                           ))}
                         </div>
-                      </div>
-                    )}
-                    {isWorkspaceOwner && (
-                      <div className="border-t px-3 py-2.5">
-                        <label className="flex cursor-pointer items-center justify-between gap-3">
-                          <span className="text-caption font-medium text-muted-foreground">
-                            {t(($) => $.toolbar.show_workspace_owned_items)}
-                          </span>
-                          <Switch
-                            size="sm"
-                            checked={showWorkspaceOwnedItems}
-                            onCheckedChange={setShowWorkspaceOwnedItems}
-                          />
-                        </label>
                       </div>
                     )}
                   </PopoverContent>

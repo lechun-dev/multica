@@ -78,6 +78,7 @@ type BusinessMetrics struct {
 	entitlementVersionRegression      prometheus.Counter
 	autopilotQuotaDecision            *prometheus.CounterVec
 	issueWindowDecision               *prometheus.CounterVec
+	agentRuntimeLookup                *prometheus.CounterVec
 
 	activeMu    sync.Mutex
 	activeTasks map[string]activeTaskLabels
@@ -257,7 +258,7 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Subsystem: "runtime_gc",
 			Name:      "backlog_runtimes",
 			Help:      "Bounded oldest-first sample of stale offline runtimes classified by garbage-collection state.",
-		}, metricLabels("multica_runtime_gc_backlog_runtimes")),
+		}, []string{labelReason}),
 		runtimeGCBlockedObservationFailed: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "multica",
 			Subsystem: "runtime_gc",
@@ -296,10 +297,17 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Namespace: "multica", Subsystem: "issue_window", Name: "decision_total",
 			Help: "Total recently-created issue window outcomes by request surface.",
 		}, metricLabels("multica_issue_window_decision_total")),
+		agentRuntimeLookup: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica",
+			Subsystem: "agent_runtime",
+			Name:      "lookup_total",
+			Help:      "Total agent_runtime single-row lookups by call-site source and result.",
+		}, metricLabels("multica_agent_runtime_lookup_total")),
 		activeTasks: map[string]activeTaskLabels{},
 		events:      newBusinessEventMetrics(),
 	}
 	m.prewarmFailureReasons()
+	m.prewarmRuntimeLookup()
 	for _, reason := range []string{RuntimeGCSkipEligibilityChanged, RuntimeGCSkipNonTerminalTask, RuntimeGCSkipWorkspaceMismatch} {
 		m.runtimeGCSkipped.WithLabelValues(reason).Add(0)
 	}
@@ -336,9 +344,6 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.runtimeGCDeleted,
 		m.runtimeGCFailed,
 		m.runtimeGCSkipped,
-		m.runtimeGCBlocked,
-		m.runtimeGCBacklog,
-		m.runtimeGCBlockedObservationFailed,
 		m.entitlementConfigError,
 		m.entitlementCache,
 		m.entitlementRefresh,
@@ -347,6 +352,7 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.entitlementVersionRegression,
 		m.autopilotQuotaDecision,
 		m.issueWindowDecision,
+		m.agentRuntimeLookup,
 	}, m.events.collectors()...)
 }
 
@@ -404,6 +410,15 @@ func (m *BusinessMetrics) RecordIssueWindowDecision(action, surface, result stri
 		surface = "other"
 	}
 	m.issueWindowDecision.WithLabelValues(action, surface, result).Inc()
+}
+
+func (m *BusinessMetrics) RecordAgentRuntimeLookup(source, result string) {
+	if m == nil {
+		return
+	}
+	source = NormalizeAgentRuntimeLookupSource(source)
+	result = NormalizeAgentRuntimeLookupResult(result)
+	m.agentRuntimeLookup.WithLabelValues(source, result).Inc()
 }
 
 func (m *BusinessMetrics) RecordRuntimeGCDeleted() {
@@ -749,6 +764,14 @@ func (m *BusinessMetrics) prewarmFailureReasons() {
 			for _, reason := range taskfailure.AllReasons() {
 				m.taskFailed.WithLabelValues(source, runtimeMode, reason.String()).Add(0)
 			}
+		}
+	}
+}
+
+func (m *BusinessMetrics) prewarmRuntimeLookup() {
+	for _, source := range AllRuntimeLookupSources() {
+		for _, result := range AllRuntimeLookupResults() {
+			m.agentRuntimeLookup.WithLabelValues(source, result).Add(0)
 		}
 	}
 }
