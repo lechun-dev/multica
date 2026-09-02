@@ -905,6 +905,7 @@ export class ApiClient {
   // Issues
   async listIssues(params?: ListIssuesParams): Promise<ListIssuesResponse> {
     const search = new URLSearchParams();
+    if (params?.archive_state) search.set("archive_state", params.archive_state);
     if (params?.limit) search.set("limit", String(params.limit));
     if (params?.offset) search.set("offset", String(params.offset));
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
@@ -972,6 +973,7 @@ export class ApiClient {
 
   async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
     const search = new URLSearchParams({ group_by: params.group_by });
+    if (params.archive_state) search.set("archive_state", params.archive_state);
     if (params.limit) search.set("limit", String(params.limit));
     if (params.offset) search.set("offset", String(params.offset));
     if (params.workspace_id) search.set("workspace_id", params.workspace_id);
@@ -1248,6 +1250,30 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  /** Archive an issue without deleting its history; operation is idempotent. */
+  async archiveIssue(id: string): Promise<Issue> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+    });
+    const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
+      endpoint: "POST /api/issues/:id/archive",
+    });
+    if (!issue) throw new Error("Invalid archive issue response");
+    return issue;
+  }
+
+  /** Restore an archived issue to the active list; operation is idempotent. */
+  async restoreIssue(id: string): Promise<Issue> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/restore`, {
+      method: "POST",
+    });
+    const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
+      endpoint: "POST /api/issues/:id/restore",
+    });
+    if (!issue) throw new Error("Invalid restore issue response");
+    return issue;
   }
 
   async moveIssue(id: string, data: MoveIssueRequest): Promise<Issue> {

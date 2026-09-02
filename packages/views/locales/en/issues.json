@@ -725,6 +725,12 @@
     "remove_parent_issue_success": "Removed parent issue",
     "add_sub_issue": "Add sub-issue...",
     "delete_issue": "Delete issue"
+    ,"archive": "Archive issue"
+    ,"restore": "Restore issue"
+    ,"archive_success": "Issue archived"
+    ,"restore_success": "Issue restored"
+    ,"archive_failed": "Failed to archive issue"
+    ,"restore_failed": "Failed to restore issue"
   },
   "pickers": {
     "custom_property": {

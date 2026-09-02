@@ -18,11 +18,15 @@ download page, use a semver prerelease tag such as `v0.4.70-beta.1`:
 1. Create and push the tag from the reviewed commit on `main`.
 2. The release workflows mark tags containing a suffix (`-beta.1`, `-rc.1`,
    etc.) as GitHub **Pre-release** and do not mark them **Latest**.
-3. Give testers the direct GitHub Release URL. Do not add the URL to the
+3. Deploy the staging private environment first with the
+   `Deploy Multica Staging` workflow and pass the same tag as `image_tag`,
+   then let desktop prerelease builds point their API, Web, and WS endpoints
+   at that staging backend.
+4. Give testers the direct GitHub Release URL. Do not add the URL to the
    website or stable install instructions.
-4. Testers can download the CLI archive and run `missionos version` (or the
+5. Testers can download the CLI archive and run `missionos version` (or the
    compatible `multica version`) against the normal server.
-5. After validation, create the corresponding stable tag (for example
+6. After validation, create the corresponding stable tag (for example
    `v0.4.70`). That stable release becomes **Latest** and is then picked up by
    the website and automatic update checks.
 

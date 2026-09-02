@@ -694,6 +694,12 @@
     "remove_parent_issue_success": "已移除父任务",
     "add_sub_issue": "添加子任务...",
     "delete_issue": "删除任务"
+    ,"archive": "归档任务"
+    ,"restore": "恢复任务"
+    ,"archive_success": "任务已归档"
+    ,"restore_success": "任务已恢复"
+    ,"archive_failed": "归档任务失败"
+    ,"restore_failed": "恢复任务失败"
   },
   "pickers": {
     "custom_property": {

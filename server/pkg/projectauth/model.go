@@ -39,6 +39,9 @@ const (
 	// project metadata editing so members can comment without broad edit access.
 	IssueComment   Permission = "project.issue.comment"
 	IssueManage    Permission = "project.issue.manage"
+	// 2026-09-02 coder(lq): Archive is isolated from issue management so
+	// deployments can grant retention control without granting task edits.
+	IssueArchive   Permission = "project.issue.archive"
 	AgentUse       Permission = "project.agent.use"
 	MemberManage   Permission = "project.member.manage"
 	SettingsManage Permission = "project.settings.manage"

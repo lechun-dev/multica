@@ -206,6 +206,8 @@ export interface Issue {
   labels?: Label[];
   created_at: string;
   updated_at: string;
+  /** RFC3339 timestamp when the issue was archived; null for active issues. */
+  archived_at?: string | null;
   /** Monotonic server revision; absent when connected to an older backend. */
   revision?: number;
   /**

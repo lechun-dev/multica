@@ -45,6 +45,9 @@ func (h *Handler) MoveIssue(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIssueProjectPermission(w, r, current, projectauth.IssueManage) {
 		return
 	}
+	if rejectArchivedIssueMutation(w, current) {
+		return
+	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

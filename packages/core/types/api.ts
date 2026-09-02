@@ -129,6 +129,8 @@ export interface IssueTriggerPreview {
 }
 
 export interface ListIssuesParams {
+  /** Filter archived issues; defaults to active on the server. */
+  archive_state?: "active" | "archived" | "all";
   /** 2026-08-28 coder(lq): Include workspace-owner-only issues in list results. */
   include_workspace_owned?: boolean;
   limit?: number;
@@ -223,6 +225,8 @@ export interface IssueActorRef {
 }
 
 export interface ListGroupedIssuesParams {
+  /** Filter archived issues; defaults to active on the server. */
+  archive_state?: "active" | "archived" | "all";
   /** 2026-08-28 coder(lq): Include workspace-owner-only issues in grouped results. */
   include_workspace_owned?: boolean;
   group_by: "assignee";

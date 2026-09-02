@@ -1243,6 +1243,8 @@ export const IssueSchema = z.object({
   labels: z.array(z.unknown()).optional(),
   created_at: z.string(),
   updated_at: z.string(),
+  // Optional for mixed-version self-hosted deployments; old servers omit it.
+  archived_at: z.string().nullable().optional().default(null),
   revision: z.number().int().positive().optional(),
   // Optional for compatibility with older self-hosted backends; a current
   // backend emits null until its historical backfill reaches the issue.

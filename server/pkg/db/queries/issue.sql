@@ -8,9 +8,10 @@
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
@@ -80,6 +81,22 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 -- name: GetIssueInWorkspace :one
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
+
+-- name: ArchiveIssue :one
+UPDATE issue
+SET archived_at = now(),
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL
+RETURNING *;
+
+-- name: RestoreIssue :one
+UPDATE issue
+SET archived_at = NULL,
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND archived_at IS NOT NULL
+RETURNING *;
 
 -- name: LockIssueForChannelMediaBind :one
 -- Channel media resolves after /issue creation. Hold a key-share lock while
@@ -350,9 +367,10 @@ DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   -- Negate only known terminal keys so an unknown legacy key remains visible.
   AND NOT (i.status = ANY(sqlc.arg('terminal_status_keys')::text[]))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
@@ -451,6 +469,7 @@ ORDER BY i.position ASC, i.created_at DESC;
 -- See ListIssues for the semantics of involves_user_id.
 SELECT count(*) FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
@@ -501,6 +520,7 @@ WHERE i.workspace_id = $1
 -- monotonic counter and is sibling-stable.
 SELECT * FROM issue
 WHERE parent_issue_id = $1
+  AND archived_at IS NULL
 ORDER BY number ASC;
 
 -- name: ListChildrenByParents :many
@@ -514,6 +534,7 @@ ORDER BY number ASC;
 SELECT * FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')
   AND parent_issue_id = ANY(sqlc.arg('parent_ids')::uuid[])
+  AND archived_at IS NULL
 ORDER BY parent_issue_id, number ASC;
 
 -- name: GetIssueByOrigin :one
@@ -526,6 +547,7 @@ SELECT * FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
+  AND archived_at IS NULL
 LIMIT 1;
 
 -- name: CountCreatedIssueAssignees :many
@@ -549,6 +571,7 @@ SELECT parent_issue_id,
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  AND archived_at IS NULL
 GROUP BY parent_issue_id;
 
 -- SearchIssues: moved to handler (dynamic SQL for multi-word search support).
@@ -601,7 +624,8 @@ RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
 SELECT COUNT(*)::bigint
 FROM (
     SELECT 1
-    FROM issue
-    WHERE workspace_id = $1
+FROM issue
+WHERE workspace_id = $1
+  AND archived_at IS NULL
     LIMIT sqlc.arg('limit')::bigint
 ) bounded_issues;

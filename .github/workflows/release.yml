@@ -442,6 +442,7 @@ jobs:
 
       - name: Package Desktop installers (${{ matrix.target }})
         working-directory: apps/desktop
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # electron-builder's GitHub publisher reads this:
@@ -451,4 +452,14 @@ jobs:
           # trust boundary. Set CSC_LINK in repo secrets to enable
           # Windows signing later.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: node scripts/package.mjs --${{ matrix.target }} --x64 --arm64 --publish always
+        run: |
+          set -euo pipefail
+          # 2026-09-02 coder(lq): Prerelease tags must ship desktop builds
+          # that talk to the staging backend/web pair, otherwise testers land
+          # on the production self-host by accident.
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            export VITE_API_URL="https://multica-api.copilothub.ai"
+            export VITE_WS_URL="wss://multica-api.copilothub.ai/ws"
+            export VITE_APP_URL="https://multica-app.copilothub.ai"
+          fi
+          node scripts/package.mjs --${{ matrix.target }} --x64 --arm64 --publish always

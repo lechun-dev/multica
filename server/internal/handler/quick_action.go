@@ -797,6 +797,9 @@ func (h *Handler) RenderQuickAction(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIssueProjectPermission(w, r, issue, projectauth.AgentUse) {
 		return
 	}
+	if rejectArchivedIssueMutation(w, issue) {
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -856,6 +859,9 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.requireIssueProjectPermission(w, r, issue, projectauth.AgentUse) {
+		return
+	}
+	if rejectArchivedIssueMutation(w, issue) {
 		return
 	}
 	userID, ok := requireUserID(w, r)

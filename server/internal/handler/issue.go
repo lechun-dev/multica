@@ -80,6 +80,8 @@ type IssueResponse struct {
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
 	Revision  int64   `json:"revision"`
+	// 2026-09-02 coder(lq): Expose archive state without changing task status.
+	ArchivedAt *string `json:"archived_at,omitempty"`
 	// LastActivityAt is the latest semantic issue activity. It stays nullable
 	// while the operator-run historical backfill is incomplete.
 	LastActivityAt *string `json:"last_activity_at"`
@@ -321,6 +323,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		CreatedAt:      timestampToString(i.CreatedAt),
 		UpdatedAt:      timestampToString(i.UpdatedAt),
 		Revision:       i.Revision,
+		ArchivedAt:     timestampToNanoPtr(i.ArchivedAt),
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
@@ -358,6 +361,7 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		CreatedAt:      timestampToString(i.CreatedAt),
 		UpdatedAt:      timestampToString(i.UpdatedAt),
 		Revision:       i.Revision,
+		ArchivedAt:     timestampToNanoPtr(i.ArchivedAt),
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
@@ -427,6 +431,7 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 		CreatedAt:      timestampToString(i.CreatedAt),
 		UpdatedAt:      timestampToString(i.UpdatedAt),
 		Revision:       i.Revision,
+		ArchivedAt:     timestampToNanoPtr(i.ArchivedAt),
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
@@ -625,7 +630,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 // 2026-09-01 coder(lq): Keep the legacy search builder default-inclusive for
 // older callers, while allowing the task page's workspace-owner toggle to
 // flow into the same SQL visibility predicate as list/table queries.
-func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string, includeWorkspaceOwned bool) (string, []any) {
+func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string, includeWorkspaceOwned bool, archiveStates ...string) (string, []any) {
 	// Lowercase in Go so SQL only needs LOWER() on the column side.
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
@@ -709,6 +714,11 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 	}
 
 	whereClause := "(" + strings.Join(whereParts, " OR ") + ")"
+	archiveState := "active"
+	if len(archiveStates) > 0 && archiveStates[0] != "" {
+		archiveState = archiveStates[0]
+	}
+	whereClause = appendIssueArchivePredicate([]string{whereClause}, archiveState, "i")[0]
 
 	if !includeClosed {
 		whereClause += " AND issue_effective_status(i.workspace_id, i.status) NOT IN ('done', 'cancelled')"
@@ -872,8 +882,8 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
-		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
-		i.revision,
+		 i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
+		 i.revision, i.archived_at,
 		COUNT(*) OVER() AS total_count,
 		%s AS match_source,
 		%s AS matched_comment_content
@@ -922,6 +932,10 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeClosed := r.URL.Query().Get("include_closed") == "true"
+	archiveState, ok := parseIssueArchiveState(w, r.URL.Query().Get("archive_state"))
+	if !ok {
+		return
+	}
 	// 2026-09-01 coder(lq): Search is another task-list read path. Honor the
 	// same owner-only visibility toggle used by /api/issues and the table API;
 	// otherwise workspace owners could still discover ungranted tasks by title.
@@ -947,7 +961,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sqlQuery, args := buildSearchQueryWithWorkspaceScope(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, includeWorkspaceOwned)
+	sqlQuery, args := buildSearchQueryWithWorkspaceScope(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, includeWorkspaceOwned, archiveState)
 	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
 	args[3] = wsUUID
 	args[len(args)-2] = limit
@@ -980,6 +994,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.Number,
 				&sr.issue.ProjectID,
 				&sr.issue.Revision,
+				&sr.issue.ArchivedAt,
 				&sr.totalCount,
 				&sr.matchSource,
 				&sr.matchedCommentContent,
@@ -1081,6 +1096,10 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	archiveState, ok := parseIssueArchiveState(w, r.URL.Query().Get("archive_state"))
 	if !ok {
 		return
 	}
@@ -1371,6 +1390,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	// Build dynamic SQL — same approach as ListGroupedIssues.
 	where := []string{"i.workspace_id = $1"}
+	where = appendIssueArchivePredicate(where, archiveState, "i")
 	args := []any{wsUUID}
 	addArg := func(v any) string {
 		args = append(args, v)
@@ -1580,7 +1600,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-	   i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE %s
 ORDER BY %s
@@ -1621,6 +1641,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.ArchivedAt,
 		); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -1678,6 +1699,34 @@ type issueDateFilter struct {
 	column string
 	start  time.Time
 	end    time.Time
+}
+
+// 2026-09-02 coder(lq): Keep archive filtering explicit and shared by every
+// issue read endpoint. Unknown values fail closed instead of accidentally
+// exposing historical tasks.
+func parseIssueArchiveState(w http.ResponseWriter, raw string) (string, bool) {
+	state := strings.TrimSpace(strings.ToLower(raw))
+	if state == "" {
+		return "active", true
+	}
+	switch state {
+	case "active", "archived", "all":
+		return state, true
+	default:
+		writeError(w, http.StatusBadRequest, "invalid archive_state")
+		return "", false
+	}
+}
+
+func appendIssueArchivePredicate(where []string, state, alias string) []string {
+	switch state {
+	case "archived":
+		return append(where, alias+".archived_at IS NOT NULL")
+	case "all":
+		return where
+	default:
+		return append(where, alias+".archived_at IS NULL")
+	}
 }
 
 func parseIssueDateFilter(w http.ResponseWriter, values url.Values) (*issueDateFilter, bool) {
@@ -1845,6 +1894,10 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	archiveState, ok := parseIssueArchiveState(w, r.URL.Query().Get("archive_state"))
+	if !ok {
+		return
+	}
 	windowPolicy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	limit := 50
@@ -1864,6 +1917,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	where := []string{"i.workspace_id = $1"}
+	where = appendIssueArchivePredicate(where, archiveState, "i")
 	args := []any{wsUUID}
 	addArg := func(v any) string {
 		args = append(args, v)
@@ -2187,7 +2241,7 @@ WITH ranked AS (
 		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
-		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision,
+		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.archived_at,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
 		ROW_NUMBER() OVER (
 			PARTITION BY i.assignee_type, i.assignee_id
@@ -2200,7 +2254,7 @@ SELECT
 	id, workspace_id, title, description, status, priority,
 	assignee_type, assignee_id, creator_type, creator_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at, last_activity_at,
-	number, project_id, metadata, stage, properties, revision, group_total
+	number, project_id, metadata, stage, properties, revision, archived_at, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY
@@ -2249,6 +2303,7 @@ ORDER BY
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.ArchivedAt,
 			&row.GroupTotal,
 		); err != nil {
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
@@ -3615,6 +3670,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIssueProjectPermission(w, r, prevIssue, projectauth.IssueManage) {
 		return
 	}
+	if rejectArchivedIssueMutation(w, prevIssue) {
+		return
+	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(prevIssue.WorkspaceID)
 
@@ -4372,6 +4430,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !h.requireIssueProjectPermission(w, r, prevIssue, projectauth.IssueManage) {
+			return
+		}
+		if rejectArchivedIssueMutation(w, prevIssue) {
 			return
 		}
 

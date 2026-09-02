@@ -172,6 +172,9 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIssueProjectPermission(w, r, issue, projectauth.AgentUse) {
 		return
 	}
+	if rejectArchivedIssueMutation(w, issue) {
+		return
+	}
 
 	// Body is optional. A zero-length body or `{}` keeps the legacy
 	// assignee-driven rerun behaviour the CLI relies on.

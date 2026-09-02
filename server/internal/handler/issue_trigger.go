@@ -197,6 +197,9 @@ func (h *Handler) PreviewIssueTrigger(w http.ResponseWriter, r *http.Request) {
 	resp := IssueTriggerPreviewResponse{Triggers: make([]IssueTriggerPreviewItem, 0)}
 
 	appendTrigger := func(issue db.Issue, in service.IssueTriggerInput) {
+		if issueArchiveSuppressesAgentTriggers(issue) {
+			return
+		}
 		probe := h.issueTriggerPreviewProbe(r, actorType, actorID, workspaceID, issue)
 		if trigger, ok := h.IssueService.WillEnqueueRun(r.Context(), in, probe); ok {
 			resp.Triggers = append(resp.Triggers, IssueTriggerPreviewItem{
