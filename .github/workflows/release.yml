@@ -452,14 +452,9 @@ jobs:
           # trust boundary. Set CSC_LINK in repo secrets to enable
           # Windows signing later.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+          STAGING_WS_URL: ${{ vars.STAGING_WS_URL }}
+          STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
         run: |
           set -euo pipefail
-          # 2026-09-02 coder(lq): Prerelease tags must ship desktop builds
-          # that talk to the staging backend/web pair, otherwise testers land
-          # on the production self-host by accident.
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
-            export VITE_API_URL="https://multica-api.copilothub.ai"
-            export VITE_WS_URL="wss://multica-api.copilothub.ai/ws"
-            export VITE_APP_URL="https://multica-app.copilothub.ai"
-          fi
           node scripts/package.mjs --${{ matrix.target }} --x64 --arm64 --publish always

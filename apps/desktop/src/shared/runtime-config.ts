@@ -28,7 +28,11 @@ export function isSupportedReleaseServerUrl(apiUrl: string): boolean {
     const url = new URL(apiUrl);
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
-      ["api.multica.ai", "mission.lechun.cc"].includes(url.hostname.toLowerCase())
+      [
+        "api.multica.ai",
+        "mission.lechun.cc",
+        "mission-staging.lechun.cc",
+      ].includes(url.hostname.toLowerCase())
     );
   } catch {
     return false;

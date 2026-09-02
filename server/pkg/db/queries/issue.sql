@@ -135,6 +135,7 @@ SET description = CASE
     updated_at = now()
 WHERE id = sqlc.arg(id)
   AND workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: LockIssueForDelete :one
@@ -155,6 +156,7 @@ SET parent_issue_id = NULL,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now())
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND parent_issue_id = sqlc.arg(parent_issue_id)
+  AND archived_at IS NULL
   AND NOT COALESCE(id = ANY(sqlc.arg(excluded_issue_ids)::uuid[]), false)
 RETURNING *;
 
@@ -207,6 +209,7 @@ WITH candidate AS (
                     SELECT COALESCE(MIN(target.position), 0) - 1
                     FROM issue AS target
                     WHERE target.workspace_id = i.workspace_id
+                      AND target.archived_at IS NULL
                       AND target.status = sqlc.narg('status')::text
                 )
             ELSE i.position
@@ -218,6 +221,7 @@ WITH candidate AS (
         sqlc.narg('stage')::integer AS next_stage
     FROM issue AS i
     WHERE i.id = $1
+      AND i.archived_at IS NULL
       AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
 ), changed AS (
     SELECT
@@ -266,6 +270,7 @@ WHERE i.id = changed.id
   -- from the same snapshot; EvalPlanQual re-evaluates this target-row predicate
   -- after waiting for the first writer, leaving the stale writer with 0 rows.
   AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
+  AND i.archived_at IS NULL
 RETURNING i.*;
 
 -- name: UpdateIssueStatus :one
@@ -288,7 +293,7 @@ UPDATE issue AS i SET
         ELSE i.last_activity_at
     END,
     updated_at = now()
-WHERE i.id = $1 AND i.workspace_id = $3
+WHERE i.id = $1 AND i.workspace_id = $3 AND i.archived_at IS NULL
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one
@@ -562,6 +567,7 @@ WHERE workspace_id = $1
   AND creator_type = 'member'
   AND assignee_type IS NOT NULL
   AND assignee_id IS NOT NULL
+  AND archived_at IS NULL
 GROUP BY assignee_type, assignee_id;
 
 -- name: ChildIssueProgress :many
@@ -589,7 +595,7 @@ UPDATE issue SET
         ELSE last_activity_at
     END,
     updated_at = now()
-WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id')
+WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
 RETURNING *;
 
 -- name: DeleteIssueMetadataKey :one
@@ -604,7 +610,7 @@ UPDATE issue SET
         ELSE last_activity_at
     END,
     updated_at = now()
-WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id')
+WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
 RETURNING *;
 
 -- name: MarkIssueFirstExecuted :one
@@ -614,7 +620,7 @@ RETURNING *;
 -- retries and re-assignments hit the WHERE clause and no-op.
 UPDATE issue
 SET first_executed_at = now()
-WHERE id = $1 AND first_executed_at IS NULL
+WHERE id = $1 AND first_executed_at IS NULL AND archived_at IS NULL
 RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
 
 -- name: CountIssuesUpTo :one
