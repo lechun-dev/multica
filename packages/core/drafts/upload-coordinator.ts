@@ -29,6 +29,8 @@ export interface UploadCoordinatorContext {
   issueId?: string;
   commentId?: string;
   chatSessionId?: string;
+  /** 2026-09-03 coder(lq): Keep comment uploads temporary until the comment is submitted. */
+  commentDraft?: boolean;
 }
 
 export type UploadOutcome =
@@ -77,6 +79,7 @@ export function startUpload({
           issueId: ctx?.issueId,
           commentId: ctx?.commentId,
           chatSessionId: ctx?.chatSessionId,
+          commentDraft: ctx?.commentDraft,
         },
         controller.signal,
       );
