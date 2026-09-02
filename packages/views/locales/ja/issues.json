@@ -128,6 +128,10 @@
     "section_project": "プロジェクト",
     "section_label": "ラベル",
     "section_date": "日付",
+    "section_archive": "アーカイブ",
+    "archive_active": "未アーカイブ",
+    "archive_archived": "アーカイブ済み",
+    "archive_all": "すべて",
     "date_field": "項目",
     "date_field_created": "作成",
     "date_field_updated": "更新",
@@ -693,7 +697,13 @@
     "remove_parent_issue": "親タスクを解除",
     "remove_parent_issue_success": "親タスクを解除しました",
     "add_sub_issue": "サブタスクを追加...",
-    "delete_issue": "タスクを削除"
+    "delete_issue": "タスクを削除",
+    "archive": "タスクをアーカイブ",
+    "restore": "タスクを復元",
+    "archive_success": "タスクをアーカイブしました",
+    "restore_success": "タスクを復元しました",
+    "archive_failed": "タスクをアーカイブできませんでした",
+    "restore_failed": "タスクを復元できませんでした"
   },
   "pickers": {
     "custom_property": {

@@ -168,6 +168,7 @@ describe("IssueSurface — scope switch loading semantics", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       ...statusTableMethodsFromLegacy(listIssues),
       listGroupedIssues: vi.fn(() => never()),
@@ -259,6 +260,7 @@ describe("IssueSurface — scope switch loading semantics", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       ...statusTableMethodsFromLegacy(listIssues),
       listGroupedIssues: vi.fn(() => never()),
@@ -338,6 +340,7 @@ describe("IssueSurface — table pagination ownership", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
@@ -366,7 +369,6 @@ describe("IssueSurface — table pagination ownership", () => {
       ),
       getChildIssueProgress: vi.fn(() => never()),
       listProperties: vi.fn(() => never()),
-      listMembers: vi.fn(() => never()),
       listAgents: vi.fn(() => never()),
       listSquads: vi.fn(() => never()),
     } as unknown as ApiClient);
@@ -439,6 +441,7 @@ describe("IssueSurface — table pagination ownership", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
@@ -447,7 +450,6 @@ describe("IssueSurface — table pagination ownership", () => {
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
-      listMembers: vi.fn(() => Promise.resolve([])),
       listAgents: vi.fn(() => Promise.resolve([])),
       listSquads: vi.fn(() => Promise.resolve([])),
     } as unknown as ApiClient);
@@ -511,6 +513,7 @@ describe("IssueSurface — table pagination ownership", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       listIssueTableRows: vi.fn(() =>
         Promise.resolve({
@@ -529,7 +532,6 @@ describe("IssueSurface — table pagination ownership", () => {
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
-      listMembers: vi.fn(() => Promise.resolve([])),
       listAgents: vi.fn(() => Promise.resolve([])),
       listSquads: vi.fn(() => Promise.resolve([])),
     } as unknown as ApiClient);
@@ -583,6 +585,7 @@ describe("IssueSurface — table pagination ownership", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
@@ -591,7 +594,6 @@ describe("IssueSurface — table pagination ownership", () => {
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
-      listMembers: vi.fn(() => Promise.resolve([])),
       listAgents: vi.fn(() => Promise.resolve([])),
       listSquads: vi.fn(() => Promise.resolve([])),
     } as unknown as ApiClient);
@@ -655,6 +657,7 @@ describe("IssueSurface — table pagination ownership", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       listIssueTableGroups: vi.fn(() =>
         Promise.resolve({
@@ -687,7 +690,6 @@ describe("IssueSurface — table pagination ownership", () => {
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getChildIssueProgress: vi.fn(() => Promise.resolve([])),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
-      listMembers: vi.fn(() => Promise.resolve([])),
       listAgents: vi.fn(() => Promise.resolve([])),
       listSquads: vi.fn(() => Promise.resolve([])),
     } as unknown as ApiClient);
@@ -748,6 +750,7 @@ describe("IssueSurface — filtered empty state", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       ...statusTableMethodsFromLegacy(listIssues),
       listGroupedIssues: vi.fn(() => never()),
@@ -831,6 +834,7 @@ describe("IssueSurface — status catalog failure", () => {
     const tableMethods = statusTableMethodsFromLegacy(listIssues);
     setApiInstance({
       listIssueStatuses,
+      listMembers: async () => [],
       listIssues,
       ...tableMethods,
       listIssueTableRows: vi.fn((request: IssueTableRowsRequest) => {
