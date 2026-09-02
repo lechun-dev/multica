@@ -917,6 +917,9 @@ func (h *Handler) SetIssueProperty(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
 		return
 	}
+	if rejectArchivedIssueMutation(w, issue) {
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
@@ -1009,14 +1012,18 @@ func (h *Handler) DeleteIssueProperty(w http.ResponseWriter, r *http.Request) {
 	if !h.requireIssueProjectPermission(w, r, issue, projectauth.Edit) {
 		return
 	}
+	if rejectArchivedIssueMutation(w, issue) {
+		return
+	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
 
-	// Deleting a value is allowed even for archived definitions — cleanup
-	// must never be blocked. Unknown property ids only need to belong to the
-	// workspace; `properties - key` is a no-op when the key is absent.
+	// Active issues may clear values from archived definitions; archived issues
+	// are rejected above because their task body is immutable. Unknown property
+	// ids only need to belong to the workspace; `properties - key` is a no-op
+	// when the key is absent.
 	if _, err := h.Queries.GetIssueProperty(r.Context(), db.GetIssuePropertyParams{ID: propertyID, WorkspaceID: issue.WorkspaceID}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "property not found")

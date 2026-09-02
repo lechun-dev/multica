@@ -58,6 +58,8 @@ export interface UploadContext {
   issueId?: string;
   commentId?: string;
   chatSessionId?: string;
+  /** Upload is a temporary attachment for a comment draft. */
+  commentDraft?: boolean;
 }
 
 // pickMarkdownLink chooses the URL the editor will write into markdown.
@@ -125,6 +127,7 @@ export function useFileUpload(
           issueId: ctx?.issueId,
           commentId: ctx?.commentId,
           chatSessionId: ctx?.chatSessionId,
+          commentDraft: ctx?.commentDraft,
         });
         return toUploadResult(att);
       } finally {

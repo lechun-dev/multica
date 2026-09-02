@@ -1894,6 +1894,13 @@ func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtyp
 }
 
 func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
+	// 2026-09-02 coder(lq): A merged PR can arrive after the task was
+	// archived. Keep the archive contract authoritative and avoid changing its
+	// status or publishing a misleading completion event.
+	if issue.ArchivedAt.Valid {
+		slog.Debug("github: skip archived issue status transition", "issue_id", uuidToString(issue.ID))
+		return
+	}
 	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 		ID:          issue.ID,
 		Status:      "done",

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func inboxRequest(method, path, workspaceID string) *http.Request {
@@ -56,6 +57,38 @@ func TestListInboxProjectsCurrentIssueStatusAndPriority(t *testing.T) {
 	}
 	if items[0].IssuePriority == nil || *items[0].IssuePriority != "high" {
 		t.Errorf("issue_priority = %v, want high", items[0].IssuePriority)
+	}
+}
+
+func TestUnreadInboxCountsExcludeArchivedIssues(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Unread archived issue", "inbox-unread-archived-"+uuid.NewString())
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	archivedIssueID := dbfx.Issue(t, "Archived issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"archived_at":  "now()",
+	})
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   workspaceID,
+		"recipient_type": "member",
+		"recipient_id":   testUserID,
+		"type":           "status_changed",
+		"severity":       "info",
+		"issue_id":       archivedIssueID,
+		"title":          "Archived issue notification",
+		"read":           false,
+		"archived":       false,
+	})
+
+	count, err := testHandler.Queries.CountUnreadInbox(t.Context(), db.CountUnreadInboxParams{
+		WorkspaceID:   parseUUID(workspaceID),
+		RecipientType: "member",
+		RecipientID:   parseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("count unread inbox: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count unread inbox = %d, want archived issue excluded", count)
 	}
 }
 

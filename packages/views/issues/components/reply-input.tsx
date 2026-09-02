@@ -82,7 +82,7 @@ function ReplyInput({
   // `gate` widens the editor gate with coordinator-owned placeholders — see
   // CommentInput.
   const { uploads, attachments: pendingAttachments, handleUpload, removeUpload, gate } =
-    useCommentUploads(draftKey, { issueId }, uploadGate, editorRef);
+    useCommentUploads(draftKey, { issueId, commentDraft: true }, uploadGate, editorRef);
 
   // Readonly-first: static shell until intent; an unsent draft mounts the
   // real editor immediately (see CommentInput). This is also what keeps the

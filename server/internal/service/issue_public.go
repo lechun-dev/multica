@@ -32,6 +32,11 @@ type IssueContentPatch struct {
 // remain separate operations because each has additional policy and side
 // effects.
 func (s *IssueService) UpdateContent(ctx context.Context, issue db.Issue, patch IssueContentPatch) (db.Issue, error) {
+	// 2026-09-02 coder(lq): Enforce archive immutability at the shared service
+	// boundary before a plugin hook or database query can produce side effects.
+	if issue.ArchivedAt.Valid {
+		return db.Issue{}, ErrArchivedIssue
+	}
 	params := db.UpdateIssueParams{
 		ID:            issue.ID,
 		AssigneeType:  issue.AssigneeType,

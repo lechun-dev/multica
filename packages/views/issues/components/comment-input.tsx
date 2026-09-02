@@ -57,7 +57,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
   // `gate` widens the editor gate with coordinator-owned placeholders, so a
   // composer reopened over a still-in-flight upload cannot send past it.
   const { attachments: pendingAttachments, handleUpload, gate } =
-    useCommentUploads(draftKey, { issueId }, uploadGate, editorRef);
+    useCommentUploads(draftKey, { issueId, commentDraft: true }, uploadGate, editorRef);
 
   // Readonly-first: the composer renders as a same-looking static shell until
   // the user shows intent (click / keyboard / file drop). An unsent draft is

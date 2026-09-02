@@ -416,7 +416,7 @@ export function useCoordinatedUploads(
           clientUploadId,
           file,
           api,
-          ctx: { issueId, commentId, chatSessionId },
+          ctx: { issueId, commentId, chatSessionId, commentDraft: ctx.commentDraft },
           onSettled: (outcome) => {
             if (outcome.status === "uploaded") {
               if (target) {

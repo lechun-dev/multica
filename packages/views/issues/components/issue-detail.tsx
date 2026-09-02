@@ -39,7 +39,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
-import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider } from "../../editor";
+import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, ReadonlyContent, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider } from "../../editor";
 import { collectImageSequence, type ImageSequenceBlock } from "@multica/core/attachments/image-sequence";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import {
@@ -2266,6 +2266,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return <IssueNotFound showBackLink={!onDelete} leading={leadingAction} />;
   }
 
+  const isArchived = Boolean(issue.archived_at);
+
   const persistDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
   ) => {
@@ -2334,6 +2336,68 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${propertiesOpen ? "rotate-90" : ""}`} />
         </button>
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
+          {isArchived ? (
+            <>
+              <PropRow label={t(($) => $.detail.prop_status)} interactive={false}>
+                <StatusIcon status={issue.status} className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{resolveStatusLabel(issue.status)}</span>
+              </PropRow>
+              <PropRow label={t(($) => $.detail.prop_assignee)} interactive={false}>
+                {issue.assignee_type && issue.assignee_id ? (
+                  <>
+                    <ActorAvatar actorType={issue.assignee_type} actorId={issue.assignee_id} size="sm" />
+                    <span className="truncate">{getActorName(issue.assignee_type, issue.assignee_id)}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">{t(($) => $.actions.unassigned)}</span>
+                )}
+              </PropRow>
+              <PropRow label={t(($) => $.detail.prop_project)} interactive={false}>
+                {breadcrumbProject ? (
+                  <>
+                    <ProjectIcon project={breadcrumbProject} size="sm" />
+                    <span className="truncate">{breadcrumbProject.title}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">{issue.project_id ?? t(($) => $.table.no_value)}</span>
+                )}
+              </PropRow>
+              {visibleOptionalProps.has("priority") && (
+                <PropRow label={t(($) => $.detail.prop_priority)} interactive={false}>
+                  <PriorityIcon priority={issue.priority} className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{t(($) => $.priority[issue.priority])}</span>
+                </PropRow>
+              )}
+              {issue.parent_issue_id != null && visibleOptionalProps.has("stage") && (
+                <PropRow label={t(($) => $.detail.prop_stage)} interactive={false}>
+                  <span className="truncate">{issue.stage == null ? t(($) => $.table.no_value) : `Stage ${issue.stage}`}</span>
+                </PropRow>
+              )}
+              {visibleOptionalProps.has("start_date") && (
+                <PropRow label={t(($) => $.detail.prop_start_date)} interactive={false}>
+                  <span className="truncate">{issue.start_date ? formatDateOnly(issue.start_date, { month: "short", day: "numeric" }, locale) : t(($) => $.table.no_value)}</span>
+                </PropRow>
+              )}
+              {visibleOptionalProps.has("due_date") && (
+                <PropRow label={t(($) => $.detail.prop_due_date)} interactive={false}>
+                  <span className="truncate">{issue.due_date ? formatDateOnly(issue.due_date, { month: "short", day: "numeric" }, locale) : t(($) => $.table.no_value)}</span>
+                </PropRow>
+              )}
+              {visibleOptionalProps.has("labels") && (
+                <PropRow label={t(($) => $.detail.prop_labels)} interactive={false}>
+                  {attachedLabels.length > 0 ? attachedLabels.map((label) => <LabelChip key={label.id} label={label} />) : <span className="text-muted-foreground">{t(($) => $.table.no_value)}</span>}
+                </PropRow>
+              )}
+              {workspaceProperties
+                .filter((p) => issue.properties?.[p.id] !== undefined)
+                .map((p) => (
+                  <PropRow key={p.id} label={<><PropertyIcon property={p} className="size-3.5 text-caption" /><span className="truncate">{p.name}</span></>} interactive={false}>
+                    <CustomPropertyValueDisplay property={p} value={issue.properties?.[p.id]} />
+                  </PropRow>
+                ))}
+            </>
+          ) : (
+            <>
           {/* Core props — always rendered. */}
           <PropRow label={t(($) => $.detail.prop_status)}>
             <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
@@ -2510,6 +2574,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 </PopoverContent>
               </Popover>
             </div>
+          )}
+            </>
           )}
         </div>}
       </div>
@@ -2900,7 +2966,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             `useStickyComposer`), so it lands here — right where the launcher
             floats — once the reader scrolls to the bottom. */}
         <div className="mx-auto w-full max-w-4xl px-3 py-6 max-md:pb-chat-launcher md:px-8 md:py-8">
-          {titleLazy.active && (
+          {isArchived ? (
+            <h1 className="w-full text-display-sm font-bold leading-snug tracking-tight">
+              {issue.title}
+            </h1>
+          ) : titleLazy.active ? (
             <div className={titleLazy.ready ? undefined : "hidden"}>
               <TitleEditor
                 key={`title-${id}-${titleResetToken}`}
@@ -2930,8 +3000,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 }}
               />
             </div>
-          )}
-          {!titleLazy.ready && (
+          ) : null}
+          {!isArchived && !titleLazy.ready && (
             <div
               role="button"
               tabIndex={0}
@@ -3051,25 +3121,31 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
 
           <div
-            {...descDropZoneProps}
+            {...(isArchived ? {} : descDropZoneProps)}
             className="relative mt-5 rounded-lg"
-            onFocusCapture={() => {
+            onFocusCapture={isArchived ? undefined : () => {
               if (!descriptionEditingRef.current) {
                 descriptionEditingRef.current = true;
               }
             }}
-            onBlurCapture={(event) => {
+            onBlurCapture={isArchived ? undefined : (event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) {
                 descriptionEditingRef.current = false;
               }
             }}
           >
-            <ContentEditor
-              ref={descEditorRef}
-              key={id}
-              value={descriptionConflictDraft ?? issue.description ?? ""}
-              placeholder={t(($) => $.detail.desc_placeholder)}
-              onUpdate={(md, baseMarkdown) => {
+            {isArchived ? (
+              <ReadonlyContent
+                content={issue.description ?? ""}
+                attachments={descEditorAttachments}
+              />
+            ) : (
+              <ContentEditor
+                ref={descEditorRef}
+                key={id}
+                value={descriptionConflictDraft ?? issue.description ?? ""}
+                placeholder={t(($) => $.detail.desc_placeholder)}
+                onUpdate={(md, baseMarkdown) => {
                 // Bind any pending uploads still referenced in the markdown
                 // so they appear in `issueAttachments` after refresh and the
                 // editor's text/code preview keeps working past reload.
@@ -3090,23 +3166,24 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 const ids = descPendingAttachmentsRef.current
                   .filter((a) => contentReferencesAttachment(md, a))
                   .map((a) => a.id);
-                queueDescriptionSave({
-                  markdown: md,
-                  baseMarkdown,
-                  attachmentIds: ids,
-                });
-              }}
-              onUploadFile={handleDescriptionUpload}
-              debounceMs={1500}
-              // Closing the issue modal must save what the user last saw —
-              // without the flush, a paste followed by a quick close loses
-              // the image markdown and its attachment_ids bind (MUL-3254).
-              flushPendingOnUnmount
-              currentIssueId={id}
-              attachments={descEditorAttachments}
-            />
+                  queueDescriptionSave({
+                    markdown: md,
+                    baseMarkdown,
+                    attachmentIds: ids,
+                  });
+                }}
+                onUploadFile={handleDescriptionUpload}
+                debounceMs={1500}
+                // Closing the issue modal must save what the user last saw —
+                // without the flush, a paste followed by a quick close loses
+                // the image markdown and its attachment_ids bind (MUL-3254).
+                flushPendingOnUnmount
+                currentIssueId={id}
+                attachments={descEditorAttachments}
+              />
+            )}
 
-            {descriptionConflictDraft !== null ? (
+            {!isArchived && descriptionConflictDraft !== null ? (
               <RevisionConflictCompare
                 className="mt-3"
                 title={t(($) => $.revision.compare_description)}
@@ -3171,13 +3248,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 onToggle={handleToggleIssueReaction}
                 getActorName={getActorName}
               />
-              <FileUploadButton
-                size="sm"
-                multiple
-                onSelect={(file) => descEditorRef.current?.uploadFile(file)}
-              />
+              {!isArchived && (
+                <FileUploadButton
+                  size="sm"
+                  multiple
+                  onSelect={(file) => descEditorRef.current?.uploadFile(file)}
+                />
+              )}
             </div>
-            {descDragOver && <FileDropOverlay />}
+            {!isArchived && descDragOver && <FileDropOverlay />}
           </div>
 
           {/* Sub-issues — Linear-style */}

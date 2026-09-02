@@ -829,6 +829,21 @@ describe("IssueDetail (shared)", () => {
     expect(contentEditorMounts.count).toBe(1);
   });
 
+  it("renders archived issues read-only while keeping the comment composer", async () => {
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      archived_at: "2026-08-27T00:00:00Z",
+    });
+
+    renderIssueDetail();
+
+    expect(await screen.findByText("Implement authentication")).toBeInTheDocument();
+    expect(screen.getByText("Add JWT auth to the backend")).toBeInTheDocument();
+    expect(screen.queryByTestId("rich-text-editor")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("title-editor")).not.toBeInTheDocument();
+    expect(screen.getByTestId("comment-composer-shell")).toBeInTheDocument();
+  });
+
   it("reconciles a cached list snapshot so source context appears on first entry", async () => {
     const sourceContext: NonNullable<Issue["source_context"]> = {
       id: "context-1",

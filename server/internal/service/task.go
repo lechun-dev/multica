@@ -50,6 +50,9 @@ type TaskService struct {
 	// SourceContextStorage is used only by the bounded 30-day cleanup pass for
 	// terminal quick-create captures. Nil disables it where storage is absent.
 	SourceContextStorage SourceContextObjectStore
+	// 2026-09-03 coder(lq): Reclaim unbound comment-composer uploads after their
+	// short draft retention window independently from source-context cleanup.
+	CommentAttachmentStorage SourceContextObjectStore
 	// FeatureFlags is the server-side toggle router. Nil is valid and returns
 	// each call site's default.
 	FeatureFlags *featureflag.Service
@@ -642,10 +645,10 @@ func triggerOwnerAttribution(ctx context.Context, q *db.Queries, triggerID, work
 // run never starts.
 var ErrAttributionFailClosed = errors.New("attribution: no precise accountable human and enqueue refused (fail-closed policy, policy read failed, or no agent owner)")
 
-// 2026-09-02 coder(lq): Keep archived issues readable, but fail every new
-// execution enqueue at the shared service boundary so autopilot and background
-// paths cannot bypass the archive policy enforced by HTTP handlers.
-var ErrArchivedIssue = errors.New("archived issue cannot start a new agent run")
+// 2026-09-02 coder(lq): Keep archived issues readable and commentable, but fail
+// content mutations and new execution enqueues at shared service boundaries so
+// internal, plugin, and background paths cannot bypass the archive policy.
+var ErrArchivedIssue = errors.New("archived issue cannot be modified or start a new agent run")
 
 // ErrDuplicatePendingTask means a fresh enqueue lost the race to a concurrent
 // one: a queued/dispatched task for the same (issue, agent) already exists, so
@@ -5458,6 +5461,12 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 	if err != nil {
 		return nil, fmt.Errorf("load issue: %w", err)
 	}
+	// 2026-09-02 coder(lq): Keep the archive fence at the service boundary as
+	// well as the HTTP handler so trusted/internal rerun callers cannot start
+	// new work for an archived issue.
+	if issue.ArchivedAt.Valid {
+		return nil, ErrArchivedIssue
+	}
 
 	// Determine the target agent for the rerun.
 	var (
@@ -5820,7 +5829,10 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				// status it inherits, so a custom review gate is excluded for
 				// the same reason In Review is. (MUL-6243)
 				effectiveStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
-				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
+				// 2026-09-02 coder(lq): A task may fail after its issue was
+				// archived. Archived issues are immutable, so skip this
+				// asynchronous status reset even when no active task remains.
+				if !issue.ArchivedAt.Valid && effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
 					processedIssues[issueKey] = true
 					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
 					if checkErr != nil {
