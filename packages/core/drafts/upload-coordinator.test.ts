@@ -99,12 +99,17 @@ describe("upload coordinator", () => {
       clientUploadId: "c1",
       file: file(),
       api,
-      ctx: { commentId: "cmt-9", chatSessionId: "sess-3" },
+      ctx: { commentId: "cmt-9", chatSessionId: "sess-3", commentDraft: true },
       onSettled: () => {},
     });
     expect(api.uploadFile).toHaveBeenCalledWith(
       expect.any(File),
-      { issueId: undefined, commentId: "cmt-9", chatSessionId: "sess-3" },
+      {
+        issueId: undefined,
+        commentId: "cmt-9",
+        chatSessionId: "sess-3",
+        commentDraft: true,
+      },
       expect.any(AbortSignal),
     );
   });
