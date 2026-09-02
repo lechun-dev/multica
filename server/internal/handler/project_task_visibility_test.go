@@ -73,9 +73,10 @@ func TestProjectlessVisibilityPredicatesIncludeAgentOwners(t *testing.T) {
 	}
 }
 
-// 2026-08-27 coder(lq): Projectless issues are intentionally narrower than
+// 2026-09-02 coder(lq): Projectless issues are intentionally narrower than
 // project-bound issues: only the creator, member assignee, or workspace owner
-// may view them, and non-owners do not gain mutation permissions implicitly.
+// may access them, while creators and assignees can still perform normal task
+// work until a project is selected.
 func TestProjectlessIssuePermission(t *testing.T) {
 	creatorID := pgtype.UUID{Bytes: [16]byte{11}, Valid: true}
 	assigneeID := pgtype.UUID{Bytes: [16]byte{12}, Valid: true}
@@ -97,9 +98,9 @@ func TestProjectlessIssuePermission(t *testing.T) {
 		{name: "workspace owner can view", userID: otherID, workspaceRole: projectauth.WorkspaceOwner, permission: projectauth.View, want: true},
 		{name: "workspace owner can edit", userID: otherID, workspaceRole: projectauth.WorkspaceOwner, permission: projectauth.Edit, want: true},
 		{name: "creator can view", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: true},
-		{name: "creator cannot edit", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: false},
+		{name: "creator can edit", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: true},
 		{name: "member assignee can view", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: true},
-		{name: "member assignee cannot edit", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: false},
+		{name: "member assignee can edit", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: true},
 		{name: "unrelated member cannot view", userID: otherID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: false},
 	}
 

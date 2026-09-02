@@ -360,10 +360,12 @@ func workspaceOwnerBypassPredicate(workspaceRef string) string {
 	return "TRUE"
 }
 
-// 2026-08-27 coder(lq): Keep the direct issue guard consistent with the SQL
-// list predicate. Non-owner creators/assignees receive visibility only; all
-// mutation permissions for projectless tasks remain denied because there is no
-// project role from which to inherit them.
+// 2026-09-02 coder(lq): Projectless tasks remain visible only to their creator,
+// assignee, or an enabled workspace-owner bypass, but participants must still
+// be able to move the work forward before a project is selected. Once a
+// project_id is supplied, UpdateIssue performs a separate target-project
+// permission check before binding the task, so allowing mutation here cannot
+// bypass the project ACL.
 func projectlessIssuePermissionAllowed(issue db.Issue, userID pgtype.UUID, workspaceRole projectauth.WorkspaceRole, permission projectauth.Permission) bool {
 	return projectlessIssuePermissionAllowedWithOwners(issue, userID, workspaceRole, permission, pgtype.UUID{}, pgtype.UUID{})
 }
@@ -376,7 +378,7 @@ func projectlessIssuePermissionAllowedWithOwnersAndBypass(issue db.Issue, userID
 	if workspaceRole == projectauth.WorkspaceOwner && ownerBypassEnabled {
 		return true
 	}
-	if permission != projectauth.View || !userID.Valid {
+	if !userID.Valid {
 		return false
 	}
 	if issue.CreatorType == "member" && issue.CreatorID.Valid && issue.CreatorID == userID {
