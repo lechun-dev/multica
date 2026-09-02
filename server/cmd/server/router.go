@@ -37,6 +37,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -218,6 +219,22 @@ type RouterOptions struct {
 	// ChannelLeaseRedis is a dedicated non-blocking Redis client/pool. It is
 	// required only when CHANNEL_WS_LEASE_BACKEND=redis.
 	ChannelLeaseRedis *redis.Client
+	// WecomRelay is the realtime relay, seen through the two halves the WeCom
+	// adapter needs: publish a reply to the other replicas, and register as
+	// the consumer that delivers the ones they publish. Nil on a deployment
+	// with no Redis — where it is also unnecessary, because one replica both
+	// publishes the completion and holds the socket.
+	// WecomSenders is the process-wide installation→socket registry, minted in
+	// main so the relay's deliverer can be registered before the shard readers
+	// start. Nil is tolerated (tests, embedders): one is minted here instead.
+	WecomSenders *wecom.SendersRegistry
+
+	// WecomRelayOutbound is the cross-replica router, already registered with
+	// the relay and running. Nil on a deployment with no Redis, where it is
+	// also unnecessary: one replica publishes the completion and holds the
+	// socket both.
+	WecomRelayOutbound *wecom.RelayOutbound
+
 	// WecomMetrics is the WeCom adapter's health sink. Nil discards every
 	// counter, which is what a deployment with /metrics turned off gets.
 	WecomMetrics *obsmetrics.WecomMetrics
@@ -292,6 +309,19 @@ func buildChannelSupervisor(
 	return engine.NewSupervisor(installations, leases, registry, inbound, cfg)
 }
 
+// channelLeasePollInterval is how often a Supervisor scans for installations
+// it should be holding, and therefore how long a WebSocket lease takes to
+// finish moving to another replica.
+//
+// Read through one function because two places are sized by it: the supervisor
+// itself, and the WeCom cross-replica dispatcher's re-offer chain — a frame
+// that arrives mid-move has to stay offerable until the move completes, and
+// pinning that to a constant of its own would let the two drift apart on any
+// deployment that tunes the knob.
+func channelLeasePollInterval() (time.Duration, error) {
+	return strictPositiveDurationEnv("CHANNEL_WS_LEASE_POLL_INTERVAL", 30*time.Second)
+}
+
 func channelSupervisorConfigFromEnv(leaseMetrics *obsmetrics.ChannelLeaseMetrics) (engine.Config, error) {
 	ttl, err := strictPositiveDurationEnv("CHANNEL_WS_LEASE_TTL", 180*time.Second)
 	if err != nil {
@@ -301,7 +331,7 @@ func channelSupervisorConfigFromEnv(leaseMetrics *obsmetrics.ChannelLeaseMetrics
 	if err != nil {
 		return engine.Config{}, err
 	}
-	poll, err := strictPositiveDurationEnv("CHANNEL_WS_LEASE_POLL_INTERVAL", 30*time.Second)
+	poll, err := channelLeasePollInterval()
 	if err != nil {
 		return engine.Config{}, err
 	}
@@ -338,6 +368,22 @@ func strictPositiveDurationEnv(name string, fallback time.Duration) (time.Durati
 		return 0, fmt.Errorf("%s must be a positive duration (got %q)", name, raw)
 	}
 	return value, nil
+}
+
+func seatCapacityExecutor(cloudURL string) seatcapacity.Executor {
+	executor, err := seatcapacity.New(seatcapacity.Config{
+		BaseURL: cloudURL,
+	})
+	if err == nil {
+		return executor
+	}
+	// A Cloud-connected deployment with malformed connection settings must not
+	// silently restore unlimited membership. The fail-closed executor returns
+	// 503 until the operator repairs the Cloud URL; it is deliberately
+	// ineligible for recovery-worker startup so queued intents keep their retry
+	// budget while configuration is broken.
+	slog.Error("subscription seat capacity executor unavailable", "error", err)
+	return seatcapacity.NewUnavailable(err)
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -380,8 +426,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 		AppURL:                   appURLFromEnv(),
 		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
-		CloudRuntimeFleetURL:     cloudRuntimeFleetURLFromEnv(),
-		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
+		CloudURL:                 strings.TrimSpace(os.Getenv("MULTICA_CLOUD_URL")),
+		CloudTimeout:             35 * time.Second,
 		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 		AttachmentFrameAncestors: origins,
@@ -404,21 +450,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
 	entitlementClient, entitlementErr := entitlement.New(entitlement.Config{
-		Enabled:      envBool("MULTICA_ENTITLEMENT_POLICY_ENABLED", false),
-		BaseURL:      strings.TrimSpace(os.Getenv("MULTICA_ENTITLEMENT_POLICY_URL")),
-		ServiceToken: os.Getenv("MULTICA_ENTITLEMENT_SERVICE_TOKEN"),
-		Timeout:      envDuration("MULTICA_ENTITLEMENT_POLICY_TIMEOUT", 3*time.Second),
-		StaleGrace:   envNonNegativeDuration("MULTICA_ENTITLEMENT_STALE_GRACE", 15*time.Minute),
-		Observer:     opts.BusinessMetrics,
+		BaseURL:  signupConfig.CloudURL,
+		Observer: opts.BusinessMetrics,
 	})
 	if entitlementErr != nil {
-		slog.Error("entitlement policy client disabled by invalid configuration", "error", entitlementErr)
+		slog.Error("entitlement policy client disabled by malformed Multica Cloud URL", "error", entitlementErr)
 		opts.BusinessMetrics.RecordEntitlementConfigError()
 	} else if entitlementClient.Enabled() {
-		entitlementClient.SetEmergencyDisabled(envBool("MULTICA_ENTITLEMENT_EMERGENCY_DISABLED", false))
 		h.Entitlements = entitlementClient
+		h.TaskService.Entitlements = entitlementClient
+		h.IssueService.Entitlements = entitlementClient
 		h.AutopilotService.Entitlements = entitlementClient
 		h.AutopilotService.QuotaMetrics = opts.BusinessMetrics
+	}
+	// Cloud Runtime and strict seat capacity are one managed deployment. Reuse
+	// the same base URL so Billing cannot be readable while invitation writes
+	// silently skip Cloud's authoritative seat policy.
+	h.SeatCapacity = seatCapacityExecutor(signupConfig.CloudURL)
+	capacityLocker := seatcapacity.NewWorkspaceLocker(pool)
+	h.SeatCapacityLocker = capacityLocker
+	if seatcapacity.CanRunWorker(h.SeatCapacity) {
+		h.SeatCapacityWorker = seatcapacity.NewWorker(queries, h.SeatCapacity, capacityLocker, seatcapacity.WorkerConfig{})
 	}
 	if opts.BusinessMetrics != nil {
 		// Wire the BusinessMetrics receiver into the cloud runtime client
@@ -465,7 +517,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// connection of its own outside the per-installation supervisor. The Router
 	// is the single shared inbound handler injected into every Channel.
 	channelRegistry := channel.NewRegistry()
-	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
+	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{
+		Logger: slog.Default(), Lifecycle: h,
+	})
 	// Debounce the per-session run trigger so a burst of messages collapses
 	// into one agent run instead of one per message (MUL-2968).
 	channelRouter.EnableRunBatching(engine.DefaultChatRunBatchWindow)
@@ -716,8 +770,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// The bind link (/slack/bind) is a web-app page, so it must use the
 				// app URL (MULTICA_APP_URL ?? FRONTEND_ORIGIN), NOT MULTICA_PUBLIC_URL
 				// (the backend/API URL). Mirrors the Lark replier (appURLFromEnv).
-				AppURL: appURLFromEnv(),
-				Logger: slog.Default(),
+				AppURL:  appURLFromEnv(),
+				Queries: queries,
+				Logger:  slog.Default(),
 			})
 			// Typing indicator (MUL-3874): a 👀 reaction on the user's message
 			// while the agent works, cleared when the run finishes or fails.
@@ -748,16 +803,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// agent asks, instead of force-assembling it on every inbound.
 			h.SlackHistory = slack.NewHistory(queries, box.Open, slog.Default())
 
-			// `/issue` slash command (MUL-3908): a real Slack slash command,
-			// delivered over the same Socket Mode connection. It is a quick-create
-			// entry point — the invoker's natural-language description is enqueued as
-			// a quick-create task (no chat session or chat run) and the agent authors
-			// the well-formed issue in the background — reusing the shared TaskService
-			// + binding service. The invoker gets a private ephemeral acknowledgement
-			// and a Multica notification when the issue lands.
+			// `/issue`, `/new`, and `/clear` are real Slack slash commands delivered
+			// over the same Socket Mode connection. `/issue` enqueues quick-create;
+			// the two session controls reuse the shared route/context and task
+			// services. Every outcome receives a private ephemeral acknowledgement.
 			slackSlash := slack.NewSlashCommandProcessor(slack.SlashCommandConfig{
 				Queries: queries,
 				Tasks:   h.TaskService,
+				Control: slack.NewSlackDMControlStarter(queries, pool, h.TaskService, h),
 				Binding: slackBindingSvc,
 				AppURL:  appURLFromEnv(),
 				Logger:  slog.Default(),
@@ -817,9 +870,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			channelRouter.Register(dingtalk.TypeDingTalk, dingtalk.NewDingTalkResolverSet(queries, pool, replier, ack, media, botNames))
 			dingtalk.NewOutbound(queries, box.Open, dingtalkClient, slog.Default()).Register(bus)
 			dingtalk.RegisterDingTalk(channelRegistry, dingtalk.ChannelDeps{
-				Decrypt: box.Open,
-				Client:  dingtalkClient,
-				Logger:  slog.Default(),
+				Decrypt:  box.Open,
+				Client:   dingtalkClient,
+				BotNames: botNames,
+				Logger:   slog.Default(),
 			})
 			installSvc, installErr := dingtalk.NewInstallService(queries, pool, box, slog.Default())
 			if installErr != nil {
@@ -832,6 +886,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
 	}
+	// Member @mentions use the deployment-wide DingTalk login application and
+	// are intentionally independent from the optional per-Agent BYO robot
+	// integration above.
+	registerDingTalkNotifyRuntime(bus, pool)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
@@ -871,7 +929,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// ChannelDeps write side and the Replier read side both
 				// receive it, and each Channel.Connect self-registers on
 				// entry and clears on exit.
-				wecomSenders := wecom.NewSendersRegistry()
+				wecomSenders := opts.WecomSenders
+				if wecomSenders == nil {
+					wecomSenders = wecom.NewSendersRegistry()
+				}
 
 				wecomReplier := wecom.NewOutboundReplier(wecom.OutboundReplierConfig{
 					Binding: wecomBinding,
@@ -940,7 +1001,29 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					wecomOutboundOpts = append(wecomOutboundOpts, wecom.WithAttachments(store))
 					h.DeclareChannelFileDelivery(string(wecom.TypeWecom))
 				}
-				wecom.NewOutbound(queries, wecomSenders, slog.Default(), wecomOutboundOpts...).Register(bus)
+				// The outbound subscriber reports to the same sink the
+				// connection path uses, so an operator reads "replies are
+				// being dropped, and for which reason" off the same dashboard
+				// as "the bot cannot connect".
+				wecomOutboundOpts = append(wecomOutboundOpts,
+					wecom.WithOutboundMetrics(wecomMetricsOrNil(opts.WecomMetrics)))
+				// Cross-replica routing. Built here rather than in main
+				// because the senders registry it guards is created here, and
+				// registered back onto the relay so every node's read loop
+				// reaches it. See wecom/relay_outbound.go.
+				if opts.WecomRelayOutbound != nil {
+					opts.WecomRelayOutbound.SetMetrics(wecomMetricsOrNil(opts.WecomMetrics))
+					wecomOutboundOpts = append(wecomOutboundOpts, wecom.WithRelay(opts.WecomRelayOutbound))
+					slog.Info("wecom integration: cross-replica outbound routing enabled")
+				}
+				wecomOutbound := wecom.NewOutbound(queries, wecomSenders, slog.Default(), wecomOutboundOpts...)
+				wecomOutbound.Register(bus)
+				// The dispatcher has been consuming since before this router
+				// existed; this is where it learns who performs a delivery.
+				// Anything it read in the meantime is waiting in its queue.
+				if opts.WecomRelayOutbound != nil {
+					opts.WecomRelayOutbound.Attach(wecomOutbound)
+				}
 
 				// Ranges the media fetcher may dial despite looking reserved.
 				// Empty by default, which leaves the SSRF guard exactly as
@@ -978,7 +1061,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// limiting), not "more than one replica". See wecom/outbound.go
 				// and SELF_HOSTING.md. Remove once outbound routes to the lease
 				// holder.
-				slog.Warn("wecom integration: WeCom agent replies and inbox pushes are delivered only by the replica holding each bot's WebSocket lease. If you run more than one backend replica, responses produced on a replica that does not hold the lease will be dropped — run the WeCom-enabled backend as a single replica until cross-replica outbound routing is implemented.")
+				if opts.WecomRelayOutbound != nil {
+					slog.Info("wecom integration: cross-replica outbound routing enabled — agent replies and inbox pushes produced on a replica that does not hold the bot's WebSocket lease are forwarded to the lease holder over the realtime relay. A reply produced while NO replica holds a live connection (every one mid-reconnect) is still lost; see wecom/relay_outbound.go.")
+				} else {
+					slog.Warn("wecom integration: WeCom agent replies and inbox pushes are delivered only by the replica holding each bot's WebSocket lease. If you run more than one backend replica, responses produced on a replica that does not hold the lease will be dropped — run the WeCom-enabled backend as a single replica, or run a sharded/dual realtime relay (REDIS_URL), which enables cross-replica outbound routing.")
+				}
 			}
 		}
 	} else {
@@ -1165,13 +1252,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
-	// Fleet. Returns nil when no Fleet URL is configured — the Auth /
+	// Fleet. Returns nil when no Cloud URL is configured — the Auth /
 	// DaemonAuth middlewares treat nil as "mcn_ not supported" and
 	// reject with 401, instead of falling through to mul_/JWT paths.
-	// Reuses MULTICA_CLOUD_FLEET_URL (the same URL the cloud-runtime
-	// proxy uses) so a deployment doesn't need a second config knob.
+	// Reuses MULTICA_CLOUD_URL (the same URL the cloud-runtime proxy uses) so a
+	// deployment has one authoritative multica-cloud connection.
 	cloudPATVerifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
-		FleetBaseURL: signupConfig.CloudRuntimeFleetURL,
+		FleetBaseURL: signupConfig.CloudURL,
 		Redis:        rdb,
 	})
 
@@ -1297,9 +1384,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
+	dingtalkRedirectURI := strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_REDIRECT_URI"))
+	if dingtalkRedirectURI == "" && signupConfig.AppURL != "" {
+		dingtalkRedirectURI = strings.TrimRight(signupConfig.AppURL, "/") + "/auth/dingtalk/callback"
+	}
+	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI)
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	r.With(authRL).Get("/auth/dingtalk/start", dingtalkLogin.ServeHTTP)
+	r.With(authRL).Post("/auth/dingtalk", dingtalkLogin.ServeHTTP)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -1441,6 +1535,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// no workspace in the path to gate on.
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
+		r.Get("/api/me/dingtalk-profile", h.GetDingTalkProfile)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
@@ -1746,17 +1841,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		// Workspace subscriptions use the same cloud transport and Stripe
 		// webhook as the existing owner-credit billing surface, but every request
-		// is workspace-scoped. Entitlements, summary and prices are
-		// member-readable; Checkout, seat reconcile, and Portal mutations require
-		// owner/admin. The handlers also enforce
-		// billing_workspace_subscriptions so a route refactor cannot
+		// is workspace-scoped. Summary and prices are member-readable. Local role
+		// checks cheaply reject unauthorized writes; Cloud remains the final
+		// authority and validates every mutation before external writes. Handlers
+		// also enforce billing_workspace_subscriptions so a route refactor cannot
 		// accidentally bypass the rollout flag.
 		r.Route("/api/cloud-subscriptions", func(r chi.Router) {
 			r.Use(handler.RequireHumanActor)
-
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireWorkspaceMember(queries))
-				r.Get("/entitlements", h.GetCloudWorkspaceEntitlements)
 				r.Get("/summary", h.GetCloudWorkspaceSubscriptionSummary)
 				r.Get("/prices", h.GetCloudWorkspaceSubscriptionPrices)
 			})
@@ -1772,15 +1865,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireWorkspaceMember(queries))
-			r.Get("/api/project-permissions/report", h.ListPermissionReport)
+		r.Use(middleware.RequireWorkspaceMember(queries))
+		r.Get("/api/project-permissions/report", h.ListPermissionReport)
+		r.Route("/api/project-permission-roles", func(r chi.Router) {
+			r.Get("/", h.ListProjectPermissionRoles)
+			r.Post("/", h.CreateProjectPermissionRole)
+			r.Route("/{key}", func(r chi.Router) {
+				r.Patch("/", h.UpdateProjectPermissionRole)
+				r.Delete("/", h.DeleteProjectPermissionRole)
+		})
+		})
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
-				r.Get("/window-usage", h.GetIssueWindowUsage)
+				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
 				r.Post("/table/rows", h.ListIssueTableRows)
 				r.Post("/table/facets", h.ListIssueTableFacets)
@@ -1799,10 +1900,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
-					r.Get("/permissions", h.ListIssuePermissions)
-					r.Post("/permissions", h.GrantIssuePermission)
-					r.Delete("/permissions/{userId}/{permission}", h.RevokeIssuePermission)
 					r.Put("/", h.UpdateIssue)
+					r.Post("/archive", h.ArchiveIssue)
+					r.Post("/restore", h.RestoreIssue)
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
@@ -1838,6 +1938,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick actions (definitions; running one lives under
 			// /api/issues/{id}/quick-actions/{quickActionId}/run)
@@ -1983,6 +2084,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Comments
 			r.Route("/api/comments/{commentId}", func(r chi.Router) {
+				r.With(handler.RequireHumanActor).Get("/sub-issue-preview", h.PreviewCommentSubIssue)
+				r.With(handler.RequireHumanActor).Post("/sub-issues", h.CreateCommentSubIssue)
 				r.Put("/", h.UpdateComment)
 				r.Delete("/", h.DeleteComment)
 				r.Post("/resolve", h.ResolveComment)
@@ -2375,13 +2478,6 @@ func splitAndTrim(s string) []string {
 	return res
 }
 
-func cloudRuntimeFleetURLFromEnv() string {
-	if url := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_FLEET_URL")); url != "" {
-		return url
-	}
-	return strings.TrimSpace(os.Getenv("MULTICA_FLEET_URL"))
-}
-
 // composioStateSecret resolves the HMAC key for the connect-state. Prefers an
 // explicit COMPOSIO_STATE_SECRET; otherwise derives a composio-specific key
 // from JWT_SECRET via SHA-256 so the two signing domains never share an
@@ -2408,6 +2504,15 @@ func composioCallbackBaseURL(publicURL string) string {
 		return publicURL
 	}
 	return appURLFromEnv()
+}
+
+// WecomRelay is what the WeCom adapter needs from the realtime relay:
+// publish under ScopeWecomOutbound, and register the consumer that acts on
+// frames the other replicas publish. *realtime.ShardedStreamRelay and
+// *realtime.RedisRelay both satisfy it.
+type WecomRelay interface {
+	PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error
+	SetWecomOutboundDeliverer(d realtime.WecomOutboundDeliverer)
 }
 
 // wecomMetricsOrNil keeps a typed nil out of the adapter's interface field.

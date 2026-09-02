@@ -160,13 +160,12 @@ export function resolveContent(
   }
 
   if (detected.os === "windows") {
-    // Trust arch whenever the UA hints at it (even non-confident);
-    // Windows-on-ARM can still run x64 via emulation so this is low
-    // risk either way. Surface the arch-fallback hint when we're
-    // guessing so users on uncommon setups know to scroll down.
-    const isArm = detected.arch === "arm64";
-    const copy = isArm ? d.winArm64 : d.winX64;
-    const url = isArm ? assets.winArm64Exe : assets.winX64Exe;
+    // 2026-08-28 coder(lq): The private release publishes Windows x64 only.
+    // Windows-on-ARM can run this installer through emulation, so use the
+    // x64 artifact for both Windows architectures instead of producing a
+    // dead CTA when the browser reports arm64.
+    const copy = d.winX64;
+    const url = assets.winX64Exe;
     return {
       title: copy.title,
       sub: copy.sub,
@@ -183,28 +182,10 @@ export function resolveContent(
     };
   }
 
-  // Linux — same principle: trust the arm64 signal, surface a hint
-  // when we're not confident. Linux ARM has no binary emulation so
-  // the hint matters more here than on Windows.
-  const isArmLinux = detected.arch === "arm64";
-  const primaryUrl = isArmLinux
-    ? assets.linuxArm64AppImage
-    : assets.linuxAmd64AppImage;
-  return {
-    title: d.linux.title,
-    sub: d.linux.sub,
-    primary: primaryUrl
-      ? {
-          href: primaryUrl,
-          label: d.linux.primary,
-          disabled: false,
-        }
-      : versionUnavailable
-        ? { href: "#", label: d.linux.primary, disabled: true }
-        : undefined,
-    alt: { href: "#all-platforms", label: d.linux.altFormats },
-    hint: detected.archConfident ? undefined : d.archFallbackHint,
-  };
+  // 2026-08-30 coder(lq): The private release currently ships macOS and
+  // Windows installers only, so do not expose stale Linux assets from an
+  // older upstream release.
+  return { title: d.unknown.title, sub: d.unknown.sub };
 }
 
 // ------------------------------------------------------------

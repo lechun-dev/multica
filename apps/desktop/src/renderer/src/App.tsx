@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
+import { brandLocaleResources } from "@multica/core/i18n/branding";
 import { useAuthStore } from "@multica/core/auth";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -29,6 +30,7 @@ import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
+import { DESKTOP_PRODUCT_NAME } from "./desktop-brand";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -339,7 +341,7 @@ function BlockingRuntimeConfigError({ message }: { message: string }) {
       <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
         <h1 className="text-title font-semibold">Desktop configuration error</h1>
         <p className="mt-3 text-body text-muted-foreground">
-          Multica Desktop could not load <code>~/.multica/desktop.json</code>. Fix or remove the file and restart the app.
+          {DESKTOP_PRODUCT_NAME} Desktop could not load <code>~/.multica/desktop.json</code>. Fix or remove the file and restart the app.
         </p>
         <pre className="mt-4 whitespace-pre-wrap rounded-md bg-muted p-3 text-caption text-muted-foreground">
           {message}
@@ -417,7 +419,8 @@ export default function App() {
   );
   const locale = useMemo(() => pickLocale(localeAdapter), [localeAdapter]);
   const resources = useMemo(
-    () => ({ [locale]: RESOURCES[locale] }),
+    () =>
+      brandLocaleResources({ [locale]: RESOURCES[locale] }, DESKTOP_PRODUCT_NAME),
     [locale],
   );
 

@@ -1034,3 +1034,18 @@ func TestListDingTalkGroupsReturnsInternalErrorOnDatabaseFailure(t *testing.T) {
 		testHandler.listDingTalkGroups(w, r, parseUUID(testWorkspaceID), "", nil)
 	}, inactiveReq).Want(http.StatusInternalServerError)
 }
+
+func TestDingTalkDepartmentNamesReturnsNamesOnly(t *testing.T) {
+	names, err := dingtalkDepartmentNames([]byte(`[
+		{"id":"42","name":" Engineering "},
+		{"id":"43","name":"Product"},
+		{"id":"44","name":"Engineering"},
+		{"id":"45","name":""}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || names[0] != "Engineering" || names[1] != "Product" {
+		t.Fatalf("names=%v", names)
+	}
+}

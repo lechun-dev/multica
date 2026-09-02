@@ -12,6 +12,8 @@ import { GlobalShortcuts } from "./global-shortcuts";
 
 interface DashboardLayoutProps {
   children: ReactNode;
+  /** 2026-08-30 coder(lq): Product name used for shared loading fallbacks. */
+  productName?: string;
   /** Rendered inside SidebarInset (e.g. ChatWindow, ChatFab — absolute-positioned overlays) */
   extra?: ReactNode;
   /** Rendered inside sidebar header as a search trigger */
@@ -22,6 +24,7 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({
   children,
+  productName,
   extra,
   searchSlot,
   loadingIndicator,
@@ -37,7 +40,7 @@ export function DashboardLayout({
       <SidebarProvider className="h-svh bg-app-shell">
         <GlobalShortcuts />
         <WorkspacePresencePrefetch />
-        <AppSidebar searchSlot={searchSlot} />
+        <AppSidebar productName={productName} searchSlot={searchSlot} />
         <SidebarInset className="relative overflow-hidden">
           <NavigationProgress />
           {children}

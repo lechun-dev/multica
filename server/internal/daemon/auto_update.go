@@ -37,8 +37,9 @@ var detectSelfVersion = func(ctx context.Context, path string) (string, error) {
 	return ParseSelfVersion(string(out)), nil
 }
 
-// ParseSelfVersion pulls the version out of `multica --version` output, whose
-// first line is rendered by cmd/multica's version template:
+// ParseSelfVersion pulls the version out of `missionos --version` or the
+// legacy `multica --version` output, whose first line is rendered by
+// cmd/multica's version template:
 //
 //	multica 0.3.7 (commit: abc1234, built: 2026-07-29T10:00:00Z)
 //	go: go1.26.1, os/arch: darwin/arm64
@@ -54,7 +55,8 @@ var detectSelfVersion = func(ctx context.Context, path string) (string, error) {
 func ParseSelfVersion(raw string) string {
 	line, _, _ := strings.Cut(raw, "\n")
 	line = strings.TrimSpace(line)
-	if fields := strings.Fields(line); len(fields) >= 2 && fields[0] == "multica" {
+	if fields := strings.Fields(line); len(fields) >= 2 &&
+		(fields[0] == "missionos" || fields[0] == "multica") {
 		return fields[1]
 	}
 	return line

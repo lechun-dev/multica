@@ -53,7 +53,7 @@ services:
       retries: 5
 
   backend:
-    image: ${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:${MULTICA_IMAGE_TAG:-latest}
+    image: ${MULTICA_BACKEND_IMAGE:-ghcr.io/lechun-dev/multica-backend}:${MULTICA_IMAGE_TAG:-latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,11 +100,11 @@ services:
       MULTICA_DATABASE_CONNECT_TIMEOUT: ${MULTICA_DATABASE_CONNECT_TIMEOUT:-5s}
       MULTICA_SHUTDOWN_HOLD_DURATION: ${MULTICA_SHUTDOWN_HOLD_DURATION:-}
       MULTICA_RUNTIME_RECONNECT_GRACE: ${MULTICA_RUNTIME_RECONNECT_GRACE:-}
-      MULTICA_TASK_QUEUED_TTL: ${MULTICA_TASK_QUEUED_TTL:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
+      PROJECT_PERMISSION_ENABLED: ${PROJECT_PERMISSION_ENABLED:-false}
       # Managed entitlement policy is explicitly opt-in. The false/empty
       # defaults keep self-hosted installs on the legacy path with no Cloud
       # request and no quota-table access.
@@ -197,10 +197,33 @@ services:
       # for a debugging session and unset it when that session ends, because
       # what it records is user message content.
       MULTICA_WECOM_TRACE: ${MULTICA_WECOM_TRACE:-}
+      # 钉钉机器人集成。留空表示禁用；启用前请生成 Base64 编码的 32 字节密钥。
+      MULTICA_DINGTALK_SECRET_KEY: ${MULTICA_DINGTALK_SECRET_KEY:-}
+      # 独立钉钉通知模块。三个应用凭据完整后，成员 @通知自动启动。
+      DINGTALK_NOTIFY_WORKER_INTERVAL: ${DINGTALK_NOTIFY_WORKER_INTERVAL:-5s}
+      DINGTALK_NOTIFY_MAX_ATTEMPTS: ${DINGTALK_NOTIFY_MAX_ATTEMPTS:-5}
+      DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS: ${DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS:-true}
+      # 基础设施占位配置；服务器和数据库准备好后再填写。
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-}
+      REDIS_URL: ${REDIS_URL:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      SECRET_STORE_REF: ${SECRET_STORE_REF:-}
+      DEPLOY_ENV: ${DEPLOY_ENV:-local}
+      # 钉钉应用配置；敏感信息不要提交代码或发到聊天中。
+      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
+      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
+      DINGTALK_CORP_ID: ${DINGTALK_CORP_ID:-}
+      DINGTALK_OAUTH_REDIRECT_URI: ${DINGTALK_OAUTH_REDIRECT_URI:-}
+      DINGTALK_AGENT_ID: ${DINGTALK_AGENT_ID:-}
+      DINGTALK_ROBOT_CODE: ${DINGTALK_ROBOT_CODE:-}
+      DINGTALK_API_BASE_URL: ${DINGTALK_API_BASE_URL:-https://api.dingtalk.com}
+      DINGTALK_OAUTH_AUTH_URL: ${DINGTALK_OAUTH_AUTH_URL:-https://login.dingtalk.com/oauth2/auth}
+      DINGTALK_OAUTH_SCOPE: ${DINGTALK_OAUTH_SCOPE:-}
     restart: unless-stopped
 
   frontend:
-    image: ${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:${MULTICA_IMAGE_TAG:-latest}
+    image: ${MULTICA_WEB_IMAGE:-ghcr.io/lechun-dev/multica-web}:${MULTICA_IMAGE_TAG:-latest}
     depends_on:
       - backend
     ports:
@@ -211,6 +234,8 @@ services:
       DOCS_URL: ${DOCS_URL:-}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+      MULTICA_GITHUB_RELEASE_REPOSITORY: ${MULTICA_GITHUB_RELEASE_REPOSITORY:-lechun-dev/multica}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     restart: unless-stopped
 
 volumes:

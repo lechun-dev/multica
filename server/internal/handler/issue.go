@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -47,15 +48,29 @@ type IssueResponse struct {
 	// category for a custom status. Omitted when the endpoint does not resolve
 	// it, so consumers must fall back to Status rather than assume a blank
 	// value means "no category". (MUL-6243)
-	StatusCategory string  `json:"status_category,omitempty"`
-	Priority       string  `json:"priority"`
-	AssigneeType   *string `json:"assignee_type"`
-	AssigneeID     *string `json:"assignee_id"`
-	CreatorType    string  `json:"creator_type"`
-	CreatorID      string  `json:"creator_id"`
-	ParentIssueID  *string `json:"parent_issue_id"`
-	ProjectID      *string `json:"project_id"`
-	Position       float64 `json:"position"`
+	StatusCategory string `json:"status_category,omitempty"`
+	// StatusName is a CUSTOM status's display name, carried beside the key so a
+	// consumer that only ever sees `status` is not left holding a bare handle.
+	// A key derived from a non-Latin name is opaque by construction
+	// (`in_review_2`), and an agent reading an issue has nothing else to match
+	// against the status a human named for it.
+	//
+	// Always emitted, unlike StatusCategory. Empty is a MEANING here — "this is
+	// a built-in, localize it from the key" — not the "this endpoint did not
+	// resolve it" that an absent status_category signals. Keeping the key
+	// present is also what lets TestIssueToMap_KeysMatchIssueResponse see the
+	// field at all: with omitempty a built-in fixture hides it from BOTH
+	// renderings, and the drift guard goes green on a payload that has drifted.
+	// (MUL-6749)
+	StatusName    string  `json:"status_name"`
+	Priority      string  `json:"priority"`
+	AssigneeType  *string `json:"assignee_type"`
+	AssigneeID    *string `json:"assignee_id"`
+	CreatorType   string  `json:"creator_type"`
+	CreatorID     string  `json:"creator_id"`
+	ParentIssueID *string `json:"parent_issue_id"`
+	ProjectID     *string `json:"project_id"`
+	Position      float64 `json:"position"`
 	// Stage groups sub-issues under the same parent into ordered barrier
 	// groups (null = unstaged). See issue_child_done.go for how a closed
 	// stage gates the child-done -> parent wake.
@@ -65,6 +80,8 @@ type IssueResponse struct {
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
 	Revision  int64   `json:"revision"`
+	// 2026-09-02 coder(lq): Expose archive state without changing task status.
+	ArchivedAt *string `json:"archived_at,omitempty"`
 	// LastActivityAt is the latest semantic issue activity. It stays nullable
 	// while the operator-run historical backfill is incomplete.
 	LastActivityAt *string `json:"last_activity_at"`
@@ -127,7 +144,10 @@ func (h *Handler) resolveIssueStatusKeyKind(w http.ResponseWriter, r *http.Reque
 	entry, err := issuestatus.Resolve(r.Context(), h.Queries, workspaceID, status)
 	if err != nil {
 		if errors.Is(err, issuestatus.ErrUnknownStatus) {
-			allowed, listErr := issuestatus.ActiveKeys(r.Context(), h.Queries, workspaceID)
+			// Labels, not bare keys: a derived key says nothing about what the
+			// status means, so listing `in_review_2` alone leaves the caller no
+			// way to find the one they were told to use. (MUL-6749)
+			allowed, listErr := issuestatus.ActiveKeyLabels(r.Context(), h.Queries, workspaceID)
 			if listErr != nil || len(allowed) == 0 {
 				allowed = issuestatus.Canonical()
 			}
@@ -258,6 +278,9 @@ func (h *Handler) newStatusCategoryFiller(ctx context.Context, wsID pgtype.UUID)
 			return
 		}
 		resp.StatusCategory = resolver.Effective(ctx, h.Queries, resp.Status)
+		// Same Resolver, same single catalog read, so the name rides along for
+		// free. Built-ins return "" and stay omitted. (MUL-6749)
+		resp.StatusName = resolver.Name(ctx, h.Queries, resp.Status)
 	}
 }
 
@@ -300,6 +323,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		CreatedAt:      timestampToString(i.CreatedAt),
 		UpdatedAt:      timestampToString(i.UpdatedAt),
 		Revision:       i.Revision,
+		ArchivedAt:     timestampToNanoPtr(i.ArchivedAt),
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
@@ -337,6 +361,7 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		CreatedAt:      timestampToString(i.CreatedAt),
 		UpdatedAt:      timestampToString(i.UpdatedAt),
 		Revision:       i.Revision,
+		ArchivedAt:     timestampToNanoPtr(i.ArchivedAt),
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
@@ -406,6 +431,7 @@ func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueRes
 		CreatedAt:      timestampToString(i.CreatedAt),
 		UpdatedAt:      timestampToString(i.UpdatedAt),
 		Revision:       i.Revision,
+		ArchivedAt:     timestampToNanoPtr(i.ArchivedAt),
 		LastActivityAt: timestampToNanoPtr(i.LastActivityAt),
 		Metadata:       parseIssueMetadata(i.Metadata),
 		Properties:     parseIssueProperties(i.Properties),
@@ -598,6 +624,13 @@ type searchResult struct {
 // Search patterns are lowercased in Go to avoid redundant LOWER() on the pattern side in SQL.
 // LIKE patterns are pre-built in Go (e.g. "%html%") so pg_bigm can extract bigrams from a single parameter value.
 func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string) (string, []any) {
+	return buildSearchQueryWithWorkspaceScope(phrase, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, true)
+}
+
+// 2026-09-01 coder(lq): Keep the legacy search builder default-inclusive for
+// older callers, while allowing the task page's workspace-owner toggle to
+// flow into the same SQL visibility predicate as list/table queries.
+func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string, includeWorkspaceOwned bool, archiveStates ...string) (string, []any) {
 	// Lowercase in Go so SQL only needs LOWER() on the column side.
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
@@ -681,6 +714,11 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	}
 
 	whereClause := "(" + strings.Join(whereParts, " OR ") + ")"
+	archiveState := "active"
+	if len(archiveStates) > 0 && archiveStates[0] != "" {
+		archiveState = archiveStates[0]
+	}
+	whereClause = appendIssueArchivePredicate([]string{whereClause}, archiveState, "i")[0]
 
 	if !includeClosed {
 		whereClause += " AND issue_effective_status(i.workspace_id, i.status) NOT IN ('done', 'cancelled')"
@@ -690,7 +728,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		whereClause = issueWindowPredicate("i", wsParam, limitRef) + " AND " + whereClause
 	}
 	if projectUserParam != "" {
-		whereClause = issueProjectVisibilityPredicate("i", wsParam, projectUserParam) + " AND " + whereClause
+		whereClause = issueProjectVisibilityPredicateWithWorkspaceScope("i", wsParam, projectUserParam, includeWorkspaceOwned) + " AND " + whereClause
 	}
 
 	// --- ORDER BY clause ---
@@ -844,8 +882,8 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
-		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
-		i.revision,
+		 i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
+		 i.revision, i.archived_at,
 		COUNT(*) OVER() AS total_count,
 		%s AS match_source,
 		%s AS matched_comment_content
@@ -894,6 +932,14 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeClosed := r.URL.Query().Get("include_closed") == "true"
+	archiveState, ok := parseIssueArchiveState(w, r.URL.Query().Get("archive_state"))
+	if !ok {
+		return
+	}
+	// 2026-09-01 coder(lq): Search is another task-list read path. Honor the
+	// same owner-only visibility toggle used by /api/issues and the table API;
+	// otherwise workspace owners could still discover ungranted tasks by title.
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -915,7 +961,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID)
+	sqlQuery, args := buildSearchQueryWithWorkspaceScope(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, includeWorkspaceOwned, archiveState)
 	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
 	args[3] = wsUUID
 	args[len(args)-2] = limit
@@ -948,6 +994,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.Number,
 				&sr.issue.ProjectID,
 				&sr.issue.Revision,
+				&sr.issue.ArchivedAt,
 				&sr.totalCount,
 				&sr.matchSource,
 				&sr.matchedCommentContent,
@@ -1049,6 +1096,10 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := h.resolveWorkspaceID(r)
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	archiveState, ok := parseIssueArchiveState(w, r.URL.Query().Get("archive_state"))
 	if !ok {
 		return
 	}
@@ -1162,21 +1213,16 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnauthorized, "user not authenticated")
 				return
 			}
-			visibleProjects, scopeErr := h.ProjectAuth.Scope(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID})
+			includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+			visible, scopeErr := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(ctx, wsUUID, parseUUID(userID), openIDs, includeWorkspaceOwned)
 			if scopeErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to list issues")
 				return
 			}
-			visible := make(map[string]struct{}, len(visibleProjects))
-			for _, id := range visibleProjects {
-				visible[id] = struct{}{}
-			}
 			filtered := issues[:0]
 			for _, issue := range issues {
-				if issue.ProjectID.Valid {
-					if _, ok := visible[uuidToString(issue.ProjectID)]; ok {
-						filtered = append(filtered, issue)
-					}
+				if _, ok := visible[issue.ID]; ok {
+					filtered = append(filtered, issue)
 				}
 			}
 			issues = filtered
@@ -1344,6 +1390,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	// Build dynamic SQL — same approach as ListGroupedIssues.
 	where := []string{"i.workspace_id = $1"}
+	where = appendIssueArchivePredicate(where, archiveState, "i")
 	args := []any{wsUUID}
 	addArg := func(v any) string {
 		args = append(args, v)
@@ -1355,7 +1402,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userID)))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
 	}
 
 	if len(statusCategoriesFilter) > 0 {
@@ -1552,7 +1600,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-	   i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE %s
 ORDER BY %s
@@ -1593,6 +1641,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.ArchivedAt,
 		); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -1650,6 +1699,34 @@ type issueDateFilter struct {
 	column string
 	start  time.Time
 	end    time.Time
+}
+
+// 2026-09-02 coder(lq): Keep archive filtering explicit and shared by every
+// issue read endpoint. Unknown values fail closed instead of accidentally
+// exposing historical tasks.
+func parseIssueArchiveState(w http.ResponseWriter, raw string) (string, bool) {
+	state := strings.TrimSpace(strings.ToLower(raw))
+	if state == "" {
+		return "active", true
+	}
+	switch state {
+	case "active", "archived", "all":
+		return state, true
+	default:
+		writeError(w, http.StatusBadRequest, "invalid archive_state")
+		return "", false
+	}
+}
+
+func appendIssueArchivePredicate(where []string, state, alias string) []string {
+	switch state {
+	case "archived":
+		return append(where, alias+".archived_at IS NOT NULL")
+	case "all":
+		return where
+	default:
+		return append(where, alias+".archived_at IS NULL")
+	}
 }
 
 func parseIssueDateFilter(w http.ResponseWriter, values url.Values) (*issueDateFilter, bool) {
@@ -1817,6 +1894,10 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	archiveState, ok := parseIssueArchiveState(w, r.URL.Query().Get("archive_state"))
+	if !ok {
+		return
+	}
 	windowPolicy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	limit := 50
@@ -1836,6 +1917,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	where := []string{"i.workspace_id = $1"}
+	where = appendIssueArchivePredicate(where, archiveState, "i")
 	args := []any{wsUUID}
 	addArg := func(v any) string {
 		args = append(args, v)
@@ -1847,7 +1929,8 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		where = append(where, issueProjectVisibilityPredicate("i", "$1", addArg(userID)))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
 	}
 
 	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
@@ -2158,7 +2241,7 @@ WITH ranked AS (
 		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
-		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision,
+		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.archived_at,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
 		ROW_NUMBER() OVER (
 			PARTITION BY i.assignee_type, i.assignee_id
@@ -2171,7 +2254,7 @@ SELECT
 	id, workspace_id, title, description, status, priority,
 	assignee_type, assignee_id, creator_type, creator_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at, last_activity_at,
-	number, project_id, metadata, stage, properties, revision, group_total
+	number, project_id, metadata, stage, properties, revision, archived_at, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY
@@ -2220,6 +2303,7 @@ ORDER BY
 			&row.Stage,
 			&row.Properties,
 			&row.Revision,
+			&row.ArchivedAt,
 			&row.GroupTotal,
 		); err != nil {
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
@@ -2330,8 +2414,18 @@ func (h *Handler) ListChildIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		visible := children[:0]
+		childIDs := make([]pgtype.UUID, 0, len(children))
 		for _, child := range children {
-			if allowed, _ := h.issueProjectAllowed(r, child, projectauth.View); allowed {
+			childIDs = append(childIDs, child.ID)
+		}
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleIDs, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), issue.WorkspaceID, parseUUID(requestUserID(r)), childIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list child issues")
+			return
+		}
+		for _, child := range children {
+			if _, ok := visibleIDs[child.ID]; ok {
 				visible = append(visible, child)
 			}
 		}
@@ -2435,6 +2529,33 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"issues": []IssueResponse{}})
 		return
 	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// 2026-08-27 coder(lq): Parent ids are an access edge, not merely a
+		// batching hint. Filter them before loading children so an inaccessible
+		// parent cannot be used to discover its task tree or child count.
+		userID := requestUserID(r)
+		if userID == "" {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return
+		}
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleParents, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(userID), parentIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list child issues")
+			return
+		}
+		filteredParents := parentIDs[:0]
+		for _, parentID := range parentIDs {
+			if _, ok := visibleParents[parentID]; ok {
+				filteredParents = append(filteredParents, parentID)
+			}
+		}
+		parentIDs = filteredParents
+		if len(parentIDs) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"issues": []IssueResponse{}})
+			return
+		}
+	}
 
 	children, err := h.Queries.ListChildrenByParents(r.Context(), db.ListChildrenByParentsParams{
 		WorkspaceID: wsUUID,
@@ -2446,8 +2567,18 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		visible := children[:0]
+		childIDs := make([]pgtype.UUID, 0, len(children))
 		for _, child := range children {
-			if allowed, _ := h.issueProjectAllowed(r, child, projectauth.View); allowed {
+			childIDs = append(childIDs, child.ID)
+		}
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleIDs, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), wsUUID, parseUUID(requestUserID(r)), childIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list child issues")
+			return
+		}
+		for _, child := range children {
+			if _, ok := visibleIDs[child.ID]; ok {
 				visible = append(visible, child)
 			}
 		}
@@ -2525,15 +2656,16 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		userRef := "$2"
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 		query := fmt.Sprintf(`SELECT i.parent_issue_id,
 			COUNT(*)::bigint AS total,
 			COUNT(*) FILTER (WHERE issue_effective_status(i.workspace_id, i.status) IN ('done', 'cancelled'))::bigint AS done
 		FROM issue i
 		JOIN issue p ON p.id = i.parent_issue_id AND p.workspace_id = i.workspace_id
 		WHERE i.workspace_id = $1
-		  AND %s
-		  AND %s
-		GROUP BY i.parent_issue_id`, issueProjectVisibilityPredicate("i", "$1", userRef), issueProjectVisibilityPredicate("p", "$1", userRef))
+			AND %s
+			AND %s
+		GROUP BY i.parent_issue_id`, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", userRef, includeWorkspaceOwned), issueProjectVisibilityPredicateWithWorkspaceScope("p", "$1", userRef, includeWorkspaceOwned))
 		rows, err := h.DB.Query(r.Context(), query, wsUUID, userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
@@ -2593,7 +2725,10 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		rows, err := h.Queries.ChildIssueProgress(r.Context(), wsUUID)
+		rows, err := h.Queries.ChildIssueProgress(r.Context(), db.ChildIssueProgressParams{
+			WorkspaceID:        wsUUID,
+			TerminalStatusKeys: h.projectTerminalIssueStatusKeys(r.Context(), wsUUID),
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
 			return
@@ -2767,7 +2902,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	// — but with the verdict's own code, so "CLI cannot run" no longer arrives
 	// as "runtime is offline" and sends the user to reconnect a machine that is
 	// already connected (MUL-6164).
-	if verdict, err := service.AgentReadiness(r.Context(), h.Queries, agent); err != nil {
+	if verdict, err := service.AgentReadiness(r.Context(), h.runtimeLookup(obsmetrics.RuntimeLookupSourceIssue), agent); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check agent runtime")
 		return
 	} else if !verdict.Ready() {
@@ -2784,13 +2919,13 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	// twenty seconds later. Dev-built
 	// daemons (git-describe shape) are exempted inside CheckMinCLIVersion
 	// so `make daemon` works without weakening staging or production.
-	if status, payload := h.checkQuickCreateDaemonVersion(r.Context(), agent.RuntimeID); status != 0 {
+	if status, payload := h.checkQuickCreateDaemonVersion(r.Context(), obsmetrics.RuntimeLookupSourceIssue, agent.RuntimeID); status != 0 {
 		writeJSON(w, status, payload)
 		return
 	}
 	if priority != "" || dueDate != "" {
 		if status, payload := h.checkQuickCreateDaemonVersionAtLeast(
-			r.Context(), agent.RuntimeID, agentpkg.MinQuickCreateFieldsCLIVersion,
+			r.Context(), obsmetrics.RuntimeLookupSourceIssue, agent.RuntimeID, agentpkg.MinQuickCreateFieldsCLIVersion,
 		); status != 0 {
 			writeJSON(w, status, payload)
 			return
@@ -2851,6 +2986,9 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, priority, dueDate, projectUUID, parentIssueUUID, attachmentIDs)
 	if err != nil {
+		if writeIssueLimitReached(w, err) {
+			return
+		}
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
 		return
@@ -2880,7 +3018,7 @@ func writeAgentUnavailable(w http.ResponseWriter, reason string, reasonCode disp
 // agent's runtime is offline so the user gets immediate feedback in the
 // modal instead of an inbox failure twenty seconds later.
 func (h *Handler) isRuntimeOnline(ctx context.Context, runtimeID pgtype.UUID) bool {
-	rt, err := h.Queries.GetAgentRuntime(ctx, runtimeID)
+	rt, err := h.runtimeLookup(obsmetrics.RuntimeLookupSourceIssue).Get(ctx, runtimeID)
 	if err != nil {
 		return false
 	}
@@ -2901,12 +3039,12 @@ func (h *Handler) isRuntimeOnline(ctx context.Context, runtimeID pgtype.UUID) bo
 //	  "min_version":     "0.2.21",
 //	  "runtime_id":      "<uuid>"
 //	}
-func (h *Handler) checkQuickCreateDaemonVersion(ctx context.Context, runtimeID pgtype.UUID) (int, map[string]any) {
-	return h.checkQuickCreateDaemonVersionAtLeast(ctx, runtimeID, agentpkg.MinQuickCreateCLIVersion)
+func (h *Handler) checkQuickCreateDaemonVersion(ctx context.Context, source string, runtimeID pgtype.UUID) (int, map[string]any) {
+	return h.checkQuickCreateDaemonVersionAtLeast(ctx, source, runtimeID, agentpkg.MinQuickCreateCLIVersion)
 }
 
-func (h *Handler) checkQuickCreateDaemonVersionAtLeast(ctx context.Context, runtimeID pgtype.UUID, minimum string) (int, map[string]any) {
-	rt, err := h.Queries.GetAgentRuntime(ctx, runtimeID)
+func (h *Handler) checkQuickCreateDaemonVersionAtLeast(ctx context.Context, source string, runtimeID pgtype.UUID, minimum string) (int, map[string]any) {
+	rt, err := h.runtimeLookup(source).Get(ctx, runtimeID)
 	if err != nil {
 		// Runtime row vanished between the online check and here — treat
 		// as unavailable rather than wedging the request on a 500.
@@ -3045,11 +3183,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		assigneeID = id
 	}
 
-	if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID); status != 0 {
-		writeError(w, status, msg)
-		return
-	}
-
 	var parentIssueID pgtype.UUID
 	var projectID pgtype.UUID
 	if req.ProjectID != nil {
@@ -3066,11 +3199,13 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		parentIssueID = id
 	}
-	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
-		return
-	}
-	if parentIssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		parent, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+	// 2026-08-28 coder(lq): Validate the parent workspace boundary before
+	// project or assignee authorization so a foreign parent cannot be masked by
+	// an unrelated permission response when the project overlay is disabled.
+	var parentIssue db.Issue
+	if parentIssueID.Valid {
+		var err error
+		parentIssue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 			ID:          parentIssueID,
 			WorkspaceID: wsUUID,
 		})
@@ -3078,14 +3213,21 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 			return
 		}
-		if !h.requireParentIssueProjectPermission(w, r, parent, projectID) {
+	}
+	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
+		return
+	}
+	if parentIssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if !h.requireParentIssueProjectPermission(w, r, parentIssue, projectID) {
 			return
 		}
 	}
-	// Cross-workspace parent / project existence is enforced inside
-	// IssueService.Create (atomically with the create), so every entry
-	// point — HTTP, Lark, future MCP — gets the same boundary check
-	// without duplicating the lookup here.
+	if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID); status != 0 {
+		writeError(w, status, msg)
+		return
+	}
+	// IssueService.Create repeats the parent/project boundary checks atomically
+	// for non-HTTP entry points and to close races between validation and insert.
 
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
@@ -3227,6 +3369,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
+		BeforeCommit:     h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment, labels []db.IssueLabel) map[string]any {
 			payload := issueToResponse(issue, prefix)
 			// The event other tabs receive must carry the category too — filling
@@ -3272,6 +3415,9 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, service.ErrIssueStatusUnavailable) {
 		writeError(w, http.StatusConflict,
 			"the target status was archived while this request was in flight; reload the status list and retry")
+		return
+	}
+	if writeIssueLimitReached(w, err) {
 		return
 	}
 	if err != nil {
@@ -3504,6 +3650,11 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 			}
 		}
 	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.Issue{}, current, false, fmt.Errorf("commit atomic issue update: %w", err)
 	}
@@ -3517,6 +3668,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.requireIssueProjectPermission(w, r, prevIssue, projectauth.IssueManage) {
+		return
+	}
+	if rejectArchivedIssueMutation(w, prevIssue) {
 		return
 	}
 	userID := requestUserID(r)
@@ -3753,11 +3907,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			prevIssue = lockedPrev
 		}
 	} else {
-		err = h.runWithIssueStatusGuard(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, func(q *db.Queries) error {
-			var innerErr error
-			issue, innerErr = q.UpdateIssue(r.Context(), params)
-			return innerErr
-		})
+		issue, err = h.updateIssueWithProjectAccess(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params)
 	}
 	if err != nil {
 		if writeIssueStatusRaceError(w, err) {
@@ -4061,7 +4211,7 @@ func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool
 	// The shared verdict, not a local re-check (service.AgentReadiness). Only a
 	// BLOCKED verdict stops the enqueue: an offline machine still queues,
 	// because that work runs when the machine comes back.
-	verdict, err := service.AgentReadiness(ctx, h.Queries, agent)
+	verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceIssue), agent)
 	if err != nil || !verdict.Blocked() {
 		return err == nil
 	}
@@ -4282,6 +4432,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if !h.requireIssueProjectPermission(w, r, prevIssue, projectauth.IssueManage) {
 			return
 		}
+		if rejectArchivedIssueMutation(w, prevIssue) {
+			return
+		}
 
 		params := db.UpdateIssueParams{
 			ID:            prevIssue.ID,
@@ -4441,11 +4594,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				prevIssue = lockedPrev
 			}
 		} else {
-			err = h.runWithIssueStatusGuard(r.Context(), wsUUID, batchStatusKey, func(q *db.Queries) error {
-				var innerErr error
-				issue, innerErr = q.UpdateIssue(r.Context(), params)
-				return innerErr
-			})
+			issue, err = h.updateIssueWithProjectAccess(r.Context(), wsUUID, batchStatusKey, params)
 		}
 		if err != nil {
 			// The archive race is a property of the batch's shared target
@@ -4560,10 +4709,18 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deleted := 0
+	// Resolve and authorize the complete target set before mutating any issue.
+	// The exclusion set lets parent/child deletes in one request preserve only
+	// surviving descendants, independent of request order or duplicate IDs.
+	issues := make([]db.Issue, 0, len(req.IssueIDs))
+	excludedIssueIDs := make([]pgtype.UUID, 0, len(req.IssueIDs))
+	seenIssueIDs := make(map[pgtype.UUID]struct{}, len(req.IssueIDs))
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
+			continue
+		}
+		if _, seen := seenIssueIDs[issueUUID]; seen {
 			continue
 		}
 		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -4576,6 +4733,40 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueManage) {
 			return
 		}
+		seenIssueIDs[issueUUID] = struct{}{}
+		issues = append(issues, issue)
+		excludedIssueIDs = append(excludedIssueIDs, issueUUID)
+	}
+
+	// Detach direct children that will survive this batch before deleting any
+	// target. Children also in the target set stay attached until their own
+	// pass, so a surviving grandchild is detached exactly once.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	detached := make(map[pgtype.UUID]struct{})
+	for _, issue := range issues {
+		children, err := h.Queries.DetachDirectChildIssues(r.Context(), db.DetachDirectChildIssuesParams{
+			WorkspaceID:      wsUUID,
+			ParentIssueID:    issue.ID,
+			ExcludedIssueIds: excludedIssueIDs,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to detach child issues")
+			return
+		}
+		for _, child := range children {
+			if _, already := detached[child.ID]; already {
+				continue
+			}
+			detached[child.ID] = struct{}{}
+			prefix := h.getIssuePrefix(r.Context(), child.WorkspaceID)
+			h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
+				"issue": issueToResponse(child, prefix),
+			})
+		}
+	}
+	deleted := 0
+	for _, issue := range issues {
+		issueID := uuidToString(issue.ID)
 
 		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 		_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
@@ -4589,7 +4780,6 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		h.deleteS3Objects(r.Context(), attachmentURLs)
 
 		// Always emit the resolved UUID — frontend caches key by UUID.
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
 		h.publish(protocol.EventIssueDeleted, workspaceID, actorType, actorID, map[string]any{"issue_id": uuidToString(issue.ID)})
 		deleted++
 	}

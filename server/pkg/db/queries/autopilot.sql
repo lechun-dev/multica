@@ -34,6 +34,43 @@ WHERE a.workspace_id = $1
     (sqlc.narg('status')::text IS NULL AND a.status <> 'archived')
     OR a.status = sqlc.narg('status')
   )
+  -- 2026-08-27 coder(lq): Autopilot data is private to its creator, its
+  -- effective executor, and the workspace owner. A squad executes through
+  -- its leader Agent, so that Agent's owner is the squad executor.
+  AND (
+    -- 2026-08-27 coder(lq): Projectless Autopilots retain the native
+    -- workspace visibility boundary. Project-scoped rows use the overlay
+    -- below; the handler passes viewer_role=owner while the feature is off
+    -- so the generated query remains backward compatible.
+    a.project_id IS NULL
+    OR sqlc.arg('viewer_role')::text = 'owner'
+    OR (
+      a.created_by_type = 'member'
+      AND a.created_by_id = sqlc.arg('viewer_user_id')::uuid
+    )
+    OR (
+      a.assignee_type = 'agent'
+      AND EXISTS (
+        SELECT 1
+        FROM agent executor
+        WHERE executor.id = a.assignee_id
+          AND executor.workspace_id = a.workspace_id
+          AND executor.owner_id = sqlc.arg('viewer_user_id')::uuid
+      )
+    )
+    OR (
+      a.assignee_type = 'squad'
+      AND EXISTS (
+        SELECT 1
+        FROM squad executor_squad
+        JOIN agent leader ON leader.id = executor_squad.leader_id
+        WHERE executor_squad.id = a.assignee_id
+          AND executor_squad.workspace_id = a.workspace_id
+          AND leader.workspace_id = a.workspace_id
+          AND leader.owner_id = sqlc.arg('viewer_user_id')::uuid
+      )
+    )
+  )
 ORDER BY a.created_at DESC;
 
 -- name: GetAutopilot :one
@@ -698,10 +735,35 @@ RETURNING *;
 -- =====================
 
 -- name: ListAutopilotSubscribers :many
+-- Only current workspace members are effective subscribers. The membership
+-- join makes legacy rows left behind by older member-removal code inert on
+-- both the detail response and the dispatch path, so clients never round-trip
+-- a hidden departed member into an otherwise valid update.
 -- ORDER BY created_at keeps chip rendering stable across refreshes.
-SELECT * FROM autopilot_subscriber
-WHERE autopilot_id = $1
-ORDER BY created_at ASC, user_id ASC;
+SELECT s.* FROM autopilot_subscriber AS s
+JOIN autopilot AS a ON a.id = s.autopilot_id
+JOIN member AS m
+  ON m.workspace_id = a.workspace_id
+ AND m.user_id = s.user_id
+WHERE s.autopilot_id = $1
+  AND s.user_type = 'member'
+ORDER BY s.created_at ASC, s.user_id ASC;
+
+-- name: ListAutopilotSubscribersForAutopilots :many
+-- Batch form of ListAutopilotSubscribers for the list endpoint, which must not
+-- issue one query per row. The autopilot_subscriber primary key leads with
+-- autopilot_id, so ANY($1) is index-supported and no extra index is needed.
+-- The member join and ordering are identical to the single-autopilot query on
+-- purpose: list and detail have to agree on who counts as a subscriber, or the
+-- two projections disagree again (MUL-6680).
+SELECT s.* FROM autopilot_subscriber AS s
+JOIN autopilot AS a ON a.id = s.autopilot_id
+JOIN member AS m
+  ON m.workspace_id = a.workspace_id
+ AND m.user_id = s.user_id
+WHERE s.autopilot_id = ANY($1::uuid[])
+  AND s.user_type = 'member'
+ORDER BY s.autopilot_id ASC, s.created_at ASC, s.user_id ASC;
 
 -- name: AddAutopilotSubscriber :exec
 INSERT INTO autopilot_subscriber (autopilot_id, user_type, user_id)
@@ -712,6 +774,17 @@ ON CONFLICT (autopilot_id, user_type, user_id) DO NOTHING;
 -- Paired with a re-insert loop to implement full-replace PATCH semantics.
 DELETE FROM autopilot_subscriber
 WHERE autopilot_id = $1;
+
+-- name: DeleteAutopilotSubscribersByMember :exec
+-- Autopilot subscribers carry no FK, so member removal must prune them in the
+-- same application transaction. Scope through the autopilot's workspace: the
+-- same user may remain subscribed to autopilots in another workspace.
+DELETE FROM autopilot_subscriber AS s
+USING autopilot AS a
+WHERE s.autopilot_id = a.id
+  AND a.workspace_id = sqlc.arg(workspace_id)
+  AND s.user_type = 'member'
+  AND s.user_id = sqlc.arg(user_id);
 
 -- =====================
 -- Autopilot Collaborators

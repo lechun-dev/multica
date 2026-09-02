@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 type issueTableEnrichmentFailTxStarter struct {
@@ -207,6 +209,48 @@ func TestIssueTableProjectScopeAssigneeTypes(t *testing.T) {
 		bad,
 	); ok {
 		t.Fatal("invalid assignee_types must be rejected on project scope")
+	}
+}
+
+// 2026-08-27 coder(lq): Keep the table compiler covered by the project
+// permission boundary; rows, groups, and facets all reuse this predicate,
+// including the restricted visibility branch for projectless issues.
+func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	original := testHandler.ProjectAuth
+	testHandler.ProjectAuth = projectauth.New(nil, true)
+	t.Cleanup(func() { testHandler.ProjectAuth = original })
+
+	spec := issueTableQuerySpec{
+		Scope:   issueTableScope{Kind: "workspace"},
+		Filters: issueTableFiltersRequest{IncludeNoProject: true},
+		Sort:    issueTableSortRequest{Field: "position", Direction: "asc"},
+	}
+	w := httptest.NewRecorder()
+	compiled, ok := testHandler.compileIssueTableQuery(
+		w,
+		newRequest(http.MethodPost, "/api/issues/table/rows", nil),
+		spec,
+	)
+	if !ok {
+		t.Fatalf("compile failed: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(compiled.where, "i.project_id IS NOT NULL") || !strings.Contains(compiled.where, "i.project_id IS NULL") {
+		t.Fatalf("project visibility must cover project-bound and projectless issues: %q", compiled.where)
+	}
+	if !strings.Contains(compiled.where, "i.creator_type = 'member'") || !strings.Contains(compiled.where, "i.assignee_type = 'member'") {
+		t.Fatalf("projectless visibility must restrict creator and assignee identities: %q", compiled.where)
+	}
+	if !strings.Contains(compiled.where, "FROM project_members pm") {
+		t.Fatalf("project visibility membership predicate missing: %q", compiled.where)
+	}
+	if len(compiled.args) != 2 {
+		t.Fatalf("project visibility must bind the authenticated user, args=%#v", compiled.args)
+	}
+	if _, ok := compiled.args[1].(pgtype.UUID); !ok {
+		t.Fatalf("project visibility user argument must be a UUID, args=%#v", compiled.args)
 	}
 }
 

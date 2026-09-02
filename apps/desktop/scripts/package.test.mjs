@@ -12,7 +12,23 @@ import {
   parsePackageArgs,
   resolveBuildMatrix,
   stripLeadingSeparator,
+  updateChannelForTarget,
 } from "./package.mjs";
+import { stripForwardedSeparator } from "./package-lechun.mjs";
+
+describe("stripForwardedSeparator (Lechun wrapper)", () => {
+  it("removes pnpm's leading separator before config injection", () => {
+    expect(stripForwardedSeparator(["--", "--linux", "--x64", "--publish", "never"])).toEqual([
+      "--linux", "--x64", "--publish", "never",
+    ]);
+  });
+
+  it("does not remove a separator that is not leading", () => {
+    expect(stripForwardedSeparator(["--config", "electron-builder.lechun.yml", "--"])).toEqual([
+      "--config", "electron-builder.lechun.yml", "--",
+    ]);
+  });
+});
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -130,6 +146,20 @@ describe("deriveVersion (real git describe)", () => {
     const { dir, run } = initRepo();
     run("tag", "v1.4.2");
     expect(deriveVersion(dir)).toBe("1.4.2");
+  });
+
+  it("prefers the explicit release tag when multiple tags point at one commit", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v0.4.51");
+    run("tag", "v0.4.52");
+    run("tag", "v0.4.53");
+    expect(deriveVersion(dir, "v0.4.53")).toBe("0.4.53");
+  });
+
+  it("ignores an invalid release tag and falls back to git describe", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v1.4.2");
+    expect(deriveVersion(dir, "release_iteration/Sprint_0705")).toBe("1.4.2");
   });
 
   it("selects the semver tag even when a nearer non-semver tag exists", () => {
@@ -267,6 +297,50 @@ describe("resolveBuildMatrix", () => {
 });
 
 describe("builderArgsForTarget", () => {
+  it("maps each Lechun architecture to a non-official feed", () => {
+    expect(updateChannelForTarget({ platform: "mac", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+    expect(updateChannelForTarget({ platform: "mac", arch: "x64" }, "lechun")).toBe(
+      "latest-lechun-x64",
+    );
+    expect(updateChannelForTarget({ platform: "win", arch: "x64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+    expect(updateChannelForTarget({ platform: "win", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun-arm64",
+    );
+    expect(updateChannelForTarget({ platform: "linux", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+  });
+
+  it("uses a separate Lechun update namespace", () => {
+    expect(
+      builderArgsForTarget(
+        { platform: "win", arch: "x64" },
+        {
+          allPlatforms: false,
+          sharedArgs: ["--publish", "always"],
+          platformTargets: { mac: [], win: ["nsis"], linux: [] },
+          requestedPlatforms: ["win"],
+          requestedArchs: ["x64"],
+        },
+        "1.2.3",
+        { hostPlatform: "win32", useScopedOutputDir: true, variant: "lechun" },
+      ),
+    ).toEqual([
+      "-c.extraMetadata.version=1.2.3",
+      "--win",
+      "nsis",
+      "--x64",
+      "--publish",
+      "always",
+      "-c.directories.output=dist/win-x64",
+      "-c.publish.channel=latest-lechun",
+    ]);
+  });
+
   it("adds scoped output directories for multi-target builds", () => {
     expect(
       builderArgsForTarget(
@@ -475,5 +549,22 @@ describe("electron-builder.yml packaging config", () => {
     const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
+  });
+
+  it("keeps the Lechun packaging overrides in a separate config", () => {
+    const lechunConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun.yml"),
+      resolve(process.cwd(), "apps/desktop/electron-builder.lechun.yml"),
+    ].find((candidate) => existsSync(candidate));
+    expect(lechunConfigPath, "Lechun electron-builder config not found").toBeTruthy();
+    if (!lechunConfigPath) return;
+    const config = readFileSync(lechunConfigPath, "utf-8");
+    expect(config).toContain("extends: electron-builder.yml");
+    expect(config).toContain("appId: ai.multica.desktop.lechun");
+    expect(config).toContain("productName: MissionOS");
+    expect(config).toContain("deb:\n  packageName: multica-lechun");
+    expect(config).toContain("rpm:\n  packageName: multica-lechun");
+    expect(config).toContain("channel: latest-lechun");
+    expect(config).toContain("multica-lechun");
   });
 });

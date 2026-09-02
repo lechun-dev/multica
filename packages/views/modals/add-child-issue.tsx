@@ -10,6 +10,7 @@ import {
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 export function AddChildIssueModal({
   onClose,
@@ -22,14 +23,16 @@ export function AddChildIssueModal({
   const issueId = (data?.issueId as string) || "";
   const wsId = useWorkspaceId();
   const updateIssue = useUpdateIssue();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
 
   const { data: issue = null } = useQuery({
-    ...issueDetailOptions(wsId, issueId),
-    enabled: !!issueId,
+    ...issueDetailOptions(wsId, issueId, includeWorkspaceOwned),
+    enabled: visibilityReady && !!issueId,
   });
   const { data: children = [] } = useQuery({
-    ...childIssuesOptions(wsId, issueId),
-    enabled: !!issueId,
+    ...childIssuesOptions(wsId, issueId, includeWorkspaceOwned),
+    enabled: visibilityReady && !!issueId,
   });
 
   const excludeIds = [

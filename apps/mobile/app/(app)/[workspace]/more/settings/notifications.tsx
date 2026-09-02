@@ -15,6 +15,7 @@ import type {
 } from "@multica/core/types";
 import { Text } from "@/components/ui/text";
 import { Switch } from "@/components/ui/switch";
+import { DEFAULT_PRODUCT_NAME } from "@multica/core/i18n/branding";
 import { Separator } from "@/components/ui/separator";
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { notificationPreferenceOptions } from "@/data/queries/notification-preferences";
@@ -133,7 +134,7 @@ export default function NotificationsSettingsScreen() {
 
       <Section
         title="System"
-        description="Multica-wide announcements and important account events."
+        description={`${DEFAULT_PRODUCT_NAME}-wide announcements and important account events.`}
       >
         <View className="flex-row items-center px-4 py-3 gap-3">
           <View className="flex-1">

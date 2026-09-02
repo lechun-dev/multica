@@ -726,6 +726,82 @@ type RedeemDingTalkBindingTokenResponse struct {
 	DingTalkUserID string `json:"dingtalk_user_id"`
 }
 
+// DingTalkProfileResponse is limited to the authenticated user's own linked
+// identity. It is intentionally separate from UserResponse so the public user
+// model does not become coupled to the optional DingTalk module.
+type DingTalkProfileResponse struct {
+	Bound       bool      `json:"bound"`
+	Name        string    `json:"name,omitempty"`
+	Email       string    `json:"email,omitempty"`
+	AvatarURL   string    `json:"avatar_url,omitempty"`
+	Departments *[]string `json:"departments,omitempty"`
+}
+
+type storedDingTalkDepartment struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func dingtalkDepartmentNames(raw []byte) ([]string, error) {
+	var stored []storedDingTalkDepartment
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(stored))
+	seen := make(map[string]struct{}, len(stored))
+	for _, department := range stored {
+		name := strings.TrimSpace(department.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// GetDingTalkProfile returns the current user's saved DingTalk identity.
+func (h *Handler) GetDingTalkProfile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var profile DingTalkProfileResponse
+	var departmentsJSON []byte
+	var departmentsSyncedAt pgtype.Timestamptz
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT COALESCE(name, ''), COALESCE(email, ''), COALESCE(avatar_url, ''),
+		       departments, departments_synced_at
+		FROM dingtalk_notify_identities
+		WHERE multica_user_id = $1 AND active = true
+		ORDER BY updated_at DESC
+		LIMIT 1`, userID).Scan(
+		&profile.Name, &profile.Email, &profile.AvatarURL,
+		&departmentsJSON, &departmentsSyncedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, profile)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DingTalk profile is unavailable")
+		return
+	}
+	profile.Bound = true
+	if departmentsSyncedAt.Valid {
+		departments, decodeErr := dingtalkDepartmentNames(departmentsJSON)
+		if decodeErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "DingTalk profile is unavailable")
+			return
+		}
+		profile.Departments = &departments
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
 // RedeemDingTalkBindingToken (POST /api/dingtalk/binding/redeem) binds the
 // DingTalk user id carried by the bearer token to the logged-in Multica user.
 // The redeemer's identity comes from the session, while token possession proves

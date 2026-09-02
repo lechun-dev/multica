@@ -24,6 +24,41 @@ func inboxWorkspaceHandler(handler http.HandlerFunc) http.HandlerFunc {
 	return middleware.RequireWorkspaceMember(testHandler.Queries)(handler).ServeHTTP
 }
 
+func TestListInboxProjectsCurrentIssueStatusAndPriority(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Inbox filter projections", "inbox-filter-"+uuid.NewString())
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	issueID := dbfx.Issue(t, "Filtered issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"status":       "in_review",
+		"priority":     "high",
+	})
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   workspaceID,
+		"recipient_type": "member",
+		"recipient_id":   testUserID,
+		"type":           "status_changed",
+		"severity":       "info",
+		"issue_id":       issueID,
+		"title":          "Projected issue",
+	})
+
+	var items []InboxItemResponse
+	testutil.Call(t, inboxWorkspaceHandler(testHandler.ListInbox),
+		inboxRequest(http.MethodGet, "/api/inbox", workspaceID)).
+		Want(http.StatusOK).
+		JSON(&items)
+
+	if len(items) != 1 {
+		t.Fatalf("inbox items = %d, want 1: %+v", len(items), items)
+	}
+	if items[0].IssueStatus == nil || *items[0].IssueStatus != "in_review" {
+		t.Errorf("issue_status = %v, want in_review", items[0].IssueStatus)
+	}
+	if items[0].IssuePriority == nil || *items[0].IssuePriority != "high" {
+		t.Errorf("issue_priority = %v, want high", items[0].IssuePriority)
+	}
+}
+
 func TestListArchivedInboxLimitsIssueGroupsNotRows(t *testing.T) {
 	workspaceID := dbfx.Workspace(t, "Archived inbox groups", "archived-groups-"+uuid.NewString())
 	dbfx.Member(t, workspaceID, testUserID, "owner")
@@ -126,5 +161,52 @@ func TestArchiveAllReadInboxUsesNewestIssueRow(t *testing.T) {
 	if got := dbfx.Count(t,
 		"SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived = true", unreadIssueID); got != 0 {
 		t.Fatalf("archived rows in unread issue = %d, want the whole group untouched", got)
+	}
+}
+
+func TestArchiveCompletedInboxExpandsCustomTerminalStatuses(t *testing.T) {
+	workspaceID := dbfx.Workspace(t, "Archive custom completed", "archive-custom-completed-"+uuid.NewString())
+	dbfx.Member(t, workspaceID, testUserID, "owner")
+	dbfx.Insert(t, "issue_status", testutil.Cols{
+		"workspace_id": workspaceID,
+		"key":          "verified_complete",
+		"name":         "Verified complete",
+		"category":     "done",
+		"color":        "#22c55e",
+		"is_system":    false,
+		"position":     1,
+	})
+	completedIssueID := dbfx.Issue(t, "Custom completed issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"status":       "verified_complete",
+	})
+	openIssueID := dbfx.Issue(t, "Open issue", testutil.Cols{
+		"workspace_id": workspaceID,
+		"status":       "todo",
+	})
+	for _, issueID := range []string{completedIssueID, openIssueID} {
+		dbfx.Insert(t, "inbox_item", testutil.Cols{
+			"workspace_id":   workspaceID,
+			"recipient_type": "member",
+			"recipient_id":   testUserID,
+			"type":           "status_changed",
+			"severity":       "info",
+			"issue_id":       issueID,
+			"title":          "Status changed",
+			"archived":       false,
+		})
+	}
+
+	testutil.Call(t, inboxWorkspaceHandler(testHandler.ArchiveCompletedInbox),
+		inboxRequest(http.MethodPost, "/api/inbox/archive-completed", workspaceID)).
+		Want(http.StatusOK)
+
+	if got := dbfx.Count(t,
+		"SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived = true", completedIssueID); got != 1 {
+		t.Fatalf("archived rows for custom completed issue = %d, want 1", got)
+	}
+	if got := dbfx.Count(t,
+		"SELECT count(*) FROM inbox_item WHERE issue_id = $1 AND archived = true", openIssueID); got != 0 {
+		t.Fatalf("archived rows for open issue = %d, want 0", got)
 	}
 }

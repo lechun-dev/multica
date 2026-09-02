@@ -5,6 +5,7 @@ import { issueIdentifierOptions } from "@multica/core/issues/queries";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { isIssueIdentifier } from "@multica/ui/markdown";
 import type { Issue } from "@multica/core/types";
+import { useWorkspaceTaskVisibility } from "../surface/visibility-context";
 
 /**
  * Resolve a bare issue identifier ("MUL-123") to a real issue in the current
@@ -23,6 +24,8 @@ import type { Issue } from "@multica/core/types";
  */
 export function useResolveIssueIdentifier(identifier: string): Issue | null {
   const workspace = useCurrentWorkspace();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const wsId = workspace?.id ?? "";
   const prefix = workspace?.issue_prefix;
   const prefixMatches =
@@ -30,8 +33,9 @@ export function useResolveIssueIdentifier(identifier: string): Issue | null {
     identifier.toUpperCase().startsWith(`${prefix.toUpperCase()}-`);
 
   const { data } = useQuery({
-    ...issueIdentifierOptions(wsId, identifier),
-    enabled: Boolean(wsId) && isIssueIdentifier(identifier) && prefixMatches,
+    ...issueIdentifierOptions(wsId, identifier, includeWorkspaceOwned),
+    enabled:
+      visibilityReady && Boolean(wsId) && isIssueIdentifier(identifier) && prefixMatches,
   });
 
   return data ?? null;

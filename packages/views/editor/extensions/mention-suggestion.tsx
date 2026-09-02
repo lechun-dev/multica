@@ -36,6 +36,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
+import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 import { Badge } from "@multica/ui/components/ui/badge";
 import {
   Tooltip,
@@ -262,6 +263,8 @@ function demoteCancelledItems(items: MentionItem[], query: string): MentionItem[
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
+    const { includeWorkspaceOwned, ready: visibilityReady } =
+      useWorkspaceTaskVisibility();
     // Selection is tracked by item identity, NOT by a positional index. The
     // list is re-bucketed by groupItems() and grows asynchronously (server
     // search results), so a slot index is not a stable target — the row under
@@ -287,7 +290,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       }
 
       const wsId = getCurrentWsId();
-      if (!wsId) {
+      if (!wsId || !visibilityReady) {
         setIsSearching(false);
         setSearchedQuery(q);
         return;
@@ -306,6 +309,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                   q,
                   limit: SERVER_CONTEXT_SEARCH_LIMIT,
                   include_closed: true,
+                  include_workspace_owned: includeWorkspaceOwned,
                   signal: controller.signal,
                 }),
                 api.searchProjects({
@@ -326,6 +330,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                 q,
                 limit: SERVER_ISSUE_SEARCH_LIMIT,
                 include_closed: true,
+                include_workspace_owned: includeWorkspaceOwned,
                 signal: controller.signal,
               });
               if (!cancelled && !controller.signal.aborted) {
@@ -348,7 +353,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         clearTimeout(timer);
         controller.abort();
       };
-    }, [includeProjectSearch, normalizedQuery]);
+    }, [includeProjectSearch, includeWorkspaceOwned, normalizedQuery, visibilityReady]);
 
     const displayItems = useMemo(() => {
       const currentServerItems = searchedQuery === normalizedQuery ? serverItems : [];
@@ -624,14 +629,14 @@ function MentionRow({
         {item.type === "all" ? t(($) => $.mention.all_members) : item.label}
       </span>
       {item.type === "agent" && (
-        // "Agent" is a glossary-protected product term — kept un-translated.
-        // eslint-disable-next-line i18next/no-literal-string
-        <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">Agent</Badge>
+        <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">
+          {t(($) => $.mention.agent_badge)}
+        </Badge>
       )}
       {item.type === "squad" && (
-        // "Squad" is a glossary-protected product term — kept un-translated.
-        // eslint-disable-next-line i18next/no-literal-string
-        <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">Squad</Badge>
+        <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">
+          {t(($) => $.mention.squad_badge)}
+        </Badge>
       )}
     </button>
   );

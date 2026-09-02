@@ -122,19 +122,20 @@ type issueTableDateFilterRequest struct {
 }
 
 type issueTableFiltersRequest struct {
-	Statuses          []string                     `json:"statuses,omitempty"`
-	Priorities        []string                     `json:"priorities,omitempty"`
-	Assignees         []issueTableActorRef         `json:"assignees,omitempty"`
-	IncludeNoAssignee bool                         `json:"include_no_assignee,omitempty"`
-	Creators          []issueTableActorRef         `json:"creators,omitempty"`
-	ProjectIDs        []string                     `json:"project_ids,omitempty"`
-	IncludeNoProject  bool                         `json:"include_no_project,omitempty"`
-	LabelIDs          []string                     `json:"label_ids,omitempty"`
-	Properties        map[string][]string          `json:"properties,omitempty"`
-	Date              *issueTableDateFilterRequest `json:"date,omitempty"`
-	WorkingOnly       bool                         `json:"working_only,omitempty"`
-	WorkingIssueIDs   []string                     `json:"working_issue_ids,omitempty"`
-	IncludeSubIssues  *bool                        `json:"include_sub_issues,omitempty"`
+	Statuses              []string                     `json:"statuses,omitempty"`
+	Priorities            []string                     `json:"priorities,omitempty"`
+	Assignees             []issueTableActorRef         `json:"assignees,omitempty"`
+	IncludeNoAssignee     bool                         `json:"include_no_assignee,omitempty"`
+	Creators              []issueTableActorRef         `json:"creators,omitempty"`
+	ProjectIDs            []string                     `json:"project_ids,omitempty"`
+	IncludeNoProject      bool                         `json:"include_no_project,omitempty"`
+	LabelIDs              []string                     `json:"label_ids,omitempty"`
+	Properties            map[string][]string          `json:"properties,omitempty"`
+	Date                  *issueTableDateFilterRequest `json:"date,omitempty"`
+	WorkingOnly           bool                         `json:"working_only,omitempty"`
+	WorkingIssueIDs       []string                     `json:"working_issue_ids,omitempty"`
+	IncludeSubIssues      *bool                        `json:"include_sub_issues,omitempty"`
+	IncludeWorkspaceOwned *bool                        `json:"include_workspace_owned,omitempty"`
 }
 
 type issueTableSortRequest struct {
@@ -459,6 +460,23 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	addArg := func(value any) string {
 		args = append(args, value)
 		return "$" + strconv.Itoa(len(args))
+	}
+	// 2026-08-27 coder(lq): The table compiler is shared by rows, groups, and
+	// facets, so apply the project boundary here once instead of relying on
+	// each surface to remember it. Projectless issues use the same creator,
+	// assignee, and workspace-owner visibility rule as the issue endpoints.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return issueTableSQL{}, false
+		}
+		userUUID, err := util.ParseUUID(userID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return issueTableSQL{}, false
+		}
+		includeWorkspaceOwned := spec.Filters.IncludeWorkspaceOwned == nil || *spec.Filters.IncludeWorkspaceOwned
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userUUID), includeWorkspaceOwned))
 	}
 
 	// Any non-empty status KEY, not just the 7 built-ins. A status filter names

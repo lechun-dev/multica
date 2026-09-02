@@ -40,7 +40,7 @@ func (h *Handler) issueWindowPolicy(ctx context.Context, workspaceID pgtype.UUID
 	if h.Entitlements == nil || !workspaceID.Valid {
 		return issueWindowPolicy{}, false
 	}
-	decision := h.Entitlements.Gate(ctx, uuid.UUID(workspaceID.Bytes), entitlement.GateIssueWindow)
+	decision := h.Entitlements.Gate(ctx, uuid.UUID(workspaceID.Bytes), entitlement.GateIssueCount)
 	gate := decision.Gate
 	if gate.Action == entitlement.ActionOff {
 		return issueWindowPolicy{}, false

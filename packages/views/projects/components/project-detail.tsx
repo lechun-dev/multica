@@ -22,10 +22,11 @@ import { useActorName } from "@multica/core/workspace/hooks";
 import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { useNavigation } from "../../navigation";
+import { currentPath, useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { ProjectResourcesSection } from "./project-resources-section";
+import { ProjectPermissionsPanel } from "./project-permissions-panel";
 import { ProjectStartDatePicker } from "./project-start-date-picker";
 import { ProjectDueDatePicker } from "./project-due-date-picker";
 import { IssueSurface } from "../../issues/surface/issue-surface";
@@ -279,6 +280,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         />
       </div>
 
+      {/* 2026-08-28 coder(lq): Keep project authorization beside the project identity so managers can find it without opening another settings page. */}
+      <div className="flex items-center">
+        <ProjectPermissionsPanel projectId={projectId} />
+      </div>
+
       {/* Properties */}
       <div>
         <button
@@ -508,7 +514,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 />
                 <DropdownMenuContent align="end" className="w-auto">
                   <DropdownMenuItem onClick={() => {
-                    void copyText(window.location.href).then((ok) => {
+                    void copyText(router.getShareableUrl(currentPath(router))).then((ok) => {
                       if (ok) toast.success(t(($) => $.detail.toast_link_copied));
                     });
                   }}>

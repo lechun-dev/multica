@@ -1,6 +1,7 @@
 "use client";
 
 import { issueStatusCategory } from "@multica/core/issues";
+import { DEFAULT_PRODUCT_NAME } from "@multica/core/i18n/branding";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
@@ -87,6 +88,7 @@ import {
 } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
 import { useAppForeground } from "../common/use-app-foreground";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 // Top-level nav items stay active when the user is on a child route
 // (e.g. "Projects" stays lit on /:slug/projects/:id). Pinned items keep
@@ -286,10 +288,12 @@ function PinRow({
   const isIssue = pin.item_type === "issue";
   const isView = pin.item_type === "view";
   const p = useWorkspacePaths();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const setActiveView = useActiveIssueViewStore((s) => s.setActive);
   const issueQuery = useQuery({
-    ...issueDetailOptions(wsId, pin.item_id),
-    enabled: isIssue,
+    ...issueDetailOptions(wsId, pin.item_id, includeWorkspaceOwned),
+    enabled: isIssue && visibilityReady,
   });
   const projectQuery = useQuery({
     ...projectDetailOptions(wsId, pin.item_id),
@@ -412,6 +416,8 @@ function PinSkeleton() {
 }
 
 interface AppSidebarProps {
+  /** 2026-08-30 coder(lq): Product name shown while the workspace loads. */
+  productName?: string;
   /** Rendered above SidebarHeader (e.g. desktop traffic light spacer) */
   topSlot?: React.ReactNode;
   /** Rendered in the header between workspace switcher and new-issue button (e.g. search trigger) */
@@ -422,7 +428,13 @@ interface AppSidebarProps {
   headerStyle?: React.CSSProperties;
 }
 
-export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
+export function AppSidebar({
+  productName = DEFAULT_PRODUCT_NAME,
+  topSlot,
+  searchSlot,
+  headerClassName,
+  headerStyle,
+}: AppSidebarProps = {}) {
   const { t } = useT("layout");
   const { pathname, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
@@ -447,10 +459,14 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   }, [pathname, setOpenMobile]);
 
   const wsId = workspace?.id;
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const { data: inboxItems = EMPTY_INBOX } = useQuery({
-    queryKey: wsId ? inboxKeys.list(wsId) : ["inbox", "disabled"],
-    queryFn: () => api.listInbox(),
-    enabled: !!wsId,
+    queryKey: wsId
+      ? inboxKeys.list(wsId, includeWorkspaceOwned)
+      : ["inbox", "disabled"],
+    queryFn: () => api.listInbox(includeWorkspaceOwned),
+    enabled: !!wsId && visibilityReady,
   });
   const unreadCount = React.useMemo(
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
@@ -460,8 +476,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   // threads (countUnreadChatMessages is the shared definition — mobile's tab
   // badge derives from the same function, keeping the platforms in agreement).
   const { data: chatSessions = [] } = useQuery({
-    ...chatSessionsOptions(wsId ?? ""),
-    enabled: !!wsId,
+    ...chatSessionsOptions(wsId ?? "", includeWorkspaceOwned),
+    enabled: !!wsId && visibilityReady,
   });
   // The session the user is reading right now must not count: the thread list
   // renders its row badge as 0 (auto mark-read is about to clear it), and a
@@ -489,8 +505,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   // shared cache entry across workspaces; gated on an active workspace since
   // the endpoint resolves through the workspace-member middleware.
   const { data: unreadSummary = EMPTY_INBOX_SUMMARY } = useQuery({
-    ...inboxUnreadSummaryOptions(),
-    enabled: !!wsId,
+    ...inboxUnreadSummaryOptions(includeWorkspaceOwned),
+    enabled: !!wsId && visibilityReady,
   });
   const otherWorkspaceUnread = React.useMemo(
     () => hasOtherWorkspaceUnread(unreadSummary, wsId),
@@ -500,8 +516,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   // specific one(s) rather than just the aggregate avatar dot.
   const unreadWsIds = React.useMemo(() => unreadWorkspaceIds(unreadSummary), [unreadSummary]);
   const { data: pinnedItems = EMPTY_PINS } = useQuery({
-    ...pinListOptions(wsId ?? "", userId ?? ""),
-    enabled: !!wsId && !!userId,
+    ...pinListOptions(wsId ?? "", userId ?? "", includeWorkspaceOwned),
+    enabled: !!wsId && !!userId && visibilityReady,
   });
   const deletePin = useDeletePin();
   const reorderPins = useReorderPins();
@@ -613,7 +629,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         )}
                       </span>
                       <span className="flex-1 truncate font-medium">
-                        {workspace?.name ?? "Multica"}
+                        {workspace?.name ?? productName}
                       </span>
                       <ChevronDown className="size-3 text-muted-foreground" />
                     </SidebarMenuButton>

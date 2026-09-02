@@ -12,7 +12,7 @@ Multica CLI 既负责连接本机运行时，也可以在终端中管理工作�
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.sh | bash
 ```
 
 安装了 Homebrew 时也可以运行：
@@ -24,7 +24,7 @@ brew install multica-ai/tap/multica
 **Windows PowerShell**
 
 ```powershell
-irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.ps1 | iex
 ```
 
 确认安装成功：
@@ -256,7 +256,7 @@ CLI 配置文件包含可代表你访问 Multica 的令牌。不要提交到仓�
 | | `env get/set <agent-id>` | 读写自定义环境变量（仅 owner 和 admin） | |
 | | `skills list/set/add <agent-id>` | 管理绑定的 skill | `--skill-ids`（`set` 全量替换，`add` 增量添加） |
 | | `mcp list/add/enable/disable/remove <agent-id>` | 给该 agent 分配工作区 MCP 服务 | server id 从 `workspace mcp list` 获取。库里的条目在这里添加之前不会生效；`disable` 只停止下发，保留分配 |
-| `autopilot` | `list/get/create/update/delete` | 管理自动化 | `create`：`--title`、`--agent`、`--mode`（均必填）、`--priority`、`--project`、`--subscriber`（可重复） |
+| `autopilot` | `list/get/create/update/delete` | 管理自动化 | `create`：`--title`、`--agent`、`--mode`（均必填）、`--project`、`--subscriber`（可重复） |
 | | `trigger <id>` | 手动触发一次 | |
 | | `runs <id>` | 查看运行历史 | |
 | | `trigger-add/trigger-update/trigger-delete/trigger-rotate-url` | 管理定时和 webhook 触发器 | |
@@ -301,7 +301,7 @@ CLI 配置文件包含可代表你访问 Multica 的令牌。不要提交到仓�
 ## 在其他编码智能体里操作 Multica
 
 如果你的工作大多发生在 Codex、Claude Code 或 Cursor 里，可以直接在那里操作 Multica，
-不必切回终端。[Multica CLI skill](https://github.com/multica-ai/multica-cli)
+不必切回终端。[Multica CLI skill](https://github.com/lechun-dev/multica-cli)
 会教这些智能体安全地使用本页的命令：低成本地读 issue 和评论线程、通过文件写评论，
 以及正确处理 mention、状态变更和指派带来的副作用。
 
@@ -312,7 +312,7 @@ Claude Code 插件市场、Codex skill 安装器、Cursor 以及其他任何加�
 
 ## 接下来
 
-- [Multica CLI skill](https://github.com/multica-ai/multica-cli) — 在 Codex、Claude Code 或 Cursor 里操作 Multica。
+- [Multica CLI skill](https://github.com/lechun-dev/multica-cli) — 在 Codex、Claude Code 或 Cursor 里操作 Multica。
 - [认证与令牌](/auth-tokens) — PAT 的创建、续期和吊销。
 - [故障排查](/troubleshooting) — 命令报错和任务不开始的排查路径。
 - [创建和配置智能体](/agents-create) — `agent create` 各字段的完整语义。

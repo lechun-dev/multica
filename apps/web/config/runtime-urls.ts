@@ -134,6 +134,14 @@ export function runtimeRewriteDestination(
   if (pathname === "/ws") {
     return appendPath(remoteApiUrl, "/ws");
   }
+  // `multica setup self-host` probes `{server-url}/health` and treats any
+  // non-200 as "Server not reachable". The backend serves it, but a
+  // same-origin reverse proxy that forwards everything to the web image left
+  // the probe 404ing at the Next.js router, so setup failed against a healthy
+  // stack. Proxy the exact path like /ws.
+  if (pathname === "/health") {
+    return appendPath(remoteApiUrl, "/health");
+  }
   if (isBackendAuthPath(pathname)) {
     return appendPath(remoteApiUrl, pathname);
   }
@@ -144,6 +152,8 @@ export function runtimeRewriteDestination(
 function isBackendAuthPath(pathname: string): boolean {
   if (pathname === "/auth/callback") return false;
   if (pathname.startsWith("/auth/callback/")) return false;
+  if (pathname === "/auth/dingtalk/callback") return false;
+  if (pathname.startsWith("/auth/dingtalk/callback/")) return false;
   if (pathname === "/auth/hg-sso/callback") return false;
   if (pathname.startsWith("/auth/hg-sso/callback/")) return false;
   return pathname === "/auth" || pathname.startsWith("/auth/");

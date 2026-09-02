@@ -19,6 +19,7 @@ import { descriptionPreview } from "./description-preview";
 import { PriorityIcon } from "./priority-icon";
 import { ProgressRing } from "./progress-ring";
 import { StatusIcon } from "./status-icon";
+import { useWorkspaceTaskVisibility } from "../surface/visibility-context";
 
 interface IssueHoverCardProps {
   issueId: string;
@@ -117,11 +118,19 @@ function IssueHoverCardBody({
   fallbackLabel?: string;
 }) {
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const resolveStatusLabel = useStatusLabel(wsId);
-  const detail = useQuery(issueDetailOptions(wsId, issueId));
+  const detail = useQuery({
+    ...issueDetailOptions(wsId, issueId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   // One workspace-wide progress snapshot shared with the issues list and issue
   // detail, not a per-issue children fetch: opening a card reuses the cache.
-  const { data: childProgress } = useQuery(childIssueProgressOptions(wsId));
+  const { data: childProgress } = useQuery({
+    ...childIssueProgressOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const { t } = useT("issues");
 
   // A skeleton rather than localized loading text: only the pending phase gets

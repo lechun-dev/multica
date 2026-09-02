@@ -25,10 +25,10 @@ FOR UPDATE;
 
 -- name: CreateProject :one
 INSERT INTO project (
-    workspace_id, title, description, icon, status,
+    workspace_id, created_by, title, description, icon, status,
     lead_type, lead_id, priority, start_date, due_date
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 ) RETURNING *;
 
 -- name: UpdateProject :one
@@ -57,7 +57,8 @@ WHERE project_id = $1;
 -- name: GetProjectIssueStats :many
 SELECT project_id,
        count(*)::bigint AS total_count,
-       count(*) FILTER (WHERE issue_effective_status(workspace_id, status) IN ('done', 'cancelled'))::bigint AS done_count
+       count(*) FILTER (WHERE status = ANY(sqlc.arg('terminal_status_keys')::text[]))::bigint AS done_count
 FROM issue
-WHERE project_id = ANY(sqlc.arg('project_ids')::uuid[])
+WHERE workspace_id = sqlc.arg('workspace_id')::uuid
+  AND project_id = ANY(sqlc.arg('project_ids')::uuid[])
 GROUP BY project_id;

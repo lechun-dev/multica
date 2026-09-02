@@ -8,10 +8,15 @@ export const projectKeys = {
     [...projectKeys.all(wsId), "detail", id] as const,
 };
 
-export function projectListOptions(wsId: string) {
+export function projectListOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: projectKeys.list(wsId),
-    queryFn: () => api.listProjects(),
+    queryKey: includeWorkspaceOwned
+      ? projectKeys.list(wsId)
+      : [...projectKeys.list(wsId), false] as const,
+    queryFn: () =>
+      api.listProjects(
+        includeWorkspaceOwned ? undefined : { include_workspace_owned: false },
+      ),
     select: (data) => data.projects,
   });
 }

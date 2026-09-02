@@ -8,7 +8,7 @@ import { projectListOptions } from "@multica/core/projects/queries";
 import { childIssueProgressOptions } from "@multica/core/issues/queries";
 import { issueSurfaceGanttOptions } from "@multica/core/issues/surface/repository";
 import type { IssueSurfaceQueryPlan } from "@multica/core/issues/surface/query-plan";
-import type { IssueStatus, IssueStatusCategory } from "@multica/core/types";
+import type { IssueStatus, IssueStatusCategory, PropertyFilterValue } from "@multica/core/types";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { issueBehavesAsAny, statusFilterColumns } from "@multica/core/issues";
 import {
@@ -96,9 +96,12 @@ export function useIssueSurfaceData({
   projectId,
   usesGantt,
   usesTable,
+  visibilityReady,
   serverStatusBranches,
   serverGroupBranches,
   ganttShowCompleted,
+  archiveState,
+  includeWorkspaceOwned,
   statusFilters,
   hiddenStatusCategories,
   statusFilterPending,
@@ -121,11 +124,15 @@ export function useIssueSurfaceData({
   projectId?: string;
   usesGantt: boolean;
   usesTable: boolean;
+  /** Prevent rendering cached rows before workspace visibility is resolved. */
+  visibilityReady: boolean;
   serverStatusBranches: IssueStatusBranches;
   serverGroupBranches: IssueGroupBranches;
   /** Gantt's "show completed" display toggle. The canvas hides done/cancelled
    *  rows without it, so the working scope has to honour it too. */
   ganttShowCompleted: boolean;
+  archiveState: "active" | "archived" | "all";
+  includeWorkspaceOwned: boolean;
   statusFilters: IssueStatus[];
   hiddenStatusCategories: IssueStatusCategory[];
   /** A custom status filter is waiting on the catalog — hold loading. */
@@ -140,15 +147,15 @@ export function useIssueSurfaceData({
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  propertyFilters: Record<string, string[]>;
+  propertyFilters: Record<string, PropertyFilterValue[]>;
   /** Distinct running-task issue ids projected by `/api/working-agents`. */
   workingIssueIDs: ReadonlySet<string>;
   showSubIssues: boolean;
   loadProjects: boolean;
 }): IssueSurfaceData {
   const ganttIssuesQuery = useQuery({
-    ...issueSurfaceGanttOptions(wsId, projectId ?? "", queryPlan),
-    enabled: usesGantt,
+    ...issueSurfaceGanttOptions(wsId, projectId ?? "", queryPlan, includeWorkspaceOwned, archiveState),
+    enabled: usesGantt && visibilityReady,
   });
   const workingFilterContext = useMemo(
     () => ({ runningIssueIds: workingIssueIDs }),
@@ -165,7 +172,9 @@ export function useIssueSurfaceData({
   // board / swimlane columns, header facet counts, batch selection, and the
   // isEmpty check. The status filter narrows this set like any other status —
   // it no longer unlocks an otherwise-hidden bucket.
-  const ganttIssues = ganttIssuesQuery.data ?? EMPTY_ISSUES;
+  const ganttIssues = visibilityReady
+    ? ganttIssuesQuery.data ?? EMPTY_ISSUES
+    : EMPTY_ISSUES;
   const surfaceIssues = usesGantt
     ? ganttIssues
     : usesTable
@@ -288,7 +297,10 @@ export function useIssueSurfaceData({
   const {
     data: childProgressData,
     refetch: refetchChildProgress,
-  } = useQuery(childIssueProgressOptions(wsId));
+  } = useQuery({
+    ...childIssueProgressOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const childProgressMap = childProgressData ?? EMPTY_CHILD_PROGRESS;
   const {
     data: projectData,
@@ -398,6 +410,7 @@ export function useIssueSurfaceData({
   // the surface reported "loaded, zero results" — an empty board with no
   // spinner — for the whole cold-load window. (MUL-6243)
   const isLoading =
+    !visibilityReady ||
     statusFilterPending ||
     (serverGroupBranches.enabled
       ? serverGroupBranches.isLoading

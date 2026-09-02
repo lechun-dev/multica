@@ -31,6 +31,7 @@ import type {
   IssuePriority,
   IssueAssigneeType,
   IssuePropertyValue,
+  SourceContextPreview,
 } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import {
@@ -70,7 +71,12 @@ import {
   type ManualCreateField,
 } from "@multica/core/issues/stores/issue-create-settings-store";
 import { issueDetailOptions, childIssuesOptions } from "@multica/core/issues/queries";
-import { useCreateIssue, useUpdateIssue } from "@multica/core/issues/mutations";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
+import {
+  useCreateCommentSubIssue,
+  useCreateIssue,
+  useUpdateIssue,
+} from "@multica/core/issues/mutations";
 import { useAttachLabelToIssue } from "@multica/core/labels";
 import {
   propertyListOptions,
@@ -92,6 +98,9 @@ import {
 } from "../issues/components/pickers/custom-property-picker";
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
+import { SourceContextPreviewCard, useSourceContextFailureMessage } from "./source-context-preview";
+import { NoProjectCollaborationHint } from "./no-project-collaboration-hint";
+import { useIssueLimitUpgradePrompt } from "./use-issue-limit-upgrade-prompt";
 
 // ---------------------------------------------------------------------------
 // ManualCreatePanel — manual-mode body of the create-issue dialog. Renders
@@ -114,10 +123,12 @@ import { useT } from "../i18n";
 function CreateRunHint({
   assigneeType,
   assigneeId,
+  projectId,
   status,
 }: {
   assigneeType?: IssueAssigneeType;
   assigneeId?: string;
+  projectId?: string;
   status: IssueStatus;
 }) {
   const { t } = useT("modals");
@@ -125,6 +136,7 @@ function CreateRunHint({
   const isAgentLike = assigneeType === "agent" || assigneeType === "squad";
   const preview = useIssueTriggerPreview({
     isCreate: true,
+    projectId: projectId ?? null,
     assigneeType: assigneeType ?? null,
     assigneeId: assigneeId ?? null,
     status,
@@ -209,11 +221,24 @@ export function ManualCreatePanel({
   setIsExpanded: (v: boolean) => void;
 }) {
   const { t } = useT("modals");
+  const { t: tIssues } = useT("issues");
   const { t: tEditor } = useT("editor");
   const { t: tProjects } = useT("projects");
   const router = useNavigation();
   const p = useWorkspacePaths();
   const workspaceName = useCurrentWorkspace()?.name;
+  const anchorCommentId = typeof data?.anchor_comment_id === "string" ? data.anchor_comment_id : null;
+  const sourcePreview = data?.source_context_preview as SourceContextPreview | undefined;
+  const sourceContextLoading = data?.source_context_loading === true;
+  const sourceContextFailed = data?.source_context_failed === true;
+  const sourceContextError = data?.source_context_error;
+  const refetchSourceContext = data?.source_context_refetch as (() => Promise<unknown>) | undefined;
+  const sourceContextExpanded = typeof data?.source_context_expanded === "boolean"
+    ? data.source_context_expanded
+    : undefined;
+  const onSourceContextExpandedChange = data?.source_context_on_expanded_change as ((expanded: boolean) => void) | undefined;
+  const sourceContextFailureMessage = useSourceContextFailureMessage();
+  const showIssueLimitUpgradePrompt = useIssueLimitUpgradePrompt();
 
   const draft = useIssueDraftStore((s) => s.draft);
   const setManual = useIssueDraftStore((s) => s.setManual);
@@ -267,6 +292,9 @@ export function ManualCreatePanel({
   const [parentIssueId, setParentIssueId] = useState<string | undefined>(
     (data?.parent_issue_id as string) || undefined,
   );
+  const parentIssueLocked = anchorCommentId !== null
+    && typeof data?.parent_issue_id === "string"
+    && data.parent_issue_id.length > 0;
   // Stage only applies to a sub-issue; kept local (not in the persisted draft)
   // since it's a per-creation choice tied to the chosen parent.
   const [stage, setStage] = useState<number | null>(
@@ -298,17 +326,19 @@ export function ManualCreatePanel({
   // Fetch parent issue details for the chip (status/identifier/title).
   // List cache usually has it already, so this resolves synchronously.
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const { categoryOf: draftStatusCategory } = useIssueStatuses(wsId);
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(wsId));
   const { data: parentIssue } = useQuery({
-    ...issueDetailOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...issueDetailOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
   });
   // Sibling stages under the chosen parent, so the Stage picker can offer the
   // already-used max stage (and one beyond) instead of flooring at Stage 1–3.
   const { data: parentChildren = [] } = useQuery({
-    ...childIssuesOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...childIssuesOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
   });
 
   // Set the persisted draft's active mode so a later reopen (and any reader of
@@ -388,6 +418,7 @@ export function ManualCreatePanel({
   };
 
   const createIssueMutation = useCreateIssue();
+  const createCommentSubIssueMutation = useCreateCommentSubIssue();
   const updateIssueMutation = useUpdateIssue();
   const attachLabelMutation = useAttachLabelToIssue();
   const setIssuePropertyMutation = useSetIssueProperty();
@@ -461,27 +492,52 @@ export function ManualCreatePanel({
       const activeAttachmentIds = draftAttachments
         .filter((a) => contentReferencesAttachment(description ?? "", a))
         .map((a) => a.id);
-      const issue = await createIssueMutation.mutateAsync({
-        title: title.trim(),
-        description,
-        status,
-        priority,
-        assignee_type: assigneeType,
-        assignee_id: assigneeId,
-        start_date: startDate || undefined,
-        due_date: dueDate || undefined,
-        attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
-        // The server attaches these in the same transaction as the create and
-        // echoes them back as `issue.labels`, so a stale selection fails the
-        // create instead of leaving a committed-but-unlabeled issue. A legacy
-        // backend that predates this ignores the field — handled by the
-        // compatibility fallback below.
-        label_ids: labelIds.length > 0 ? labelIds : undefined,
-        parent_issue_id: parentIssueId,
-        // Stage is only meaningful for a sub-issue (relative to its siblings).
-        stage: parentIssueId && stage != null ? stage : undefined,
-        project_id: projectId,
-      });
+      let issue: Issue;
+      if (anchorCommentId && sourcePreview) {
+        issue = await createCommentSubIssueMutation.mutateAsync({
+          anchorCommentId,
+          data: {
+            mode: "manual",
+            capture_token: sourcePreview.capture_token,
+            issue: {
+              title: title.trim(),
+              description,
+              status,
+              priority,
+              assignee_type: assigneeType,
+              assignee_id: assigneeId,
+              start_date: startDate || undefined,
+              due_date: dueDate || undefined,
+              attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
+              label_ids: labelIds.length > 0 ? labelIds : undefined,
+              stage: parentIssueId && stage != null ? stage : undefined,
+              project_id: projectId,
+            },
+          },
+        });
+      } else {
+        issue = await createIssueMutation.mutateAsync({
+          title: title.trim(),
+          description,
+          status,
+          priority,
+          assignee_type: assigneeType,
+          assignee_id: assigneeId,
+          start_date: startDate || undefined,
+          due_date: dueDate || undefined,
+          attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
+          // The server attaches these in the same transaction as the create and
+          // echoes them back as `issue.labels`, so a stale selection fails the
+          // create instead of leaving a committed-but-unlabeled issue. A legacy
+          // backend that predates this ignores the field — handled by the
+          // compatibility fallback below.
+          label_ids: labelIds.length > 0 ? labelIds : undefined,
+          parent_issue_id: parentIssueId,
+          // Stage is only meaningful for a sub-issue (relative to its siblings).
+          stage: parentIssueId && stage != null ? stage : undefined,
+          project_id: projectId,
+        });
+      }
 
       // Custom-property values can only be addressed once the issue has an
       // id. Keep the modal in its submitting state until every value settles
@@ -609,6 +665,30 @@ export function ManualCreatePanel({
       }
       return true;
     } catch (err) {
+      const sourceCode = err instanceof ApiError && err.body && typeof err.body === "object"
+        ? (err.body as { code?: unknown }).code
+        : undefined;
+      if (anchorCommentId && (
+        sourceCode === "source_context_changed"
+        || sourceCode === "anchor_comment_deleted"
+        || sourceCode === "source_issue_deleted"
+      )) {
+        await refetchSourceContext?.();
+        toast.error(sourceContextFailureMessage(err) ?? tIssues(($) => $.source_context.error_source_changed));
+        return false;
+      }
+      if (anchorCommentId && sourceCode === "source_context_server_unsupported") {
+        toast.error(tIssues(($) => $.source_context.error_server_unsupported));
+        return false;
+      }
+      if (anchorCommentId && sourceCode === "source_context_too_large") {
+        toast.error(sourceContextFailureMessage(err) ?? tIssues(($) => $.source_context.error_too_large));
+        return false;
+      }
+      if (sourceCode === "issue_limit_reached") {
+        showIssueLimitUpgradePrompt();
+        return false;
+      }
       // Duplicate-issue is the only structured 409 the create endpoint
       // returns. We schema-guard the body (ApiError.body is `unknown`) so a
       // future server-side rename / drop of `code` / `issue` degrades to the
@@ -692,6 +772,7 @@ export function ManualCreatePanel({
   // at the fix; otherwise hand off to the composer (single-flight + gate live
   // there).
   const handleSubmit = () => {
+    if (anchorCommentId && !sourcePreview) return;
     if (!title.trim()) {
       titleEditorRef.current?.focus();
       return;
@@ -751,14 +832,16 @@ export function ManualCreatePanel({
 
   // One state for the button and the keyboard paths, so a rendered affordance
   // can never disagree with what `handleSubmit` will actually do.
-  const submitState: "submitting" | "uploading" | "missing_title" | "ready" =
+  const submitState: "submitting" | "uploading" | "missing_title" | "source_unavailable" | "ready" =
     submitting
       ? "submitting"
       : gate.uploading
         ? "uploading"
-        : !title.trim()
-          ? "missing_title"
-          : "ready";
+        : anchorCommentId && !sourcePreview
+          ? "source_unavailable"
+          : !title.trim()
+            ? "missing_title"
+            : "ready";
   const submitBusy = submitState === "submitting" || submitState === "uploading";
 
   // Built once and reused by both footer branches: rendering a separate Button
@@ -772,7 +855,7 @@ export function ManualCreatePanel({
       // keyboard and screen-reader users could never reach the tooltip that
       // explains why nothing happens. `handleSubmit` is the real gate either way.
       disabled={submitBusy}
-      aria-disabled={submitState === "missing_title" || undefined}
+      aria-disabled={submitState === "missing_title" || submitState === "source_unavailable" || undefined}
       aria-busy={submitBusy || undefined}
       // The Button base only dims/blocks on native `disabled`, so aria-disabled
       // would otherwise stay a fully lit, pressable-looking primary button.
@@ -882,10 +965,24 @@ export function ManualCreatePanel({
               {descDragOver && <FileDropOverlay />}
             </div>
 
+            {anchorCommentId && (
+              <SourceContextPreviewCard
+                preview={sourcePreview}
+                loading={sourceContextLoading}
+                failed={sourceContextFailed}
+                error={sourceContextError}
+                onRetry={refetchSourceContext ? () => { void refetchSourceContext(); } : undefined}
+                constrainToParent
+                expanded={sourceContextExpanded}
+                onExpandedChange={onSourceContextExpandedChange}
+              />
+            )}
 
             {/* Pre-trigger preview — a passive caption above the toolbar; reveals
                 when an agent assignee will pick the issue up. */}
-            <CreateRunHint assigneeType={assigneeType} assigneeId={assigneeId} status={status} />
+            <CreateRunHint assigneeType={assigneeType} assigneeId={assigneeId} projectId={projectId} status={status} />
+
+            <NoProjectCollaborationHint visible={projectId == null} />
 
             {/* Property toolbar — each field renders per the Settings → Issue
                 selection (see showField above). */}
@@ -1043,7 +1140,18 @@ export function ManualCreatePanel({
               {/* Parent chip — appears when parent is set.
                   Placed before the ⋯ so it wraps to a new line with ⋯ if
                   space is tight, but ⋯ always stays last in DOM order. */}
-              {parentIssueId && parentIssue && (
+              {parentIssueId && parentIssueLocked ? (
+                <span
+                  data-testid="manual-sub-issue-chip"
+                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-caption text-muted-foreground"
+                >
+                  {t(($) => $.create_issue.subissue_of, {
+                    identifier: parentIssue?.identifier
+                      ?? (data?.parent_issue_identifier as string | undefined)
+                      ?? "",
+                  })}
+                </span>
+              ) : parentIssueId && parentIssue ? (
                 <div className="inline-flex items-center rounded-full border text-caption transition-colors hover:bg-accent/60">
                   <button
                     type="button"
@@ -1064,7 +1172,7 @@ export function ManualCreatePanel({
                     <XIcon className="size-3" />
                   </button>
                 </div>
-              )}
+              ) : null}
 
               {/* Child chips — one per queued sub-issue. Links are deferred
                   until create resolves (see handleSubmit). */}
@@ -1150,7 +1258,7 @@ export function ManualCreatePanel({
                       {t(($) => $.create_issue.set_start_date)}
                     </DropdownMenuItem>
                   )}
-                  {parentIssueId && parentIssue ? (
+                  {!parentIssueLocked && (parentIssueId && parentIssue ? (
                     <DropdownMenuItem onClick={() => setParentPickerOpen(true)}>
                       <ArrowUp className="h-3.5 w-3.5" />
                       {t(($) => $.create_issue.parent_with_id, { identifier: parentIssue.identifier })}
@@ -1160,7 +1268,7 @@ export function ManualCreatePanel({
                       <ArrowUp className="h-3.5 w-3.5" />
                       {t(($) => $.create_issue.set_parent)}
                     </DropdownMenuItem>
-                  )}
+                  ))}
                   <DropdownMenuItem onClick={() => setChildPickerOpen(true)}>
                     <ArrowDown className="h-3.5 w-3.5" />
                     {t(($) => $.create_issue.add_subissue)}
@@ -1214,7 +1322,7 @@ export function ManualCreatePanel({
                     <Settings2 className="h-3.5 w-3.5" />
                     {t(($) => $.create_issue.customize_fields)}
                   </DropdownMenuItem>
-                  {parentIssueId && parentIssue && (
+                  {!parentIssueLocked && parentIssueId && parentIssue && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -1269,6 +1377,7 @@ export function ManualCreatePanel({
             <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-2.5 border-t px-4 py-3 shrink-0 sm:flex sm:flex-wrap">
               <div className="flex min-h-7 items-center gap-2 sm:mr-auto">
                 <FileUploadButton
+                  size="sm"
                   multiple
                   onSelect={(file) => descEditorRef.current?.uploadFile(file)}
                 />

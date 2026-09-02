@@ -1,3 +1,4 @@
+import { configStore } from "../config";
 import type {
   Issue,
   IssuePriority,
@@ -13,6 +14,7 @@ import type {
   UpdateMemberRequest,
   ListIssuesParams,
   ListGroupedIssuesParams,
+  ListProjectsParams,
   IssueTableFacetsRequest,
   IssueTableFacetsResponse,
   IssueTableGroupsRequest,
@@ -98,6 +100,10 @@ import type {
   CreateProjectRequest,
   UpdateProjectRequest,
   ListProjectsResponse,
+  ProjectPermissionReportParams,
+  ProjectPermissionReportResponse,
+  ProjectPermissionRole,
+  ProjectPermissionRolesResponse,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
@@ -180,6 +186,7 @@ import type {
   RegisterSlackBYORequest,
   RedeemSlackBindingTokenResponse,
   DingTalkInstallation,
+  DingTalkProfile,
   ListDingTalkInstallationsResponse,
   ListDingTalkGroupsResponse,
   ListDingTalkGroupsParams,
@@ -205,8 +212,8 @@ import type {
   CreateBillingCheckoutSessionResponse,
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
-  WorkspaceSubscriptionEntitlements,
   WorkspaceSubscriptionSummary,
+  IssueLimitUsage,
   WorkspaceSubscriptionPrices,
   CreateWorkspaceSubscriptionCheckoutRequest,
   CreateWorkspaceSubscriptionCheckoutResponse,
@@ -216,6 +223,10 @@ import type {
   PurchaseWorkspaceSeatsRequest,
   PurchaseWorkspaceSeatsResponse,
   CreateWorkspaceSubscriptionPortalResponse,
+  SourceContextPreview,
+  CreateCommentSubIssueManualRequest,
+  CreateCommentSubIssueAgentRequest,
+  CreateCommentSubIssueRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -240,6 +251,8 @@ import {
   ChatMessageListSchema,
   ChatMessagesPageSchema,
   ChatPendingTaskSchema,
+  ChatSessionListSchema,
+  ChatSessionSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
   StartMikaOnboardingResponseSchema,
@@ -265,6 +278,8 @@ import {
   EMPTY_ATTACHMENT,
   EMPTY_CHAT_MESSAGE_LIST,
   EMPTY_CHAT_PENDING_TASK,
+  EMPTY_CHAT_SESSION,
+  EMPTY_CHAT_SESSION_LIST,
   EMPTY_PRIORITIZE_QUEUED_CHAT_TASK_RESPONSE,
   EMPTY_CLOUD_RUNTIME_NODE,
   EMPTY_CLOUD_RUNTIME_NODE_LIST,
@@ -299,6 +314,9 @@ import {
   ListIssuesResponseSchema,
   CreateIssueResponseSchema,
   IssueSchema,
+  AgentTaskSchema,
+  SourceContextPreviewSchema,
+  CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -311,6 +329,7 @@ import {
   SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
+  LoginResponseSchema,
   UserSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
@@ -321,8 +340,8 @@ import {
   CreateBillingCheckoutSessionResponseSchema,
   BillingCheckoutSessionStatusSchema,
   CreateBillingPortalSessionResponseSchema,
-  WorkspaceSubscriptionEntitlementsSchema,
   WorkspaceSubscriptionSummarySchema,
+  IssueLimitUsageSchema,
   WorkspaceSubscriptionPricesSchema,
   CreateWorkspaceSubscriptionCheckoutResponseSchema,
   WorkspaceSubscriptionSeatReconcileResultSchema,
@@ -330,10 +349,12 @@ import {
   PurchaseWorkspaceSeatsResponseSchema,
   CreateWorkspaceSubscriptionPortalResponseSchema,
   DingTalkInstallationSchema,
+  DingTalkProfileSchema,
   ListDingTalkInstallationsResponseSchema,
   ListDingTalkGroupsResponseSchema,
   RedeemDingTalkBindingTokenResponseSchema,
   EMPTY_DINGTALK_INSTALLATION,
+  EMPTY_DINGTALK_PROFILE,
   EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
   EMPTY_LIST_DINGTALK_GROUPS_RESPONSE,
   EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE,
@@ -369,6 +390,10 @@ import {
   EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
   LabelSchema,
   ListLabelsResponseSchema,
+  ProjectMembersResponseSchema,
+  EMPTY_PROJECT_MEMBERS_RESPONSE,
+  type ProjectMembersResponse,
+  ProjectPermissionRolesResponseSchema,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
   IssuePropertySchema,
@@ -402,6 +427,8 @@ import {
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
   SkillSchema,
   EMPTY_SKILL,
+  SkillImportResultSchema,
+  EMPTY_SKILL_IMPORT_RESULT,
   IssueViewSchema,
   IssueViewListSchema,
   IssueViewPreferenceSchema,
@@ -492,6 +519,19 @@ export class ApiError extends Error {
   }
 }
 
+function assertAgentConversationStartersWriteSupported(data: {
+  conversation_starters?: unknown;
+}): void {
+  if (
+    Object.prototype.hasOwnProperty.call(data, "conversation_starters") &&
+    !configStore.getState().agentConversationStartersSupported
+  ) {
+    throw new Error(
+      "This server version does not support agent conversation starters. Update the server before saving them.",
+    );
+  }
+}
+
 // errorCode extracts the stable `code` a handler attaches to a failure
 // (writeErrorCode), so a caller can render its own localized sentence instead
 // of toasting the server's English one. Returns undefined for a non-ApiError,
@@ -553,6 +593,37 @@ export class PreviewUnsupportedError extends Error {
     super("attachment type not supported for inline preview");
     this.name = "PreviewUnsupportedError";
   }
+}
+
+function remapSkillImportError(err: unknown): unknown {
+  if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") {
+    return err;
+  }
+  const body = err.body as { reason?: unknown; error?: unknown };
+  const reason = typeof body.reason === "string" && body.reason ? body.reason : "";
+  const error = typeof body.error === "string" && body.error ? body.error : "";
+  const message = reason || error;
+  if (!message || message === err.message) return err;
+  return new ApiError(message, err.status, err.statusText, err.body);
+}
+
+function skillFromImportResult(raw: unknown, endpoint: string): Skill {
+  const result = parseWithFallback(
+    raw,
+    SkillImportResultSchema,
+    EMPTY_SKILL_IMPORT_RESULT,
+    { endpoint },
+  );
+  if (
+    (result.status === "created" || result.status === "updated") &&
+    result.skill
+  ) {
+    const skill = parseWithFallback(result.skill, SkillSchema, EMPTY_SKILL, {
+      endpoint,
+    });
+    if (skill.id) return skill;
+  }
+  throw new Error(result.reason || "Import failed");
 }
 
 /**
@@ -751,6 +822,23 @@ export class ApiClient {
     });
   }
 
+  async dingTalkLogin(code: string, state: string): Promise<LoginResponse> {
+    const raw = await this.fetch<unknown>("/auth/dingtalk", {
+      method: "POST",
+      body: JSON.stringify({ code, state }),
+    });
+    const response = parseWithFallback<LoginResponse | null>(
+      raw,
+      LoginResponseSchema,
+      null,
+      { endpoint: "POST /auth/dingtalk" },
+    );
+    if (!response) {
+      throw new Error("POST /auth/dingtalk returned a malformed login response");
+    }
+    return response;
+  }
+
   async logout(): Promise<void> {
     await this.fetch("/auth/logout", { method: "POST" });
   }
@@ -817,9 +905,13 @@ export class ApiClient {
   // Issues
   async listIssues(params?: ListIssuesParams): Promise<ListIssuesResponse> {
     const search = new URLSearchParams();
+    if (params?.archive_state) search.set("archive_state", params.archive_state);
     if (params?.limit) search.set("limit", String(params.limit));
     if (params?.offset) search.set("offset", String(params.offset));
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
+    if (params?.include_workspace_owned !== undefined) {
+      search.set("include_workspace_owned", String(params.include_workspace_owned));
+    }
     if (params?.q?.trim()) search.set("q", params.q.trim());
     if (params?.status) search.set("status", params.status);
     if (params?.statuses?.length) search.set("statuses", params.statuses.join(","));
@@ -881,9 +973,13 @@ export class ApiClient {
 
   async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
     const search = new URLSearchParams({ group_by: params.group_by });
+    if (params.archive_state) search.set("archive_state", params.archive_state);
     if (params.limit) search.set("limit", String(params.limit));
     if (params.offset) search.set("offset", String(params.offset));
     if (params.workspace_id) search.set("workspace_id", params.workspace_id);
+    if (params.include_workspace_owned !== undefined) {
+      search.set("include_workspace_owned", String(params.include_workspace_owned));
+    }
     if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
     if (params.priorities?.length) search.set("priorities", params.priorities.join(","));
     if (params.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
@@ -960,11 +1056,14 @@ export class ApiClient {
     );
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; include_workspace_owned?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
+    if (params.include_workspace_owned !== undefined) {
+      search.set("include_workspace_owned", String(params.include_workspace_owned));
+    }
     const raw = await this.fetch<unknown>(
       `/api/issues/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,
@@ -1005,9 +1104,16 @@ export class ApiClient {
    * an ApiError 404, so `issueIdentifierOptions` propagates it instead of
    * caching it as "no such issue".
    */
-  async getIssue(id: string, options?: { signal?: AbortSignal }): Promise<Issue> {
+  async getIssue(
+    id: string,
+    options?: { signal?: AbortSignal; includeWorkspaceOwned?: boolean },
+  ): Promise<Issue> {
+    const query =
+      options?.includeWorkspaceOwned === false
+        ? "?include_workspace_owned=false"
+        : "";
     const raw = await this.fetch<unknown>(
-      `/api/issues/${encodeURIComponent(id)}`,
+      `/api/issues/${encodeURIComponent(id)}${query}`,
       options?.signal ? { signal: options.signal } : undefined,
     );
     const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
@@ -1059,6 +1165,63 @@ export class ApiClient {
     });
   }
 
+  async getCommentSubIssuePreview(anchorCommentId: string): Promise<SourceContextPreview> {
+    const raw = await this.fetch<unknown>(`/api/comments/${anchorCommentId}/sub-issue-preview`);
+    const preview = parseWithFallback<SourceContextPreview | null>(
+      raw,
+      SourceContextPreviewSchema,
+      null,
+      { endpoint: "GET /api/comments/:id/sub-issue-preview" },
+    );
+    if (!preview) throw new Error("Invalid source context preview response");
+    return preview;
+  }
+
+  async createCommentSubIssue(
+    anchorCommentId: string,
+    data: CreateCommentSubIssueManualRequest,
+  ): Promise<Issue>;
+  async createCommentSubIssue(
+    anchorCommentId: string,
+    data: CreateCommentSubIssueAgentRequest,
+  ): Promise<{ task_id: string }>;
+  async createCommentSubIssue(
+    anchorCommentId: string,
+    data: CreateCommentSubIssueRequest,
+  ): Promise<Issue | { task_id: string }> {
+    try {
+      const raw = await this.fetch<unknown>(`/api/comments/${anchorCommentId}/sub-issues`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      if (data.mode === "manual") {
+        const issue = parseWithFallback<Issue | null>(raw, CreateIssueResponseSchema, null, {
+          endpoint: "POST /api/comments/:id/sub-issues (manual)",
+        });
+        if (!issue) throw new Error("Invalid sub-issue response");
+        return issue;
+      }
+      const task = parseWithFallback<{ task_id: string } | null>(
+        raw,
+        CommentSubIssueTaskResponseSchema,
+        null,
+        { endpoint: "POST /api/comments/:id/sub-issues (agent)" },
+      );
+      if (!task) throw new Error("Invalid quick-create response");
+      return task;
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+        throw new ApiError(
+          "Source-context sub-issues require a newer server",
+          error.status,
+          error.statusText,
+          { code: "source_context_server_unsupported" },
+        );
+      }
+      throw error;
+    }
+  }
+
   async createFeedback(data: {
     message: string;
     url?: string;
@@ -1089,6 +1252,30 @@ export class ApiClient {
     });
   }
 
+  /** Archive an issue without deleting its history; operation is idempotent. */
+  async archiveIssue(id: string): Promise<Issue> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+    });
+    const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
+      endpoint: "POST /api/issues/:id/archive",
+    });
+    if (!issue) throw new Error("Invalid archive issue response");
+    return issue;
+  }
+
+  /** Restore an archived issue to the active list; operation is idempotent. */
+  async restoreIssue(id: string): Promise<Issue> {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(id)}/restore`, {
+      method: "POST",
+    });
+    const issue = parseWithFallback<Issue | null>(raw, IssueSchema, null, {
+      endpoint: "POST /api/issues/:id/restore",
+    });
+    if (!issue) throw new Error("Invalid restore issue response");
+    return issue;
+  }
+
   async moveIssue(id: string, data: MoveIssueRequest): Promise<Issue> {
     return this.fetch(`/api/issues/${id}/move`, {
       method: "POST",
@@ -1096,8 +1283,9 @@ export class ApiClient {
     });
   }
 
-  async listChildIssues(id: string): Promise<{ issues: Issue[] }> {
-    const raw = await this.fetch<unknown>(`/api/issues/${id}/children`);
+  async listChildIssues(id: string, includeWorkspaceOwned = true): Promise<{ issues: Issue[] }> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/issues/${id}/children${query}`);
     return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
       endpoint: "GET /api/issues/:id/children",
     });
@@ -1107,29 +1295,38 @@ export class ApiClient {
    *  Avoids an N-request fan-out in Swimlane (one per visible parent lane).
    *  parentIds must be non-empty; pass a sorted, deduplicated list so the
    *  React Query cache key is stable across renders. */
-  async listChildrenByParents(parentIds: string[]): Promise<{ issues: Issue[] }> {
+  async listChildrenByParents(parentIds: string[], includeWorkspaceOwned = true): Promise<{ issues: Issue[] }> {
+    const scope = includeWorkspaceOwned ? "" : "&include_workspace_owned=false";
     const raw = await this.fetch<unknown>(
-      `/api/issues/children?parent_ids=${parentIds.join(",")}`,
+      `/api/issues/children?parent_ids=${parentIds.join(",")}${scope}`,
     );
     return parseWithFallback(raw, ChildIssuesResponseSchema, { issues: [] }, {
       endpoint: "GET /api/issues/children",
     });
   }
 
-  async getChildIssueProgress(): Promise<{
-    progress: {
-      parent_issue_id: string;
-      total: number;
-      done: number;
-      visible_total?: number;
-      visible_done?: number;
-      hidden_total?: number;
-    }[];
+  async getChildIssueProgress(includeWorkspaceOwned = true): Promise<{
+    progress: { parent_issue_id: string; total: number; done: number }[];
   }> {
-    const raw = await this.fetch<unknown>("/api/issues/child-progress");
-    return parseWithFallback(raw, ChildIssueProgressResponseSchema, { progress: [] }, {
-      endpoint: "GET /api/issues/child-progress",
-    });
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/issues/child-progress${query}`);
+    return parseWithFallback(
+      raw,
+      ChildIssueProgressResponseSchema,
+      { progress: [] },
+      { endpoint: "GET /api/issues/child-progress" },
+    );
+  }
+
+  async getIssueLimitUsage(): Promise<IssueLimitUsage | null> {
+    const raw = await this.fetch<unknown>("/api/issues/limit-usage");
+    if (raw == null) return null;
+    return parseWithFallback<IssueLimitUsage | null>(
+      raw,
+      IssueLimitUsageSchema,
+      null,
+      { endpoint: "GET /api/issues/limit-usage" },
+    );
   }
 
   async deleteIssue(id: string): Promise<void> {
@@ -1202,6 +1399,7 @@ export class ApiClient {
       body: JSON.stringify({
         ...(params.issueIds?.length ? { issue_ids: params.issueIds } : {}),
         ...(params.isCreate ? { is_create: true } : {}),
+        ...(params.projectId ? { project_id: params.projectId } : {}),
         ...(params.assigneeType ? { assignee_type: params.assigneeType } : {}),
         ...(params.assigneeId ? { assignee_id: params.assigneeId } : {}),
         ...(params.status ? { status: params.status } : {}),
@@ -1343,6 +1541,7 @@ export class ApiClient {
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
+    assertAgentConversationStartersWriteSupported(data);
     return this.fetch("/api/agents", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1458,6 +1657,7 @@ export class ApiClient {
   }
 
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
+    assertAgentConversationStartersWriteSupported(data);
     return this.fetch(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -1704,18 +1904,6 @@ export class ApiClient {
   //   - a 2xx body that does not match the contract returns null here.
   // ---------------------------------------------------------------------
 
-  async getWorkspaceSubscriptionEntitlements(): Promise<WorkspaceSubscriptionEntitlements | null> {
-    const raw = await this.fetch<unknown>(
-      "/api/cloud-subscriptions/entitlements",
-    );
-    return parseWithFallback<WorkspaceSubscriptionEntitlements | null>(
-      raw,
-      WorkspaceSubscriptionEntitlementsSchema,
-      null,
-      { endpoint: "GET /api/cloud-subscriptions/entitlements" },
-    );
-  }
-
   async getWorkspaceSubscriptionSummary(): Promise<WorkspaceSubscriptionSummary | null> {
     const raw = await this.fetch<unknown>("/api/cloud-subscriptions/summary");
     return parseWithFallback<WorkspaceSubscriptionSummary | null>(
@@ -1746,9 +1934,6 @@ export class ApiClient {
         body: JSON.stringify({
           interval: data.interval,
           idempotency_key: data.idempotencyKey,
-          ...(data.customerEmail
-            ? { customer_email: data.customerEmail }
-            : {}),
         }),
         extraHeaders: {
           "Content-Type": "application/json",
@@ -2221,8 +2406,9 @@ export class ApiClient {
     return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
   }
 
-  async listAgentTasks(agentId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/agents/${agentId}/tasks`);
+  async listAgentTasks(agentId: string, includeWorkspaceOwned = true): Promise<AgentTask[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/agents/${agentId}/tasks${query}`);
   }
 
   // Workspace-scoped agent task snapshot: every active task
@@ -2230,8 +2416,9 @@ export class ApiClient {
   // Powers the front-end's "active wins, else latest terminal" presence
   // derivation; one fetch backs every per-agent presence read in the app.
   // Workspace is resolved server-side from the X-Workspace-Slug header.
-  async getAgentTaskSnapshot(): Promise<AgentTask[]> {
-    return this.fetch(`/api/agent-task-snapshot`);
+  async getAgentTaskSnapshot(includeWorkspaceOwned = true): Promise<AgentTask[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/agent-task-snapshot${query}`);
   }
 
   // Independent workspace-level projection. Unlike the task snapshot, this
@@ -2246,6 +2433,7 @@ export class ApiClient {
     type?: WorkspaceWorkingAgentType,
     mineRelation?: WorkspaceWorkingAgentMineRelation,
     parentIssueId?: string,
+    includeWorkspaceOwned = true,
   ): Promise<WorkspaceWorkingAgent[]> {
     const search = new URLSearchParams();
     if (type) search.set("type", type);
@@ -2255,6 +2443,7 @@ export class ApiClient {
     } else if (parentIssueId) {
       search.set("parent", parentIssueId);
     }
+    if (!includeWorkspaceOwned) search.set("include_workspace_owned", "false");
     const query = search.toString();
     return this.fetch(`/api/working-agents${query ? `?${query}` : ""}`);
   }
@@ -2304,9 +2493,24 @@ export class ApiClient {
     });
   }
 
+  async retrySourceContextQuickCreate(taskId: string): Promise<AgentTask> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/retry-source-context`, {
+      method: "POST",
+    });
+    const task = parseWithFallback<AgentTask | null>(raw, AgentTaskSchema, null, {
+      endpoint: "POST /api/tasks/:id/retry-source-context",
+    });
+    if (!task) throw new Error("Invalid source-context retry response");
+    return task;
+  }
+
   // Inbox
-  async listInbox(): Promise<InboxItem[]> {
-    return this.fetch("/api/inbox");
+  async listInbox(includeWorkspaceOwned = true): Promise<InboxItem[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/inbox${query}`);
+    return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
+      endpoint: "GET /api/inbox",
+    });
   }
 
   async markInboxRead(id: string): Promise<InboxItem> {
@@ -2324,8 +2528,9 @@ export class ApiClient {
   // Archived notifications, backing the inbox's "Archived" sub-view. Capped
   // server-side (no pagination in v1). Schema-guarded so a contract drift
   // renders an empty archive instead of taking the inbox down with it.
-  async listArchivedInbox(): Promise<InboxItem[]> {
-    const raw = await this.fetch<unknown>("/api/inbox/archived");
+  async listArchivedInbox(includeWorkspaceOwned = true): Promise<InboxItem[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/inbox/archived${query}`);
     return parseWithFallback(raw, InboxItemListSchema, EMPTY_INBOX_ITEMS, {
       endpoint: "GET /api/inbox/archived",
     });
@@ -2343,8 +2548,9 @@ export class ApiClient {
   // to that has unread inbox items. Backs the workspace-switcher dot for
   // OTHER workspaces. Schema-guarded so a contract drift hides the dot rather
   // than crashing the sidebar.
-  async getInboxUnreadSummary(): Promise<InboxWorkspaceUnread[]> {
-    const raw = await this.fetch<unknown>("/api/inbox/unread-summary");
+  async getInboxUnreadSummary(includeWorkspaceOwned = true): Promise<InboxWorkspaceUnread[]> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    const raw = await this.fetch<unknown>(`/api/inbox/unread-summary${query}`);
     return parseWithFallback(raw, InboxUnreadSummarySchema, EMPTY_INBOX_UNREAD_SUMMARY, {
       endpoint: "GET /api/inbox/unread-summary",
     });
@@ -2914,6 +3120,36 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Imports a skill from a local .skill / .zip archive. Not routed through
+   * `this.fetch`: the browser has to set the multipart boundary itself.
+   *
+   * The archive path always returns a structured `{ status, skill, reason }`
+   * body. Created/updated responses yield the skill; anything else throws
+   * with the server's reason (or `error`) so the dialog can show it.
+   */
+  async importSkillArchive(
+    file: File,
+    onConflict?: "fail" | "overwrite" | "rename" | "skip",
+  ): Promise<Skill> {
+    const formData = new FormData();
+    formData.append("file", file, file.name || "skill.zip");
+    if (onConflict) formData.append("on_conflict", onConflict);
+
+    let res: Response;
+    try {
+      res = await this.fetchRaw("/api/skills/import", {
+        method: "POST",
+        body: formData,
+      });
+    } catch (err) {
+      throw remapSkillImportError(err);
+    }
+
+    const raw = (await res.json()) as unknown;
+    return skillFromImportResult(raw, "POST /api/skills/import");
+  }
+
   // Re-downloads the skill from its stored config.origin source, replacing
   // name/description/content/files in place while preserving the skill id and
   // its agent bindings.
@@ -3030,17 +3266,28 @@ export class ApiClient {
 
   // Chat Sessions
   async listChatSessions(
-    params?: { status?: string },
+    params?: { status?: string; includeWorkspaceOwned?: boolean },
     workspaceSlug?: string,
   ): Promise<ChatSession[]> {
-    const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`, {
+    const queryParams = new URLSearchParams();
+    if (params?.status) queryParams.set("status", params.status);
+    if (params?.includeWorkspaceOwned === false) {
+      queryParams.set("include_workspace_owned", "false");
+    }
+    const query = queryParams.toString() ? `?${queryParams.toString()}` : "";
+    const raw: unknown = await this.fetch(`/api/chat/sessions${query}`, {
       headers: workspaceHeader(workspaceSlug),
+    });
+    return parseWithFallback(raw, ChatSessionListSchema, EMPTY_CHAT_SESSION_LIST, {
+      endpoint: "GET /api/chat/sessions",
     });
   }
 
   async getChatSession(id: string): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`);
+    const raw: unknown = await this.fetch(`/api/chat/sessions/${id}`);
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
+      endpoint: "GET /api/chat/sessions/:id",
+    });
   }
 
   async createChatSession(
@@ -3270,12 +3517,14 @@ export class ApiClient {
     });
   }
 
-  async listPendingChatTasks(): Promise<PendingChatTasksResponse> {
-    return this.fetch(`/api/chat/pending-tasks`);
+  async listPendingChatTasks(includeWorkspaceOwned = true): Promise<PendingChatTasksResponse> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/chat/pending-tasks${query}`);
   }
 
-  async hasAnyPendingChatTasks(): Promise<HasPendingChatTasksResponse> {
-    return this.fetch(`/api/chat/pending-tasks/has-any`);
+  async hasAnyPendingChatTasks(includeWorkspaceOwned = true): Promise<HasPendingChatTasksResponse> {
+    const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
+    return this.fetch(`/api/chat/pending-tasks/has-any${query}`);
   }
 
   async markChatSessionRead(sessionId: string): Promise<void> {
@@ -3382,9 +3631,12 @@ export class ApiClient {
   }
 
   // Projects
-  async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
+  async listProjects(params?: ListProjectsParams): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
+    if (params?.include_workspace_owned !== undefined) {
+      search.set("include_workspace_owned", String(params.include_workspace_owned));
+    }
     return this.fetch(`/api/projects?${search}`);
   }
 
@@ -3408,6 +3660,69 @@ export class ApiClient {
 
   async deleteProject(id: string): Promise<void> {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
+  }
+
+  async listProjectMembers(projectId: string): Promise<ProjectMembersResponse> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/members`);
+    return parseWithFallback(raw, ProjectMembersResponseSchema, EMPTY_PROJECT_MEMBERS_RESPONSE, {
+      endpoint: "GET /api/projects/:id/members",
+    });
+  }
+
+  async addProjectMember(projectId: string, data: { user_id: string; role: string }): Promise<void> {
+    await this.fetch(`/api/projects/${projectId}/members`, { method: "POST", body: JSON.stringify(data) });
+  }
+
+  async removeProjectMember(projectId: string, userId: string): Promise<void> {
+    await this.fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+  }
+
+  async listProjectPermissionReport(
+    params: ProjectPermissionReportParams = {},
+  ): Promise<ProjectPermissionReportResponse> {
+    const q = new URLSearchParams();
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.user_id) q.set("user_id", params.user_id);
+    if (params.role) q.set("role", params.role);
+    if (params.permission) q.set("permission", params.permission);
+    if (params.scope) q.set("scope", params.scope);
+    if (params.limit !== undefined) q.set("limit", String(params.limit));
+    if (params.offset !== undefined) q.set("offset", String(params.offset));
+    return this.fetch(`/api/project-permissions/report?${q}`);
+  }
+
+  async listProjectPermissionRoles(): Promise<ProjectPermissionRolesResponse> {
+    const raw = await this.fetch<unknown>("/api/project-permission-roles");
+    return parseWithFallback(raw, ProjectPermissionRolesResponseSchema, { roles: [] }, {
+      endpoint: "GET /api/project-permission-roles",
+    });
+  }
+
+  async createProjectPermissionRole(data: {
+    key: string;
+    name: string;
+    description?: string;
+    permissions: string[];
+  }): Promise<ProjectPermissionRole> {
+    return this.fetch("/api/project-permission-roles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProjectPermissionRole(key: string, data: {
+    name: string;
+    description?: string;
+    permissions: string[];
+  }): Promise<ProjectPermissionRole> {
+    return this.fetch(`/api/project-permission-roles/${encodeURIComponent(key)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProjectPermissionRole(key: string): Promise<void> {
+    await this.fetch(`/api/project-permission-roles/${encodeURIComponent(key)}`, { method: "DELETE" });
   }
 
   // Project resources
@@ -3839,11 +4154,12 @@ export class ApiClient {
   }
 
   // Pins
-  async listPins(): Promise<PinnedItem[]> {
+  async listPins(includeWorkspaceOwned = true): Promise<PinnedItem[]> {
     // include=view is the capability opt-in: the server withholds view pins
     // from clients that don't declare support (old builds treated any
     // non-issue pin as a project pin and auto-deleted it on 404).
-    return this.fetch("/api/pins?include=view");
+    const scope = includeWorkspaceOwned ? "" : "&include_workspace_owned=false";
+    return this.fetch(`/api/pins?include=view${scope}`);
   }
 
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {
@@ -3997,7 +4313,9 @@ export class ApiClient {
         action: "off",
         used: null,
         reserved: null,
+        total: null,
         limit: null,
+        reached: null,
         period_start: null,
         period_end: null,
         reset_at: null,
@@ -4335,6 +4653,13 @@ export class ApiClient {
       EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
       { endpoint: "GET /api/workspaces/:id/dingtalk/installations" },
     );
+  }
+
+  async getDingTalkProfile(): Promise<DingTalkProfile> {
+    const raw = await this.fetch<unknown>(`/api/me/dingtalk-profile`);
+    return parseWithFallback(raw, DingTalkProfileSchema, EMPTY_DINGTALK_PROFILE, {
+      endpoint: "GET /api/me/dingtalk-profile",
+    });
   }
 
   async listDingTalkGroups(

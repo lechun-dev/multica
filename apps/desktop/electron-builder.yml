@@ -123,12 +123,14 @@ win:
   artifactName: multica-desktop-${version}-windows-${arch}.${ext}
 publish:
   provider: github
-  owner: multica-ai
+  # 2026-08-26 coder(lq): Private deployments publish and resolve desktop
+  # update metadata from the private fork rather than the upstream repository.
+  owner: lechun-dev
   repo: multica
-  # Align with our CLI release flow which pre-creates a *published* GitHub
-  # Release via `gh release create`. The electron-builder default of
-  # `releaseType: draft` conflicts with `existingType=release` and causes
-  # uploads of the DMG/ZIP/blockmaps/latest-mac.yml to be silently skipped,
-  # which breaks electron-updater auto-update on installed clients.
+  # The GitHub Actions release workflow creates a *published* GitHub Release
+  # before attaching these artifacts. The electron-builder default of
+  # `releaseType: draft` would conflict with that release and can cause
+  # metadata uploads to be skipped, which breaks electron-updater for clients
+  # that are allowed to use the public update channel.
   releaseType: release
 npmRebuild: false

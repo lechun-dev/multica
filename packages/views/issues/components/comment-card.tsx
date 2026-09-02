@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, ListChevronsDownUp, Copy, Loader2, MessageSquarePlus, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -28,7 +28,7 @@ import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { useTimeAgo } from "../../i18n";
+import { useLocale, useTimeAgo } from "../../i18n";
 import { ContentEditor, type ContentEditorRef, ReadonlyContent, useFileDropZone, FileDropOverlay, Attachment as AttachmentRenderer, AttachmentDownloadProvider, useUploadGate, useComposerSubmit } from "../../editor";
 import { useCommentUploads } from "./use-comment-uploads";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
@@ -112,6 +112,7 @@ interface CommentCardProps {
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[], contentBase?: string) => Promise<void>;
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
+  onCreateSubIssue?: (commentId: string) => void;
   /** Resolve/unresolve any comment in this thread (commentId = the target row). */
   onResolveToggle?: (commentId: string, resolved: boolean) => void;
   /**
@@ -555,21 +556,26 @@ function CommentRevisionConflict({
       localLabel={t(($) => $.revision.local_version)}
       serverValue={serverContent}
       localValue={localContent}
-      actions={(
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={saving}
-            onClick={onKeepLocal}
-          >
-            {t(($) => $.revision.keep_local)}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onUseServer}>
-            {t(($) => $.revision.use_server)}
-          </Button>
-        </div>
+      serverAction={(
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onUseServer}
+        >
+          {t(($) => $.revision.use_server)}
+        </Button>
+      )}
+      localAction={(
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={saving}
+          onClick={onKeepLocal}
+        >
+          {t(($) => $.revision.keep_local)}
+        </Button>
       )}
     />
   );
@@ -589,6 +595,7 @@ function CommentRow({
   onEdit,
   onDelete,
   onToggleReaction,
+  onCreateSubIssue,
   onResolveToggle,
 }: {
   issueId: string;
@@ -602,9 +609,11 @@ function CommentRow({
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[], contentBase?: string) => Promise<void>;
   onDelete: (commentId: string) => void;
   onToggleReaction: (commentId: string, emoji: string) => void;
+  onCreateSubIssue?: (commentId: string) => void;
   onResolveToggle?: (commentId: string, resolved: boolean) => void;
 }) {
   const { t } = useT("issues");
+  const locale = useLocale();
   const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
 
@@ -641,7 +650,7 @@ function CommentRow({
             }
           />
           <TooltipContent side="top">
-            {new Date(entry.created_at).toLocaleString()}
+            {new Date(entry.created_at).toLocaleString(locale)}
           </TooltipContent>
         </Tooltip>
 
@@ -655,8 +664,13 @@ function CommentRow({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
-                  <MoreHorizontal className="h-4 w-4" />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
+                  aria-label={t(($) => $.comment.more_actions)}
+                >
+                  <MoreHorizontal className="h-4 w-4" aria-hidden />
                 </Button>
               }
             />
@@ -669,6 +683,12 @@ function CommentRow({
                 <Copy className="h-3.5 w-3.5" />
                 {t(($) => $.comment.copy_action)}
               </DropdownMenuItem>
+              {onCreateSubIssue && entry.comment_type === "comment" && (
+                <DropdownMenuItem onClick={() => onCreateSubIssue(entry.id)}>
+                  <MessageSquarePlus className="h-3.5 w-3.5" aria-hidden />
+                  {t(($) => $.source_context.create_action)}
+                </DropdownMenuItem>
+              )}
               {onResolveToggle && (
                 <>
                   <DropdownMenuSeparator />
@@ -839,6 +859,7 @@ function CommentCardImpl({
   onEdit,
   onDelete,
   onToggleReaction,
+  onCreateSubIssue,
   onResolveToggle,
   onCollapseResolved,
   expandedResolvedIds,
@@ -846,6 +867,7 @@ function CommentCardImpl({
   highlightedCommentId,
 }: CommentCardProps) {
   const { t } = useT("issues");
+  const locale = useLocale();
   const timeAgo = useTimeAgo();
   const { getActorName } = useActorName();
   const isCollapsed = useCommentCollapseStore((s) => s.isCollapsed(issueId, entry.id));
@@ -951,7 +973,7 @@ function CommentCardImpl({
                   }
                 />
                 <TooltipContent side="top">
-                  {new Date(entry.created_at).toLocaleString()}
+                  {new Date(entry.created_at).toLocaleString(locale)}
                 </TooltipContent>
               </Tooltip>
 
@@ -971,8 +993,13 @@ function CommentCardImpl({
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
-                        <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
-                          <MoreHorizontal className="h-4 w-4" />
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-muted-foreground"
+                          aria-label={t(($) => $.comment.more_actions)}
+                        >
+                          <MoreHorizontal className="h-4 w-4" aria-hidden />
                         </Button>
                       }
                     />
@@ -985,6 +1012,12 @@ function CommentCardImpl({
                         <Copy className="h-3.5 w-3.5" />
                         {t(($) => $.comment.copy_action)}
                       </DropdownMenuItem>
+                      {onCreateSubIssue && entry.comment_type === "comment" && (
+                        <DropdownMenuItem onClick={() => onCreateSubIssue(entry.id)}>
+                          <MessageSquarePlus className="h-3.5 w-3.5" aria-hidden />
+                          {t(($) => $.source_context.create_action)}
+                        </DropdownMenuItem>
+                      )}
                       {onResolveToggle && (
                         <>
                           <DropdownMenuSeparator />
@@ -1177,6 +1210,7 @@ function CommentCardImpl({
                     onEdit={onEdit}
                     onDelete={onDelete}
                     onToggleReaction={onToggleReaction}
+                    onCreateSubIssue={onCreateSubIssue}
                     onResolveToggle={onResolveToggle}
                   />
                 </div>
@@ -1216,6 +1250,7 @@ function CommentCardImpl({
                     onEdit={onEdit}
                     onDelete={onDelete}
                     onToggleReaction={onToggleReaction}
+                    onCreateSubIssue={onCreateSubIssue}
                     onResolveToggle={onResolveToggle}
                   />
                 </div>

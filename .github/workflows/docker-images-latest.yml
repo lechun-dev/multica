@@ -1,0 +1,99 @@
+name: Publish latest self-hosted images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - Dockerfile.web
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - apps/web/**
+      - packages/**
+      - server/**
+      - extensions/**
+      - .github/workflows/docker-images-latest.yml
+  workflow_dispatch:
+
+# 2026-08-26 coder(lq): Keep this workflow independent from the tagged
+# release workflow. Private deployments can follow the mutable `latest` tag
+# without creating or editing a version tag for every image refresh.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-latest-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            file: Dockerfile
+            cache_scope: latest-backend
+          - name: web
+            file: Dockerfile.web
+            cache_scope: latest-web
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/multica-${{ matrix.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Multica ${{ matrix.name }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          # 2026-08-26 coder(lq): The current private deployment runs on an
+          # amd64 host. Keeping this path single-platform avoids the flaky
+          # arm64 hosted-runner dependency in the tagged release workflow.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+          build-args: |
+            VERSION=latest
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.run_started_at }}
+            NEXT_PUBLIC_APP_VERSION=latest
+            NEXT_PUBLIC_PRODUCT_NAME=MissionOS
+
+  deploy:
+    # 2026-08-26 coder(lq): Do not let production pull a stale `latest` tag;
+    # both application images must be published before deployment starts.
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

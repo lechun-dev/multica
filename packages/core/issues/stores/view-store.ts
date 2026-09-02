@@ -4,12 +4,14 @@ import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { IssueStatus, IssueStatusCategory, IssuePriority } from "../../types";
+import type { IssueStatus, IssueStatusCategory, IssuePriority, PropertyFilterValue } from "../../types";
 import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
 export type ViewMode = "board" | "list" | "table" | "gantt" | "swimlane";
 export type GanttZoom = "day" | "week" | "month";
+/** Server-side lifecycle filter for issues. Active is the safe default. */
+export type IssueArchiveState = "active" | "archived" | "all";
 /**
  * Board grouping. Besides the three built-ins, a select-type custom property
  * groups columns by its options via the `property:<definitionId>` form.
@@ -119,6 +121,7 @@ export interface ActorFilterValue {
 /** The nine query-defining filter fields as one value — what a saved view
  *  fixes, and what resets restore. */
 export interface FilterSnapshot {
+  archiveState: IssueArchiveState;
   statusFilters: IssueStatus[];
   priorityFilters: IssuePriority[];
   assigneeFilters: ActorFilterValue[];
@@ -127,12 +130,13 @@ export interface FilterSnapshot {
   projectFilters: string[];
   includeNoProject: boolean;
   labelFilters: string[];
-  propertyFilters: Record<string, string[]>;
+  propertyFilters: Record<string, PropertyFilterValue[]>;
 }
 
 /** Filter-bar chip dimensions. Date is excluded: `dateFilter` lives outside
  *  the persisted slice and clears through `setDateFilter(null)`. */
 export type FilterDimension =
+  | "archive"
   | "status"
   | "priority"
   | "assignee"
@@ -190,12 +194,16 @@ export interface IssueViewState {
   includeNoProject: boolean;
   labelFilters: string[];
   /**
-   * Custom-property filters: definition id → selected option ids (checkbox
-   * definitions use the pseudo-options "true"/"false"). Empty array = no
+   * Custom-property filters: definition id → selected values (checkbox
+   * definitions use the pseudo-options "true"/"false"; scalars hold the
+   * committed value as a bare string, or an operator object per
+   * `PropertyFilterValue`, plus the "__none__" sentinel). Empty array = no
    * filter for that definition; matching is OR within a definition and AND
    * across definitions, mirroring the other filter groups.
    */
-  propertyFilters: Record<string, string[]>;
+  propertyFilters: Record<string, PropertyFilterValue[]>;
+  /** Which issue lifecycle rows the surface should request. */
+  archiveState: IssueArchiveState;
   dateFilter: IssueDateFilter | null;
   // When true, the list only shows issues that currently have at least one
   // agent task in `running` status. Drives the workspace "agents working"
@@ -242,6 +250,8 @@ export interface IssueViewState {
   tableCollapsedParents: string[];
   tableHierarchy: boolean;
   tableCalculation: TableCalculation;
+  /** 2026-08-28 coder(lq): Display preference; does not change permissions. */
+  showWorkspaceOwnedItems: boolean;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
   toggleGanttShowCompleted: () => void;
@@ -255,7 +265,11 @@ export interface IssueViewState {
   toggleNoProject: () => void;
   toggleLabelFilter: (labelId: string) => void;
   togglePropertyFilter: (propertyId: string, optionId: string) => void;
+  /** Replace a property's full filter value set (used by scalar value inputs
+   *  for text/number/date/url, which build the array including "__none__"). */
+  setPropertyFilterValues: (propertyId: string, optionIds: PropertyFilterValue[]) => void;
   setDateFilter: (filter: IssueDateFilter | null) => void;
+  setArchiveState: (state: IssueArchiveState) => void;
   toggleAgentRunningFilter: () => void;
   hideStatus: (category: IssueStatusCategory) => void;
   showStatus: (category: IssueStatusCategory) => void;
@@ -286,6 +300,7 @@ export interface IssueViewState {
   toggleTableParentCollapsed: (issueId: string) => void;
   toggleTableHierarchy: () => void;
   setTableCalculation: (calculation: TableCalculation) => void;
+  setShowWorkspaceOwnedItems: (show: boolean) => void;
 }
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
@@ -300,6 +315,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   includeNoProject: false,
   labelFilters: [],
   propertyFilters: {},
+  archiveState: "active",
   dateFilter: null,
   agentRunningFilter: false,
   sortBy: "position",
@@ -329,6 +345,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCollapsedParents: [],
   tableHierarchy: true,
   tableCalculation: "none",
+  showWorkspaceOwnedItems: true,
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setGanttZoom: (zoom) => set({ ganttZoom: zoom }),
@@ -400,7 +417,15 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       else propertyFilters[propertyId] = next;
       return { propertyFilters };
     }),
+  setPropertyFilterValues: (propertyId, optionIds) =>
+    set((state) => {
+      const propertyFilters = { ...state.propertyFilters };
+      if (optionIds.length === 0) delete propertyFilters[propertyId];
+      else propertyFilters[propertyId] = optionIds;
+      return { propertyFilters };
+    }),
   setDateFilter: (filter) => set({ dateFilter: filter }),
+  setArchiveState: (archiveState) => set({ archiveState }),
   toggleAgentRunningFilter: () =>
     set((state) => ({ agentRunningFilter: !state.agentRunningFilter })),
   hideStatus: (category) =>
@@ -424,6 +449,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       includeNoProject: false,
       labelFilters: [],
       propertyFilters: {},
+      archiveState: "active",
       dateFilter: null,
       agentRunningFilter: false,
       // Reset restores every column, matching what it did when hiding a column
@@ -436,6 +462,8 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       switch (dimension) {
         case "status":
           return { statusFilters: [] };
+        case "archive":
+          return { archiveState: "active" };
         case "priority":
           return { priorityFilters: [] };
         case "assignee":
@@ -540,6 +568,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   toggleTableHierarchy: () =>
     set((state) => ({ tableHierarchy: !state.tableHierarchy })),
   setTableCalculation: (tableCalculation) => set({ tableCalculation }),
+  setShowWorkspaceOwnedItems: (show) => set({ showWorkspaceOwnedItems: show }),
 });
 
 export const viewStorePersistOptions = (name: string) => ({
@@ -563,6 +592,7 @@ export const viewStorePersistOptions = (name: string) => ({
     includeNoProject: state.includeNoProject,
     labelFilters: state.labelFilters,
     propertyFilters: state.propertyFilters,
+    archiveState: state.archiveState,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,
     cardProperties: state.cardProperties,
@@ -581,6 +611,7 @@ export const viewStorePersistOptions = (name: string) => ({
     tableCollapsedParents: state.tableCollapsedParents,
     tableHierarchy: state.tableHierarchy,
     tableCalculation: state.tableCalculation,
+    showWorkspaceOwnedItems: state.showWorkspaceOwnedItems,
   }),
   // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
   // saved before a new toggle was introduced wins entirely and the new key is
@@ -624,6 +655,8 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   return {
     ...current,
     ...p,
+    showWorkspaceOwnedItems:
+      p.showWorkspaceOwnedItems ?? current.showWorkspaceOwnedItems,
     cardProperties: {
       ...current.cardProperties,
       ...(p.cardProperties ?? {}),

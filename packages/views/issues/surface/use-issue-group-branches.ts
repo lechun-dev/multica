@@ -215,7 +215,9 @@ export function useIssueGroupBranches({
     () =>
       pageTargets.map(({ key, cursor }) => {
         const placeholder =
-          cursor === null ? headPlaceholderRef.current.get(key) : undefined;
+          cursor === null && query.filters.include_workspace_owned !== false
+            ? headPlaceholderRef.current.get(key)
+            : undefined;
         return {
           ...issueTableRowPageOptions(wsId, {
             query,

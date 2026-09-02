@@ -35,6 +35,17 @@ import (
 // char_length and the front-end's String.prototype.length-with-counter UX.
 const maxAgentDescriptionLength = 255
 
+const (
+	maxAgentConversationStarters      = 3
+	maxAgentConversationStarterLabel  = 80
+	maxAgentConversationStarterLength = 4000
+)
+
+type AgentConversationStarter struct {
+	Label  string `json:"label"`
+	Prompt string `json:"prompt"`
+}
+
 type AgentResponse struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
@@ -54,6 +65,9 @@ type AgentResponse struct {
 	// holds only the workspace's own notes — the product half lives in
 	// SystemInstructions and is never stored on the row.
 	Instructions string `json:"instructions"`
+	// ConversationStarters are optional, agent-specific first-turn suggestions. An
+	// empty list tells clients to render their localized fallback prompts.
+	ConversationStarters []AgentConversationStarter `json:"conversation_starters"`
 	// SystemKey identifies a product-defined agent (e.g. "mika"). Empty for
 	// every user- or template-created agent. The UI keys "this is maintained
 	// by Multica" off this rather than off the display name, which owners may
@@ -167,6 +181,14 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		mcpConfig = json.RawMessage(a.McpConfig)
 	}
 
+	conversationStarters := []AgentConversationStarter{}
+	if len(a.ConversationStarters) > 0 {
+		if err := json.Unmarshal(a.ConversationStarters, &conversationStarters); err != nil {
+			slog.Warn("failed to unmarshal agent conversation_starters", "agent_id", uuidToString(a.ID), "error", err)
+			conversationStarters = []AgentConversationStarter{}
+		}
+	}
+
 	// composio_toolkit_allowlist: the column is stored as TEXT[] and arrives
 	// here as a []string (sqlc). NULL and `{}` both serialize as nil through
 	// the postgres driver — both correctly mean "no toolkits", but the API
@@ -184,6 +206,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Name:                     a.Name,
 		Description:              a.Description,
 		Instructions:             a.Instructions,
+		ConversationStarters:     conversationStarters,
 		SystemKey:                a.SystemKey.String,
 		SystemInstructions:       systemInstructionsFor(a),
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
@@ -336,6 +359,8 @@ type AgentTaskResponse struct {
 	RuntimeID            string                 `json:"runtime_id"`
 	IssueID              string                 `json:"issue_id"`
 	WorkspaceID          string                 `json:"workspace_id"`
+	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
+	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
 	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// PluginHookTools are the workspace's agent-trigger plugin hooks, which the
 	// daemon renders as MCP tools for this task. Resolved at claim time so
@@ -398,8 +423,8 @@ type AgentTaskResponse struct {
 	PriorSessionResumeUnavailable bool   `json:"prior_session_resume_unavailable,omitempty"`
 	WorkDir                       string `json:"work_dir,omitempty"` // local working directory pinned for this task; populated once the daemon reports it
 	// RelativeWorkDir is a privacy-safe display form of WorkDir intended for
-	// the UI. For standard tasks it strips the daemon's workspaces root so
-	// the user sees `<wsUUID>/<taskShort>/workdir`; for local_directory
+	// the UI. For standard tasks it strips the daemon's workspaces root while
+	// preserving either the legacy or readable workspace/task segments; for local_directory
 	// tasks the absolute path lives outside the envRoot layout, so we strip
 	// recognised home-directory prefixes (`/Users/<name>/`, `/home/<name>/`,
 	// `<drive>:/Users/<name>/`) and otherwise fall back to the basename so
@@ -450,6 +475,7 @@ type AgentTaskResponse struct {
 	QuickCreatePriority      string                 `json:"quick_create_priority,omitempty"`       // explicit priority selected in quick-create
 	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
+	QuickCreateSourceContext json.RawMessage        `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
 	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
@@ -797,9 +823,11 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 // rendered in transcripts that frequently end up in screen shares,
 // screenshots, and recordings, so this function is the only guard.
 //
-//   - For standard tasks (work_dir laid out as `<workspacesRoot>/<wsUUID>/
-//     <taskShort>/workdir` by execenv.Prepare), it strips everything up to and
-//     including the workspaces root, returning `<wsUUID>/<taskShort>/workdir`.
+//   - For standard tasks, it validates the adjacent workspace/task segments
+//     by their stable ID suffixes, then strips everything before them. This
+//     accepts both legacy `<wsUUID>/<taskShort>` roots and readable
+//     `<workspaceSlug>-<wsShort>/<issueKey>-<taskShort>` roots without treating
+//     the labels as identity.
 //   - For local_directory tasks the absolute path lives outside the envRoot
 //     layout. We try to recognise common home-directory prefixes
 //     (`/Users/<name>/`, `/home/<name>/`, `<drive>:/Users/<name>/`) and strip
@@ -812,8 +840,8 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 // (i.e. work_dir was exactly the user's home — rendering nothing is
 // preferable to a chip that says `<name>`). taskDirSegment() must stay in
 // lock-step with server/internal/daemon/execenv/git.go:taskKey — both
-// consume the same task UUID; if that helper changes, this one must too
-// or the envRoot match silently degrades to the local_directory fallback.
+// consume the same task UUID. legacyTaskDirSegment keeps privacy-safe display
+// working for pre-#7347 roots and roots created by an earlier build of this PR.
 func relativeWorkDir(workDir, workspaceID, taskID string) string {
 	if workDir == "" {
 		return ""
@@ -823,9 +851,12 @@ func relativeWorkDir(workDir, workspaceID, taskID string) string {
 	normalized := strings.ReplaceAll(workDir, "\\", "/")
 
 	if workspaceID != "" && taskID != "" {
-		envRootSuffix := workspaceID + "/" + taskDirSegment(taskID)
-		if idx := strings.Index(normalized, envRootSuffix); idx >= 0 {
-			return normalized[idx:]
+		parts := strings.Split(normalized, "/")
+		for i := 0; i+1 < len(parts); i++ {
+			if matchesWorkspacePathSegment(parts[i], workspaceID) &&
+				matchesTaskPathSegment(parts[i+1], taskID) {
+				return strings.Join(parts[i:], "/")
+			}
 		}
 	}
 
@@ -834,6 +865,22 @@ func relativeWorkDir(workDir, workspaceID, taskID string) string {
 	}
 
 	return basename(normalized)
+}
+
+func matchesWorkspacePathSegment(segment, workspaceID string) bool {
+	lower := strings.ToLower(segment)
+	legacy := legacyTaskDirSegment(workspaceID)
+	current := strings.ToLower(taskDirSegment(workspaceID))
+	return strings.EqualFold(segment, workspaceID) ||
+		strings.HasSuffix(lower, "-"+legacy) || strings.HasSuffix(lower, "-"+current)
+}
+
+func matchesTaskPathSegment(segment, taskID string) bool {
+	lower := strings.ToLower(segment)
+	legacy := legacyTaskDirSegment(taskID)
+	current := strings.ToLower(taskDirSegment(taskID))
+	return strings.EqualFold(segment, legacy) || strings.EqualFold(segment, current) ||
+		strings.HasSuffix(lower, "-"+legacy) || strings.HasSuffix(lower, "-"+current)
 }
 
 // taskDirSegmentLen and taskDirSegment mirror execenv.taskKeyLen /
@@ -853,6 +900,16 @@ func taskDirSegment(uuid string) string {
 		return s[len(s)-taskDirSegmentLen:]
 	}
 	return s
+}
+
+// legacyTaskDirSegment mirrors the historical shortID layout: the first eight
+// dash-free characters. It is display compatibility only, never new identity.
+func legacyTaskDirSegment(uuid string) string {
+	s := strings.ReplaceAll(uuid, "-", "")
+	if len(s) > 8 {
+		return strings.ToLower(s[:8])
+	}
+	return strings.ToLower(s)
 }
 
 // homeDirPattern matches the well-known per-user home layouts on macOS,
@@ -1080,16 +1137,17 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateAgentRequest struct {
-	Name          string            `json:"name"`
-	Description   string            `json:"description"`
-	Instructions  string            `json:"instructions"`
-	AvatarURL     *string           `json:"avatar_url"`
-	RuntimeID     string            `json:"runtime_id"`
-	RuntimeConfig any               `json:"runtime_config"`
-	CustomEnv     map[string]string `json:"custom_env"`
-	CustomArgs    []string          `json:"custom_args"`
-	McpConfig     json.RawMessage   `json:"mcp_config"`
-	Visibility    string            `json:"visibility"`
+	Name                 string                     `json:"name"`
+	Description          string                     `json:"description"`
+	Instructions         string                     `json:"instructions"`
+	ConversationStarters []AgentConversationStarter `json:"conversation_starters"`
+	AvatarURL            *string                    `json:"avatar_url"`
+	RuntimeID            string                     `json:"runtime_id"`
+	RuntimeConfig        any                        `json:"runtime_config"`
+	CustomEnv            map[string]string          `json:"custom_env"`
+	CustomArgs           []string                   `json:"custom_args"`
+	McpConfig            json.RawMessage            `json:"mcp_config"`
+	Visibility           string                     `json:"visibility"`
 	// PermissionMode + InvocationTargets are the new invocation-permission
 	// inputs (MUL-3963). When permission_mode is present it is authoritative
 	// and Visibility is ignored; when absent, legacy Visibility is mapped
@@ -1138,6 +1196,32 @@ func decodeJSONBodyWithRawFields(body io.Reader, dst any) (map[string]json.RawMe
 	return raw, nil
 }
 
+func normaliseAgentConversationStarters(starters []AgentConversationStarter) ([]AgentConversationStarter, error) {
+	if len(starters) > maxAgentConversationStarters {
+		return nil, fmt.Errorf("conversation_starters must contain at most %d items", maxAgentConversationStarters)
+	}
+
+	normalised := make([]AgentConversationStarter, 0, len(starters))
+	for i, item := range starters {
+		item.Label = strings.TrimSpace(item.Label)
+		item.Prompt = strings.TrimSpace(item.Prompt)
+		if item.Label == "" {
+			return nil, fmt.Errorf("conversation_starters[%d].label is required", i)
+		}
+		if item.Prompt == "" {
+			return nil, fmt.Errorf("conversation_starters[%d].prompt is required", i)
+		}
+		if utf8.RuneCountInString(item.Label) > maxAgentConversationStarterLabel {
+			return nil, fmt.Errorf("conversation_starters[%d].label must be %d characters or fewer", i, maxAgentConversationStarterLabel)
+		}
+		if utf8.RuneCountInString(item.Prompt) > maxAgentConversationStarterLength {
+			return nil, fmt.Errorf("conversation_starters[%d].prompt must be %d characters or fewer", i, maxAgentConversationStarterLength)
+		}
+		normalised = append(normalised, item)
+	}
+	return normalised, nil
+}
+
 func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
@@ -1163,6 +1247,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RuntimeID == "" {
 		writeError(w, http.StatusBadRequest, "runtime_id is required")
+		return
+	}
+	conversationStarters, err := normaliseAgentConversationStarters(req.ConversationStarters)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Visibility == "" {
@@ -1267,6 +1356,8 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ca = []byte("[]")
 	}
 
+	sp, _ := json.Marshal(conversationStarters)
+
 	var mc []byte
 	if rawMcpConfig, ok := rawFields["mcp_config"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null")) {
 		mc = append([]byte(nil), rawMcpConfig...)
@@ -1329,6 +1420,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		Model:                    pgtype.Text{String: req.Model, Valid: req.Model != ""},
 		ThinkingLevel:            pgtype.Text{String: req.ThinkingLevel, Valid: req.ThinkingLevel != ""},
 		ServiceTier:              pgtype.Text{String: req.ServiceTier, Valid: req.ServiceTier != ""},
+		ConversationStarters:     sp,
 		ComposioToolkitAllowlist: allowlist,
 	})
 	if err != nil {
@@ -1395,12 +1487,13 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateAgentRequest struct {
-	Name          *string `json:"name"`
-	Description   *string `json:"description"`
-	Instructions  *string `json:"instructions"`
-	AvatarURL     *string `json:"avatar_url"`
-	RuntimeID     *string `json:"runtime_id"`
-	RuntimeConfig any     `json:"runtime_config"`
+	Name                 *string                     `json:"name"`
+	Description          *string                     `json:"description"`
+	Instructions         *string                     `json:"instructions"`
+	ConversationStarters *[]AgentConversationStarter `json:"conversation_starters"`
+	AvatarURL            *string                     `json:"avatar_url"`
+	RuntimeID            *string                     `json:"runtime_id"`
+	RuntimeConfig        any                         `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
 	// the agent owner or a workspace owner/admin, denies agent actors,
@@ -1664,6 +1757,15 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Instructions != nil {
 		params.Instructions = pgtype.Text{String: *req.Instructions, Valid: true}
+	}
+	if req.ConversationStarters != nil {
+		conversationStarters, err := normaliseAgentConversationStarters(*req.ConversationStarters)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		encoded, _ := json.Marshal(conversationStarters)
+		params.ConversationStarters = encoded
 	}
 	if req.AvatarURL != nil {
 		avatarURL, ok := h.acceptAvatarURL(w, r, *req.AvatarURL, existing.AvatarUrl.String)
@@ -2250,11 +2352,12 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel all pending/active tasks for this agent. Discard the returned
-	// rows here — the agent:archived event below already triggers a full
-	// active-tasks invalidation on every connected client, so per-task
-	// task:cancelled events would be redundant noise.
-	if cancelled, err := h.Queries.CancelAgentTasksByAgent(r.Context(), agent.ID); err != nil {
+	// Cancel all pending/active tasks for this agent. The cancel and its
+	// delegated-failure settlement commit together — a settlement issued after
+	// the cancel committed could never be repaired. Per-task task:cancelled
+	// events are still skipped: the agent:archived event below already triggers
+	// a full active-tasks invalidation on every connected client.
+	if cancelled, err := h.TaskService.CancelTasksForArchivedAgent(r.Context(), agent.ID); err != nil {
 		slog.Warn("cancel agent tasks on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 	} else {
 		h.TaskService.CaptureCancelledTasks(r.Context(), cancelled)
@@ -2332,11 +2435,60 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.canManageAgent(w, r, agent) {
-		return
+	projectOverlay := h.ProjectAuth != nil && h.ProjectAuth.Enabled()
+	if !projectOverlay {
+		if !h.canManageAgent(w, r, agent) {
+			return
+		}
+	} else {
+		// 2026-08-27 coder(lq): Project-scoped cancellation may be requested
+		// by a workspace member who is not the agent owner, but only after the
+		// native private-agent visibility gate. The per-task project check below
+		// decides which rows this member may actually mutate.
+		member, memberOK := h.workspaceMember(w, r, uuidToString(agent.WorkspaceID))
+		if !memberOK {
+			return
+		}
+		isAdmin := roleAllowed(member.Role, "owner", "admin")
+		isAgentOwner := uuidToString(agent.OwnerID) == requestUserID(r)
+		if !isAdmin && !isAgentOwner {
+			actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+			if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, uuidToString(agent.WorkspaceID)) {
+				writeError(w, http.StatusForbidden, "you do not have access to this agent")
+				return
+			}
+		}
 	}
 
-	cancelled, err := h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
+	var cancelled []db.AgentTaskQueue
+	var err error
+	if projectOverlay {
+		// 2026-08-27 coder(lq): An agent may own runs across several projects;
+		// member-level owners can only cancel rows in projects they manage.
+		// Admins retain the native cancel-all behavior. Workspace owners do so
+		// only while the workspace-owner bypass switch is enabled; once disabled,
+		// their cancellation is constrained by explicit project grants too.
+		member, memberOK := h.workspaceMember(w, r, uuidToString(agent.WorkspaceID))
+		if !memberOK {
+			return
+		}
+		ownerBypassEnabled := false
+		if member.Role == "owner" {
+			ownerBypassEnabled, err = h.ProjectAuth.WorkspaceOwnerBypassEnabled(r.Context(), uuidToString(agent.WorkspaceID))
+		}
+		if err != nil {
+			// Keep the internal error for the common error response below.
+		} else if member.Role == "admin" || (member.Role == "owner" && ownerBypassEnabled) {
+			cancelled, err = h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
+		} else {
+			cancelled, err = h.cancelAgentTasksWithProjectPermission(r.Context(), parseUUID(id), requestUserID(r), uuidToString(agent.WorkspaceID))
+			if err == nil && len(cancelled) > 0 {
+				h.TaskService.BroadcastCancelledTasks(r.Context(), uuidToString(agent.WorkspaceID), cancelled)
+			}
+		}
+	} else {
+		cancelled, err = h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
+	}
 	if err != nil {
 		slog.Warn("cancel agent tasks failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to cancel tasks")
@@ -2366,6 +2518,12 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
+		return
+	}
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+	tasks, err = h.filterTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, requestUserID(r), tasks, includeWorkspaceOwned)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
 	}
 
@@ -2420,6 +2578,7 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	workType := strings.TrimSpace(r.URL.Query().Get("type"))
 	switch workType {
@@ -2512,10 +2671,48 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := make([]WorkspaceWorkingAgent, 0, len(rows))
+	var visibleIssues map[pgtype.UUID]struct{}
+	var visibleWorkingAgents map[pgtype.UUID]struct{}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		issueIDs := make([]pgtype.UUID, 0)
+		agentIDs := make([]pgtype.UUID, 0, len(rows))
+		for _, row := range rows {
+			agentIDs = append(agentIDs, row.ID)
+			for _, issueID := range row.IssueIds {
+				if issueID.Valid {
+					issueIDs = append(issueIDs, issueID)
+				}
+			}
+		}
+		visibleIssues, err = h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), issueIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		// The aggregate row can contain issue, chat, autopilot, and projectless
+		// tasks. Check every running task, regardless of the requested type, so
+		// a hidden projectless task cannot leak an agent row or its count.
+		visibleWorkingAgents, err = h.visibleWorkingAgentIDsByProjectPermissionWithWorkspaceScope(r.Context(), parseUUID(workspaceID), parseUUID(requestUserID(r)), agentIDs, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+	}
 	for _, row := range rows {
 		agentID := uuidToString(row.ID)
 		if _, ok := allowed[agentID]; !ok {
 			continue
+		}
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			if _, ok := visibleWorkingAgents[row.ID]; !ok {
+				continue
+			}
+			// 2026-08-27 coder(lq): A workspace aggregate can mix tasks from
+			// multiple projects. Hide the whole row when any referenced issue is
+			// outside View scope; otherwise its count would reveal hidden work.
+			if !issueIDsVisibleByProjectPermission(row.IssueIds, visibleIssues) {
+				continue
+			}
 		}
 		resp = append(resp, WorkspaceWorkingAgent{
 			ID:               agentID,
@@ -2529,6 +2726,24 @@ func (h *Handler) ListWorkspaceWorkingAgents(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// 2026-08-27 coder(lq): Keep aggregate visibility logic independently
+// testable. An empty issue list means the running work has no issue context,
+// so the project overlay must leave the native workspace result unchanged.
+func issueIDsVisibleByProjectPermission(issueIDs []pgtype.UUID, visible map[pgtype.UUID]struct{}) bool {
+	if len(issueIDs) == 0 {
+		return true
+	}
+	for _, issueID := range issueIDs {
+		if !issueID.Valid {
+			return false
+		}
+		if _, ok := visible[issueID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // GetWorkspaceAgentRunCounts returns 30-day total run counts for every
 // agent in the workspace. Same single-fetch pattern as live-tasks /
 // activity to keep the Agents list cheap regardless of agent count.
@@ -2539,7 +2754,17 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	rows, err := h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
+	var rows []db.GetWorkspaceAgentRunCountsRow
+	var err error
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		rows, err = h.getWorkspaceAgentRunCountsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
+	} else {
+		rows, err = h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get agent run counts")
 		return
@@ -2580,7 +2805,17 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	rows, err := h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
+	var rows []db.GetWorkspaceAgentActivity30dRow
+	var err error
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		rows, err = h.getWorkspaceAgentActivityWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
+	} else {
+		rows, err = h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get agent activity")
 		return
@@ -2639,6 +2874,12 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+	tasks, err = h.filterTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, requestUserID(r), tasks, includeWorkspaceOwned)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
 	}
 

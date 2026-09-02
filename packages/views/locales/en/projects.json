@@ -25,7 +25,9 @@
     "status": "Status",
     "progress": "Progress",
     "lead": "Lead",
+    "my_role": "My role",
     "created": "Created",
+    "creator": "Created by",
     "issues": "Issues"
   },
   "status": {
@@ -153,6 +155,43 @@
   "chip": {
     "fallback_label": "Project"
   },
+  "permissions": {
+    "title": "Project permissions",
+    "authorize": "Access",
+    "dialog_title": "Project access",
+    "dialog_description": "Select workspace members and grant one project role. Existing members can be selected to change their role.",
+    "current_access": "Current project access",
+    "current_access_empty": "No explicit project access",
+    "add_members": "Add members",
+    "add_members_description": "Select workspace members who do not yet have project access.",
+    "selected_role_aria": "Role for selected members",
+    "change_role_aria": "Change role for",
+    "search_placeholder": "Search by name or email",
+    "loading": "Loading…",
+    "no_results": "No workspace members match your search",
+    "selected_prefix": "Selected",
+    "select_all": "Select search results",
+    "clear_selection": "Clear",
+    "role_owner": "Owner",
+    "role_manager": "Manager",
+    "role_member": "Member",
+    "role_viewer": "Viewer",
+    "role_owner_description": "Can manage the project, tasks, members, and project settings.",
+    "role_manager_description": "Can manage the project and tasks, but not members or project settings.",
+    "role_member_description": "Can view and work on tasks in the project.",
+    "role_viewer_description": "Can only view the project and its tasks.",
+    "grant": "Grant access",
+    "granting": "Granting…",
+    "grant_success": "Project access updated",
+    "grant_failed": "Some members could not be updated. Try again.",
+    "update_success": "Project access updated",
+    "update_failed": "Failed to update project role",
+    "cancel": "Cancel",
+    "remove_success": "Project member removed",
+    "remove_failed": "Failed to remove member",
+    "remove_aria": "Remove project access for",
+    "workspace_members_failed": "Failed to load workspace members"
+  },
   "toolbar": {
     "result_count_title": "Matching projects / all projects",
     "filter_label": "Filter",
@@ -167,6 +206,7 @@
     "direction_asc": "Ascending",
     "direction_desc": "Descending",
     "section_columns": "Columns",
-    "view": "View"
+    "view": "View",
+    "show_workspace_owned_items": "Show workspace-owned projects"
   }
 }

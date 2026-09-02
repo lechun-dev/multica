@@ -1,0 +1,49 @@
+# Lechun's distributable desktop build. Keep the upstream configuration as
+# the base so future Multica updates remain easy to merge; this file contains
+# only values that must differ from the official application.
+extends: electron-builder.yml
+
+appId: ai.multica.desktop.lechun
+productName: MissionOS
+
+extraMetadata:
+  productName: MissionOS
+  multicaDesktopVariant: lechun
+
+# Keep direct electron-builder invocations on the Lechun feed as well. The
+# package script adds architecture-specific suffixes where required.
+publish:
+  channel: latest-lechun
+
+protocols:
+  - name: MissionOS
+    schemes:
+      - multica-lechun
+
+mac:
+  artifactName: multica-lechun-${version}-mac-${arch}.${ext}
+
+# `dmg.artifactName` overrides the parent mac target's name for DMG output.
+# Keep it in the Lechun namespace so the release workflow selects the DMG
+# alongside the matching Lechun ZIP instead of producing `multica-desktop-*`.
+dmg:
+  artifactName: multica-lechun-${version}-mac-${arch}.${ext}
+
+linux:
+  artifactName: multica-lechun-${version}-linux-${arch}.${ext}
+  executableName: multica-lechun
+  desktop:
+    entry:
+      StartupWMClass: MissionOS
+
+win:
+  artifactName: multica-lechun-${version}-windows-${arch}.${ext}
+
+# Linux package managers require a machine-safe package name. Keep this
+# separate from productName so the installed app still displays "MissionOS" while
+# deb/rpm metadata uses a valid identifier without spaces.
+deb:
+  packageName: multica-lechun
+
+rpm:
+  packageName: multica-lechun

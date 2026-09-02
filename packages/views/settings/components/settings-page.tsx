@@ -20,12 +20,13 @@ import {
   Blocks,
   CreditCard,
   Server,
+  ShieldCheck,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { useFeatureEnabled } from "@multica/core/config";
+import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
 import {
   BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
   PLUGINS_V1_FLAG,
@@ -49,6 +50,8 @@ import { PropertiesTab } from "./properties-tab";
 import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
+import { ProjectPermissionsTab } from "./project-permissions-tab";
+import { ProjectPermissionRolesTab } from "./project-permission-roles-tab";
 import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
@@ -79,6 +82,8 @@ const WORKSPACE_TAB_KEYS = [
   "quick_actions",
   "mcp",
   "plugins",
+  "project_permissions",
+  "project_permission_roles",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -94,6 +99,8 @@ const WORKSPACE_TAB_VALUES = {
   quick_actions: "quick-actions",
   mcp: "mcp",
   plugins: "plugins",
+  project_permissions: "project-permissions",
+  project_permission_roles: "project-permission-roles",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -109,6 +116,8 @@ const WORKSPACE_TAB_ICONS = {
   quick_actions: Zap,
   mcp: Server,
   plugins: Blocks,
+  project_permissions: ShieldCheck,
+  project_permission_roles: ShieldCheck,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -143,6 +152,9 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const navigation = useNavigation();
   const isMobile = useIsMobile();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
+  const projectPermissionsEnabled = useConfigStore(
+    (state) => state.projectPermissionsEnabled,
+  );
   const billingEnabled = useFeatureEnabled(
     BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
     false,
@@ -153,9 +165,12 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
       WORKSPACE_TAB_KEYS.filter(
         (key) =>
           (key !== "plugins" || pluginsEnabled) &&
-          (key !== "billing" || billingEnabled),
-      ),
-    [billingEnabled, pluginsEnabled],
+          (key !== "billing" || billingEnabled) &&
+          (key !== "project_permissions" &&
+            key !== "project_permission_roles" ||
+            projectPermissionsEnabled),
+    ),
+    [billingEnabled, pluginsEnabled, projectPermissionsEnabled],
   );
 
   // Whitelist of valid tab values; unknown ?tab=… values silently fall back to
@@ -175,10 +190,22 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const candidateTab = tabFromUrl
     ? tabFromUrl === "billing" && !billingEnabled
       ? "workspace"
+      : (tabFromUrl === "project-permissions" ||
+          tabFromUrl === "project-permission-roles") &&
+        !projectPermissionsEnabled
+      ? "workspace"
       : LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
     : null;
   const activeTab =
     candidateTab && validTabs.has(candidateTab) ? candidateTab : DEFAULT_TAB;
+
+  const usesWideContent =
+    activeTab === "labels" ||
+    activeTab === "issue-statuses" ||
+    activeTab === "properties" ||
+    activeTab === "quick-actions" ||
+    activeTab === "project-permissions" ||
+    activeTab === "project-permission-roles";
 
   // replace (not push) so settings tab switches don't pollute browser history.
   // Preserve any other query params the page may carry.
@@ -264,9 +291,10 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
 
       {/* Right content */}
       <div className="min-w-0 flex-1 md:overflow-y-auto">
-        <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" || activeTab === "issue-statuses" || activeTab === "properties" || activeTab === "quick-actions"
-              ? "max-w-5xl"
-              : "max-w-3xl"}`}>
+        <div
+          data-testid="settings-content"
+          className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${usesWideContent ? "max-w-5xl" : "max-w-3xl"}`}
+        >
           <TabsContent value="profile"><AccountTab /></TabsContent>
           <TabsContent value="preferences"><PreferencesTab /></TabsContent>
           <TabsContent value="shortcuts"><KeyboardShortcutsTab /></TabsContent>
@@ -289,6 +317,12 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="quick-actions"><QuickActionsTab /></TabsContent>
           <TabsContent value="mcp"><McpTab /></TabsContent>
           {pluginsEnabled ? <TabsContent value="plugins"><PluginsTab /></TabsContent> : null}
+          {projectPermissionsEnabled ? (
+            <>
+              <TabsContent value="project-permissions"><ProjectPermissionsTab /></TabsContent>
+              <TabsContent value="project-permission-roles"><ProjectPermissionRolesTab /></TabsContent>
+            </>
+          ) : null}
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
           ))}

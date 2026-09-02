@@ -16,6 +16,7 @@ import type { AgentTask } from "@multica/core/types";
 import { AlertTriangle } from "lucide-react";
 import { AppLink } from "../../navigation";
 import { useT, useTimeAgo } from "../../i18n";
+import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 import { availabilityConfig, workloadConfig } from "../presence";
 
 interface AgentLivePeekCardProps {
@@ -30,11 +31,16 @@ interface AgentLivePeekCardProps {
 export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const p = useWorkspacePaths();
   const { data: agents = [], isLoading: agentsLoading } = useQuery(
     agentListOptions(wsId),
   );
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
+  const { data: snapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const presence = useAgentPresenceDetail(wsId, agentId);
 
   const agent = agents.find((a) => a.id === agentId);
@@ -126,6 +132,8 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
         <CurrentIssueRow
           wsId={wsId}
           issueId={currentIssueId}
+          includeWorkspaceOwned={includeWorkspaceOwned}
+          visibilityReady={visibilityReady}
           label={t(($) => $.live_peek.current_issue_label)}
           emptyLabel={t(($) => $.live_peek.no_current_issue)}
           issueHref={(id) => p.issueDetail(id)}
@@ -165,12 +173,16 @@ function pickLatestTerminal(tasks: readonly AgentTask[]): AgentTask | null {
 function CurrentIssueRow({
   wsId,
   issueId,
+  includeWorkspaceOwned,
+  visibilityReady,
   label,
   emptyLabel,
   issueHref,
 }: {
   wsId: string;
   issueId: string | null;
+  includeWorkspaceOwned: boolean;
+  visibilityReady: boolean;
   label: string;
   emptyLabel: string;
   issueHref: (id: string) => string;
@@ -179,8 +191,8 @@ function CurrentIssueRow({
   // a running issue id. snapshot already gives us the id; this hook just
   // resolves the human identifier (MUL-123) + title.
   const { data: issue } = useQuery({
-    ...issueDetailOptions(wsId, issueId ?? ""),
-    enabled: !!issueId,
+    ...issueDetailOptions(wsId, issueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!issueId,
   });
 
   return (

@@ -11,11 +11,11 @@
 **智能体，也在看板上。**
 
 Multica 是一个开源的团队工作区。你像给同事派活一样，把任务交给 AI 编码智能体——它自己接手、边做边
-汇报、卡住了主动说，做完交回来给你审。可自部署，支持 23 种智能体 CLI，不绑定任何厂商。
+汇报、卡住了主动说，做完交回来给你审。可自部署，支持 26 种智能体 CLI，不绑定任何厂商。
 
-[![CI](https://github.com/multica-ai/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/multica-ai/multica/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/releases)
-[![GitHub stars](https://img.shields.io/github/stars/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/stargazers)
+[![CI](https://github.com/lechun-dev/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/lechun-dev/multica/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/lechun-dev/multica?style=flat)](https://github.com/lechun-dev/multica/releases)
+[![GitHub stars](https://img.shields.io/github/stars/lechun-dev/multica?style=flat)](https://github.com/lechun-dev/multica/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/W8gYBn226t)
 
 [官网](https://multica.ai) · [文档](https://multica.ai/docs) · [快速开始](https://multica.ai/docs/cloud-quickstart) · [下载](https://multica.ai/download) · [愿景](VISION.zh.md) · [自部署](SELF_HOSTING.md) · [Discord](https://discord.gg/W8gYBn226t) · [X](https://x.com/MulticaAI)
@@ -49,7 +49,7 @@ diff，全都挂在同一个任务下——没人需要重新捋一遍上下文�
 
 *Claude Code、Codex、Cursor、Kimi——不用挑一个，全都招进来。*
 
-- **[23 种智能体 CLI](#运行时) →** Claude Code、Codex、Cursor、Copilot、Kimi、OpenCode 等等。
+- **[26 种智能体 CLI](#运行时) →** Claude Code、Codex、Cursor、Copilot、Kimi、OpenCode 等等。
 - **[智能体也是队友](https://multica.ai/docs/agents) →** 起个名字、选个提供方、配台运行时，它就上了看板，跟其他同事没两样。
 - **[小队](https://multica.ai/docs/squads) →** 人和智能体混编成队，leader 决定谁来接活。
 - **[Skills](https://multica.ai/docs/skills) →** 解决过一次的问题沉淀下来，全团队的智能体都能复用。
@@ -104,12 +104,12 @@ Claude Code、Codex、Cursor 都行。Multica 负责驱动它们，但不替你�
 <br/>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+curl -fsSL https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.sh | bash -s -- --with-server
 multica setup self-host
 ```
 
 Windows 上先设 `$env:MULTICA_MODE="with-server"`，再跑 PowerShell 安装脚本：
-`irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex`。
+`irm https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.ps1 | iex`。
 
 这会拉取 GHCR 上的官方镜像，需要 Docker。详见[自部署指南](SELF_HOSTING.md)。如果你选的 GHCR
 标签还没发布，可以在代码目录里跑 `make selfhost-build` 兜底。
@@ -155,7 +155,8 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 | Qwen Code | `qwen` | QwenPaw | `qwenpaw` |
 | Reasonix | `reasonix` | Trae CLI | `traecli` |
 | DeepSeek Harness | `dsh` | Oh-My-Pi | `omp` |
-| Dim | `dim` | | |
+| MiniMax Code | `mcode` | Dim | `dim` |
+| 华为云 CodeArts | `codearts` | | |
 
 怎么装、怎么登录：[安装智能体运行时](https://multica.ai/docs/install-agent-runtime) ·
 [AI 编程工具对照](https://multica.ai/docs/providers)
@@ -174,7 +175,7 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 | 接上 Git 和聊天工具 | [GitHub](https://multica.ai/docs/github-integration) · [自建 Git](https://multica.ai/docs/vcs-integration) · [消息渠道](https://multica.ai/docs/channels) |
 | 部署在自己的基础设施上 | [自部署](SELF_HOSTING.md) · [安全模型](https://multica.ai/docs/security-model) · [环境变量](https://multica.ai/docs/environment-variables) |
 | 用脚本驱动它 | [CLI 参考](https://multica.ai/docs/cli) · [CLI 与守护进程指南](CLI_AND_DAEMON.md) · [认证令牌](https://multica.ai/docs/auth-tokens) |
-| 查智能体为什么卡住了 | [执行任务](https://multica.ai/docs/tasks) · [问题排查](https://multica.ai/docs/troubleshooting) |
+| 查智能体为什么卡住了 | [Task](https://multica.ai/docs/tasks) · [问题排查](https://multica.ai/docs/troubleshooting) |
 
 ---
 
@@ -195,7 +196,7 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
                              │  拉起
                       ┌──────┴───────────────────────────────┐
                       │  Claude Code · Codex · Cursor · …    │
-                      │  （上面 23 种运行时里的任意一种）    │
+                      │  （上面 26 种运行时里的任意一种）    │
                       └──────────────────────────────────────┘
 ```
 
@@ -206,7 +207,7 @@ Multica 不自带模型。它驱动的是你本来就装好、登录好的那些
 | 移动端 | Expo / React Native (iOS) |
 | 后端 | Go (Chi router, sqlc, gorilla/websocket) |
 | 数据库 | PostgreSQL 17（`pgcrypto` + `pg_trgm`） |
-| 智能体运行时 | 本地守护进程拉起上面 23 种智能体 CLI 中的任意一个 |
+| 智能体运行时 | 本地守护进程拉起上面 26 种智能体 CLI 中的任意一个 |
 
 ---
 

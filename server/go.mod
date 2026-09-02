@@ -3,6 +3,7 @@ module github.com/multica-ai/multica/server
 go 1.26.6
 
 require (
+	github.com/lechun-dev/multica/extensions/dingtalk-notify v0.0.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.13
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.13
@@ -37,6 +38,8 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/lechun-dev/multica/extensions/dingtalk-notify => ../extensions/dingtalk-notify
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 // indirect

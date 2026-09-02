@@ -15,6 +15,7 @@ import {
   Plus,
   Rows3,
   Search,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -109,6 +110,8 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
+import { ProjectPermissionsDialog } from "./project-permissions-dialog";
+import { ProjectPermissionsTab } from "../../settings/components/project-permissions-tab";
 import { PAGE_GUTTER, PAGE_TOOLBAR } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -148,23 +151,27 @@ const COLUMN_WIDTHS: Record<ProjectColumnKey, number> = {
   priority: 116,
   progress: 88,
   lead: 132,
+  role: 108,
   issues: 80,
+  creator: 132,
   created: 104,
 };
+const ACCESS_COLUMN_WIDTH = 96;
 
 // Fixed tracks: edges 12+12, checkbox 16, name min 200, status 116,
-// kebab 28 = 384, plus the 10 gap-x-3 gaps between the wide template's
-// 11 tracks.
-const FIXED_TRACKS_WIDTH = 384 + 10 * 12;
+// authorization 96, kebab 28 = 480, plus the gaps between the wide template's
+// tracks. Authorization stays fixed and visible so the primary permission
+// action cannot be lost in the column preferences.
+const FIXED_TRACKS_WIDTH = 384 + ACCESS_COLUMN_WIDTH + 13 * 12;
 
 // Render/track order: checkbox, name, status (core, fixed 116px), priority,
-// progress, lead, issues, created, kebab. MUST be a literal string —
+// progress, lead, role, issues, creator, access, created, kebab. MUST be a literal string —
 // Tailwind can't see interpolated `grid-cols-[...]` arbitrary values, so an
 // interpolated width silently drops the whole template and the grid
 // collapses to one column.
 const GRID_COLS =
-  "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
+  "grid-cols-[0.75rem_1rem_minmax(120px,1fr)_116px_var(--pjc-access)_1.75rem_0.75rem] " +
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-role)_var(--pjc-issues)_var(--pjc-creator)_var(--pjc-access)_var(--pjc-created)_1.75rem_0.75rem]";
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
@@ -183,8 +190,11 @@ function columnTrackVars(
     "--pjc-priority": width("priority"),
     "--pjc-progress": width("progress"),
     "--pjc-lead": width("lead"),
+    "--pjc-role": width("role"),
     "--pjc-issues": width("issues"),
+    "--pjc-creator": width("creator"),
     "--pjc-created": width("created"),
+    "--pjc-access": `${ACCESS_COLUMN_WIDTH}px`,
     "--pjc-minw": `${minWidth}px`,
   } as React.CSSProperties;
 }
@@ -225,10 +235,12 @@ function ProjectRowActions({
   project,
   pinned,
   canDelete,
+  showAuthorize = true,
 }: {
   project: Project;
   pinned: boolean;
   canDelete: boolean;
+  showAuthorize?: boolean;
 }) {
   const { t } = useT("projects");
   const { t: tCommon } = useT("common");
@@ -238,6 +250,7 @@ function ProjectRowActions({
   const deletePin = useDeletePin();
   const deleteProject = useDeleteProject();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
 
   const togglePin = () => {
     if (pinned) deletePin.mutate({ itemType: "project", itemId: project.id });
@@ -280,6 +293,15 @@ function ProjectRowActions({
             )}
             {pinned ? t(($) => $.page.unpin) : t(($) => $.page.pin)}
           </DropdownMenuItem>
+          {showAuthorize && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setPermissionsOpen(true)}>
+                <ShieldCheck className="size-3.5" />
+                {t(($) => $.permissions.authorize)}
+              </DropdownMenuItem>
+            </>
+          )}
           {canDelete && (
             <>
               <DropdownMenuSeparator />
@@ -294,6 +316,16 @@ function ProjectRowActions({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* 2026-08-28 coder(lq): Keep the list action on the same authorization dialog as project detail. */}
+      {permissionsOpen && (
+        <ProjectPermissionsDialog
+          projectId={project.id}
+          open={permissionsOpen}
+          onOpenChange={setPermissionsOpen}
+          hideTrigger
+        />
+      )}
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="sm:max-w-md">
@@ -335,6 +367,42 @@ function ProjectRowActions({
   );
 }
 
+function ProjectAuthorizationCell({ project }: { project: Project }) {
+  const { t } = useT("projects");
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <ListGridCell
+        className="justify-start"
+        onClick={stopRowNavigation}
+        onAuxClick={stopRowNavigation}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-caption"
+          aria-label={t(($) => $.permissions.authorize)}
+          title={t(($) => $.permissions.authorize)}
+          onClick={() => setOpen(true)}
+        >
+          <ShieldCheck className="size-3.5" />
+          <span>{t(($) => $.permissions.authorize)}</span>
+        </Button>
+      </ListGridCell>
+      {open && (
+        <ProjectPermissionsDialog
+          projectId={project.id}
+          open={open}
+          onOpenChange={setOpen}
+          hideTrigger
+        />
+      )}
+    </>
+  );
+}
+
 function CheckboxCell({
   checked,
   onToggle,
@@ -371,6 +439,7 @@ function ProjectTableRow({
   onToggleSelect,
   rowHref,
   rowLink,
+  getActorName,
 }: {
   project: Project;
   pinned: boolean;
@@ -380,7 +449,9 @@ function ProjectTableRow({
   onToggleSelect: () => void;
   rowHref: string;
   rowLink: ReturnType<typeof useRowLink>;
+  getActorName: (actorType: string, actorId: string) => string | undefined;
 }) {
+  const { t } = useT("projects");
   const formatRelativeDate = useFormatRelativeDate();
   const updateProject = useUpdateProject();
   const handleUpdate = useCallback(
@@ -449,6 +520,22 @@ function ProjectTableRow({
         <ListGridCell className="hidden px-0 @2xl:flex" />
       )}
 
+      {isColVisible("role") ? (
+        <ListGridCell className="hidden text-body @2xl:flex">
+          {project.current_user_role === "owner"
+            ? t(($) => $.permissions.role_owner)
+            : project.current_user_role === "manager"
+              ? t(($) => $.permissions.role_manager)
+              : project.current_user_role === "member"
+                ? t(($) => $.permissions.role_member)
+                : project.current_user_role === "viewer"
+                  ? t(($) => $.permissions.role_viewer)
+                  : project.current_user_role || "—"}
+        </ListGridCell>
+      ) : (
+        <ListGridCell className="hidden px-0 @2xl:flex" />
+      )}
+
       {isColVisible("issues") ? (
         <ListGridCell className="hidden justify-end font-mono text-caption tabular-nums text-muted-foreground @2xl:flex">
           {project.issue_count}
@@ -456,6 +543,26 @@ function ProjectTableRow({
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
       )}
+
+      {isColVisible("creator") ? (
+        <ListGridCell className="hidden @2xl:flex">
+          {project.created_by ? (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <ActorAvatar actorType="member" actorId={project.created_by} size="sm" enableHoverCard />
+              <span className="min-w-0 truncate text-caption text-muted-foreground">
+                {getActorName("member", project.created_by) ?? "—"}
+              </span>
+            </span>
+          ) : (
+            <span className="text-caption text-faint-foreground">—</span>
+          )}
+        </ListGridCell>
+      ) : (
+        <ListGridCell className="hidden px-0 @2xl:flex" />
+      )}
+
+      {/* 2026-08-29 coder(lq): Keep authorization visible beside the creator instead of burying it in the row menu. */}
+      <ProjectAuthorizationCell project={project} />
 
       {isColVisible("created") ? (
         <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
@@ -467,7 +574,12 @@ function ProjectTableRow({
 
       <ListGridCell className="justify-end px-0">
         <span onClick={stopRowNavigation} onAuxClick={stopRowNavigation} className="flex items-center">
-          <ProjectRowActions project={project} pinned={pinned} canDelete={canDelete} />
+          <ProjectRowActions
+            project={project}
+            pinned={pinned}
+            canDelete={canDelete}
+            showAuthorize={false}
+          />
         </span>
       </ListGridCell>
     </ListGridRow>
@@ -549,6 +661,13 @@ function ProjectTableHeader({
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
       )}
+      {isColVisible("role") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          {t(($) => $.table.my_role)}
+        </ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
       {isColVisible("issues") ? (
         <ListGridHeaderCell className="hidden justify-end @2xl:flex" align="right">
           {t(($) => $.table.issues)}
@@ -556,6 +675,16 @@ function ProjectTableHeader({
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
       )}
+      {isColVisible("creator") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">
+          {t(($) => $.table.creator)}
+        </ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
+      <ListGridHeaderCell>
+        {t(($) => $.permissions.authorize)}
+      </ListGridHeaderCell>
       {isColVisible("created") ? (
         <ListGridHeaderCell
           className="hidden @2xl:flex"
@@ -580,10 +709,12 @@ function ProjectCard({
   project,
   pinned,
   canDelete,
+  getActorName,
 }: {
   project: Project;
   pinned: boolean;
   canDelete: boolean;
+  getActorName: (actorType: string, actorId: string) => string | undefined;
 }) {
   const { t } = useT("projects");
   const wsPaths = useWorkspacePaths();
@@ -660,6 +791,16 @@ function ProjectCard({
           )}
         />
         <div className="flex items-center gap-2">
+          <span className="flex max-w-[100px] items-center gap-1 text-micro text-muted-foreground" title={t(($) => $.table.creator)}>
+            {project.created_by ? (
+              <>
+                <ActorAvatar actorType="member" actorId={project.created_by} size="sm" enableHoverCard />
+                <span className="truncate">{getActorName("member", project.created_by) ?? "—"}</span>
+              </>
+            ) : (
+              "—"
+            )}
+          </span>
           <ProjectPriorityBadge project={project} handleUpdate={handleUpdate} align="start" />
           <span className="text-micro text-muted-foreground">
             {formatRelativeDate(project.created_at)}
@@ -683,7 +824,7 @@ const STATUS_VALUES: ProjectStatus[] = [
   "cancelled",
 ];
 const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "none"];
-const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
+const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "role", "issues", "creator", "created"];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
 
 function countActiveFilters(f: ProjectListFilters): number {
@@ -796,6 +937,8 @@ function ProjectBatchToolbar({
 
 export function ProjectsPage() {
   const { t } = useT("projects");
+  const { t: tSettings } = useT("settings");
+  const [projectPermissionsOpen, setProjectPermissionsOpen] = useState(false);
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
@@ -817,8 +960,22 @@ export function ProjectsPage() {
   const isCompact = viewMode === "compact";
   const isColVisible = (key: ProjectColumnKey) => !hiddenColumns.includes(key);
 
-  const { data: projects = [], isLoading } = useQuery(projectListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const membersQuery = useQuery(memberListOptions(wsId));
+  const members = membersQuery.data ?? [];
+  const visibilityReady = membersQuery.isSuccess;
+  // 2026-09-02 coder(lq): Every caller is filtered by the backend project ACL;
+  // PROJECT_OWNER_BYPASS_ENABLED only controls the workspace owner's implicit
+  // all-project access. Keep the request scope fixed so a local view preference
+  // cannot be mistaken for an authorization setting.
+  const includeWorkspaceOwned = visibilityReady;
+  const {
+    data: projects = [],
+    isLoading: projectsLoading,
+  } = useQuery({
+    ...projectListOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
+  const isLoading = projectsLoading || !visibilityReady;
   const { data: pins = [] } = useQuery({
     ...pinListOptions(wsId, currentUser?.id ?? ""),
     enabled: !!wsId && !!currentUser?.id,
@@ -927,9 +1084,13 @@ export function ProjectsPage() {
         ? t(($) => $.table.progress)
         : k === "lead"
           ? t(($) => $.table.lead)
+          : k === "role"
+            ? t(($) => $.table.my_role)
           : k === "issues"
             ? t(($) => $.table.issues)
-            : t(($) => $.table.created);
+            : k === "creator"
+              ? t(($) => $.table.creator)
+              : t(($) => $.table.created);
 
   const showEmpty = !isLoading && projects.length === 0;
   const countBadge = (n: number) => (
@@ -988,6 +1149,12 @@ export function ProjectsPage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+              <CollectionPageHeaderAction
+                icon={ShieldCheck}
+                label={tSettings(($) => $.page.tabs.project_permissions)}
+                onClick={() => setProjectPermissionsOpen(true)}
+              />
+
               {/* Filter */}
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -1099,6 +1266,15 @@ export function ProjectsPage() {
                   </DropdownMenuSub>
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              <Dialog open={projectPermissionsOpen} onOpenChange={setProjectPermissionsOpen}>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
+                  <DialogTitle className="sr-only">
+                    {tSettings(($) => $.page.tabs.project_permissions)}
+                  </DialogTitle>
+                  {projectPermissionsOpen ? <ProjectPermissionsTab /> : null}
+                </DialogContent>
+              </Dialog>
 
               {/* Display (sort + columns). Always present — view mode is a
                   pure presentation choice and must not reshape the toolbar.
@@ -1261,6 +1437,7 @@ export function ProjectsPage() {
                     onToggleSelect={() => toggleSelected(project.id)}
                     rowHref={wsPaths.projectDetail(project.id)}
                     rowLink={rowLink}
+                    getActorName={getActorName}
                   />
                 ))}
               </ListGrid>
@@ -1277,6 +1454,7 @@ export function ProjectsPage() {
                     project={project}
                     pinned={pinnedProjectIds.has(project.id)}
                     canDelete={isWorkspaceAdmin}
+                    getActorName={getActorName}
                   />
                 ))}
               </div>

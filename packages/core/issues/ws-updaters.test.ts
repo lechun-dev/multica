@@ -554,6 +554,60 @@ describe("onIssueCreated — carries the label snapshot into list cache", () => 
   });
 });
 
+describe("onIssueCreated — respects restricted list caches", () => {
+  it("does not optimistically insert into a cache that excludes workspace-owned issues", () => {
+    const qc = new QueryClient();
+    const sort = { sort_by: "position" as const };
+    const inclusiveKey = issueKeys.listSorted(WS_ID, sort);
+    const restrictedKey = [
+      ...inclusiveKey,
+      { includeWorkspaceOwned: false },
+    ] as const;
+    qc.setQueryData<ListIssuesCache>(inclusiveKey, makeListCache());
+    qc.setQueryData<ListIssuesCache>(restrictedKey, makeListCache());
+
+    onIssueCreated(qc, WS_ID, otherIssue);
+
+    expect(
+      qc.getQueryData<ListIssuesCache>(inclusiveKey)?.byStatus.todo?.issues,
+    ).toContainEqual(otherIssue);
+    expect(
+      qc.getQueryData<ListIssuesCache>(restrictedKey)?.byStatus.todo?.issues,
+    ).toEqual([]);
+    expectInvalidated(qc, restrictedKey);
+  });
+});
+
+describe("onIssueUpdated — source deletion detaches sub-issues", () => {
+  it("patches the detached child and invalidates the former parent's hierarchy caches", () => {
+    const qc = new QueryClient();
+    const child: Issue = { ...parentedIssue, stage: 2, revision: 1 };
+    const oldChildrenKey = issueKeys.children(WS_ID, PARENT_ISSUE_ID);
+    const batchedChildrenKey = issueKeys.childrenByParents(WS_ID, [PARENT_ISSUE_ID]);
+    qc.setQueryData(issueKeys.detail(WS_ID, ISSUE_ID), child);
+    qc.setQueryData<ListIssuesCache>(issueKeys.list(WS_ID), makeListCache(child));
+    qc.setQueryData<Issue[]>(oldChildrenKey, [child]);
+    qc.setQueryData(batchedChildrenKey, new Map([[PARENT_ISSUE_ID, [child]]]));
+    qc.setQueryData(issueKeys.childProgress(WS_ID), []);
+
+    onIssueUpdated(qc, WS_ID, {
+      ...child,
+      parent_issue_id: null,
+      stage: null,
+      revision: 2,
+    });
+
+    expect(qc.getQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID))).toMatchObject({
+      parent_issue_id: null,
+      stage: null,
+      revision: 2,
+    });
+    expectInvalidated(qc, oldChildrenKey);
+    expectInvalidated(qc, batchedChildrenKey);
+    expectInvalidated(qc, issueKeys.childProgress(WS_ID));
+  });
+});
+
 describe("onIssueUpdated — position move is surgical, not a list refetch", () => {
   let qc: QueryClient;
 

@@ -18,9 +18,13 @@ export interface Project {
   due_date: string | null;
   created_at: string;
   updated_at: string;
+  /** User who created the project; null for projects created before attribution was added. */
+  created_by: string | null;
   issue_count: number;
   done_count: number;
   resource_count: number;
+  /** Explicit role on this project for the signed-in user; omitted by legacy backends. */
+  current_user_role?: string | null;
 }
 
 export interface CreateProjectRequest {
@@ -56,6 +60,69 @@ export interface ListProjectsResponse {
   total: number;
 }
 
+export interface ListProjectsParams {
+  status?: string;
+  /** 2026-08-28 coder(lq): Include workspace-owner-only projects in list results. */
+  include_workspace_owned?: boolean;
+}
+
+export type ProjectPermissionReportRole = string;
+
+export interface ProjectPermissionRole {
+  id: string;
+  workspace_id: string;
+  key: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+  permissions: ProjectPermissionReportPermission[];
+}
+
+export interface ProjectPermissionRolesResponse {
+  roles: ProjectPermissionRole[];
+}
+
+export type ProjectPermissionReportPermission =
+  | "project.view"
+  | "project.edit"
+  | "project.issue.create"
+  | "project.issue.comment"
+  | "project.issue.manage"
+  | "project.agent.use"
+  | "project.member.manage"
+  | "project.settings.manage";
+
+export interface ProjectPermissionReportRow {
+  scope: "project";
+  project_id: string;
+  project_title: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  workspace_role?: ProjectPermissionReportRole;
+  project_role?: ProjectPermissionReportRole;
+  permission: ProjectPermissionReportPermission;
+  source: "workspace_role" | "project_role";
+  granted_by?: string;
+}
+
+export interface ProjectPermissionReportParams {
+  project_id?: string;
+  user_id?: string;
+  role?: ProjectPermissionReportRole;
+  permission?: ProjectPermissionReportPermission;
+  scope?: "all" | "project";
+  limit?: number;
+  offset?: number;
+}
+
+export interface ProjectPermissionReportResponse {
+  rows: ProjectPermissionReportRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ProjectResource is a typed pointer from a project to an external resource.
 // The resource_ref shape depends on resource_type. New types add a case in
 // validateAndNormalizeResourceRef on the server and a renderer in the UI.
@@ -79,8 +146,13 @@ export interface GithubRepoResourceRef {
  *   one at a time — a second task waits in `waiting_local_directory`. Edits
  *   land in the user's working copy.
  * - `worktree`: each task gets its own git worktree of that repo inside the
- *   runtime's workspace, so tasks run concurrently and deliver their work as an
- *   `agent/<agent>/<task>` branch instead of touching the working copy.
+ *   runtime's workspace, so tasks run concurrently and deliver their work as a
+ *   branch instead of touching the working copy. Every task of one conversation
+ *   shares that branch — `agent/<agent>/<issue>` — so a follow-up continues the
+ *   previous turn's work; a task with no conversation behind it gets
+ *   `agent/<agent>/<task>`. Continuation is decided by an ownership record in
+ *   the repo, not by the branch name, so a same-named branch the user made is
+ *   never adopted.
  *
  * Absent means `in_place`: resources created before the mode existed keep their
  * original behavior, so this is optional rather than defaulted on the server.

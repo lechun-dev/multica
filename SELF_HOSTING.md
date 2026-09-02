@@ -23,7 +23,7 @@ Two commands to set up everything — server, CLI, and configuration.
 
 ```bash
 # 1. Install CLI + provision the self-host server
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+curl -fsSL https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.sh | bash -s -- --with-server
 
 # 2. Configure CLI, authenticate, and start the daemon
 multica setup self-host
@@ -36,7 +36,7 @@ multica setup self-host
 
 ```powershell
 # 1. Install CLI + provision the self-host server
-$env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+$env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.ps1 | iex
 
 # 2. Configure CLI, authenticate, and start the daemon
 multica setup self-host
@@ -66,7 +66,7 @@ If you prefer to run each step manually:
 **Prerequisites:** Docker and Docker Compose.
 
 ```bash
-git clone https://github.com/multica-ai/multica.git
+git clone https://github.com/lechun-dev/multica.git
 cd multica
 make selfhost
 ```
@@ -108,6 +108,28 @@ a fallback for a private API URL.
 
 Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads all three from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
 
+### Project permissions (optional)
+
+Project-level permissions are disabled by default for compatibility with the
+upstream workspace-only behavior. After applying the database migrations, set
+`PROJECT_PERMISSION_ENABLED=true` in `.env` and restart the backend/Compose
+stack. This is a backend feature flag; changing it does not require rebuilding
+the web image.
+
+When enabled:
+
+- Workspace owners can access and manage every project.
+- The owner bypass can be toggled from `.env` with
+  `PROJECT_OWNER_BYPASS_ENABLED`; set it to `false` to require explicit
+  project access for workspace owners too.
+- Project owners can manage that project's authorization entries.
+- Project creators and member leads are automatically granted the `owner` role;
+  the migration also backfills owners for existing member-led projects.
+- Other members must have a project role to see its tasks and resources.
+- Tasks inherit project permissions and have no separate task-level ACL. A task
+  assignee is promoted to project `member`, and users mentioned in a project or
+  task are promoted to project `viewer`.
+
 > **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 
 ### Step 3 — Install CLI & Start Daemon
@@ -131,6 +153,7 @@ You also need at least one AI agent CLI installed:
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`copilot` on PATH)
 - [OpenClaw](https://github.com/openclaw/openclaw) (`openclaw` on PATH)
 - [OpenCode](https://github.com/anomalyco/opencode) (`opencode` on PATH)
+- [Huawei Cloud CodeArts](https://support.huaweicloud.com/qs-codeartssnap/codeartsagent_qs_0004.html) (`codearts` on PATH)
 - [Hermes](https://github.com/NousResearch/hermes) (`hermes` on PATH)
 - [Pi](https://pi.dev/) (`pi` on PATH)
 - [Cursor Agent](https://cursor.com/) (`cursor-agent` on PATH)
@@ -184,7 +207,7 @@ multica daemon status
 
 ## Kubernetes Deployment (Alternative)
 
-If you already run a Kubernetes cluster, you can deploy Multica there instead of Docker Compose using the released OCI Helm chart at `oci://ghcr.io/multica-ai/charts/multica` or the source chart at [`deploy/helm/multica/`](deploy/helm/multica/). It targets a typical k3s / k8s setup with an Ingress controller and a default `ReadWriteOnce` StorageClass — authored against k3s + Traefik + `local-path`, and should work on any cluster with minor tweaks.
+If you already run a Kubernetes cluster, you can deploy Multica there instead of Docker Compose using the released OCI Helm chart at `oci://ghcr.io/lechun-dev/charts/multica` or the source chart at [`deploy/helm/multica/`](deploy/helm/multica/). It targets a typical k3s / k8s setup with an Ingress controller and a default `ReadWriteOnce` StorageClass — authored against k3s + Traefik + `local-path`, and should work on any cluster with minor tweaks.
 
 The chart creates the following resources in the target namespace:
 
@@ -241,7 +264,7 @@ Leave optional values empty for now — you can fill them in later (see [Step 5 
 ### Step 4 — Install the chart
 
 ```bash
-helm install multica oci://ghcr.io/multica-ai/charts/multica \
+helm install multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica
 ```
@@ -251,10 +274,10 @@ Released chart versions strip the leading `v` from the Git tag. For example, rel
 To override defaults, export the chart values, edit them, and pass them with `-f`:
 
 ```bash
-helm show values oci://ghcr.io/multica-ai/charts/multica \
+helm show values oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> > my-values.yaml
 # edit my-values.yaml — e.g. change ingress hosts, image tags, resource limits
-helm install multica oci://ghcr.io/multica-ai/charts/multica \
+helm install multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
@@ -304,7 +327,7 @@ The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.
 - **Deterministic local/private testing:** set `backend.config.appEnv: development` in your values file and `MULTICA_DEV_VERIFICATION_CODE=888888` in the Secret, then `helm upgrade` and restart. This fixed code is ignored when `APP_ENV=production`.
 
   ```bash
-  helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
+  helm upgrade multica oci://ghcr.io/lechun-dev/charts/multica \
     --version <chart-version> \
     -n multica \
     -f my-values.yaml --set backend.config.appEnv=development
@@ -340,7 +363,7 @@ kubectl -n multica rollout restart deploy/multica-backend deploy/multica-fronten
 To upgrade to a specific Multica release, upgrade to the matching chart version. The released chart defaults its app images to the matching Git tag:
 
 ```bash
-helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
+helm upgrade multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
@@ -359,7 +382,7 @@ images:
 Then run the same upgrade command with `-f my-values.yaml`:
 
 ```bash
-helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
+helm upgrade multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
@@ -391,7 +414,12 @@ The Usage / Runtime dashboards read from a derived `task_usage_hourly` table pop
 
 Multiple backend replicas are safe: each replica ticks every 30 seconds and tries to claim the current 5-minute UTC plan, but the unique key `(job_name, scope_kind, scope_id, plan_time)` means only one wins each plan. Inspect steady-state operation:
 
-> **Exception — WeCom (企业微信) smart bot must run single-replica.** Unlike Slack and Lark, whose outbound is stateless HTTP that any replica can perform, the WeCom smart bot's only outbound path is an in-process WebSocket long connection. Agent replies and inbox pushes are delivered only by the replica currently holding a given bot's connection lease. If you run more than one backend replica with WeCom enabled (`MULTICA_WECOM_SECRET_KEY` set), responses produced on a replica that does not hold the lease are silently dropped and the WeCom user sees nothing. Until cross-replica outbound routing lands, run the WeCom-enabled backend as a single replica. Everything else (including the rollup scheduler above) is multi-replica safe.
+> **WeCom (企业微信) smart bot and replica count.** Unlike Slack and Lark, whose outbound is stateless HTTP that any replica can perform, the WeCom smart bot's only outbound path is an in-process WebSocket long connection, held by the replica that owns that bot's lease. What happens to a reply produced on a *different* replica depends on the realtime relay:
+>
+> - **Sharded or dual relay mode (`REDIS_URL` set, the default with Redis):** the reply or inbox push is forwarded to the lease holder over the relay and delivered. Multi-replica WeCom is supported in this mode.
+> - **Legacy relay mode, or no Redis:** the reply is dropped and the WeCom user sees nothing. Run the WeCom-enabled backend as a single replica in this configuration.
+>
+> In **every** mode there is one residual window: a reply produced while *no* replica holds a live connection to that bot — all of them mid-reconnect — is not delivered. It is **counted**: the replica that routed it checks afterwards whether any replica ever claimed the delivery, and increments `multica_wecom_outbound_dropped_total{reason="no_live_connection"}` when none did, so the window can be measured on a deployment rather than guessed at. If a rare lost reply during reconnects is unacceptable, a single replica remains the most conservative deployment. Everything else (including the rollup scheduler above) is multi-replica safe.
 
 ```sql
 SELECT plan_time, status, attempt, runner_id,
@@ -439,7 +467,7 @@ External cron / systemd timer / Kubernetes `CronJob` setups that call `SELECT ro
 If you installed via the install script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --stop
+curl -fsSL https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.sh | bash -s -- --stop
 ```
 
 If you cloned the repo manually:
@@ -483,7 +511,7 @@ If the selected GHCR tag has not been published yet, fall back to `make selfhost
 If you prefer running Docker Compose steps manually instead of `make selfhost`:
 
 ```bash
-git clone https://github.com/multica-ai/multica.git
+git clone https://github.com/lechun-dev/multica.git
 cd multica
 cp .env.example .env
 ```

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   deleteProject: vi.fn(),
   createPin: vi.fn(),
   deletePin: vi.fn(),
+  listProjectMembers: vi.fn(),
   openModal: vi.fn(),
   projectViewState: {
     viewMode: "compact",
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
     sortDirection: "asc",
     hiddenColumns: [] as string[],
     filters: { statuses: [], priorities: [], leads: [] },
+    showWorkspaceOwnedItems: true,
     setViewMode: vi.fn(),
     toggleSort: vi.fn(),
     setSortField: vi.fn(),
@@ -30,17 +32,19 @@ const mocks = vi.hoisted(() => ({
     toggleColumn: vi.fn(),
     toggleFilter: vi.fn(),
     clearFilters: vi.fn(),
+    setShowWorkspaceOwnedItems: vi.fn(),
   },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey?.[0];
     if (key === "projects") {
-      return { data: mocks.projects, isLoading: false };
+      return { data: mocks.projects, isLoading: false, isSuccess: true };
     }
     if (key === "members") {
-      return { data: mocks.members, isLoading: false };
+      return { data: mocks.members, isLoading: false, isSuccess: true };
     }
     if (key === "agents") {
       return { data: mocks.agents, isLoading: false };
@@ -48,7 +52,20 @@ vi.mock("@tanstack/react-query", () => ({
     if (key === "pins") {
       return { data: mocks.pins, isLoading: false };
     }
+    if (key === "project-members") {
+      return {
+        data: { members: [], total: 0, can_manage: true },
+        isLoading: false,
+      };
+    }
     return { data: [], isLoading: false };
+  },
+}));
+
+vi.mock("@multica/core/api", () => ({
+  api: {
+    listProjectMembers: mocks.listProjectMembers,
+    listProjectPermissionRoles: vi.fn().mockResolvedValue({ roles: [] }),
   },
 }));
 
@@ -76,6 +93,10 @@ vi.mock("@multica/core/paths", () => ({
     memberDetail: (id: string) => `/test-workspace/members/${id}`,
     agentDetail: (id: string) => `/test-workspace/agents/${id}`,
   }),
+}));
+
+vi.mock("../../settings/components/project-permissions-tab", () => ({
+  ProjectPermissionsTab: () => <div>Project Permissions Content</div>,
 }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -185,6 +206,7 @@ vi.mock("@multica/ui/components/ui/tooltip", () => ({
 const PROJECT: Project = {
   id: "project-1",
   workspace_id: "workspace-1",
+  created_by: null,
   title: "Launch Plan",
   description: null,
   icon: null,
@@ -199,6 +221,7 @@ const PROJECT: Project = {
   issue_count: 3,
   done_count: 1,
   resource_count: 0,
+  current_user_role: "viewer",
 };
 
 function makeAdapter(
@@ -210,6 +233,7 @@ function makeAdapter(
     back: vi.fn(),
     pathname: "/test-workspace/projects",
     searchParams: new URLSearchParams(),
+    hash: "",
     getShareableUrl: (p) => p,
     ...overrides,
   };
@@ -241,6 +265,7 @@ beforeEach(() => {
   mocks.deleteProject.mockClear();
   mocks.createPin.mockClear();
   mocks.deletePin.mockClear();
+  mocks.listProjectMembers.mockClear();
   mocks.openModal.mockClear();
   mocks.projectViewState.viewMode = "compact";
   mocks.projectViewState.sortField = "name";
@@ -250,6 +275,22 @@ beforeEach(() => {
 });
 
 describe("ProjectsPage compact row navigation", () => {
+  it("opens project permissions in a dialog", async () => {
+    const user = userEvent.setup();
+    renderProjects();
+
+    await user.click(screen.getByRole("button", { name: "Project Permissions" }));
+
+    expect(await screen.findByRole("dialog", { name: "Project Permissions" })).toBeInTheDocument();
+    expect(screen.getByText("Project Permissions Content")).toBeInTheDocument();
+  });
+
+  it("shows the signed-in user's project role in the table", () => {
+    renderProjects();
+
+    expect(within(projectRow()).getByText("Viewer")).toBeInTheDocument();
+  });
+
   it("renders the project name as text, not a title link", () => {
     renderProjects();
 
@@ -282,6 +323,26 @@ describe("ProjectsPage compact row navigation", () => {
     await user.click(within(row).getAllByRole("button", { name: "In Progress" })[0]!);
     await user.click(within(row).getAllByRole("button", { name: "High" })[0]!);
     await user.click(within(row).getByRole("button", { name: "—" }));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("opens the project authorization dialog from row actions", async () => {
+    const user = userEvent.setup();
+    renderProjects();
+
+    await user.click(screen.getByRole("button", { name: "Access" }));
+
+    expect(await screen.findByRole("dialog", { name: "Project access" })).toBeInTheDocument();
+  });
+
+  it("does not navigate when the project authorization dialog is closed", async () => {
+    const user = userEvent.setup();
+    const push = vi.fn();
+    renderProjects(makeAdapter({ push }));
+
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(push).not.toHaveBeenCalled();
   });

@@ -74,6 +74,9 @@ export function AuthInitializer({
           workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
           // Absent/false on the managed cloud and older servers → section hidden.
           vcsIntegrationAvailable: cfg.vcs_integration_available === true,
+          // The permission routes are disabled by default; keep their settings
+          // screens hidden until the backend explicitly advertises the switch.
+          projectPermissionsEnabled: cfg.project_permissions_enabled === true,
         });
         configStore.getState().setDaemonConfig({
           daemonServerUrl: cfg.daemon_server_url,
@@ -86,6 +89,14 @@ export function AuthInitializer({
         configStore
           .getState()
           .setLocalWorktreeSupported(cfg.local_worktree_supported === true);
+        // Older agent handlers returned success while silently dropping this
+        // additive field, so writes stay disabled unless the server declares
+        // the persistence contract explicitly.
+        configStore
+          .getState()
+          .setAgentConversationStartersSupported(
+            cfg.agent_conversation_starters_supported === true,
+          );
         if (cfg.posthog_key) {
           initAnalytics({
             key: cfg.posthog_key,

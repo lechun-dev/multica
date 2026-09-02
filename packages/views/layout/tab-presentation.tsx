@@ -35,6 +35,7 @@ import { ActorAvatar } from "../common/actor-avatar";
 import { getInboxDisplayTitle } from "../inbox/components/inbox-display";
 import { useT } from "../i18n";
 import { ROUTE_ICON_COMPONENTS } from "./route-icon-components";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 /**
  * Desktop tab presentation: turn a tab URL into a leading visual and a title,
@@ -75,6 +76,7 @@ const PENDING_RESOURCE_KEYS: ReadonlySet<TabLabelKey> = new Set<TabLabelKey>([
 /** Gather cached entity data for a subject. All reads are cache-only. */
 function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   const { t: chatT } = useT("chat");
+  const { includeWorkspaceOwned } = useWorkspaceTaskVisibility();
 
   // Read both inbox lists cache-only; the archived view keeps its own list, so
   // an archived selection has to resolve against the archived cache — the same
@@ -104,12 +106,12 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   // identifier would freeze on the title and status it had when first opened.
   // Both reads stay cache-only, and a UUID segment resolves to itself.
   const rawIssue = useQuery({
-    ...issueDetailOptions(wsId, issueId || NONE),
+    ...issueDetailOptions(wsId, issueId || NONE, includeWorkspaceOwned),
     enabled: false,
   }).data;
   const issue =
     useQuery({
-      ...issueDetailOptions(wsId, rawIssue?.id || NONE),
+        ...issueDetailOptions(wsId, rawIssue?.id || NONE, includeWorkspaceOwned),
       enabled: false,
     }).data ?? rawIssue;
 
@@ -133,7 +135,10 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   const members = useQuery({ ...memberListOptions(wsId), enabled: false }).data;
   const squads = useQuery({ ...squadListOptions(wsId), enabled: false }).data;
   const runtimes = useQuery({ ...runtimeListOptions(wsId), enabled: false }).data;
-  const sessions = useQuery({ ...chatSessionsOptions(wsId), enabled: false }).data;
+  const sessions = useQuery({
+    ...chatSessionsOptions(wsId, includeWorkspaceOwned),
+    enabled: false,
+  }).data;
 
   const data: TabEntityData = {};
   switch (subject.kind) {

@@ -17,6 +17,7 @@ import {
 } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
 import { Loader2 } from "lucide-react";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 function CallbackContent() {
   const router = useRouter();
@@ -148,9 +149,9 @@ function CallbackContent() {
       <div className="flex min-h-screen items-center justify-center">
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
-            <CardTitle className="text-display-sm">Opening Multica</CardTitle>
+            <CardTitle className="text-display-sm">Opening {PRODUCT_NAME}</CardTitle>
             <CardDescription>
-              You should see a prompt to open the Multica desktop app. If
+              You should see a prompt to open the {PRODUCT_NAME} desktop app. If
               nothing happens, click the button below.
             </CardDescription>
           </CardHeader>
@@ -161,7 +162,7 @@ function CallbackContent() {
                 window.location.href = `multica://auth/callback?token=${encodeURIComponent(desktopToken)}`;
               }}
             >
-              Open Multica Desktop
+              Open {PRODUCT_NAME} Desktop
             </Button>
           </CardContent>
         </Card>

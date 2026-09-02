@@ -12,6 +12,10 @@ import { workspaceWorkingAgentsOptions } from "@multica/core/agents";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { WorkingAgentsHoverContent } from "./workspace-agent-working-chip";
 import { useT } from "../../i18n";
+import {
+  useIssueSurfaceIncludeWorkspaceOwned,
+  useIssueSurfaceVisibilityReady,
+} from "../surface/visibility-context";
 
 interface SubIssuesAgentWorkingChipProps {
   /** Parent issue whose direct children this chip aggregates over. */
@@ -42,11 +46,18 @@ export const SubIssuesAgentWorkingChip = memo(
   }: SubIssuesAgentWorkingChipProps) {
     const { t } = useT("issues");
     const wsId = useWorkspaceId();
+    const includeWorkspaceOwned = useIssueSurfaceIncludeWorkspaceOwned();
+    const visibilityReady = useIssueSurfaceVisibilityReady();
     const { data: agents = [] } = useQuery(
-      workspaceWorkingAgentsOptions(wsId, "issue", undefined, parentIssueId),
+      {
+        ...(includeWorkspaceOwned
+          ? workspaceWorkingAgentsOptions(wsId, "issue", undefined, parentIssueId)
+          : workspaceWorkingAgentsOptions(wsId, "issue", undefined, parentIssueId, false)),
+        enabled: visibilityReady,
+      },
     );
 
-    if (agents.length === 0) return null;
+    if (!visibilityReady || agents.length === 0) return null;
 
     const agentIds = agents.map((agent) => agent.id);
 

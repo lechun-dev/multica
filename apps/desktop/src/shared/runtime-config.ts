@@ -15,23 +15,28 @@ export type RuntimeConfigResult =
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   schemaVersion: 1,
-  apiUrl: "https://api.multica.ai",
-  wsUrl: "wss://api.multica.ai/ws",
-  appUrl: "https://multica.ai",
+  // 2026-08-29 coder(lq): Mission private deployment moved to its production host.
+  // A user's ~/.multica/desktop.json can still override this.
+  apiUrl: "https://mission.lechun.cc",
+  wsUrl: "wss://mission.lechun.cc/ws",
+  appUrl: "https://mission.lechun.cc",
 });
 
-/** 2026-08-25 coder(lq): Public releases only update Multica Cloud installs. */
-export function isOfficialCloudServerUrl(apiUrl: string): boolean {
+/** Return true when the server is allowed to consume MissionOS release assets. */
+export function isSupportedReleaseServerUrl(apiUrl: string): boolean {
   try {
     const url = new URL(apiUrl);
     return (
       (url.protocol === "http:" || url.protocol === "https:") &&
-      url.hostname.toLowerCase() === "api.multica.ai"
+      ["api.multica.ai", "mission.lechun.cc"].includes(url.hostname.toLowerCase())
     );
   } catch {
     return false;
   }
 }
+
+/** @deprecated Use isSupportedReleaseServerUrl. Kept for existing callers. */
+export const isOfficialCloudServerUrl = isSupportedReleaseServerUrl;
 
 const LOCAL_DEV_RUNTIME_CONFIG: RuntimeConfig = Object.freeze({
   schemaVersion: 1,
@@ -44,6 +49,41 @@ export interface RuntimeConfigEnv {
   apiUrl?: string;
   wsUrl?: string;
   appUrl?: string;
+}
+
+/**
+ * Build-time defaults injected into packaged desktop apps.
+ *
+ * The packaged binary still prefers a user's ~/.multica/desktop.json when
+ * present, but prerelease/staging builds need a different fallback than the
+ * private production release. Returning null keeps the existing production
+ * default when the build does not set any explicit URLs.
+ */
+export function runtimeConfigFromBuildEnv(
+  env: RuntimeConfigEnv,
+): RuntimeConfig | null {
+  if (
+    env.apiUrl === undefined &&
+    env.wsUrl === undefined &&
+    env.appUrl === undefined
+  ) {
+    return null;
+  }
+
+  const apiUrl = normalizeHttpUrl(
+    env.apiUrl ?? DEFAULT_RUNTIME_CONFIG.apiUrl,
+    "VITE_API_URL",
+  );
+  return {
+    schemaVersion: 1,
+    apiUrl,
+    wsUrl: env.wsUrl
+      ? normalizeWsUrl(env.wsUrl, "VITE_WS_URL")
+      : deriveWsUrl(apiUrl),
+    appUrl: env.appUrl
+      ? normalizeHttpUrl(env.appUrl, "VITE_APP_URL")
+      : deriveAppUrl(apiUrl),
+  };
 }
 
 export function runtimeConfigFromDevEnv(env: RuntimeConfigEnv): RuntimeConfig {

@@ -27,6 +27,7 @@ import {
   type LinkClickIntent,
 } from "@multica/views/navigation";
 import { getCurrentSlug, subscribeToCurrentSlug } from "@multica/core/platform";
+import { DESKTOP_PRODUCT_NAME } from "@/desktop-brand";
 import { useDesktopUnreadBadge } from "@multica/views/platform";
 import {
   DesktopNavigationProvider,
@@ -287,7 +288,13 @@ export function DesktopShell() {
           >
             {slug && <GlobalShortcuts />}
             {slug && <WindowToolbar />}
-            {slug && <AppSidebar topSlot={<SidebarTopSpacer />} searchSlot={<SearchTrigger />} />}
+            {slug && (
+              <AppSidebar
+                productName={DESKTOP_PRODUCT_NAME}
+                topSlot={<SidebarTopSpacer />}
+                searchSlot={<SearchTrigger />}
+              />
+            )}
             {/* Right side: header + content container */}
             <div className="flex flex-1 min-w-0 flex-col">
               <MainTopBar />

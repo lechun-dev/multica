@@ -5,17 +5,20 @@ import { Switch } from "@multica/ui/components/ui/switch";
 import { useT } from "@multica/views/i18n";
 import { SettingsCard, SettingsRow, SettingsTab } from "@multica/views/settings";
 import { toast } from "sonner";
+import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
 
 type CheckState =
   | { status: "idle" }
   | { status: "checking" }
   | { status: "up-to-date" }
   | { status: "available"; latestVersion: string }
+  | { status: "downloaded"; version: string }
   | { status: "error"; message: string };
 
 export function UpdatesSettingsTab() {
   const { t } = useT("settings");
   const [state, setState] = useState<CheckState>({ status: "idle" });
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [automaticUpdates, setAutomaticUpdates] = useState(true);
   const [updatesAvailable, setUpdatesAvailable] = useState(true);
   const [preferencesReady, setPreferencesReady] = useState(false);
@@ -35,7 +38,7 @@ export function UpdatesSettingsTab() {
             setState({
               status: "error",
               message:
-                "Updates are managed by your private Multica deployment administrator.",
+                `Updates are managed by your private ${DESKTOP_PRODUCT_NAME} deployment administrator.`,
             });
           }
         }
@@ -50,6 +53,31 @@ export function UpdatesSettingsTab() {
 
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const cleanupAvailable = window.updater.onUpdateAvailable((info) => {
+      setDownloadProgress(0);
+      setState({ status: "available", latestVersion: info.version });
+    });
+    const cleanupProgress = window.updater.onDownloadProgress((progress) => {
+      setDownloadProgress(Math.max(0, Math.min(100, progress.percent)));
+    });
+    const cleanupDownloaded = window.updater.onUpdateDownloaded((info) => {
+      setDownloadProgress(100);
+      setState({ status: "downloaded", version: info.version });
+    });
+    const cleanupError = window.updater.onUpdateError((error) => {
+      setDownloadProgress(null);
+      setState({ status: "error", message: error.message });
+    });
+
+    return () => {
+      cleanupAvailable();
+      cleanupProgress();
+      cleanupDownloaded();
+      cleanupError();
     };
   }, []);
 
@@ -73,6 +101,7 @@ export function UpdatesSettingsTab() {
 
   const handleCheck = useCallback(async () => {
     setState({ status: "checking" });
+    setDownloadProgress(null);
     const result = await window.updater.checkForUpdates();
     if (!result.ok) {
       setState({ status: "error", message: result.error });
@@ -83,6 +112,7 @@ export function UpdatesSettingsTab() {
         ? { status: "available", latestVersion: result.latestVersion }
         : { status: "up-to-date" },
     );
+    if (!result.available) setDownloadProgress(null);
   }, []);
 
   return (
@@ -126,6 +156,17 @@ export function UpdatesSettingsTab() {
                   <ArrowDownToLine className="size-3.5 text-primary" />
                   {t(($) => $.desktop.updates.downloading, {
                     version: state.latestVersion,
+                  })}
+                  {downloadProgress !== null && (
+                    <span className="tabular-nums">({Math.round(downloadProgress)}%)</span>
+                  )}
+                </p>
+              )}
+              {state.status === "downloaded" && (
+                <p className="mt-2 inline-flex items-center gap-1.5">
+                  <Check className="size-3.5 text-success" />
+                  {t(($) => $.desktop.updates.downloaded, {
+                    version: state.version,
                   })}
                 </p>
               )}

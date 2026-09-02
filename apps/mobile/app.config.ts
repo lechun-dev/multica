@@ -1,4 +1,5 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
+import { DEFAULT_PRODUCT_NAME } from "@multica/core/i18n/branding";
 
 /**
  * Dynamic Expo config — replaces app.json so we can read APP_ENV at runtime
@@ -17,10 +18,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...config,
     name: isProd
-      ? "Multica"
+      ? DEFAULT_PRODUCT_NAME
       : isStaging
-        ? "Multica (Staging)"
-        : "Multica (Dev)",
+        ? `${DEFAULT_PRODUCT_NAME} (Staging)`
+        : `${DEFAULT_PRODUCT_NAME} (Dev)`,
     slug: "multica-mobile",
     version: "0.1.0",
     orientation: "portrait",
@@ -31,7 +32,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     // iOS icon size from this single PNG.
     icon: "./assets/icon.png",
     ios: {
-      supportsTablet: false,
+      // Expo keeps the top-level portrait policy for iPhone while adding all
+      // iPad orientations required for multitasking when tablet support is on.
+      supportsTablet: true,
       // Pins DEVELOPMENT_TEAM on every prebuild. Leaving it unset is the normal
       // path — `expo run:ios` then resolves a signing identity from the Keychain
       // itself, which is right when the Apple ID owns exactly one team. With
@@ -71,7 +74,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           // iOS 14+. Camera + microphone are disabled — we only ever read
           // from the existing photo library.
           photosPermission:
-            "Allow Multica to access your photos to attach images to issues and comments.",
+            `Allow ${DEFAULT_PRODUCT_NAME} to access your photos to attach images to issues and comments.`,
           cameraPermission: false,
           microphonePermission: false,
         },

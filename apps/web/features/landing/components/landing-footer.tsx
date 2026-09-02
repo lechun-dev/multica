@@ -14,6 +14,7 @@ import {
 } from "./shared";
 import { useLocale, locales, localeLabels } from "../i18n";
 import { useDashboardCtaHref } from "../utils/use-dashboard-cta";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 export function LandingFooter() {
   const { t, locale, setLocale } = useLocale();
@@ -30,8 +31,8 @@ export function LandingFooter() {
           <div className="lg:w-[340px] lg:shrink-0">
             <Link href="#product" className="flex items-center gap-3">
               <MulticaIcon className="size-5 text-white" noSpin />
-              <span className="text-title font-semibold tracking-[0.04em] lowercase">
-                multica
+              <span className="text-title font-semibold tracking-[0.04em]">
+                {PRODUCT_NAME}
               </span>
             </Link>
             <p className="mt-4 max-w-[300px] text-body leading-[1.7] text-white/50 sm:text-body-lg">
@@ -136,8 +137,8 @@ export function LandingFooter() {
               className="size-[clamp(4rem,12vw,10rem)] shrink-0 text-white"
               noSpin
             />
-            <span className="landing-serif text-[clamp(6rem,22vw,16rem)] font-normal leading-[0.82] tracking-[-0.04em] text-white lowercase">
-              multica
+            <span className="landing-serif text-[clamp(6rem,22vw,16rem)] font-normal leading-[0.82] tracking-[-0.04em] text-white">
+              {PRODUCT_NAME}
             </span>
           </div>
         </div>

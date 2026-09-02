@@ -26,6 +26,7 @@ import { StatusIcon, PriorityIcon } from "@multica/views/issues/components";
 import { STATUS_CONFIG } from "@multica/core/issues/config/status";
 import { PRIORITY_CONFIG } from "@multica/core/issues/config/priority";
 import type { IssueStatusCategory, IssuePriority } from "@multica/core/types";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 /* ------------------------------------------------------------------ */
 /*  Mock ActorAvatar — mirrors the real ActorAvatar styling exactly     */
@@ -163,7 +164,7 @@ function TeammatesVisual() {
       {/* Header bar */}
       <div className="flex h-10 shrink-0 items-center border-b bg-background px-4 text-body">
         <div className="flex items-center gap-1.5 min-w-0 text-caption">
-          <span className="text-muted-foreground">Multica Demo</span>
+          <span className="text-muted-foreground">{PRODUCT_NAME} Demo</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
           <span className="text-muted-foreground">MUL-18</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
@@ -422,7 +423,7 @@ function AutonomousVisual() {
       {/* Header bar */}
       <div className="flex h-10 shrink-0 items-center border-b bg-background px-4 text-body">
         <div className="flex items-center gap-1.5 min-w-0 text-caption">
-          <span className="text-muted-foreground">Multica Demo</span>
+          <span className="text-muted-foreground">{PRODUCT_NAME} Demo</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />
           <span className="text-muted-foreground">MUL-18</span>
           <ChevronRight className="h-3 w-3 text-faint-foreground shrink-0" />

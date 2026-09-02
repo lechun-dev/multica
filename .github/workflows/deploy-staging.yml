@@ -1,0 +1,27 @@
+name: Deploy Multica Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Optional image tag to deploy to staging
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Optional image tag to deploy to staging
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      deploy_path: /deploy/multica-staging
+      compose_project: multica-staging
+      image_tag: ${{ inputs.image_tag || '' }}
+      environment_name: staging
+    secrets: inherit

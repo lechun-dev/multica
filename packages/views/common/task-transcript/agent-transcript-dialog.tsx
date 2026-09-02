@@ -31,6 +31,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import {
   DropdownMenu,
@@ -42,7 +43,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
 import { AttributionBadge } from "../../issues/components/attribution-badge";
-import { cancelReasonLabel } from "../../agents/components/tabs/task-failure";
+import { cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { RichContent } from "../../rich-content";
 import { api } from "@multica/core/api";
 import {
@@ -56,7 +57,7 @@ import { runtimeDisplayName, providerDisplayName } from "@multica/core/runtimes"
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import { redactSecrets } from "./redact";
 import {
-  createNewestFirstFollow,
+  createLiveEndFollow,
   FOLLOW_EDGE_THRESHOLD,
   LINE_SCROLL_PX,
 } from "./transcript-follow";
@@ -95,6 +96,11 @@ import {
   ToolDetailSurface,
 } from "./detail-surfaces";
 import { languageForPath } from "./diff-highlight";
+import {
+  humanizeTraceRows,
+  type HumanReadableAction,
+  type HumanReadableStep,
+} from "./human-readable";
 import { useT } from "../../i18n";
 import {
   formatTokens,
@@ -309,6 +315,7 @@ export function AgentTranscriptDialog({
   const { t } = useT("agents");
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(() => new Set());
+  const [viewMode, setViewMode] = useState<"details" | "human">("details");
   const [query, setQuery] = useState("");
   const [elapsed, setElapsed] = useState("");
   const [copied, showCopied] = useCopyFeedback();
@@ -333,7 +340,7 @@ export function AgentTranscriptDialog({
   // controller (see transcript-follow.ts for the model); this component only
   // wires DOM events to it. A stable instance, never re-rendered by scroll
   // traffic.
-  const followCtl = useMemo(() => createNewestFirstFollow(), []);
+  const followCtl = useMemo(() => createLiveEndFollow(), []);
   const detachScrollerRef = useRef<(() => void) | null>(null);
 
   const handleScrollerRef = useCallback(
@@ -341,30 +348,55 @@ export function AgentTranscriptDialog({
       detachScrollerRef.current?.();
       detachScrollerRef.current = null;
       if (!(el instanceof HTMLElement)) return;
+      let inputFrame: number | null = null;
+      const stageInput = (delta: number) => {
+        followCtl.input(delta);
+        if (inputFrame !== null) cancelAnimationFrame(inputFrame);
+        inputFrame = requestAnimationFrame(() => {
+          inputFrame = null;
+          followCtl.endInputFrame();
+        });
+      };
       const onWheel = (e: WheelEvent) => {
         const scale =
           e.deltaMode === 1 ? LINE_SCROLL_PX : e.deltaMode === 2 ? el.clientHeight : 1;
-        followCtl.input(e.deltaY * scale);
+        stageInput(e.deltaY * scale);
       };
+      let touchId: number | null = null;
       let lastTouchY: number | null = null;
+      const trackedTouch = (touches: TouchList) =>
+        Array.from(touches).find((touch) => touch.identifier === touchId);
       const onTouchStart = (e: TouchEvent) => {
-        lastTouchY = e.touches[0]?.clientY ?? null;
+        if (touchId !== null) return;
+        const touch = e.changedTouches[0] ?? e.touches[0];
+        if (!touch) return;
+        touchId = touch.identifier;
+        lastTouchY = touch.clientY;
+        followCtl.touchStart();
       };
       const onTouchMove = (e: TouchEvent) => {
-        const y = e.touches[0]?.clientY;
-        if (y === undefined) return;
+        const touch = trackedTouch(e.touches);
+        if (!touch) return;
         // Finger moving up scrolls the content down (away from the live end).
-        if (lastTouchY !== null) followCtl.input(lastTouchY - y);
-        lastTouchY = y;
+        if (lastTouchY !== null) stageInput(lastTouchY - touch.clientY);
+        lastTouchY = touch.clientY;
+      };
+      const onTouchEnd = (e: TouchEvent) => {
+        if (touchId === null || trackedTouch(e.touches)) return;
+        touchId = null;
+        lastTouchY = null;
+        followCtl.touchEnd();
       };
       const onKeyDown = (e: KeyboardEvent) => {
         // Only keys aimed at the scroller itself; Space/arrows bubbling from
         // row controls are not scroll intent.
         if (e.target !== el) return;
-        if (e.key === "ArrowDown") followCtl.input(LINE_SCROLL_PX);
-        else if (e.key === "ArrowUp") followCtl.input(-LINE_SCROLL_PX);
-        else if (e.key === "PageDown" || e.key === " ") followCtl.input(el.clientHeight);
-        else if (e.key === "PageUp") followCtl.input(-el.clientHeight);
+        if (e.key === "ArrowDown") stageInput(LINE_SCROLL_PX);
+        else if (e.key === "ArrowUp") stageInput(-LINE_SCROLL_PX);
+        else if (e.key === "PageDown") stageInput(el.clientHeight);
+        // Shift+Space pages up — toward this list's live end.
+        else if (e.key === " ") stageInput(e.shiftKey ? -el.clientHeight : el.clientHeight);
+        else if (e.key === "PageUp") stageInput(-el.clientHeight);
         else if (e.key === "End") followCtl.disengage();
       };
       // Scrollbar drags hit the scroller element itself; clicks on row
@@ -388,14 +420,20 @@ export function AgentTranscriptDialog({
       el.addEventListener("wheel", onWheel, { passive: true });
       el.addEventListener("touchstart", onTouchStart, { passive: true });
       el.addEventListener("touchmove", onTouchMove, { passive: true });
+      el.addEventListener("touchend", onTouchEnd, { passive: true });
+      el.addEventListener("touchcancel", onTouchEnd, { passive: true });
       el.addEventListener("keydown", onKeyDown);
       el.addEventListener("mousedown", onPointerDown);
       window.addEventListener("mouseup", onPointerUp, { capture: true });
       el.addEventListener("scroll", onScroll, { passive: true });
       detachScrollerRef.current = () => {
+        if (inputFrame !== null) cancelAnimationFrame(inputFrame);
+        followCtl.endInputFrame();
         el.removeEventListener("wheel", onWheel);
         el.removeEventListener("touchstart", onTouchStart);
         el.removeEventListener("touchmove", onTouchMove);
+        el.removeEventListener("touchend", onTouchEnd);
+        el.removeEventListener("touchcancel", onTouchEnd);
         el.removeEventListener("keydown", onKeyDown);
         el.removeEventListener("mousedown", onPointerDown);
         window.removeEventListener("mouseup", onPointerUp, { capture: true });
@@ -403,6 +441,7 @@ export function AgentTranscriptDialog({
         // The scroller can detach mid-drag (listEpoch remount); a stuck
         // held-mouse flag would suppress enforcement forever.
         followCtl.pointerUp();
+        followCtl.touchEnd();
       };
     },
     [followCtl],
@@ -475,6 +514,18 @@ export function AgentTranscriptDialog({
   const displayRows = useMemo(
     () => (sortDirection === "newest_first" ? [...rows].reverse() : rows),
     [rows, sortDirection],
+  );
+
+  // The human view intentionally ignores the detail tab's search and facets:
+  // it is a complete narrative of the run, while those controls are evidence
+  // navigation tools. It still follows the selected chronological direction.
+  const humanSourceRows = useMemo(() => groupSteps(steps), [steps]);
+  const humanRows = useMemo(
+    () =>
+      humanizeTraceRows(
+        sortDirection === "newest_first" ? [...humanSourceRows].reverse() : humanSourceRows,
+      ),
+    [humanSourceRows, sortDirection],
   );
 
   const runStart = task.started_at ?? task.dispatched_at ?? steps[0]?.startedAt;
@@ -715,10 +766,13 @@ export function AgentTranscriptDialog({
         // A server-cancelled run (worktree claim gate, preserved-work
         // delivery) carries a persisted reason the user must act on; surface
         // it on the badge instead of a bare "Cancelled". User-initiated
-        // cancels have no reason and keep the plain label.
-        const cancelReason = cancelReasonLabel(task);
+        // cancels have no reason and keep the plain label. The badge carries
+        // no `title`: the raw `task.error` behind it is untranslated
+        // operator prose (#7411) and belongs in Run details, not in hover
+        // text on a status pill.
+        const cancelReason = cancelReasonLabel(task, t);
         return (
-          <span className={cn(base, "bg-muted text-muted-foreground")} title={task.error ?? undefined}>
+          <span className={cn(base, "bg-muted text-muted-foreground")}>
             <XCircle className="h-3 w-3" />
             {cancelReason
               ? `${t(($) => $.transcript.status_cancelled)} · ${cancelReason}`
@@ -785,10 +839,23 @@ export function AgentTranscriptDialog({
   // this figure, same as on the other usage surfaces.
   useCustomPricingStore((s) => s.pricings);
   const usage = summarizeTaskUsage(task.usage);
+  // Two separate things, deliberately not one string (#7411):
+  //   • `reasonLabel` — the localized reason, derived from the stable
+  //     `failure_reason` enum. This is the user-facing explanation.
+  //   • `task.error` — the raw diagnostic the server/daemon persisted, in
+  //     English, for classification and logs. Kept readable (it is how you
+  //     find "which worktree holds my preserved work" and "which machine
+  //     needs upgrading") but labelled as a technical detail rather than
+  //     presented as the reason, and never merged into the localized text.
+  const reasonLabel =
+    task.status === "failed"
+      ? failureReasonLabel(task.failure_reason, t)
+      : cancelReasonLabel(task, t);
   const hasRunDetails =
     !!runtimeInfo ||
     !!workdirCopyTarget?.relativePath ||
     !!task.branch_name ||
+    !!reasonLabel ||
     !!task.error ||
     !!createdLabel ||
     !!startedLabel ||
@@ -936,14 +1003,13 @@ export function AgentTranscriptDialog({
                           copyTitle={t(($) => $.transcript.copy_branch)}
                         />
                       )}
-                      {/* The full persisted error, for failed AND
-                          server-cancelled runs — this is where "which
-                          worktree holds my preserved work" and "which
-                          machine needs upgrading" are actually readable. */}
-                      {task.error && (
+                      {/* The localized reason, from the stable
+                          `failure_reason` enum — this is the explanation, and
+                          it reads in the user's language. */}
+                      {reasonLabel && (
                         <RunDetailRow
                           label={t(($) => $.transcript.details_reason)}
-                          value={task.error}
+                          value={reasonLabel}
                         />
                       )}
                       {createdLabel && (
@@ -954,6 +1020,23 @@ export function AgentTranscriptDialog({
                       )}
                       {completedLabel && (
                         <RunDetailRow label={t(($) => $.transcript.details_completed)} value={completedLabel} />
+                      )}
+                      {/* The raw persisted diagnostic, last and behind its own
+                          divider. It is English prose written by the server
+                          and daemon for logs and classification, so it is
+                          labelled "Technical details" — a translated heading
+                          over untranslated content — rather than shown as the
+                          run's reason (#7411). Still the place where "which
+                          worktree holds my preserved work" is readable. */}
+                      {task.error && (
+                        <>
+                          <div className="my-2 h-px bg-border" />
+                          <RunDetailRow
+                            label={t(($) => $.transcript.details_diagnostics)}
+                            value={task.error}
+                            mono
+                          />
+                        </>
                       )}
                       {usage && (
                         <>
@@ -1021,183 +1104,225 @@ export function AgentTranscriptDialog({
           </div>
         )}
 
-        {/* ── List toolbar: search left, the two menus right ── */}
-        <div className="flex items-center gap-2 border-b px-4 py-1.5 shrink-0">
-          <label className="flex h-7 min-w-0 max-w-xs flex-1 items-center gap-1.5 rounded-md bg-muted px-2 text-caption">
-            <Search aria-hidden className="h-3 w-3 shrink-0 text-faint-foreground" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t(($) => $.transcript.search_placeholder)}
-              aria-label={t(($) => $.transcript.search_placeholder)}
-              className="min-w-0 flex-1 bg-transparent text-caption outline-none placeholder:text-faint-foreground"
-            />
-          </label>
-          <span className="ml-auto shrink-0 whitespace-nowrap text-caption text-muted-foreground">
-            {activeFilterKeys.length > 0 || trimmedQuery.length > 0
-              ? t(($) => $.transcript.steps_filtered, {
-                  shown: filteredSteps.length,
-                  total: steps.length,
-                })
-              : t(($) => $.transcript.steps_count, { count: steps.length })}
-          </span>
-          {filterOptions.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant={activeFilterKeys.length > 0 ? "brand" : "ghost"}
-                    size="sm"
-                    aria-label={t(($) => $.transcript.filter)}
-                    className={activeFilterKeys.length > 0 ? undefined : "text-muted-foreground"}
-                  />
-                }
-              >
-                <Filter className="h-3 w-3" />
-                <span className="hidden sm:inline">{t(($) => $.transcript.filter)}</span>
-                {activeFilterKeys.length > 0 && (
-                  <span className="ml-0.5 rounded-full bg-brand-foreground/20 px-1.5 py-0 text-micro font-medium tabular-nums">
-                    {activeFilterKeys.length}
-                  </span>
-                )}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-auto">
-                {filterOptions.map(([value, option]) => (
-                  <DropdownMenuCheckboxItem
-                    key={value}
-                    checked={selectedFilterKeys.includes(value)}
-                    onCheckedChange={() => toggleFilterKey(value)}
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <StepIcon
-                        step={option.step}
-                        className="h-3 w-3 shrink-0 text-muted-foreground"
-                      />
-                      {option.label}
-                    </span>
-                  </DropdownMenuCheckboxItem>
-                ))}
-                {selectedFilterKeys.length > 0 && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={clearFilters} className="text-muted-foreground">
-                      {t(($) => $.transcript.clear_filters)}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          {/* Sort and copy are the run-level actions nobody needs on the way
-              in, so they live behind one overflow control instead of two
-              permanent buttons. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t(($) => $.transcript.more_actions)}
-                  className="text-muted-foreground"
-                />
-              }
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem
-                onClick={() =>
-                  handleSortDirectionChange(
-                    sortDirection === "chronological" ? "newest_first" : "chronological",
-                  )
-                }
-              >
-                {sortDirection === "chronological" ? (
-                  <ArrowUpNarrowWide className="h-3.5 w-3.5" />
-                ) : (
-                  <ArrowDownNarrowWide className="h-3.5 w-3.5" />
-                )}
-                {sortDirection === "chronological"
-                  ? t(($) => $.transcript.sort_newest_first)
-                  : t(($) => $.transcript.sort_chronological)}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleCopyAll}>
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copyTranscriptLabel}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <Tabs
+          value={viewMode}
+          onValueChange={(value) => {
+            if (value === "details" || value === "human") setViewMode(value);
+          }}
+          className="min-h-0 flex-1 gap-0"
+        >
+          <div className="flex shrink-0 items-center border-b px-4 pt-1">
+            <TabsList variant="line" className="gap-0 p-0">
+              <TabsTrigger value="details" className="px-3">
+                {t(($) => $.transcript.view_details)}
+              </TabsTrigger>
+              <TabsTrigger value="human" className="px-3">
+                {t(($) => $.transcript.view_human)}
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-        {/* ── Steps, and the inspector when one is selected ───────────── */}
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
-            {displayRows.length === 0 ? (
+          <TabsContent value="details" className="flex min-h-0 flex-1 flex-col">
+            {/* ── List toolbar: search left, the two menus right ── */}
+            <div className="flex items-center gap-2 border-b px-4 py-1.5 shrink-0">
+              <label className="flex h-7 min-w-0 max-w-xs flex-1 items-center gap-1.5 rounded-md bg-muted px-2 text-caption">
+                <Search aria-hidden className="h-3 w-3 shrink-0 text-faint-foreground" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t(($) => $.transcript.search_placeholder)}
+                  aria-label={t(($) => $.transcript.search_placeholder)}
+                  className="min-w-0 flex-1 bg-transparent text-caption outline-none placeholder:text-faint-foreground"
+                />
+              </label>
+              <span className="ml-auto shrink-0 whitespace-nowrap text-caption text-muted-foreground">
+                {activeFilterKeys.length > 0 || trimmedQuery.length > 0
+                  ? t(($) => $.transcript.steps_filtered, {
+                      shown: filteredSteps.length,
+                      total: steps.length,
+                    })
+                  : t(($) => $.transcript.steps_count, { count: steps.length })}
+              </span>
+              {filterOptions.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant={activeFilterKeys.length > 0 ? "brand" : "ghost"}
+                        size="sm"
+                        aria-label={t(($) => $.transcript.filter)}
+                        className={activeFilterKeys.length > 0 ? undefined : "text-muted-foreground"}
+                      />
+                    }
+                  >
+                    <Filter className="h-3 w-3" />
+                    <span className="hidden sm:inline">{t(($) => $.transcript.filter)}</span>
+                    {activeFilterKeys.length > 0 && (
+                      <span className="ml-0.5 rounded-full bg-brand-foreground/20 px-1.5 py-0 text-micro font-medium tabular-nums">
+                        {activeFilterKeys.length}
+                      </span>
+                    )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-auto">
+                    {filterOptions.map(([value, option]) => (
+                      <DropdownMenuCheckboxItem
+                        key={value}
+                        checked={selectedFilterKeys.includes(value)}
+                        onCheckedChange={() => toggleFilterKey(value)}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <StepIcon
+                            step={option.step}
+                            className="h-3 w-3 shrink-0 text-muted-foreground"
+                          />
+                          {option.label}
+                        </span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                    {selectedFilterKeys.length > 0 && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={clearFilters} className="text-muted-foreground">
+                          {t(($) => $.transcript.clear_filters)}
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {/* Sort and copy remain scoped to the technical detail view. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t(($) => $.transcript.more_actions)}
+                      className="text-muted-foreground"
+                    />
+                  }
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={() =>
+                      handleSortDirectionChange(
+                        sortDirection === "chronological" ? "newest_first" : "chronological",
+                      )
+                    }
+                  >
+                    {sortDirection === "chronological" ? (
+                      <ArrowUpNarrowWide className="h-3.5 w-3.5" />
+                    ) : (
+                      <ArrowDownNarrowWide className="h-3.5 w-3.5" />
+                    )}
+                    {sortDirection === "chronological"
+                      ? t(($) => $.transcript.sort_newest_first)
+                      : t(($) => $.transcript.sort_chronological)}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleCopyAll}>
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copyTranscriptLabel}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {/* ── Steps, and the inspector when one is selected ───────────── */}
+            <div className="flex min-h-0 flex-1">
+              <div className="flex min-w-0 flex-1 flex-col">
+                {displayRows.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-body text-muted-foreground">
+                    {isAntigravityLiveEmpty ? (
+                      <div className="flex max-w-md items-center gap-2 px-4 text-center">
+                        <Clock className="h-4 w-4 shrink-0" />
+                        {t(($) => $.transcript.antigravity_live_unavailable)}
+                      </div>
+                    ) : isLive && steps.length === 0 ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t(($) => $.transcript.waiting_events)}
+                      </div>
+                    ) : steps.length === 0 ? (
+                      t(($) => $.transcript.no_data)
+                    ) : (
+                      t(($) => $.transcript.no_matches)
+                    )}
+                  </div>
+                ) : (
+                  // Virtualized so a multi-thousand-step run mounts a bounded
+                  // number of DOM rows (#5733).
+                  <Virtuoso
+                    key={listEpoch}
+                    ref={virtuosoRef}
+                    style={{ height: "100%" }}
+                    data={displayRows}
+                    firstItemIndex={firstItemIndex}
+                    initialTopMostItemIndex={
+                      isLive && sortDirection !== "newest_first"
+                        ? { index: "LAST", align: "end" }
+                        : 0
+                    }
+                    followOutput={(atBottom) =>
+                      isLive && sortDirection !== "newest_first" && atBottom ? "auto" : false
+                    }
+                    atBottomThreshold={FOLLOW_EDGE_THRESHOLD}
+                    atTopThreshold={FOLLOW_EDGE_THRESHOLD}
+                    atTopStateChange={(atTop) => followCtl.onAtEdgeChange(atTop)}
+                    scrollerRef={handleScrollerRef}
+                    computeItemKey={(_, row) => row.seq}
+                    components={LIST_COMPONENTS}
+                    itemContent={(_, row) => (
+                      <TranscriptRow
+                        row={row}
+                        runStartMs={runStartMs}
+                        isLive={isLive}
+                        selectedSeq={selectedSeq}
+                        expanded={row.kind === "group" && expandedGroups.has(row.seq)}
+                        onToggleGroup={handleToggleGroup}
+                        onSelect={setSelectedSeq}
+                      />
+                    )}
+                  />
+                )}
+              </div>
+              {selectedStep && (
+                <StepInspector
+                  step={selectedStep}
+                  runStartMs={runStartMs}
+                  onClose={() => setSelectedSeq(null)}
+                />
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="human" className="min-h-0 flex-1 overflow-y-auto">
+            {humanRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-body text-muted-foreground">
                 {isAntigravityLiveEmpty ? (
                   <div className="flex max-w-md items-center gap-2 px-4 text-center">
                     <Clock className="h-4 w-4 shrink-0" />
                     {t(($) => $.transcript.antigravity_live_unavailable)}
                   </div>
-                ) : isLive && steps.length === 0 ? (
+                ) : isLive ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     {t(($) => $.transcript.waiting_events)}
                   </div>
-                ) : steps.length === 0 ? (
-                  t(($) => $.transcript.no_data)
                 ) : (
-                  t(($) => $.transcript.no_matches)
+                  t(($) => $.transcript.no_data)
                 )}
               </div>
             ) : (
-              // Virtualized so a multi-thousand-step run mounts a bounded
-              // number of DOM rows (#5733).
-              <Virtuoso
-                key={listEpoch}
-                ref={virtuosoRef}
-                style={{ height: "100%" }}
-                data={displayRows}
-                firstItemIndex={firstItemIndex}
-                // Open a live chronological transcript pinned to the newest
-                // step (#5921); the per-listEpoch remount re-applies this after
-                // task / sort / filter changes.
-                initialTopMostItemIndex={
-                  isLive && sortDirection !== "newest_first"
-                    ? { index: "LAST", align: "end" }
-                    : 0
-                }
-                followOutput={(atBottom) =>
-                  isLive && sortDirection !== "newest_first" && atBottom ? "auto" : false
-                }
-                atBottomThreshold={FOLLOW_EDGE_THRESHOLD}
-                atTopThreshold={FOLLOW_EDGE_THRESHOLD}
-                atTopStateChange={(atTop) => followCtl.onAtTopChange(atTop)}
-                scrollerRef={handleScrollerRef}
-                computeItemKey={(_, row) => row.seq}
-                components={LIST_COMPONENTS}
-                itemContent={(_, row) => (
-                  <TranscriptRow
-                    row={row}
-                    runStartMs={runStartMs}
-                    isLive={isLive}
-                    selectedSeq={selectedSeq}
-                    expanded={row.kind === "group" && expandedGroups.has(row.seq)}
-                    onToggleGroup={handleToggleGroup}
-                    onSelect={setSelectedSeq}
-                  />
-                )}
-              />
+              <div className="divide-y">
+                {humanRows.map((row) => (
+                  <HumanReadableRow key={row.seq} step={row} />
+                ))}
+              </div>
             )}
-          </div>
-          {selectedStep && (
-            <StepInspector
-              step={selectedStep}
-              runStartMs={runStartMs}
-              onClose={() => setSelectedSeq(null)}
-            />
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );
@@ -1546,6 +1671,86 @@ function callSummary(step: TraceCallStep, labels: TraceSummaryLabels): string {
 
 function firstLineOf(value: string | undefined): string {
   return value?.split("\n").find((line) => line.trim().length > 0) ?? "";
+}
+
+function HumanActionIcon({ action, className }: { action?: HumanReadableAction; className?: string }) {
+  if (action === "command") return <Terminal className={className} />;
+  if (action === "edit") return <FilePen className={className} />;
+  if (action === "read") return <FileText className={className} />;
+  if (action === "search") return <Search className={className} />;
+  return <Wrench className={className} />;
+}
+
+/** A concise narrative row for readers who do not need provider terminology. */
+function HumanReadableRow({ step }: { step: HumanReadableStep }) {
+  const { t } = useT("agents");
+
+  if (step.kind === "text") {
+    return (
+      <div className="flex items-start gap-2 px-4 py-2.5">
+        <Bot className="mt-1 h-3.5 w-3.5 shrink-0 text-success" aria-hidden />
+        <div className="min-w-0 flex-1">
+          {step.text ? (
+            <RichContent content={step.text} density="compact" className="transcript-prose max-w-[62rem]" />
+          ) : (
+            <span className="text-body text-muted-foreground">
+              {t(($) => $.transcript.human_agent_message)}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (step.kind === "thinking") {
+    return (
+      <div className="flex items-start gap-2 px-4 py-2.5 text-muted-foreground">
+        <Brain className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 text-body">
+          {t(($) => $.transcript.human_thinking)}
+          {step.text ? `：${step.text}` : ""}
+        </span>
+      </div>
+    );
+  }
+
+  if (step.kind === "error") {
+    return (
+      <div className="flex items-start gap-2 bg-destructive/5 px-4 py-2.5 text-destructive">
+        <CircleAlert className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 text-body">
+          {t(($) => $.transcript.human_error, { text: step.text || t(($) => $.transcript.human_agent_message) })}
+        </span>
+      </div>
+    );
+  }
+
+  const actionText =
+    step.kind === "group"
+      ? t(($) => $.transcript.human_group, {
+          tool: step.tool || t(($) => $.transcript.kind_tool),
+          count: step.count ?? 0,
+        })
+      : step.action === "command"
+        ? t(($) => $.transcript.human_command, { subject: step.subject || t(($) => $.transcript.kind_tool) })
+        : step.action === "read"
+          ? t(($) => $.transcript.human_read, { subject: step.subject || t(($) => $.transcript.kind_tool) })
+          : step.action === "search"
+            ? t(($) => $.transcript.human_search, { subject: step.subject || t(($) => $.transcript.kind_tool) })
+            : step.action === "edit"
+              ? t(($) => $.transcript.human_edit, { subject: step.subject || t(($) => $.transcript.kind_tool) })
+              : t(($) => $.transcript.human_tool, { subject: step.subject || step.tool || t(($) => $.transcript.kind_tool) });
+
+  return (
+    <div className="flex items-start gap-2 px-4 py-2.5">
+      <HumanActionIcon action={step.action} className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 text-body text-foreground">
+        {step.completed
+          ? t(($) => $.transcript.human_completed, { action: actionText })
+          : t(($) => $.transcript.human_running, { action: actionText })}
+      </span>
+    </div>
+  );
 }
 
 // ─── Inspector ──────────────────────────────────────────────────────────────

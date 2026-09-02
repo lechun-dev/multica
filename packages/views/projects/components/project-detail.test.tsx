@@ -9,13 +9,17 @@ import { ProjectDetail } from "./project-detail";
 
 const mocks = vi.hoisted(() => ({
   role: "admin",
+  copyText: vi.fn(),
   deleteProject: vi.fn(),
+  invalidateQueries: vi.fn(),
+  getShareableUrl: vi.fn((path: string) => `https://app.example${path}`),
   push: vi.fn(),
   recordVisit: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
@@ -32,6 +36,11 @@ vi.mock("@tanstack/react-query", () => ({
         return { data: undefined, isLoading: false };
     }
   },
+  useQueryClient: () => ({ invalidateQueries: mocks.invalidateQueries }),
+}));
+
+vi.mock("@multica/ui/lib/clipboard", () => ({
+  copyText: mocks.copyText,
 }));
 
 vi.mock("@multica/core/projects/queries", () => ({
@@ -216,6 +225,14 @@ vi.mock("./project-resources-section", () => ({
   ProjectResourcesSection: () => null,
 }));
 
+vi.mock("./project-permissions-panel", () => ({
+  ProjectPermissionsPanel: ({ projectId }: { projectId: string }) => (
+    <button type="button" aria-label={`Manage permissions for ${projectId}`}>
+      Project permissions
+    </button>
+  ),
+}));
+
 vi.mock("./project-start-date-picker", () => ({
   ProjectStartDatePicker: () => null,
 }));
@@ -253,6 +270,7 @@ vi.mock("../../layout/animated-right-sidebar", () => ({
 const PROJECT: Project = {
   id: "project-1",
   workspace_id: "workspace-1",
+  created_by: null,
   title: "Launch Plan",
   description: null,
   icon: null,
@@ -276,7 +294,8 @@ function renderProjectDetail() {
     back: vi.fn(),
     pathname: "/test-workspace/projects/project-1",
     searchParams: new URLSearchParams(),
-    getShareableUrl: (path) => path,
+    hash: "",
+    getShareableUrl: mocks.getShareableUrl,
   };
 
   renderWithI18n(
@@ -288,10 +307,28 @@ function renderProjectDetail() {
 
 beforeEach(() => {
   mocks.role = "admin";
+  mocks.copyText.mockReset().mockResolvedValue(true);
   mocks.deleteProject.mockReset();
+  mocks.getShareableUrl.mockClear();
   mocks.push.mockReset();
   mocks.recordVisit.mockReset();
   mocks.toastSuccess.mockReset();
+});
+
+describe("ProjectDetail sharing", () => {
+  it("copies the platform shareable URL instead of the renderer URL", async () => {
+    const user = userEvent.setup();
+    renderProjectDetail();
+
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+
+    expect(mocks.getShareableUrl).toHaveBeenCalledWith(
+      "/test-workspace/projects/project-1",
+    );
+    expect(mocks.copyText).toHaveBeenCalledWith(
+      "https://app.example/test-workspace/projects/project-1",
+    );
+  });
 });
 
 describe("ProjectDetail project deletion", () => {
@@ -329,5 +366,15 @@ describe("ProjectDetail project deletion", () => {
     expect(
       screen.queryByRole("button", { name: "Delete project" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("ProjectDetail project permissions", () => {
+  it("shows the project permissions entry in the details sidebar", () => {
+    renderProjectDetail();
+
+    expect(
+      screen.getByRole("button", { name: "Manage permissions for project-1" }),
+    ).toBeInTheDocument();
   });
 });

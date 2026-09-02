@@ -49,6 +49,14 @@ var internalOnlyPayloadKeys = map[string][]string{
 // time this is called, but the producer still owns the map and a second
 // forwarder may yet read it, so mutating it in place would be a landmine.
 func projectOutbound(eventType string, payload any) any {
+	// 2026-08-27 coder(lq): Autopilot visibility is narrower than workspace
+	// membership, while the realtime hub still fans these events out by
+	// workspace. Clients only use this event family to invalidate and refetch
+	// permission-filtered API queries, so expose an empty refresh signal and
+	// keep titles, assignees, resource IDs, and run details off the wire.
+	if strings.HasPrefix(eventType, "autopilot:") {
+		return map[string]any{}
+	}
 	keys := internalOnlyPayloadKeys[eventType]
 	if len(keys) == 0 {
 		return payload
@@ -87,6 +95,8 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		protocol.EventInboxBatchArchived: true,
 		protocol.EventInvitationCreated:  true,
 		protocol.EventInvitationRevoked:  true,
+		protocol.EventChatSessionCreated: true,
+		protocol.EventChatSessionUpdated: true,
 	}
 
 	// Helper: marshal event and send to a specific user.
@@ -174,6 +184,16 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			sendToRecipient(b, e, *uid)
 		}
 	})
+
+	// A Chat session is creator-private. Its initial title may be derived from
+	// the creator's first message, so the list-invalidation event must not be
+	// broadcast to every workspace member. ActorID is the creator on every
+	// producer path for this event.
+	for _, eventType := range []string{protocol.EventChatSessionCreated, protocol.EventChatSessionUpdated} {
+		bus.Subscribe(eventType, func(e events.Event) {
+			sendToRecipient(b, e, e.ActorID)
+		})
+	}
 
 	// member:added — also send to the invited user so they discover the new workspace.
 	// Pass excludeWorkspace so clients already in the target room (reached via

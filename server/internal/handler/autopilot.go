@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -82,7 +84,9 @@ type AutopilotQuotaUsageResponse struct {
 	Action        string           `json:"action"`
 	Used          *int64           `json:"used"`
 	Reserved      *int64           `json:"reserved"`
+	Total         *int64           `json:"total"`
 	Limit         *int64           `json:"limit"`
+	Reached       *bool            `json:"reached"`
 	PeriodStart   *string          `json:"period_start"`
 	PeriodEnd     *string          `json:"period_end"`
 	ResetAt       *string          `json:"reset_at"`
@@ -402,40 +406,101 @@ type UpdateAutopilotTriggerRequest struct {
 
 func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
+	caller, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
 
 	var statusFilter pgtype.Text
 	if s := r.URL.Query().Get("status"); s != "" {
 		statusFilter = pgtype.Text{String: s, Valid: true}
 	}
 
+	viewerRole := caller.Role
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		// 2026-08-27 coder(lq): The SQL query carries the project overlay
+		// predicate, so explicitly bypass it while the feature is disabled and
+		// preserve Multica's native Autopilot list behavior.
+		viewerRole = "owner"
+	}
 	autopilots, err := h.Queries.ListAutopilots(r.Context(), db.ListAutopilotsParams{
-		WorkspaceID: parseUUID(workspaceID),
-		Status:      statusFilter,
+		WorkspaceID:  parseUUID(workspaceID),
+		Status:       statusFilter,
+		ViewerRole:   viewerRole,
+		ViewerUserID: caller.UserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list autopilots")
 		return
 	}
+	// 2026-08-27 coder(lq): A project-bound Autopilot is a project resource;
+	// filter it with the same project visibility boundary as issues and task
+	// history. Projectless legacy rows remain visible for native compatibility.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r))
+		if scopeErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		filtered := make([]db.ListAutopilotsRow, 0, len(autopilots))
+		for _, row := range autopilots {
+			if !row.Autopilot.ProjectID.Valid {
+				filtered = append(filtered, row)
+				continue
+			}
+			if _, allowed := visibleProjects[row.Autopilot.ProjectID]; allowed {
+				filtered = append(filtered, row)
+			}
+		}
+		autopilots = filtered
+	}
 
 	// Resolve the caller's write access for per-row can_write. The collaborator
 	// grants are fetched once as a set (keyed by autopilot id) so the flag
-	// costs no per-row query. A missing member (shouldn't happen behind the
-	// workspace-member middleware) just yields can_write=false everywhere.
-	caller, callerErr := h.getWorkspaceMember(r.Context(), requestUserID(r), workspaceID)
+	// costs no per-row query. Visibility has already been enforced by the list
+	// query; collaborator grants affect write capability only and cannot add a
+	// hidden Autopilot to the response.
 	collabSet := map[string]struct{}{}
-	if callerErr == nil {
-		if ids, err := h.Queries.ListAutopilotIDsForCollaborator(r.Context(), caller.UserID); err == nil {
-			for _, id := range ids {
-				collabSet[uuidToString(id)] = struct{}{}
-			}
+	if ids, err := h.Queries.ListAutopilotIDsForCollaborator(r.Context(), caller.UserID); err == nil {
+		for _, id := range ids {
+			collabSet[uuidToString(id)] = struct{}{}
+		}
+	}
+
+	// Subscribers are fetched for the whole page in one batched query. An
+	// earlier version passed nil here to dodge an N+1, but the response type
+	// serializes a nil slice as [] rather than omitting it, so every listed
+	// autopilot claimed to have no subscribers while the detail endpoint
+	// reported the real ones — a silently wrong value is worse than a missing
+	// one (MUL-6680). The batch keys off the primary key's leading column, so
+	// this costs one indexed query per page, not one per row.
+	subsByAutopilot := map[string][]db.AutopilotSubscriber{}
+	autopilotIDs := make([]pgtype.UUID, 0, len(autopilots))
+	for _, row := range autopilots {
+		autopilotIDs = append(autopilotIDs, row.Autopilot.ID)
+	}
+	if len(autopilotIDs) > 0 {
+		subs, err := h.Queries.ListAutopilotSubscribersForAutopilots(r.Context(), autopilotIDs)
+		if err != nil {
+			// Fail closed. Degrading to an empty set here would reintroduce
+			// exactly the bug this endpoint was fixed for: subscribers is a
+			// non-omitempty field documented as authoritative, so an empty
+			// value on a failed read is indistinguishable from "none
+			// configured" — and a caller acting on it can overwrite a real
+			// subscriber list. An error the caller can see and retry is the
+			// only honest answer.
+			writeError(w, http.StatusInternalServerError, "failed to list autopilot subscribers")
+			return
+		}
+		for _, s := range subs {
+			id := uuidToString(s.AutopilotID)
+			subsByAutopilot[id] = append(subsByAutopilot[id], s)
 		}
 	}
 
 	resp := make([]AutopilotResponse, len(autopilots))
 	for i, row := range autopilots {
-		// Omit subscribers to avoid an N+1; GET /api/autopilots/{id} is
-		// the source of truth for the populated template.
-		r := autopilotToResponse(row.Autopilot, nil)
+		r := autopilotToResponse(row.Autopilot, subsByAutopilot[uuidToString(row.Autopilot.ID)])
 		r.TriggerKinds = row.TriggerKinds
 		if row.NextRunAt.Valid {
 			r.NextRunAt = timestampToPtr(row.NextRunAt)
@@ -444,11 +509,9 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 			s := row.LastRunStatus
 			r.LastRunStatus = &s
 		}
-		if callerErr == nil {
-			_, isCollaborator := collabSet[uuidToString(row.Autopilot.ID)]
-			cw := autopilotWriteByOwnership(row.Autopilot, caller) || isCollaborator
-			r.CanWrite = &cw
-		}
+		_, isCollaborator := collabSet[uuidToString(row.Autopilot.ID)]
+		cw := autopilotWriteByOwnership(row.Autopilot, caller) || isCollaborator
+		r.CanWrite = &cw
 		resp[i] = r
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"autopilots": resp, "total": len(resp)})
@@ -465,8 +528,11 @@ func (h *Handler) GetAutopilot(w http.ResponseWriter, r *http.Request) {
 
 	subs, err := h.Queries.ListAutopilotSubscribers(r.Context(), autopilot.ID)
 	if err != nil {
-		// Don't 500 the detail fetch over template metadata.
-		subs = nil
+		// Fail closed for the same reason the list endpoint does: an empty
+		// subscribers array is a claim, not an absence, and this response is
+		// what clients round-trip back into a full-replace PATCH.
+		writeError(w, http.StatusInternalServerError, "failed to list autopilot subscribers")
+		return
 	}
 	resp := autopilotToResponse(autopilot, subs)
 
@@ -540,7 +606,66 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "autopilot not found")
 		return db.Autopilot{}, false
 	}
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return db.Autopilot{}, false
+	}
+	// 2026-08-27 coder(lq): Enforce the same discoverability boundary for
+	// detail, mutation, runs, deliveries, triggers, and collaborator routes.
+	// Return 404 for both absent and hidden rows so guessed UUIDs cannot reveal
+	// whether another member's Autopilot exists.
+	if !h.memberCanViewAutopilot(r.Context(), autopilot, member) {
+		writeError(w, http.StatusNotFound, "autopilot not found")
+		return db.Autopilot{}, false
+	}
+	// 2026-08-27 coder(lq): Keep every authenticated Autopilot read and write
+	// path behind project View when the automation is bound to a project. This
+	// central guard covers detail, runs, deliveries, triggers, and mutations
+	// without changing generated queries or public webhook ingress.
+	if autopilot.ProjectID.Valid && !h.requireProjectPermission(
+		w,
+		r,
+		uuidToString(autopilot.ProjectID),
+		workspaceID,
+		projectauth.View,
+	) {
+		return db.Autopilot{}, false
+	}
 	return autopilot, true
+}
+
+// 2026-08-27 coder(lq): memberCanViewAutopilot reports whether a workspace
+// member belongs to the deliberately narrow Autopilot audience: creator,
+// effective executor, or workspace owner. Admin and collaborator status do
+// not independently grant visibility. Assignment lookups fail closed.
+func (h *Handler) memberCanViewAutopilot(ctx context.Context, ap db.Autopilot, member db.Member) bool {
+	if member.Role == "owner" {
+		return true
+	}
+	if ap.CreatedByType == "member" && uuidToString(ap.CreatedByID) == uuidToString(member.UserID) {
+		return true
+	}
+
+	switch ap.AssigneeType {
+	case "", "agent":
+		agent, err := h.Queries.GetAgent(ctx, ap.AssigneeID)
+		return err == nil &&
+			uuidToString(agent.WorkspaceID) == uuidToString(ap.WorkspaceID) &&
+			agent.OwnerID.Valid &&
+			uuidToString(agent.OwnerID) == uuidToString(member.UserID)
+	case "squad":
+		squad, err := h.Queries.GetSquad(ctx, ap.AssigneeID)
+		if err != nil || uuidToString(squad.WorkspaceID) != uuidToString(ap.WorkspaceID) {
+			return false
+		}
+		leader, err := h.Queries.GetAgent(ctx, squad.LeaderID)
+		return err == nil &&
+			uuidToString(leader.WorkspaceID) == uuidToString(ap.WorkspaceID) &&
+			leader.OwnerID.Valid &&
+			uuidToString(leader.OwnerID) == uuidToString(member.UserID)
+	default:
+		return false
+	}
 }
 
 // autopilotWriteByOwnership is the implicit, query-free part of the write
@@ -664,8 +789,8 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate before insert so a bad payload doesn't half-create the row.
-	subscriberUUIDs, ok := h.validateAutopilotSubscribers(w, r, req.Subscribers, workspaceID)
+	// Parse before insert so a malformed payload doesn't open a transaction.
+	subscribers, ok := parseAutopilotSubscribers(w, req.Subscribers)
 	if !ok {
 		return
 	}
@@ -677,6 +802,15 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+
+	// This must be the first lock family in the transaction. Member revocation
+	// takes the same per-(workspace, user) locks before pruning templates and
+	// deleting member rows. Re-checking membership after those locks means
+	// either this save commits first and revocation prunes it, or revocation
+	// commits first and this save rejects the departed subscriber.
+	if !h.lockAndValidateAutopilotSubscribers(w, r, qtx, subscribers, wsUUID) {
+		return
+	}
 
 	// Keep save-time readiness validation in the same transaction as the
 	// insert. The assignment lock serializes this path with Runtime teardown,
@@ -711,11 +845,11 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, uid := range subscriberUUIDs {
+	for _, subscriber := range subscribers {
 		if err := qtx.AddAutopilotSubscriber(r.Context(), db.AddAutopilotSubscriberParams{
 			AutopilotID: autopilot.ID,
 			UserType:    "member",
-			UserID:      uid,
+			UserID:      subscriber.UserID,
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to add autopilot subscriber")
 			return
@@ -742,19 +876,19 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// Writes an HTTP error and returns ok=false on the first invalid entry.
-// Returns (nil, true) when raw is empty — caller distinguishes "leave alone"
-// from "replace with empty" via the raw-fields map, not this return.
-func (h *Handler) validateAutopilotSubscribers(
-	w http.ResponseWriter,
-	r *http.Request,
-	raw []SubscriberInput,
-	workspaceID string,
-) ([]pgtype.UUID, bool) {
+type autopilotSubscriberCandidate struct {
+	UserID     pgtype.UUID
+	InputIndex int
+}
+
+// parseAutopilotSubscribers validates the wire shape without reading mutable
+// membership state. Membership is checked only after the write transaction
+// owns the same serialization locks as member revocation.
+func parseAutopilotSubscribers(w http.ResponseWriter, raw []SubscriberInput) ([]autopilotSubscriberCandidate, bool) {
 	if len(raw) == 0 {
 		return nil, true
 	}
-	out := make([]pgtype.UUID, 0, len(raw))
+	out := make([]autopilotSubscriberCandidate, 0, len(raw))
 	seen := make(map[string]bool, len(raw))
 	for i, entry := range raw {
 		if entry.UserType != "member" {
@@ -769,17 +903,57 @@ func (h *Handler) validateAutopilotSubscribers(
 		if !ok {
 			return nil, false
 		}
-		if seen[entry.UserID] {
+		canonicalID := uuidToString(uid)
+		if seen[canonicalID] {
 			continue
 		}
-		seen[entry.UserID] = true
-		if !h.isWorkspaceEntity(r.Context(), entry.UserType, entry.UserID, workspaceID) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("subscribers[%d] is not a member of this workspace", i))
-			return nil, false
-		}
-		out = append(out, uid)
+		seen[canonicalID] = true
+		out = append(out, autopilotSubscriberCandidate{UserID: uid, InputIndex: i})
 	}
 	return out, true
+}
+
+// lockAndValidateAutopilotSubscribers serializes subscriber-template writes
+// with member revocation. Locks and row checks both use canonical UUID order,
+// so two saves containing the same members in different request orders cannot
+// deadlock each other.
+func (h *Handler) lockAndValidateAutopilotSubscribers(
+	w http.ResponseWriter,
+	r *http.Request,
+	qtx *db.Queries,
+	subscribers []autopilotSubscriberCandidate,
+	workspaceID pgtype.UUID,
+) bool {
+	ordered := append([]autopilotSubscriberCandidate(nil), subscribers...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return uuidToString(ordered[i].UserID) < uuidToString(ordered[j].UserID)
+	})
+
+	for _, subscriber := range ordered {
+		if err := qtx.LockSubscriberWrites(r.Context(), db.LockSubscriberWritesParams{
+			WorkspaceID: workspaceID,
+			UserID:      subscriber.UserID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to validate autopilot subscribers")
+			return false
+		}
+	}
+	for _, subscriber := range ordered {
+		if _, err := qtx.LockActiveMember(r.Context(), db.LockActiveMemberParams{
+			UserID:      subscriber.UserID,
+			WorkspaceID: workspaceID,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf(
+					"subscribers[%d] is not a member of this workspace", subscriber.InputIndex,
+				))
+				return false
+			}
+			writeError(w, http.StatusInternalServerError, "failed to validate autopilot subscribers")
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
@@ -890,19 +1064,19 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Subscribers are validated up-front (before any write) so a bad payload
-	// doesn't leave the autopilot row updated but the template stale.
+	// Parse subscriber wire values up-front. Mutable membership is revalidated
+	// under the revocation serialization locks after the transaction starts.
 	var (
-		subscriberUUIDs    []pgtype.UUID
+		subscribers        []autopilotSubscriberCandidate
 		replaceSubscribers bool
 	)
 	if _, sent := rawFields["subscribers"]; sent {
 		replaceSubscribers = true
-		validated, vok := h.validateAutopilotSubscribers(w, r, req.Subscribers, workspaceID)
+		validated, vok := parseAutopilotSubscribers(w, req.Subscribers)
 		if !vok {
 			return
 		}
-		subscriberUUIDs = validated
+		subscribers = validated
 	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -912,6 +1086,12 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+
+	// Lock subscriber identities before assignment and autopilot rows. This is
+	// the same global order used by CreateAutopilot and member revocation.
+	if !h.lockAndValidateAutopilotSubscribers(w, r, qtx, subscribers, prev.WorkspaceID) {
+		return
+	}
 
 	// Retargeting must validate the polymorphic reference; resuming must also
 	// validate Runtime readiness. Keep both in this transaction so Runtime
@@ -986,11 +1166,11 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to update subscribers")
 			return
 		}
-		for _, uid := range subscriberUUIDs {
+		for _, subscriber := range subscribers {
 			if err := qtx.AddAutopilotSubscriber(r.Context(), db.AddAutopilotSubscriberParams{
 				AutopilotID: autopilot.ID,
 				UserType:    "member",
-				UserID:      uid,
+				UserID:      subscriber.UserID,
 			}); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to add autopilot subscriber")
 				return
@@ -1071,6 +1251,13 @@ func (h *Handler) parseAutopilotProjectID(
 		writeError(w, http.StatusBadRequest, "project_id must reference a project in this workspace")
 		return pgtype.UUID{}, false
 	}
+	// 2026-08-27 coder(lq): Binding an automation to a project must not create
+	// a resource the caller cannot subsequently read. View is the narrowest
+	// safe prerequisite; write/execute rights remain governed by the existing
+	// Autopilot ownership and collaborator policy.
+	if !h.requireProjectPermission(w, r, uuidToString(projectID), uuidToString(workspaceID), projectauth.View) {
+		return pgtype.UUID{}, false
+	}
 	return projectID, true
 }
 
@@ -1078,21 +1265,12 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
 
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "autopilot id")
+	// 2026-08-27 coder(lq): Deletion must share the same discoverability and
+	// project boundary as every other Autopilot resource path. Loading the row
+	// directly here previously let a workspace admin archive an otherwise
+	// invisible Autopilot by guessing its UUID.
+	ap, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
 	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	ap, err := h.Queries.GetAutopilotInWorkspace(r.Context(), db.GetAutopilotInWorkspaceParams{
-		ID:          idUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
 		return
 	}
 	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
@@ -1117,7 +1295,7 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	if err := qtx.ArchiveAutopilot(r.Context(), idUUID); err != nil {
+	if err := qtx.ArchiveAutopilot(r.Context(), ap.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
 		return
 	}
@@ -1131,7 +1309,7 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{"autopilot_id": uuidToString(idUUID)})
+	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{"autopilot_id": uuidToString(ap.ID)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1780,25 +1958,15 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	triggerID := chi.URLParam(r, "triggerId")
 	workspaceID := h.resolveWorkspaceID(r)
 
-	autopilotUUID, ok := parseUUIDOrBadRequest(w, autopilotID, "autopilot id")
-	if !ok {
-		return
-	}
 	triggerUUID, ok := parseUUIDOrBadRequest(w, triggerID, "trigger id")
 	if !ok {
 		return
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	// 2026-08-27 coder(lq): Keep trigger deletion behind the parent
+	// Autopilot's visibility guard; write role alone cannot make a hidden
+	// parent resource discoverable.
+	ap, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
 	if !ok {
-		return
-	}
-
-	ap, err := h.Queries.GetAutopilotInWorkspace(r.Context(), db.GetAutopilotInWorkspaceParams{
-		ID:          autopilotUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
 		return
 	}
 	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
@@ -1806,7 +1974,7 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	}
 
 	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerUUID)
-	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(autopilotUUID) {
+	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(ap.ID) {
 		writeError(w, http.StatusNotFound, "trigger not found")
 		return
 	}
@@ -1841,7 +2009,7 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(autopilotUUID),
+		"autopilot_id": uuidToString(ap.ID),
 		"trigger_id":   uuidToString(triggerUUID),
 	})
 	w.WriteHeader(http.StatusNoContent)
@@ -2158,7 +2326,8 @@ func (h *Handler) GetAutopilotQuotaUsage(w http.ResponseWriter, r *http.Request)
 	resp := AutopilotQuotaUsageResponse{Action: "off"}
 	if usage.Enabled {
 		resp.Action = usage.Action
-		resp.Used, resp.Reserved, resp.Limit = usage.Used, usage.Reserved, usage.Limit
+		resp.Used, resp.Reserved, resp.Total = usage.Used, usage.Reserved, usage.Total
+		resp.Limit, resp.Reached = usage.Limit, usage.Reached
 		resp.BlockedCounts = usage.BlockedCounts
 		if usage.PeriodStart != nil {
 			v := usage.PeriodStart.UTC().Format(time.RFC3339)

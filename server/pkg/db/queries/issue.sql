@@ -8,9 +8,10 @@
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
@@ -81,6 +82,22 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: ArchiveIssue :one
+UPDATE issue
+SET archived_at = now(),
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL
+RETURNING *;
+
+-- name: RestoreIssue :one
+UPDATE issue
+SET archived_at = NULL,
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND archived_at IS NOT NULL
+RETURNING *;
+
 -- name: LockIssueForChannelMediaBind :one
 -- Channel media resolves after /issue creation. Hold a key-share lock while
 -- the attachment row is written so a concurrent issue delete cannot land
@@ -128,6 +145,18 @@ RETURNING *;
 SELECT id FROM issue
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE;
+
+-- name: DetachDirectChildIssues :many
+UPDATE issue
+SET parent_issue_id = NULL,
+    stage = NULL,
+    revision = revision + 1,
+    updated_at = now(),
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now())
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND parent_issue_id = sqlc.arg(parent_issue_id)
+  AND NOT COALESCE(id = ANY(sqlc.arg(excluded_issue_ids)::uuid[]), false)
+RETURNING *;
 
 -- name: CreateIssue :one
 INSERT INTO issue (
@@ -279,7 +308,8 @@ SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0));
 -- name: FindActiveDuplicateIssue :one
 SELECT * FROM issue
 WHERE workspace_id = $1
-  AND issue_effective_status(workspace_id, status) NOT IN ('done', 'cancelled')
+  -- Negate only known terminal keys so an unknown legacy key remains active.
+  AND NOT (status = ANY(sqlc.arg('terminal_status_keys')::text[]))
   AND project_id IS NOT DISTINCT FROM sqlc.arg('project_id')::uuid
   AND parent_issue_id IS NOT DISTINCT FROM sqlc.arg('parent_issue_id')::uuid
   AND lower(btrim(regexp_replace(title, '[[:space:]]+', ' ', 'g'))) = sqlc.arg('normalized_title')
@@ -289,7 +319,8 @@ LIMIT 1;
 -- name: FindRecentAutopilotDuplicateIssue :one
 SELECT i.* FROM issue i
 WHERE i.workspace_id = $1
-  AND issue_effective_status(i.workspace_id, i.status) NOT IN ('done', 'cancelled')
+  -- Negate only known terminal keys so an unknown legacy key remains active.
+  AND NOT (i.status = ANY(sqlc.arg('terminal_status_keys')::text[]))
   AND i.origin_type = 'autopilot'
   AND i.origin_id = $2
   AND i.project_id IS NOT DISTINCT FROM sqlc.arg('project_id')::uuid
@@ -336,10 +367,12 @@ DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE i.workspace_id = $1
-  AND issue_effective_status(i.workspace_id, i.status) NOT IN ('done', 'cancelled')
+  AND i.archived_at IS NULL
+  -- Negate only known terminal keys so an unknown legacy key remains visible.
+  AND NOT (i.status = ANY(sqlc.arg('terminal_status_keys')::text[]))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
   AND (sqlc.narg('assignee_ids')::uuid[] IS NULL OR i.assignee_id = ANY(sqlc.narg('assignee_ids')::uuid[]))
@@ -347,12 +380,18 @@ WHERE i.workspace_id = $1
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
   AND (sqlc.narg('metadata_filter')::jsonb IS NULL OR i.metadata @> sqlc.narg('metadata_filter')::jsonb)
   -- properties_filter is a jsonb array of groups, each group an array of
-  -- containment patterns (built by parsePropertiesFilterParam): the issue
-  -- must match at least one pattern from EVERY group (AND of ORs). A pattern
-  -- of the shape {"__none__": "<definitionId>"} is the "no value" marker and
-  -- matches when the issue's properties are missing that key. The correlated
+  -- patterns (built by parsePropertiesFilterParam): the issue must match at
+  -- least one pattern from EVERY group (AND of ORs). Three pattern shapes:
+  --   {"__none__": "<definitionId>"}                         — "no value" marker;
+  --   {"<definitionId>": <value>, ...}                        — containment;
+  --   {"__op__": "<op>", "def": "<id>", "value": "<v>"}       — scalar operator
+  -- (contains / gt / gte / lt / lte / before / after), where the contains
+  -- value arrives already ILIKE-escaped and the op was validated in Go, so
+  -- the per-op branches below only ever see legal values. The correlated
   -- form skips the GIN index, which is fine here: open_only is an
-  -- unpaginated workspace scan already narrowed by status.
+  -- unpaginated workspace scan. The terminal-status predicate intentionally
+  -- remains a filter rather than a positive index narrowing so unknown legacy
+  -- status keys stay visible.
   AND (
     sqlc.narg('properties_filter')::jsonb IS NULL
     OR NOT EXISTS (
@@ -362,7 +401,33 @@ WHERE i.workspace_id = $1
         SELECT 1
         FROM jsonb_array_elements(pf.alternatives) AS alt(pattern)
         WHERE (alt.pattern ? '__none__' AND NOT (i.properties ? (alt.pattern ->> '__none__')))
-           OR (NOT (alt.pattern ? '__none__') AND i.properties @> alt.pattern)
+           OR (NOT (alt.pattern ? '__none__') AND NOT (alt.pattern ? '__op__')
+               AND i.properties @> alt.pattern)
+           OR (alt.pattern ? '__op__'
+               AND i.properties ->> (alt.pattern ->> 'def') IS NOT NULL
+               AND (
+                 (alt.pattern ->> '__op__' = 'contains'
+                  AND jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'string'
+                  AND (i.properties ->> (alt.pattern ->> 'def')) ILIKE '%' || (alt.pattern ->> 'value') || '%')
+                 OR (alt.pattern ->> '__op__' = 'gt'
+                  AND CASE WHEN jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'number'
+                    THEN (i.properties ->> (alt.pattern ->> 'def'))::numeric END > (alt.pattern ->> 'value')::numeric)
+                 OR (alt.pattern ->> '__op__' = 'gte'
+                  AND CASE WHEN jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'number'
+                    THEN (i.properties ->> (alt.pattern ->> 'def'))::numeric END >= (alt.pattern ->> 'value')::numeric)
+                 OR (alt.pattern ->> '__op__' = 'lt'
+                  AND CASE WHEN jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'number'
+                    THEN (i.properties ->> (alt.pattern ->> 'def'))::numeric END < (alt.pattern ->> 'value')::numeric)
+                 OR (alt.pattern ->> '__op__' = 'lte'
+                  AND CASE WHEN jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'number'
+                    THEN (i.properties ->> (alt.pattern ->> 'def'))::numeric END <= (alt.pattern ->> 'value')::numeric)
+                 OR (alt.pattern ->> '__op__' = 'before'
+                  AND jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'string'
+                  AND i.properties ->> (alt.pattern ->> 'def') < (alt.pattern ->> 'value'))
+                 OR (alt.pattern ->> '__op__' = 'after'
+                  AND jsonb_typeof(i.properties -> (alt.pattern ->> 'def')) = 'string'
+                  AND i.properties ->> (alt.pattern ->> 'def') > (alt.pattern ->> 'value'))
+               ))
       )
     )
   )
@@ -404,6 +469,7 @@ ORDER BY i.position ASC, i.created_at DESC;
 -- See ListIssues for the semantics of involves_user_id.
 SELECT count(*) FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
@@ -454,6 +520,7 @@ WHERE i.workspace_id = $1
 -- monotonic counter and is sibling-stable.
 SELECT * FROM issue
 WHERE parent_issue_id = $1
+  AND archived_at IS NULL
 ORDER BY number ASC;
 
 -- name: ListChildrenByParents :many
@@ -467,6 +534,7 @@ ORDER BY number ASC;
 SELECT * FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')
   AND parent_issue_id = ANY(sqlc.arg('parent_ids')::uuid[])
+  AND archived_at IS NULL
 ORDER BY parent_issue_id, number ASC;
 
 -- name: GetIssueByOrigin :one
@@ -479,6 +547,7 @@ SELECT * FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
+  AND archived_at IS NULL
 LIMIT 1;
 
 -- name: CountCreatedIssueAssignees :many
@@ -498,10 +567,11 @@ GROUP BY assignee_type, assignee_id;
 -- name: ChildIssueProgress :many
 SELECT parent_issue_id,
        COUNT(*)::bigint AS total,
-       COUNT(*) FILTER (WHERE issue_effective_status(workspace_id, status) IN ('done', 'cancelled'))::bigint AS done
+       COUNT(*) FILTER (WHERE status = ANY(sqlc.arg('terminal_status_keys')::text[]))::bigint AS done
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  AND archived_at IS NULL
 GROUP BY parent_issue_id;
 
 -- SearchIssues: moved to handler (dynamic SQL for multi-word search support).
@@ -546,3 +616,16 @@ UPDATE issue
 SET first_executed_at = now()
 WHERE id = $1 AND first_executed_at IS NULL
 RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
+
+-- name: CountIssuesUpTo :one
+-- Bounded count for issue-limit admission and display. Callers pass only the
+-- threshold needed for their decision, avoiding a full scan in an oversized
+-- workspace.
+SELECT COUNT(*)::bigint
+FROM (
+    SELECT 1
+FROM issue
+WHERE workspace_id = $1
+  AND archived_at IS NULL
+    LIMIT sqlc.arg('limit')::bigint
+) bounded_issues;

@@ -1,6 +1,9 @@
 import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
-import { app, type BrowserWindow, ipcMain } from "electron";
+import { app, net, session, type BrowserWindow, ipcMain } from "electron";
+import type { IncomingMessage } from "node:http";
+import { join } from "node:path";
 import type {
+  InstallUpdateResult,
   ManualUpdateCheckResult,
   UpdaterPreferences,
 } from "../shared/updater-types";
@@ -10,20 +13,30 @@ import {
   saveUpdaterPreferences,
   updaterPreferencesPath,
 } from "./updater-preferences";
-import { isOfficialCloudServerUrl } from "../shared/runtime-config";
+import {
+  installMacUpdate,
+  prepareMacUpdate,
+  resolveMacUpdateUrl,
+  selectMacUpdateFile,
+  type DownloadedMacUpdate,
+  type MacUpdateInfo,
+} from "./macos-custom-updater";
 
 // Silent background updates: electron-updater downloads on its own as soon
 // as `update-available` fires; we only surface UI when the package is fully
 // downloaded and ready to install on next quit.
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
+// macOS uses a local replacement flow below because Squirrel.Mac rejects
+// ad-hoc signed private builds before they can be installed.
+const useMacCustomUpdater = process.platform === "darwin" && app.isPackaged === true;
+autoUpdater.autoDownload = !useMacCustomUpdater;
+autoUpdater.autoInstallOnAppQuit = !useMacCustomUpdater;
 
 // Windows arm64 ships its own update metadata channel because
 // electron-builder's `latest.yml` is not arch-suffixed on Windows — both
 // arches would otherwise collide on the same file in the GitHub Release.
 // See scripts/package.mjs (builderArgsForTarget) for the publish-side half
 // of this pact. Pin the channel here so arm64 clients fetch
-// `latest-arm64.yml` instead of the x64 metadata.
+// `latest-lechun-arm64.yml` instead of the x64 metadata.
 if (process.platform === "win32" && process.arch === "arm64") {
   autoUpdater.channel = "latest-arm64";
 }
@@ -43,22 +56,59 @@ export function configureMacX64UpdateChannel(
   // AppUpdater.channel enables allowDowngrade as a side effect. This channel
   // isolates a CPU architecture, not a release train, so preserve normal
   // monotonic version behavior after selecting the architecture feed.
-  updater.channel = "latest-x64";
+  updater.channel = "latest-lechun-x64";
   updater.allowDowngrade = false;
 }
 
 // electron-builder does not architecture-suffix macOS update metadata.
-// package.mjs publishes macOS x64 as `latest-x64-mac.yml`; the established
+// package.mjs publishes macOS x64 as `latest-lechun-x64-mac.yml`; the established
 // arm64 feed and runtime path remain unchanged.
 configureMacX64UpdateChannel(autoUpdater);
 
 const STARTUP_CHECK_DELAY_MS = 5_000;
 const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const ELECTRON_UPDATE_SESSION = "electron-updater";
+
+const MAX_UPDATE_ERROR_LENGTH = 240;
+
+/**
+ * 2026-08-29 coder(lq): Keep provider internals out of the user-facing
+ * notification. GitHub's private-release errors can include long URLs,
+ * headers, and stack traces; they are useful in the main-process log but are
+ * too noisy (and potentially sensitive) for the renderer.
+ */
+export function formatUpdaterError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = raw.replace(/\s+/g, " ").trim();
+  if (!message) return "Unknown update error";
+
+  if (
+    /(?:HTTP|status(?: code)?)[ :]*404|cannot find .*latest[^ ]*\.yml|authentication token/i.test(
+      message,
+    )
+  ) {
+    return "Update files are temporarily unavailable. Please try again later.";
+  }
+
+  if (
+    /(?:HTTP|status(?: code)?)[ :]*(?:401|403)|timed out|timeout|econnreset|enotfound|network|ERR_(?:INTERNET_DISCONNECTED|CONNECTION_RESET|CONNECTION_TIMED_OUT|NAME_NOT_RESOLVED)|offline/i.test(
+      message,
+    )
+  ) {
+    return "Unable to reach the update server. We’ll retry automatically.";
+  }
+
+  if (message.length > MAX_UPDATE_ERROR_LENGTH) {
+    return `${message.slice(0, MAX_UPDATE_ERROR_LENGTH - 1)}…`;
+  }
+  return message;
+}
 
 type RendererChannel =
   | "updater:update-available"
   | "updater:download-progress"
-  | "updater:update-downloaded";
+  | "updater:update-downloaded"
+  | "updater:update-error";
 
 function isDestroyedObjectError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("Object has been destroyed");
@@ -79,6 +129,67 @@ function sendToLiveRenderer(
     if (isDestroyedObjectError(err)) return;
     throw err;
   }
+}
+
+/** 2026-08-29 coder(lq): Use electron-updater's network stack for the custom
+ * macOS archive download so system proxy/VPN settings are honored consistently
+ * with metadata requests. */
+function requestMacUpdateWithElectron(url: URL): Promise<IncomingMessage> {
+  return new Promise((resolveRequest, reject) => {
+    let settled = false;
+    let redirectCount = 0;
+    const request = net.request({
+      url: url.toString(),
+      method: "GET",
+      redirect: "manual",
+      session: session.fromPartition(ELECTRON_UPDATE_SESSION, { cache: false }),
+    });
+    const resolveOnce = (response: IncomingMessage) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectionTimeout);
+      resolveRequest(response);
+    };
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectionTimeout);
+      reject(error);
+    };
+    request.on("redirect", (_statusCode, _method, _redirectUrl) => {
+      if (redirectCount >= 5) {
+        rejectOnce(new Error("Too many redirects while downloading update"));
+        request.abort();
+        return;
+      }
+      redirectCount += 1;
+      // 2026-08-29 coder(lq): Electron cancels a manual redirect unless
+      // followRedirect() is called synchronously from this event. Calling it
+      // from the response handler races Chromium's cancellation and surfaces
+      // "Redirect was cancelled" to the update UI.
+      request.followRedirect();
+    });
+    const connectionTimeout = setTimeout(() => {
+      rejectOnce(new Error("Update download timed out"));
+      request.abort();
+    }, 60 * 1000);
+    request.on("response", (response) => {
+      clearTimeout(connectionTimeout);
+      const status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        response.on("data", () => undefined);
+        rejectOnce(new Error(`Update download failed with HTTP ${status}`));
+        return;
+      }
+      // 2026-08-29 coder(lq): Electron's response is Node stream-compatible,
+      // although Electron does not expose the Node declaration directly.
+      resolveOnce(response as unknown as IncomingMessage);
+    });
+    request.on("error", (error) => {
+      rejectOnce(error);
+    });
+    request.end();
+  });
 }
 
 // Single-flight guard around checkForUpdates(). With autoDownload=true the
@@ -110,17 +221,70 @@ function checkForUpdatesOnce(): Promise<unknown> {
   return p;
 }
 
-const PRIVATE_DEPLOYMENT_UPDATE_MESSAGE =
-  "Updates are managed by your private Multica deployment administrator.";
-
 export function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null,
-  options: { serverUrl?: string } = {},
+  options: {
+    serverUrl?: string;
+    /** Kept for backwards compatibility with older callers. */
+    enabled?: boolean;
+    /** Optional per-build channel, used by the Lechun distribution. */
+    channel?: string;
+    /** Display name used in user-facing update errors. */
+    productName?: string;
+  } = {},
 ): void {
-  // 2026-08-25 coder(lq): Fail closed when no runtime server is available, so
-  // private builds never fall back to the public GitHub release channel.
-  const updatesAvailable = isOfficialCloudServerUrl(options.serverUrl ?? "");
+  const privateDeploymentUpdateMessage = `Updates are managed by your private ${options.productName ?? "deployment"} deployment administrator.`;
+  // 2026-08-27 coder(lq): Desktop releases are published to the configured
+  // public GitHub repository, so private deployments can safely use the same
+  // updater without embedding credentials or falling back to upstream.
+  const updatesAvailable = options.enabled !== false;
+  if (options.channel) {
+    // Setting a custom channel also enables allowDowngrade in
+    // electron-updater. That side effect is useful when switching between
+    // prerelease channels, but not for the official/Lechun distribution
+    // split: a newer package must never be replaced by an older one merely
+    // because the channel changed.
+    autoUpdater.channel = options.channel;
+    autoUpdater.allowDowngrade = false;
+  }
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
+  const macUpdateCacheDirectory = join(app.getPath("userData"), "updates", "macos");
+  let macUpdateInfo: MacUpdateInfo | null = null;
+  let downloadedMacUpdate: DownloadedMacUpdate | null = null;
+  let macDownloadPromise: Promise<DownloadedMacUpdate> | null = null;
+  // 2026-08-29 coder(lq): Coalesce event-driven and manual downloads so two
+  // renderer actions cannot overwrite the same verified update archive.
+  const downloadMacUpdateOnce = (info: MacUpdateInfo): Promise<DownloadedMacUpdate> => {
+    if (macDownloadPromise) return macDownloadPromise;
+    const file = selectMacUpdateFile(info, process.arch);
+    const resolvedFile = {
+      ...file,
+      url: resolveMacUpdateUrl(file.url, info.tag),
+    };
+    sendToLiveRenderer(getMainWindow(), "updater:download-progress", { percent: 0 });
+    const promise = prepareMacUpdate(
+      resolvedFile,
+      macUpdateCacheDirectory,
+      info.version,
+      process.arch,
+      (percent) =>
+        sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
+          percent,
+        }),
+      requestMacUpdateWithElectron,
+    ).then((update) => {
+      update.releaseNotes = info.releaseNotes;
+      downloadedMacUpdate = update;
+      return update;
+    });
+    macDownloadPromise = promise;
+    void promise
+      .finally(() => {
+        if (macDownloadPromise === promise) macDownloadPromise = null;
+      })
+      .catch(() => undefined);
+    return promise;
+  };
   let automaticUpdatesEnabled =
     updatesAvailable && DEFAULT_UPDATER_PREFERENCES.automaticUpdates;
   let startupCheckElapsed = false;
@@ -187,6 +351,28 @@ export function setupAutoUpdater(
       version: info.version,
       releaseNotes: info.releaseNotes,
     });
+    if (useMacCustomUpdater) {
+      macUpdateInfo = info;
+      void (async () => {
+        await downloadMacUpdateOnce(info);
+        sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
+          version: info.version,
+          releaseNotes: info.releaseNotes,
+        });
+      })().catch((err) => {
+        console.error("Failed to download macOS update:", err);
+        sendToLiveRenderer(getMainWindow(), "updater:update-error", {
+          message: formatUpdaterError(err),
+        });
+      });
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    if (useMacCustomUpdater) {
+      macUpdateInfo = null;
+      downloadedMacUpdate = null;
+    }
   });
 
   autoUpdater.on("download-progress", (progress) => {
@@ -204,16 +390,53 @@ export function setupAutoUpdater(
 
   autoUpdater.on("error", (err) => {
     console.error("Auto-updater error:", err);
+    sendToLiveRenderer(getMainWindow(), "updater:update-error", {
+      message: formatUpdaterError(err),
+    });
   });
 
-  // Retained for IPC back-compat with older renderer bundles. With
-  // autoDownload=true the renderer no longer triggers this path.
-  ipcMain.handle("updater:download", () => {
-    return autoUpdater.downloadUpdate();
+  // Retained for IPC back-compat with older renderer bundles. On macOS this
+  // also provides an explicit retry for the custom download path.
+  ipcMain.handle("updater:download", async () => {
+    if (!useMacCustomUpdater) return autoUpdater.downloadUpdate();
+    if (!macUpdateInfo) throw new Error("No macOS update is available to download");
+    const update = await downloadMacUpdateOnce(macUpdateInfo);
+    sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
+      version: macUpdateInfo.version,
+      releaseNotes: macUpdateInfo.releaseNotes,
+    });
+    return [update.archivePath];
   });
 
-  ipcMain.handle("updater:install", () => {
-    autoUpdater.quitAndInstall(false, true);
+  ipcMain.handle("updater:install", async (): Promise<InstallUpdateResult> => {
+    try {
+      if (useMacCustomUpdater) {
+        if (!downloadedMacUpdate) {
+          throw new Error("The macOS update has not finished downloading");
+        }
+        const executablePath = process.execPath;
+        const bundleMarker = ".app/";
+        const bundleIndex = executablePath.indexOf(bundleMarker);
+        if (bundleIndex < 0) throw new Error("Unable to locate the current macOS app bundle");
+        const currentAppPath = executablePath.slice(0, bundleIndex + ".app".length);
+        await installMacUpdate(
+          downloadedMacUpdate,
+          currentAppPath,
+          process.pid,
+          macUpdateCacheDirectory,
+        );
+        app.quit();
+        return { success: true };
+      }
+      autoUpdater.quitAndInstall(false, true);
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // 2026-08-28 coder(lq): Return installation failures to the renderer so
+      // the update prompt does not silently ignore a failed restart.
+      console.error("Failed to install update:", err);
+      return { success: false, error: message };
+    }
   });
 
   ipcMain.handle(
@@ -233,7 +456,7 @@ export function setupAutoUpdater(
 
       await preferencesReady;
       if (!updatesAvailable && enabled) {
-        throw new Error(PRIVATE_DEPLOYMENT_UPDATE_MESSAGE);
+        throw new Error(privateDeploymentUpdateMessage);
       }
       const wasEnabled = automaticUpdatesEnabled;
       const preferences = { automaticUpdates: enabled };
@@ -257,7 +480,7 @@ export function setupAutoUpdater(
 
   ipcMain.handle("updater:check", async (): Promise<ManualUpdateCheckResult> => {
     if (!updatesAvailable) {
-      return { ok: false, error: PRIVATE_DEPLOYMENT_UPDATE_MESSAGE };
+      return { ok: false, error: privateDeploymentUpdateMessage };
     }
     try {
       const result = (await checkForUpdatesOnce()) as

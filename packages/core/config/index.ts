@@ -15,6 +15,9 @@ interface ConfigState {
   // must be hidden. Defaults to false so unknown / older servers behave like
   // the managed-cloud case.
   workspaceCreationDisabled: boolean;
+  // Whether the server exposes the additive project-permission overlay.
+  // Unknown/older servers default to false so its settings screens stay hidden.
+  projectPermissionsEnabled: boolean;
   // Self-host-only gate for the Git provider integration (Forgejo / Gitea /
   // GitLab). When false the whole Settings → Integrations "Git providers"
   // section is hidden. Defaults to false so unknown / older servers and the
@@ -32,11 +35,16 @@ interface ConfigState {
   // predate this signal are caught by the same net — indistinguishable from
   // here, and only one of the two answers is safe to guess.
   localWorktreeSupported: boolean;
+  // Whether this server persists conversation_starters on agent create/update.
+  // Older handlers accepted the unknown field and returned success while
+  // dropping it, so absent must fail closed.
+  agentConversationStartersSupported: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
     workspaceCreationDisabled?: boolean;
+    projectPermissionsEnabled?: boolean;
     vcsIntegrationAvailable?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -46,6 +54,7 @@ interface ConfigState {
   setFeatureFlags: (flags?: Record<string, boolean>) => void;
   setServerVersion: (version?: string) => void;
   setLocalWorktreeSupported: (supported?: boolean) => void;
+  setAgentConversationStartersSupported: (supported?: boolean) => void;
 }
 
 export const configStore = createStore<ConfigState>((set) => ({
@@ -56,23 +65,28 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
+  projectPermissionsEnabled: false,
   vcsIntegrationAvailable: false,
   featureFlags: {},
   serverVersion: "",
   localWorktreeSupported: false,
+  agentConversationStartersSupported: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
-  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable }),
+    projectPermissionsEnabled = false,
+  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable, projectPermissionsEnabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
   setServerVersion: (version = "") => set({ serverVersion: version }),
   setLocalWorktreeSupported: (supported = false) =>
     set({ localWorktreeSupported: supported === true }),
+  setAgentConversationStartersSupported: (supported = false) =>
+    set({ agentConversationStartersSupported: supported === true }),
 }));
 
 export function useConfigStore(): ConfigState;

@@ -7,7 +7,10 @@ import type {
 
 export const agentTaskSnapshotKeys = {
   all: (wsId: string) => ["workspaces", wsId, "agent-task-snapshot"] as const,
-  list: (wsId: string) => [...agentTaskSnapshotKeys.all(wsId), "list"] as const,
+  list: (wsId: string, includeWorkspaceOwned = true) =>
+    includeWorkspaceOwned
+      ? ([...agentTaskSnapshotKeys.all(wsId), "list"] as const)
+      : ([...agentTaskSnapshotKeys.all(wsId), "list", { includeWorkspaceOwned }] as const),
 };
 
 export const workspaceWorkingAgentsKeys = {
@@ -17,6 +20,7 @@ export const workspaceWorkingAgentsKeys = {
     type?: WorkspaceWorkingAgentType,
     mineRelation?: WorkspaceWorkingAgentMineRelation,
     parentIssueId?: string,
+    includeWorkspaceOwned?: boolean,
   ) =>
     [
       ...workspaceWorkingAgentsKeys.all(wsId),
@@ -27,6 +31,7 @@ export const workspaceWorkingAgentsKeys = {
         : parentIssueId
           ? `parent:${parentIssueId}`
           : "workspace",
+      ...(includeWorkspaceOwned === false ? [{ includeWorkspaceOwned: false }] : []),
     ] as const,
 };
 
@@ -54,10 +59,10 @@ export const agentRunCountsKeys = {
 // The 30s staleTime is a safety net only; the primary freshness signal is
 // WS task events, which invalidate this query immediately. Without WS,
 // presence still updates within 30s on focus / mount.
-export function agentTaskSnapshotOptions(wsId: string) {
+export function agentTaskSnapshotOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: agentTaskSnapshotKeys.list(wsId),
-    queryFn: () => api.getAgentTaskSnapshot(),
+    queryKey: agentTaskSnapshotKeys.list(wsId, includeWorkspaceOwned),
+    queryFn: () => api.getAgentTaskSnapshot(includeWorkspaceOwned),
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
@@ -73,6 +78,7 @@ export function workspaceWorkingAgentsOptions(
   type?: WorkspaceWorkingAgentType,
   mineRelation?: WorkspaceWorkingAgentMineRelation,
   parentIssueId?: string,
+  includeWorkspaceOwned = true,
 ) {
   return queryOptions({
     queryKey: workspaceWorkingAgentsKeys.list(
@@ -80,9 +86,10 @@ export function workspaceWorkingAgentsOptions(
       type,
       mineRelation,
       parentIssueId,
+      includeWorkspaceOwned,
     ),
     queryFn: () =>
-      api.getWorkspaceWorkingAgents(type, mineRelation, parentIssueId),
+      api.getWorkspaceWorkingAgents(type, mineRelation, parentIssueId, includeWorkspaceOwned),
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
@@ -127,10 +134,12 @@ export const agentTasksKeys = {
 // the inspector's 7-day throughput stats and the Tasks tab list — shared so
 // they don't fetch twice. WS task events invalidate this via the existing
 // task-prefix invalidation in useRealtimeSync.
-export function agentTasksOptions(wsId: string, agentId: string) {
+export function agentTasksOptions(wsId: string, agentId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: agentTasksKeys.detail(wsId, agentId),
-    queryFn: () => api.listAgentTasks(agentId),
+    queryKey: includeWorkspaceOwned
+      ? agentTasksKeys.detail(wsId, agentId)
+      : ([...agentTasksKeys.detail(wsId, agentId), { includeWorkspaceOwned: false }] as const),
+    queryFn: () => api.listAgentTasks(agentId, includeWorkspaceOwned),
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,

@@ -31,6 +31,10 @@ type AppConfig struct {
 	// from the JSON when false to keep responses identical to the
 	// previous shape for the common managed-cloud case (#3433).
 	WorkspaceCreationDisabled bool `json:"workspace_creation_disabled,omitempty"`
+	// ProjectPermissionsEnabled mirrors PROJECT_PERMISSION_ENABLED so the web
+	// app does not render permission screens that are guaranteed to return 404.
+	// Omitted while disabled to preserve the response shape for older clients.
+	ProjectPermissionsEnabled bool `json:"project_permissions_enabled,omitempty"`
 	// Public daemon setup config consumed by the web app at runtime so
 	// self-hosted instances can show `multica setup self-host` commands
 	// with the operator's own domains instead of Multica Cloud defaults.
@@ -75,6 +79,12 @@ type AppConfig struct {
 	// them, and only one of the two guesses is safe.
 	LocalWorktreeSupported bool `json:"local_worktree_supported"`
 
+	// AgentConversationStartersSupported tells independently deployed clients
+	// that agent create/update persists conversation_starters. Older handlers
+	// ignored the unknown JSON field and still returned success, so clients
+	// must fail closed when this declaration is absent.
+	AgentConversationStartersSupported bool `json:"agent_conversation_starters_supported"`
+
 	// ServerVersion is the running API build version, so self-hosted
 	// operators can confirm what's deployed and include it in bug reports.
 	// Only emitted on self-hosted deployments — omitted on the managed cloud,
@@ -91,10 +101,12 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	config := AppConfig{
 		// A property of this build, not of the deployment: if this code is
 		// running, the save gate is running with it.
-		LocalWorktreeSupported:    true,
-		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
-		GoogleClientID:            os.Getenv("GOOGLE_CLIENT_ID"),
-		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		LocalWorktreeSupported:             true,
+		AgentConversationStartersSupported: true,
+		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
+		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
+		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		ProjectPermissionsEnabled:          h.cfg.ProjectPermissionEnabled,
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()
@@ -125,7 +137,10 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func daemonSetupURLsFromEnv() (string, string) {
-	serverURL := normalizePublicURL(os.Getenv("MULTICA_PUBLIC_URL"))
+	serverURL := normalizePublicURL(os.Getenv("MULTICA_DAEMON_SERVER_URL"))
+	if serverURL == "" {
+		serverURL = normalizePublicURL(os.Getenv("MULTICA_PUBLIC_URL"))
+	}
 	appURL := resolveFrontendAppURL()
 	if appURL == "" {
 		return "", ""

@@ -26,4 +26,19 @@ describe("resolveContent", () => {
       label: "or download .zip",
     });
   });
+
+  it("uses the private Windows x64 installer on Windows ARM", () => {
+    const content = resolveContent(
+      { os: "windows", arch: "arm64", archConfident: true },
+      { winX64Exe: "https://downloads.test/windows-x64.exe" },
+      false,
+      createEnDict(true).download.hero,
+    );
+
+    expect(content.primary).toEqual({
+      href: "https://downloads.test/windows-x64.exe",
+      label: "Download (.exe)",
+      disabled: false,
+    });
+  });
 });

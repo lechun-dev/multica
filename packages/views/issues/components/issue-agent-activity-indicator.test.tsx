@@ -4,6 +4,7 @@ import type { AgentTask } from "@multica/core/types";
 
 const mockState = vi.hoisted(() => ({
   snapshot: [] as unknown[],
+  optionsCalls: [] as unknown[][],
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -11,9 +12,12 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/agents", () => ({
-  agentTaskSnapshotOptions: (wsId: string) => ({
-    queryKey: ["agents", "task-snapshot", wsId],
-  }),
+  agentTaskSnapshotOptions: (wsId: string, includeWorkspaceOwned?: boolean) => {
+    mockState.optionsCalls.push([wsId, includeWorkspaceOwned]);
+    return {
+      queryKey: ["agents", "task-snapshot", wsId, includeWorkspaceOwned],
+    };
+  },
 }));
 
 vi.mock("../../agents/components/agent-avatar-stack", () => ({
@@ -83,6 +87,7 @@ vi.mock("@tanstack/react-query", async () => {
 });
 
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { IssueSurfaceVisibilityProvider } from "../surface/visibility-context";
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -105,6 +110,7 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
 beforeEach(() => {
   cleanup();
   mockState.snapshot = [makeTask()];
+  mockState.optionsCalls = [];
 });
 
 describe("IssueAgentActivityIndicator", () => {
@@ -140,5 +146,15 @@ describe("IssueAgentActivityIndicator", () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it("excludes workspace-owned tasks when the issue surface hides them", () => {
+    render(
+      <IssueSurfaceVisibilityProvider includeWorkspaceOwned={false}>
+        <IssueAgentActivityIndicator issueId="issue-1" />
+      </IssueSurfaceVisibilityProvider>,
+    );
+
+    expect(mockState.optionsCalls).toEqual([["ws-1", false]]);
   });
 });

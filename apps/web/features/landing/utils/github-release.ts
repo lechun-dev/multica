@@ -3,6 +3,10 @@ import {
   parseReleaseAssets,
   type DownloadAssets,
 } from "./parse-release-assets";
+import {
+  getGithubReleasesApiUrl,
+  getGithubReleasesPageUrl,
+} from "./github-release-config";
 
 /**
  * Server-side fetcher for the latest downloadable Multica release,
@@ -10,15 +14,12 @@ import {
  * by the Next.js fetch cache for 5 minutes (Vercel ISR) so hitting
  * /download costs at most one GitHub API call per region per 5 minutes.
  *
- * Desktop assets don't all land at the same time: CI uploads Linux and
- * Windows within a minute of each other, but macOS is packaged manually
- * (notarization credentials aren't wired into CI yet) and lands tens of
- * minutes later. A packaging job can also fail outright and leave a
- * release permanently short of some platforms. Either way the newest
- * release is not always the newest *downloadable* one, so we pull a
- * short window of recent releases and show the newest whose desktop
- * asset set is complete — every button on the page then resolves to a
- * real file.
+ * Desktop assets don't all land at the same time: the release workflow
+ * builds each platform in a separate job, and a job can still fail outright
+ * or be rerun while a release is being assembled. Either way the newest
+ * release is not always the newest downloadable one, so we pull a short
+ * window of recent releases and show the newest whose desktop asset set is
+ * complete — every button on the page then resolves to a real file.
  *
  * On any failure (network, rate limit, malformed payload) returns a
  * `null`-shaped result and logs — the page degrades to a "version
@@ -29,6 +30,7 @@ export interface LatestRelease {
   version: string | null;
   publishedAt: string | null;
   htmlUrl: string | null;
+  allReleasesUrl: string;
   assets: DownloadAssets;
 }
 
@@ -36,9 +38,6 @@ export interface LatestRelease {
 // the page has to fall back to showing the newest one as-is. Releases
 // ship roughly daily, so that is days of head room — while staying one
 // cheap request.
-const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/multica-ai/multica/releases?per_page=5";
-
 const REVALIDATE_SECONDS = 300;
 
 interface GitHubReleasePayload {
@@ -51,6 +50,7 @@ interface GitHubReleasePayload {
 }
 
 export async function fetchLatestRelease(): Promise<LatestRelease> {
+  const allReleasesUrl = getGithubReleasesPageUrl();
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
@@ -67,7 +67,7 @@ export async function fetchLatestRelease(): Promise<LatestRelease> {
   }
 
   try {
-    const res = await fetch(GITHUB_RELEASES_URL, {
+    const res = await fetch(getGithubReleasesApiUrl(), {
       next: { revalidate: REVALIDATE_SECONDS },
       headers,
     });
@@ -90,11 +90,12 @@ export async function fetchLatestRelease(): Promise<LatestRelease> {
       version: chosen.release.tag_name ?? null,
       publishedAt: chosen.release.published_at ?? null,
       htmlUrl: chosen.release.html_url ?? null,
+      allReleasesUrl,
       assets: chosen.assets,
     };
   } catch (err) {
     console.warn("[download] fetchLatestRelease failed:", err);
-    return emptyRelease();
+    return emptyRelease(allReleasesUrl);
   }
 }
 
@@ -132,11 +133,12 @@ function pickRelease(
   return parsed[0];
 }
 
-function emptyRelease(): LatestRelease {
+function emptyRelease(allReleasesUrl = getGithubReleasesPageUrl()): LatestRelease {
   return {
     version: null,
     publishedAt: null,
     htmlUrl: null,
+    allReleasesUrl,
     assets: {},
   };
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -113,6 +115,12 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if projectID.Valid {
+		// 2026-08-27 coder(lq): Binding a chat to a project grants the
+		// conversation access to that project's context, so creation requires
+		// AgentUse and cannot be used to probe or enter an inaccessible project.
+		if !h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, projectauth.AgentUse) {
+			return
+		}
 		if _, err := qtx.LockProjectForChatSessionCreate(r.Context(), db.LockProjectForChatSessionCreateParams{
 			ID:          projectID,
 			WorkspaceID: workspaceUUID,
@@ -136,6 +144,11 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create chat session")
+		return
+	}
+	session, err = qtx.MarkChatSessionExplicitlyCreated(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark chat session explicit")
 		return
 	}
 
@@ -170,8 +183,31 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
-
 	status := r.URL.Query().Get("status")
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// 2026-08-28 coder(lq): Use the project-auth adapter for the whole
+		// workspace. The upstream creator-only query would hide projectless
+		// sessions owned by an Agent's user and sessions visible to workspace
+		// owners or project members who did not create them.
+		resp, err := h.listChatSessionsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID), status == "all", includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
+			return
+		}
+		filtered := resp[:0]
+		for _, session := range resp {
+			if _, ok := allowed[session.AgentID]; ok {
+				filtered = append(filtered, session)
+			}
+		}
+		if err := h.hydrateChatSessionChannelMetadata(r.Context(), filtered); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
+			return
+		}
+		writeJSON(w, http.StatusOK, filtered)
+		return
+	}
 
 	// Two call sites → two row types with identical shape. Collect into a
 	// common response slice via small per-branch loops.
@@ -237,6 +273,10 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	if err := h.hydrateChatSessionChannelMetadata(r.Context(), resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -262,6 +302,56 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		return db.ChatSession{}, false
 	}
 	return session, true
+}
+
+// 2026-08-28 coder(lq): Project viewers may open a Chat session that another
+// member created when the project overlay grants them access. Keep the
+// creator-only loader above for every mutating endpoint; this read-only loader
+// is deliberately selected only by public transcript/read surfaces.
+func (h *Handler) loadChatSessionForProjectViewer(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return h.loadChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	}
+	sessionUUID, ok := parseUUIDOrBadRequest(w, sessionID, "chat session id")
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	session, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+		ID:          sessionUUID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
+	visible, err := h.chatSessionVisibleByProjectPermission(r.Context(), session.ID, workspaceUUID, parseUUID(userID), includeWorkspaceOwnedFromRequest(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat access")
+		return db.ChatSession{}, false
+	}
+	if !visible {
+		writeError(w, http.StatusForbidden, "you do not have access to this chat session")
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
+func (h *Handler) chatSessionVisibleByProjectPermission(ctx context.Context, sessionID, workspaceID, userID pgtype.UUID, includeWorkspaceOwned ...bool) (bool, error) {
+	includeOwner := true
+	if len(includeWorkspaceOwned) > 0 {
+		includeOwner = includeWorkspaceOwned[0]
+	}
+	query := fmt.Sprintf(`SELECT EXISTS (
+		SELECT 1 FROM chat_session cs
+		WHERE cs.id = $1 AND cs.workspace_id = $2 AND %s
+	)`, chatProjectVisibilityPredicateWithWorkspaceScope("cs", "$2", "$3", includeOwner))
+	var visible bool
+	err := h.DB.QueryRow(ctx, query, sessionID, workspaceID, userID).Scan(&visible)
+	return visible, err
 }
 
 // gateChatSessionForUser combines the session ownership check with the
@@ -306,6 +396,44 @@ func (h *Handler) gatePublicChatSessionForUser(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "chat session not found")
 		return db.ChatSession{}, false
 	}
+	// 2026-08-27 coder(lq): A chat session carrying project context is another
+	// task access path, so ordinary user reads must inherit project View. Empty
+	// project context remains valid for normal workspace chats.
+	if session.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(session.ProjectID), workspaceID, projectauth.View) {
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
+// gatePublicChatSessionForViewer applies the same public-message and
+// project-view checks as gatePublicChatSessionForUser, but permits a project
+// viewer (including an Agent owner) to read a session created by somebody else.
+// All write paths intentionally continue using gatePublicChatSessionForUser.
+func (h *Handler) gatePublicChatSessionForViewer(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	}
+	session, ok := h.loadChatSessionForProjectViewer(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return db.ChatSession{}, false
+	}
+	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return db.ChatSession{}, false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return db.ChatSession{}, false
+	}
+	if _, err := h.Queries.GetPublicChatSessionInWorkspace(r.Context(), db.GetPublicChatSessionInWorkspaceParams{
+		ID:          session.ID,
+		WorkspaceID: session.WorkspaceID,
+	}); err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return db.ChatSession{}, false
+	}
 	return session, true
 }
 
@@ -317,12 +445,20 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForViewer(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(session))
+	resp := chatSessionToResponse(session)
+	// hydrateChatSessionChannelMetadata mutates the slice element, so retain a
+	// concrete slice here rather than passing a temporary value to writeJSON.
+	responses := []ChatSessionResponse{resp}
+	if err := h.hydrateChatSessionChannelMetadata(r.Context(), responses); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load chat channel metadata")
+		return
+	}
+	writeJSON(w, http.StatusOK, responses[0])
 }
 
 type UpdateChatSessionRequest struct {
@@ -407,6 +543,12 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 		qtx := h.Queries.WithTx(tx)
 
 		if projectID.Valid {
+			// 2026-08-27 coder(lq): Moving a session into a project is an
+			// authorization boundary too; require the same run capability as
+			// creating a project-bound session.
+			if !h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, projectauth.AgentUse) {
+				return
+			}
 			if _, lockErr := qtx.LockProjectForChatSessionCreate(r.Context(), db.LockProjectForChatSessionCreateParams{
 				ID:          projectID,
 				WorkspaceID: session.WorkspaceID,
@@ -596,6 +738,10 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 				writeError(w, http.StatusInternalServerError, "failed to cancel queued tasks for the archived session")
 				return
 			}
+			if err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
+				return
+			}
 		case errors.Is(bindingErr, pgx.ErrNoRows):
 			// A web-only chat has no room, no adapter and nowhere for a late
 			// answer to land, so there is nothing here to protect anyone from
@@ -699,6 +845,10 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	cancelled, err := qtx.CancelAgentTasksByChatSession(r.Context(), session.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to cancel chat session tasks")
+		return
+	}
+	if err := service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to settle delegated failure recoveries")
 		return
 	}
 
@@ -866,7 +1016,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// Shared verdict: an unbound agent and a machine whose CLI cannot run are
 	// both refusals here, with their own codes. A merely offline runtime is not
 	// checked at all — chat messages queue for it, as they always have.
-	if verdict, err := service.AgentReadiness(r.Context(), h.Queries, agent); err == nil && verdict.Blocked() {
+	if verdict, err := service.AgentReadiness(r.Context(), h.runtimeLookup(obsmetrics.RuntimeLookupSourceChat), agent); err == nil && verdict.Blocked() {
 		h.writeDispatchBlocked(w, http.StatusConflict, verdict.Reason)
 		return
 	}
@@ -885,6 +1035,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
 	}
+	if session.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(session.ProjectID), workspaceID, projectauth.AgentUse) {
+		return
+	}
 
 	// Detect whether this is the very first human message in the session,
 	// BEFORE we insert the new row. This scopes LLM auto-titling (MUL-4295) to
@@ -893,8 +1046,20 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// query error here is treated as "not first" so we simply skip generation
 	// (best-effort — never block the send).
 	hadUserMessage := true
-	if existed, err := h.Queries.ChatSessionHasUserMessage(r.Context(), session.ID); err == nil {
+	if existed, err := h.Queries.ChatSessionHasPublicUserMessage(r.Context(), session.ID); err == nil {
 		hadUserMessage = existed
+	}
+	channelBacked := false
+	channelSourceKnown := true
+	if !hadUserMessage {
+		if _, err := h.Queries.GetChannelChatSessionBindingBySessionAny(r.Context(), session.ID); err == nil {
+			channelBacked = true
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			// Title generation is optional. If source authority is unavailable,
+			// skip it rather than risk treating a channel manual rename as an
+			// auto-generated fallback and overwriting it.
+			channelSourceKnown = false
+		}
 	}
 
 	// Persist the whole turn atomically (MUL-4351): the owning task, the user
@@ -921,6 +1086,11 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := sent.Message
 	task := sent.Task
+	currentTitle := session.Title
+	if sent.InitialTitle != "" {
+		currentTitle = sent.InitialTitle
+		h.ChannelChatTitleInitialized(session.WorkspaceID, session.CreatorID, session.ID, sent.InitialTitle)
+	}
 
 	// AttachmentIDs actually bound by the server. Requested-but-unbound ids are
 	// surfaced to the client so it can warn the user (see SendChatMessageResponse).
@@ -962,8 +1132,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// silently keeps the original first-message-derived title. session.Title
 	// is the default/original title observed here and drives the CAS so a
 	// manual rename mid-generation is never clobbered.
-	if !hadUserMessage {
-		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, session.Title, req.Content)
+	shouldGenerateTitle := shouldGenerateFirstMessageTitle(hadUserMessage, currentTitle, sent.InitialTitle, channelBacked, channelSourceKnown)
+	if shouldGenerateTitle {
+		h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, currentTitle, req.Content)
 	}
 
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
@@ -974,6 +1145,19 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     timestampToString(task.CreatedAt),
 		AttachmentIDs: boundAttachmentIDs,
 	})
+}
+
+func shouldGenerateFirstMessageTitle(hadUserMessage bool, currentTitle, initializedTitle string, channelBacked, channelSourceKnown bool) bool {
+	if hadUserMessage || currentTitle == "" || !channelSourceKnown {
+		return false
+	}
+	if channelBacked {
+		// For an explicitly empty /new Chat, a pre-existing non-empty title is
+		// a manual rename. Only a title initialized by this send is eligible for
+		// the best-effort LLM replacement; otherwise manual naming always wins.
+		return initializedTitle != ""
+	}
+	return true
 }
 
 type ChatMessagesCursorResponse struct {
@@ -1074,6 +1258,9 @@ func (h *Handler) RegenerateChatQuickActions(w http.ResponseWriter, r *http.Requ
 		h.writeDispatchBlocked(w, http.StatusForbidden, ReasonInvocationNotAllowed)
 		return
 	}
+	if session.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(session.ProjectID), workspaceID, projectauth.AgentUse) {
+		return
+	}
 
 	var req RegenerateChatQuickActionsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1123,7 +1310,7 @@ func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForViewer(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -1156,7 +1343,7 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.gatePublicChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gatePublicChatSessionForViewer(w, r, userID, workspaceID, sessionID)
 	if !ok {
 		return
 	}
@@ -1407,37 +1594,6 @@ func (h *Handler) ConsumeChatDraftRestore(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// pruneRuntimeSystemAgentChatDraftRestores drops the pending draft restores of
-// every chat_session a runtime teardown is about to remove through the agent
-// cascade (chat_session.agent_id is ON DELETE CASCADE, migration 033).
-// chat_draft_restore has no FK (MUL-3515) and no reaper, so a restore left
-// behind keeps the user's prompt text forever, unreachable and undeletable.
-//
-// Every runtime/agent teardown path must call this in its own transaction and
-// BEFORE deleting the agent rows — the queries join through them. Only system
-// agents are in scope: since MUL-5559 a runtime delete unbinds its user agents
-// instead of deleting them, so their sessions and restores must survive.
-//
-// The sessions are locked before the sweep: that is the deleter half of the
-// mutual-exclusion protocol with FinalizeDeferredCancelledChat, which would
-// otherwise insert a restore this sweep can no longer see (see LockChatSession*
-// in chat.sql).
-//
-// The workspace teardown has its own copy of this shape (locks, then sweeps
-// inside the DeleteWorkspace CTE) because that statement's prune must stay in
-// the same statement as the workspace row it commits with.
-func pruneRuntimeSystemAgentChatDraftRestores(ctx context.Context, q *db.Queries, runtimeID pgtype.UUID) error {
-	if _, err := q.LockChatSessionsBySystemRuntimeAgents(ctx, runtimeID); err != nil {
-		return err
-	}
-	if err := q.DeleteChatDraftRestoresBySystemRuntimeAgents(ctx, runtimeID); err != nil {
-		return err
-	}
-	// Builder drafts only ever hang off a system carrier, so they are pruned
-	// here and nowhere else — the archived-agent sweep above has none to find.
-	return q.DeleteAgentBuilderDraftsBySystemRuntimeAgents(ctx, runtimeID)
-}
-
 // PendingChatTasksResponse is the aggregate view consumed by the FAB.
 type PendingChatTasksResponse struct {
 	Tasks []PendingChatTaskItem `json:"tasks"`
@@ -1472,6 +1628,7 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -1491,12 +1648,23 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
-	})
+	var rows []db.ListPendingChatTasksByCreatorRow
+	var err error
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		rows, err = h.listPendingChatTasksWithProjectPermission(r.Context(), parseUUID(workspaceID))
+	} else {
+		rows, err = h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
+			WorkspaceID: parseUUID(workspaceID),
+			CreatorID:   parseUUID(userID),
+		})
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
+		return
+	}
+	rows, err = h.filterPendingChatTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, userID, rows, includeWorkspaceOwned)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		return
 	}
 
@@ -1542,6 +1710,7 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -1557,6 +1726,38 @@ func (h *Handler) HasPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	// No accessible agents → nothing the caller may see can be pending.
 	// Skip the round-trip and return false.
 	if len(allowed) == 0 {
+		writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: false})
+		return
+	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// The generated EXISTS query predates project context on chat sessions.
+		// Resolve the same rows as the detailed endpoint, apply project View,
+		// then reduce to a boolean so hidden project work cannot light the FAB.
+		var rows []db.ListPendingChatTasksByCreatorRow
+		var err error
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			rows, err = h.listPendingChatTasksWithProjectPermission(r.Context(), parseUUID(workspaceID))
+		} else {
+			rows, err = h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
+				WorkspaceID: parseUUID(workspaceID),
+				CreatorID:   parseUUID(userID),
+			})
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check pending chat tasks")
+			return
+		}
+		rows, err = h.filterPendingChatTasksByProjectPermissionWithWorkspaceScope(r.Context(), workspaceID, userID, rows, includeWorkspaceOwned)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		for _, row := range rows {
+			if _, ok := allowed[uuidToString(row.AgentID)]; ok {
+				writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: true})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, HasPendingChatTasksResponse{HasPending: false})
 		return
 	}
@@ -1776,6 +1977,16 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	if task.IssueID.Valid {
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: task.IssueID, WorkspaceID: wsUUID})
+		if issueErr != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueManage) {
+			return
+		}
+	}
 
 	var (
 		queuedOnly      bool
@@ -1818,6 +2029,12 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if uuidToString(cs.CreatorID) != userID {
 			writeError(w, http.StatusForbidden, "not your task")
+			return
+		}
+		// 2026-08-27 coder(lq): Cancelling a project-bound task mutates agent
+		// work, so project View alone is insufficient; use the same issue/task
+		// management capability as issue-backed task cancellation.
+		if cs.ProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(cs.ProjectID), workspaceID, projectauth.IssueManage) {
 			return
 		}
 	} else {
@@ -1896,9 +2113,50 @@ type ChatSessionResponse struct {
 	LastMessage *ChatLastMessage `json:"last_message"`
 	// Pinned marks a chat the user has stuck to the top of the list. Populated
 	// by list endpoints and by the pin/unpin + single-session responses.
-	Pinned    bool   `json:"pinned"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Pinned bool `json:"pinned"`
+	// ChannelSource is present only for Chats created from an external channel.
+	// IsCurrentChannelRoute distinguishes the active route generation from an
+	// older Chat that remains readable and writable in Multica.
+	ChannelSource         *ChatSessionChannelSourceResponse `json:"channel_source,omitempty"`
+	IsCurrentChannelRoute *bool                             `json:"is_current_channel_route,omitempty"`
+	CreatedAt             string                            `json:"created_at"`
+	UpdatedAt             string                            `json:"updated_at"`
+}
+
+type ChatSessionChannelSourceResponse struct {
+	ChannelType    string `json:"channel_type"`
+	InstallationID string `json:"installation_id"`
+	RouteRevision  int64  `json:"route_revision"`
+}
+
+func (h *Handler) hydrateChatSessionChannelMetadata(ctx context.Context, sessions []ChatSessionResponse) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(sessions))
+	for _, session := range sessions {
+		ids = append(ids, parseUUID(session.ID))
+	}
+	bindings, err := h.Queries.ListChannelChatSessionBindingsBySessions(ctx, ids)
+	if err != nil {
+		return err
+	}
+	bySession := make(map[string]db.ChannelChatSessionBinding, len(bindings))
+	for _, binding := range bindings {
+		bySession[uuidToString(binding.ChatSessionID)] = binding
+	}
+	for i := range sessions {
+		binding, ok := bySession[sessions[i].ID]
+		if !ok {
+			continue
+		}
+		current := !binding.RetiredAt.Valid
+		sessions[i].ChannelSource = &ChatSessionChannelSourceResponse{
+			ChannelType: binding.ChannelType, InstallationID: uuidToString(binding.InstallationID), RouteRevision: binding.RouteRevision,
+		}
+		sessions[i].IsCurrentChannelRoute = &current
+	}
+	return nil
 }
 
 // ChatLastMessage is a preview of a session's most recent message, used to

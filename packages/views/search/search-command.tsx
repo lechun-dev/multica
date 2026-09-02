@@ -47,6 +47,7 @@ import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { StatusIcon } from "../issues/components";
 import { resolvedThreadRootIds, rootCommentIds } from "../issues/components/thread-utils";
 import { ProjectIcon } from "../projects/components/project-icon";
+import { useProjectStatusLabels } from "../projects/components/labels";
 import { routeIconForPath } from "../layout/route-icon-components";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { ProjectStatus } from "@multica/core/types";
@@ -72,6 +73,7 @@ import { useT } from "../i18n";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { HighlightText } from "./highlight-text";
 import { useSearchStore } from "./search-store";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 // The palette's Pages group is generated from WORKSPACE_PAGES, the same
 // registry the sidebar nav and the desktop tab bar read. It used to be a
@@ -184,6 +186,9 @@ function ProjectResultRow({
   disabled?: boolean;
   onSelect: (value: string) => void;
 }) {
+  const projectStatusLabels = useProjectStatusLabels();
+  const status = project.status as ProjectStatus;
+
   return (
     <CommandPrimitive.Item
       key={`project:${project.id}`}
@@ -198,9 +203,9 @@ function ProjectResultRow({
           <HighlightText text={project.title} query={query} />
         </span>
         <span
-          className={`ml-auto text-caption shrink-0 ${PROJECT_STATUS_CONFIG[project.status as ProjectStatus]?.color ?? "text-muted-foreground"}`}
+          className={`ml-auto text-caption shrink-0 ${PROJECT_STATUS_CONFIG[status]?.color ?? "text-muted-foreground"}`}
         >
-          {PROJECT_STATUS_CONFIG[project.status as ProjectStatus]?.label ?? project.status}
+          {projectStatusLabels[status] ?? project.status}
         </span>
       </div>
       {project.match_source === "description" && project.matched_snippet && (
@@ -340,6 +345,8 @@ export function SearchCommand() {
     return intent;
   }, []);
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const recentItems = useRecentIssuesStore(selectRecentIssues(wsId));
   const p: WorkspacePaths = useWorkspacePaths();
   const { theme, setTheme } = useTheme();
@@ -355,7 +362,12 @@ export function SearchCommand() {
   // detail requests on every cold app load for a surface the user may never
   // open.
   const recentDetailQueries = useQueries({
-    queries: open ? recentItems.map((item) => issueDetailOptions(wsId, item.id)) : [],
+    queries: open
+      ? recentItems.map((item) => ({
+          ...issueDetailOptions(wsId, item.id, includeWorkspaceOwned),
+          enabled: visibilityReady,
+        }))
+      : [],
   });
   const recentIssues = useMemo(
     () =>
@@ -383,8 +395,8 @@ export function SearchCommand() {
     return raw ? decodeURIComponent(raw) : null;
   }, [pathname]);
   const { data: currentIssue = null } = useQuery({
-    ...issueDetailOptions(wsId, currentIssueId ?? ""),
-    enabled: !!currentIssueId,
+    ...issueDetailOptions(wsId, currentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!currentIssueId,
   });
   const queryClient = useQueryClient();
 
@@ -614,7 +626,7 @@ export function SearchCommand() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (abortRef.current) abortRef.current.abort();
 
-    if (!q.trim()) {
+    if (!q.trim() || !visibilityReady) {
       setResults(NO_RESULTS);
       setIsLoading(false);
       return;
@@ -630,6 +642,7 @@ export function SearchCommand() {
             q: q.trim(),
             limit: 20,
             include_closed: true,
+            include_workspace_owned: includeWorkspaceOwned,
             signal: controller.signal,
           }),
           api.searchProjects({
@@ -657,7 +670,7 @@ export function SearchCommand() {
         }
       }
     }, 300);
-  }, []);
+  }, [includeWorkspaceOwned, visibilityReady]);
 
   const handleValueChange = useCallback(
     (value: string) => {

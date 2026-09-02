@@ -4,17 +4,20 @@ import type { InboxItem, InboxWorkspaceUnread } from "../types";
 
 export const inboxKeys = {
   all: (wsId: string) => ["inbox", wsId] as const,
-  list: (wsId: string) => [...inboxKeys.all(wsId), "list"] as const,
-  archived: (wsId: string) => [...inboxKeys.all(wsId), "archived"] as const,
+  list: (wsId: string, includeWorkspaceOwned = true) =>
+    [...inboxKeys.all(wsId), "list", { includeWorkspaceOwned }] as const,
+  archived: (wsId: string, includeWorkspaceOwned = true) =>
+    [...inboxKeys.all(wsId), "archived", { includeWorkspaceOwned }] as const,
   // Account-level (not workspace-scoped): a single shared cache entry that
   // holds unread counts for every workspace the user belongs to.
-  unreadSummary: () => ["inbox", "unread-summary"] as const,
+  unreadSummary: (includeWorkspaceOwned = true) =>
+    ["inbox", "unread-summary", { includeWorkspaceOwned }] as const,
 };
 
-export function inboxListOptions(wsId: string) {
+export function inboxListOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: inboxKeys.list(wsId),
-    queryFn: () => api.listInbox(),
+    queryKey: inboxKeys.list(wsId, includeWorkspaceOwned),
+    queryFn: () => api.listInbox(includeWorkspaceOwned),
   });
 }
 
@@ -25,10 +28,10 @@ export function inboxListOptions(wsId: string) {
  * from its own capped endpoint, and the server — not the client — decides
  * which issues belong in which list.
  */
-export function archivedInboxListOptions(wsId: string) {
+export function archivedInboxListOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: inboxKeys.archived(wsId),
-    queryFn: () => api.listArchivedInbox(),
+    queryKey: inboxKeys.archived(wsId, includeWorkspaceOwned),
+    queryFn: () => api.listArchivedInbox(includeWorkspaceOwned),
   });
 }
 
@@ -37,10 +40,10 @@ export function archivedInboxListOptions(wsId: string) {
  * workspaces — the data is account-level, so switching workspaces does not
  * refetch it; only the derived "is this for another workspace" view changes.
  */
-export function inboxUnreadSummaryOptions() {
+export function inboxUnreadSummaryOptions(includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: inboxKeys.unreadSummary(),
-    queryFn: () => api.getInboxUnreadSummary(),
+    queryKey: inboxKeys.unreadSummary(includeWorkspaceOwned),
+    queryFn: () => api.getInboxUnreadSummary(includeWorkspaceOwned),
   });
 }
 
@@ -72,11 +75,15 @@ export function unreadWorkspaceIds(summary: InboxWorkspaceUnread[]): Set<string>
  * list UI renders: archived items excluded, then deduplicated by issue so a
  * single issue with three unread notifications counts once.
  */
-export function useInboxUnreadCount(wsId: string | null | undefined): number {
+export function useInboxUnreadCount(
+  wsId: string | null | undefined,
+  includeWorkspaceOwned = true,
+  ready = true,
+): number {
   const { data } = useQuery({
-    queryKey: inboxKeys.list(wsId ?? ""),
-    queryFn: () => api.listInbox(),
-    enabled: !!wsId,
+    queryKey: inboxKeys.list(wsId ?? "", includeWorkspaceOwned),
+    queryFn: () => api.listInbox(includeWorkspaceOwned),
+    enabled: !!wsId && ready,
     select: (items: InboxItem[]) =>
       deduplicateInboxItems(items).filter((i) => !i.read).length,
   });

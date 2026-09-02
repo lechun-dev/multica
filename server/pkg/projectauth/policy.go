@@ -1,22 +1,45 @@
 package projectauth
 
-// 2026-08-24 coder(lq): Map project roles to permissions. Workspace owners and admins are
-// handled as an explicit bypass in Service.Check, preserving native semantics.
+// 2026-08-27 coder(lq): Map project roles to permissions. Service.Check keeps
+// native workspace-owner semantics and excludes membership management from
+// the otherwise-preserved workspace-admin bypass.
 type Policy struct {
 	roles map[ProjectRole]map[Permission]bool
+}
+
+var systemRoleNames = map[ProjectRole]string{
+	ProjectOwner:   "Owner",
+	ProjectManager: "Manager",
+	ProjectMember:  "Member",
+	ProjectViewer:  "Viewer",
+}
+
+func SystemRoleDefinitions() []RoleDefinition {
+	policy := DefaultPolicy()
+	roles := make([]RoleDefinition, 0, len(systemRoleNames))
+	for _, role := range []ProjectRole{ProjectOwner, ProjectManager, ProjectMember, ProjectViewer} {
+		permissions := make([]Permission, 0)
+		for permission, allowed := range policy.roles[role] {
+			if allowed {
+				permissions = append(permissions, permission)
+			}
+		}
+		roles = append(roles, RoleDefinition{Key: role, Name: systemRoleNames[role], IsSystem: true, Permissions: permissions})
+	}
+	return roles
 }
 
 func DefaultPolicy() Policy {
 	return Policy{roles: map[ProjectRole]map[Permission]bool{
 		ProjectOwner: {
-			View: true, Edit: true, IssueCreate: true, IssueManage: true,
-			AgentUse: true, MemberManage: true, SettingsManage: true,
+			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
+			IssueArchive: true, AgentUse: true, MemberManage: true, SettingsManage: true,
 		},
 		ProjectManager: {
-			View: true, Edit: true, IssueCreate: true, IssueManage: true,
-			AgentUse: true,
+			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
+			IssueArchive: true, AgentUse: true,
 		},
-		ProjectMember: {View: true, IssueCreate: true, AgentUse: true},
+		ProjectMember: {View: true, IssueCreate: true, IssueComment: true, AgentUse: true},
 		ProjectViewer: {View: true},
 	}}
 }
@@ -33,3 +56,5 @@ func validProjectRole(role ProjectRole) bool {
 		return false
 	}
 }
+
+func IsSystemRole(role ProjectRole) bool { return validProjectRole(role) }

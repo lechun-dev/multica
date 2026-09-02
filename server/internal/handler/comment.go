@@ -17,10 +17,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -1600,6 +1602,10 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if issueArchiveSuppressesAgentTriggers(issue) {
+		writeJSON(w, http.StatusOK, CommentTriggerPreviewResponse{Agents: []CommentTriggerAgentResponse{}})
+		return
+	}
 
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -1713,6 +1719,11 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
+		return
+	}
+	// 2026-09-02 coder(lq): Commenting is a dedicated task-conversation
+	// permission; members may write comments without project edit access.
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
 		return
 	}
 
@@ -1884,7 +1895,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	created, err := h.createCommentWithProjectAccess(r.Context(), issue, db.CreateCommentParams{
 		ID:           dbid.NewV7(),
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
@@ -1981,7 +1992,7 @@ func isNoteComment(content string) bool {
 // deferred / blocked from enqueue. UI-suppressed triggers (the user unchecked
 // them) are removed before enqueue and produce no outcome.
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID, delegationAuthorityUserID string, suppressAgentIDs []pgtype.UUID) []CommentTriggerOutcome {
-	if isNoteComment(comment.Content) {
+	if issueArchiveSuppressesAgentTriggers(issue) || isNoteComment(comment.Content) {
 		return nil
 	}
 	triggers, targets := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
@@ -3135,7 +3146,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 				continue
 			}
 			// Same shared verdict as the direct-agent branch below.
-			if verdict, err := service.AgentReadiness(ctx, h.Queries, agent); err == nil && verdict.Blocked() {
+			if verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceComment), agent); err == nil && verdict.Blocked() {
 				blockUnusableTarget("squad", m.ID, agent, verdict)
 				continue
 			}
@@ -3194,7 +3205,7 @@ func (h *Handler) resolveMentionedAgentCommentTriggers(ctx context.Context, issu
 		// will not start doing so on its own (MUL-6164). A merely offline
 		// runtime keeps queueing — that wait ends by itself when the machine
 		// returns, and taking it away would remove a behaviour people rely on.
-		if verdict, err := service.AgentReadiness(ctx, h.Queries, agent); err == nil && verdict.Blocked() {
+		if verdict, err := service.AgentReadiness(ctx, h.runtimeLookup(obsmetrics.RuntimeLookupSourceComment), agent); err == nil && verdict.Blocked() {
 			blockUnusableTarget("agent", m.ID, agent, verdict)
 			continue
 		}
@@ -3233,6 +3244,13 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "comment not found")
+		return
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: existing.IssueID, WorkspaceID: existing.WorkspaceID})
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "comment not found")
+		}
 		return
 	}
 
@@ -3357,7 +3375,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
-	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit)
+	// 2026-08-28 coder(lq): Mentions in comments are task-scoped grants.
+	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid
+	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit) || promoteMentionAccess
 	if transactionalEdit {
 		// Strict body edits, attachment-set edits, and cancellation of tasks built
 		// from the old body are one database outcome. UpdateComment takes the row
@@ -3379,6 +3399,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil && oldContent != req.Content && strictContentEdit {
 			cancelled, err = qtx.CancelAgentTasksByTriggerComment(r.Context(), existing.ID)
+			if err == nil {
+				err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...)
+			}
 		}
 		if err == nil && replaceAttachments {
 			var changed int64
@@ -3393,6 +3416,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 					WorkspaceID: existing.WorkspaceID,
 				})
 			}
+		}
+		if err == nil && promoteMentionAccess {
+			err = promoteIssueMentionedMembersWithExecutor(r.Context(), tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), req.Content)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
@@ -3502,6 +3528,13 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "comment not found")
 		return
 	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "comment not found")
+		}
+		return
+	}
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -3515,7 +3548,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "only comment author or admin can delete")
 		return
 	}
-	issue, err := h.Queries.GetIssue(r.Context(), comment.IssueID)
+	issue, err = h.Queries.GetIssue(r.Context(), comment.IssueID)
 	hasIssue := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Warn("load issue for delete post-processing failed", "issue_id", uuidToString(comment.IssueID), "error", err)
@@ -3721,6 +3754,13 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	comment, workspaceID, actorType, actorID, ok := h.loadCommentForActor(w, r)
 	if !ok {
+		return
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
+	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "comment not found")
+		}
 		return
 	}
 	wasResolved := comment.ResolvedAt.Valid

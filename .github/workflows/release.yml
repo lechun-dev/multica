@@ -20,7 +20,7 @@ jobs:
       is_stable: ${{ steps.release_meta.outputs.is_stable }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -46,7 +46,7 @@ jobs:
           fi
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           # Deliberately independent from the minimum patch in server/go.mod:
           # releases follow the newest 1.26 patch available to setup-go.
@@ -76,21 +76,21 @@ jobs:
 
   release:
     needs: verify
-    # Only run on the canonical upstream repo. Forks don't have the
+    # Only run on the canonical MissionOS repo. Forks don't have the
     # HOMEBREW_TAP_GITHUB_TOKEN secret and should not be publishing to
     # `multica-ai/homebrew-tap` anyway. Without this guard, every fork's
     # tag push fails this job (401 against the upstream tap), which makes
     # downstream CI go red without affecting the actual artifact pipeline.
-    if: github.repository_owner == 'multica-ai'
+    if: github.repository_owner == 'lechun-dev'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           # Deliberately independent from the minimum patch in server/go.mod:
           # releases follow the newest 1.26 patch available to setup-go.
@@ -132,7 +132,7 @@ jobs:
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Compute backend image labels
         id: meta
@@ -155,7 +155,7 @@ jobs:
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -249,7 +249,7 @@ jobs:
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Compute web image labels
         id: meta
@@ -272,7 +272,7 @@ jobs:
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.web
@@ -284,6 +284,7 @@ jobs:
           build-args: |
             REMOTE_API_URL=http://backend:8080
             NEXT_PUBLIC_APP_VERSION=${{ needs.verify.outputs.tag_name }}
+            NEXT_PUBLIC_PRODUCT_NAME=MissionOS
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/multica-web,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -360,7 +361,7 @@ jobs:
       OCI_REGISTRY: oci://ghcr.io/${{ github.repository_owner }}/charts
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
@@ -407,7 +408,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -416,7 +417,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           # Deliberately independent from the minimum patch in server/go.mod:
           # releases follow the newest 1.26 patch available to setup-go.
@@ -431,7 +432,7 @@ jobs:
         uses: pnpm/action-setup@v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -441,6 +442,7 @@ jobs:
 
       - name: Package Desktop installers (${{ matrix.target }})
         working-directory: apps/desktop
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # electron-builder's GitHub publisher reads this:
@@ -450,4 +452,14 @@ jobs:
           # trust boundary. Set CSC_LINK in repo secrets to enable
           # Windows signing later.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: node scripts/package.mjs --${{ matrix.target }} --x64 --arm64 --publish always
+        run: |
+          set -euo pipefail
+          # 2026-09-02 coder(lq): Prerelease tags must ship desktop builds
+          # that talk to the staging backend/web pair, otherwise testers land
+          # on the production self-host by accident.
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            export VITE_API_URL="https://multica-api.copilothub.ai"
+            export VITE_WS_URL="wss://multica-api.copilothub.ai/ws"
+            export VITE_APP_URL="https://multica-app.copilothub.ai"
+          fi
+          node scripts/package.mjs --${{ matrix.target }} --x64 --arm64 --publish always
