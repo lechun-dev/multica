@@ -153,6 +153,11 @@ var ErrActiveDuplicate = errors.New("active duplicate issue exists")
 // their transport's 400 / Lark card error.
 var ErrParentIssueNotFound = errors.New("parent issue not found in this workspace")
 
+// ErrArchivedParentIssue prevents new children from being attached to an
+// archived task. Archived tasks are structurally frozen, while their existing
+// children remain available for history and comments.
+var ErrArchivedParentIssue = errors.New("cannot create a child issue under an archived parent")
+
 // ErrProjectNotFound signals that the supplied ProjectID does not exist
 // in the issue's workspace. Cross-workspace project IDs are rejected
 // here so every create entry (HTTP `POST /issues`, Lark `/issue`, future
@@ -287,6 +292,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		})
 		if err != nil || !parent.ID.Valid {
 			return IssueCreateResult{}, ErrParentIssueNotFound
+		}
+		if parent.ArchivedAt.Valid {
+			return IssueCreateResult{}, ErrArchivedParentIssue
 		}
 		// Back-fill project from parent when the caller did not pin
 		// one explicitly. Matches the long-standing HTTP behavior: a

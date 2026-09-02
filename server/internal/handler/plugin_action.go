@@ -454,6 +454,10 @@ func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 		BeforeCommit:     h.issueAccessBeforeCommit(),
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrArchivedIssue) {
+			publicapiv1.WriteProblem(w, r, http.StatusConflict, "archived_issue", "archived task cannot be modified; restore it first")
+			return
+		}
 		if errors.Is(err, service.ErrIssueRevisionConflict) {
 			writePublicIssueRevisionConflict(w, r)
 			return

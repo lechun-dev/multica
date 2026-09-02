@@ -15,6 +15,63 @@ import {
   updateChannelForTarget,
 } from "./package.mjs";
 import { stripForwardedSeparator } from "./package-lechun.mjs";
+import {
+  applyReleaseRuntimeConfig,
+  isPrereleaseTag,
+  resolveReleaseRuntimeConfig,
+} from "./release-runtime-config.mjs";
+
+describe("release runtime config", () => {
+  it("recognizes semver prerelease tags only", () => {
+    expect(isPrereleaseTag("v0.4.71-beta.6")).toBe(true);
+    expect(isPrereleaseTag("v0.4.71")).toBe(false);
+    expect(isPrereleaseTag("release-beta.6")).toBe(false);
+  });
+
+  it("uses the private staging deployment for prerelease builds", () => {
+    expect(resolveReleaseRuntimeConfig("v0.4.71-beta.6", {})).toEqual({
+      apiUrl: "https://mission-staging.lechun.cc",
+      wsUrl: "wss://mission-staging.lechun.cc/ws",
+      appUrl: "https://mission-staging.lechun.cc",
+    });
+  });
+
+  it("allows GitHub variables to override the staging deployment", () => {
+    expect(
+      resolveReleaseRuntimeConfig("v0.4.71-rc.1", {
+        STAGING_API_URL: "https://api.preview.lechun.cc/",
+        STAGING_WS_URL: "wss://api.preview.lechun.cc/ws/",
+        STAGING_APP_URL: "https://preview.lechun.cc/",
+      }),
+    ).toEqual({
+      apiUrl: "https://api.preview.lechun.cc",
+      wsUrl: "wss://api.preview.lechun.cc/ws",
+      appUrl: "https://preview.lechun.cc",
+    });
+  });
+
+  it("blocks official infrastructure in Lechun prerelease builds", () => {
+    expect(() =>
+      resolveReleaseRuntimeConfig("v0.4.71-beta.6", {
+        STAGING_API_URL: "https://multica-api.copilothub.ai",
+      }),
+    ).toThrow(/must not point a Lechun prerelease/);
+  });
+
+  it("injects prerelease Vite values without changing stable builds", () => {
+    const prereleaseEnv = { RELEASE_TAG: "v0.4.71-beta.6" };
+    applyReleaseRuntimeConfig(prereleaseEnv);
+    expect(prereleaseEnv).toMatchObject({
+      VITE_API_URL: "https://mission-staging.lechun.cc",
+      VITE_WS_URL: "wss://mission-staging.lechun.cc/ws",
+      VITE_APP_URL: "https://mission-staging.lechun.cc",
+    });
+
+    const stableEnv = { RELEASE_TAG: "v0.4.71" };
+    expect(applyReleaseRuntimeConfig(stableEnv)).toBeNull();
+    expect(stableEnv).toEqual({ RELEASE_TAG: "v0.4.71" });
+  });
+});
 
 describe("stripForwardedSeparator (Lechun wrapper)", () => {
   it("removes pnpm's leading separator before config injection", () => {

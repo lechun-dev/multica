@@ -518,7 +518,8 @@ func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID,
 	  AND i.recipient_id = $2
 	  AND i.read = false
 	  AND i.archived = false
-	  AND (i.issue_id IS NULL OR %s)`, issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+	  AND %s
+	  AND (i.issue_id IS NULL OR %s)`, inboxIssueNotArchivedPredicate("i"), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		query = fmt.Sprintf(`SELECT COUNT(*)::bigint
 		FROM inbox_item i
@@ -527,8 +528,9 @@ func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID,
 		  AND i.recipient_id = $2
 		  AND i.read = false
 		  AND i.archived = false
-			  AND %s
-		  AND (i.issue_id IS NULL OR %s)`, inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
+		  AND %s
+		  AND %s
+		  AND (i.issue_id IS NULL OR %s)`, inboxIssueNotArchivedPredicate("i"), inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
 	}
 	var count int64
 	err := h.DB.QueryRow(ctx, query, workspaceID, recipientID, policy.limit).Scan(&count)
@@ -546,7 +548,8 @@ func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, 
 		  AND i.recipient_id = $2
 		  AND i.read = false
 		  AND i.archived = false
-		  AND %s`, inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned))
+		  AND %s
+		  AND %s`, inboxIssueNotArchivedPredicate("i"), inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned))
 	var count int64
 	err := h.DB.QueryRow(ctx, query, workspaceID, recipientID).Scan(&count)
 	return count, err
@@ -577,11 +580,12 @@ func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientI
 			  AND i.recipient_type = 'member'
 			  AND i.recipient_id = $3
 			  AND i.archived = false
+			  AND %s
 			  AND (i.issue_id IS NULL OR %s)%s
 			ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC
 		) newest
 		WHERE newest.read = false
-	) filtered`, issueWindowIDPredicate("i.issue_id", "policy.workspace_id", "policy.issue_limit"), visibility)
+	) filtered`, inboxIssueNotArchivedPredicate("i"), issueWindowIDPredicate("i.issue_id", "policy.workspace_id", "policy.issue_limit"), visibility)
 	rows, err := h.DB.Query(ctx, query, workspaceIDs, limits, recipientID)
 	if err != nil {
 		return nil, err
@@ -613,10 +617,11 @@ func (h *Handler) unreadInboxCountsWithinProjectPermissions(ctx context.Context,
 			  AND i.recipient_id = $1
 			  AND i.archived = false
 			  AND %s
+			  AND %s
 			ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
 		) newest
 		WHERE newest.read = false
-		GROUP BY newest.workspace_id`, inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "i.workspace_id", "$1", includeWorkspaceOwned))
+		GROUP BY newest.workspace_id`, inboxIssueNotArchivedPredicate("i"), inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "i.workspace_id", "$1", includeWorkspaceOwned))
 	rows, err := h.DB.Query(ctx, query, recipientID)
 	if err != nil {
 		return nil, err

@@ -10,8 +10,12 @@ import {
 } from "./runtime-config";
 
 describe("runtime config", () => {
-  it("recognizes only the official cloud API as a public update source", () => {
+  it("recognizes only approved release servers as update sources", () => {
     expect(isOfficialCloudServerUrl("https://api.multica.ai")).toBe(true);
+    expect(isOfficialCloudServerUrl("https://mission.lechun.cc")).toBe(true);
+    expect(
+      isOfficialCloudServerUrl("https://mission-staging.lechun.cc"),
+    ).toBe(true);
     expect(isOfficialCloudServerUrl("https://api.multica.ai.evil.example")).toBe(
       false,
     );

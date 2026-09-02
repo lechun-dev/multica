@@ -1915,7 +1915,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Link uploaded attachments to this comment.
 	if len(attachmentIDs) > 0 {
-		h.linkAttachmentsByIDs(r.Context(), comment.ID, issue.ID, attachmentIDs)
+		h.linkAttachmentsByIDs(r.Context(), comment.ID, issue.ID, issue.WorkspaceID, authorType, parseUUID(authorID), attachmentIDs)
 	}
 
 	// Fetch linked attachments so the response includes them.
@@ -3409,6 +3409,9 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 				CommentID:     comment.ID,
 				IssueID:       existing.IssueID,
 				AttachmentIds: attachmentIDs,
+				WorkspaceID:   existing.WorkspaceID,
+				UploaderType:  actorType,
+				UploaderID:    parseUUID(actorID),
 			})
 			if err == nil && changed > 0 && oldContent == req.Content {
 				comment, err = qtx.BumpCommentRevision(r.Context(), db.BumpCommentRevisionParams{

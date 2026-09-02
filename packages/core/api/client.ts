@@ -3225,7 +3225,13 @@ export class ApiClient {
   // File Upload & Attachments
   async uploadFile(
     file: File,
-    opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
+    opts?: {
+      issueId?: string;
+      commentId?: string;
+      chatSessionId?: string;
+      /** Keep the upload temporary until a new comment is created. */
+      commentDraft?: boolean;
+    },
     // Optional abort signal so a module-level upload coordinator (MUL-5181)
     // can cancel an in-flight upload on logout. When aborted, `fetch` rejects
     // with an AbortError, which the coordinator distinguishes from a real
@@ -3237,6 +3243,7 @@ export class ApiClient {
     if (opts?.issueId) formData.append("issue_id", opts.issueId);
     if (opts?.commentId) formData.append("comment_id", opts.commentId);
     if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
+    if (opts?.commentDraft) formData.append("comment_draft", "true");
 
     const rid = createRequestId();
     const start = Date.now();

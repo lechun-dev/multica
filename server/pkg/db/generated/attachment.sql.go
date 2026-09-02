@@ -81,13 +81,21 @@ func (q *Queries) CountUnboundChatAttachmentsForTask(ctx context.Context, arg Co
 const createAttachment = `-- name: CreateAttachment :one
 WITH inserted AS (
   INSERT INTO attachment (
-    id, workspace_id, issue_id, comment_id, chat_session_id, task_id, source_context_id,
+    id, workspace_id, issue_id, comment_id, chat_session_id, task_id, source_context_id, pending_comment,
     uploader_type, uploader_id, filename, url, content_type, size_bytes
   )
-  VALUES (
-    $1, $2, $9, $10, $11, $12, $13,
+  SELECT
+    $1, $2, $9, $10, $11, $12, $13, $14,
     $3, $4, $5, $6, $7, $8
-  )
+  WHERE $10::uuid IS NOT NULL
+  OR ($14::boolean AND $10::uuid IS NULL)
+  OR $9::uuid IS NULL
+     OR EXISTS (
+          SELECT 1 FROM issue
+          WHERE issue.id = $9::uuid
+            AND issue.workspace_id = $2
+            AND issue.archived_at IS NULL
+        )
   RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id
 ), bumped_issue AS (
   UPDATE issue
@@ -120,6 +128,7 @@ type CreateAttachmentParams struct {
 	ChatSessionID   pgtype.UUID `json:"chat_session_id"`
 	TaskID          pgtype.UUID `json:"task_id"`
 	SourceContextID pgtype.UUID `json:"source_context_id"`
+	PendingComment  bool        `json:"pending_comment"`
 }
 
 type CreateAttachmentRow struct {
@@ -157,6 +166,7 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		arg.ChatSessionID,
 		arg.TaskID,
 		arg.SourceContextID,
+		arg.PendingComment,
 	)
 	var i CreateAttachmentRow
 	err := row.Scan(
@@ -243,6 +253,17 @@ WITH deleted AS (
   DELETE FROM attachment
   WHERE attachment.id = $1 AND attachment.workspace_id = $2
     AND attachment.source_context_id IS NULL
+    AND (
+      attachment.comment_id IS NOT NULL
+      OR attachment.pending_comment = TRUE
+      OR attachment.issue_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM issue
+        WHERE issue.id = attachment.issue_id
+          AND issue.workspace_id = attachment.workspace_id
+          AND issue.archived_at IS NULL
+      )
+    )
   RETURNING issue_id, comment_id
 ), bumped_issue AS (
   UPDATE issue
@@ -392,6 +413,23 @@ SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filen
 WHERE id = $1 AND workspace_id = $2
 `
 
+const isAttachmentPendingComment = `-- name: IsAttachmentPendingComment :one
+SELECT pending_comment FROM attachment
+WHERE id = $1 AND workspace_id = $2
+`
+
+type IsAttachmentPendingCommentParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) IsAttachmentPendingComment(ctx context.Context, arg IsAttachmentPendingCommentParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isAttachmentPendingComment, arg.ID, arg.WorkspaceID)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
 type GetAttachmentParams struct {
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
@@ -511,21 +549,28 @@ func (q *Queries) LinkAttachmentsToChatMessage(ctx context.Context, arg LinkAtta
 
 const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :exec
 UPDATE attachment
-SET comment_id = $1
+SET comment_id = $1,
+    pending_comment = FALSE
 WHERE issue_id = $2
   AND comment_id IS NULL
+  AND workspace_id = $4
+  AND uploader_type = $5
+  AND uploader_id = $6
   AND source_context_id IS NULL
   AND id = ANY($3::uuid[])
 `
 
 type LinkAttachmentsToCommentParams struct {
-	CommentID pgtype.UUID   `json:"comment_id"`
-	IssueID   pgtype.UUID   `json:"issue_id"`
-	Column3   []pgtype.UUID `json:"column_3"`
+	CommentID     pgtype.UUID   `json:"comment_id"`
+	IssueID       pgtype.UUID   `json:"issue_id"`
+	AttachmentIds []pgtype.UUID `json:"attachment_ids"`
+	WorkspaceID   pgtype.UUID   `json:"workspace_id"`
+	UploaderType  string        `json:"uploader_type"`
+	UploaderID    pgtype.UUID   `json:"uploader_id"`
 }
 
 func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachmentsToCommentParams) error {
-	_, err := q.db.Exec(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.Column3)
+	_, err := q.db.Exec(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.AttachmentIds, arg.WorkspaceID, arg.UploaderType, arg.UploaderID)
 	return err
 }
 
@@ -535,8 +580,15 @@ WITH linked AS (
   SET issue_id = $1
   WHERE attachment.workspace_id = $2
     AND attachment.issue_id IS NULL
+    AND attachment.pending_comment = FALSE
     AND attachment.source_context_id IS NULL
     AND attachment.id = ANY($3::uuid[])
+    AND EXISTS (
+      SELECT 1 FROM issue
+      WHERE issue.id = $1
+        AND issue.workspace_id = $2
+        AND issue.archived_at IS NULL
+    )
   RETURNING attachment.issue_id
 ), bumped_issue AS (
   UPDATE issue
@@ -603,8 +655,9 @@ func (q *Queries) ListAttachmentURLsByCommentID(ctx context.Context, commentID p
 
 const listAttachmentURLsByIssueOrComments = `-- name: ListAttachmentURLsByIssueOrComments :many
 SELECT a.url FROM attachment a
-WHERE a.issue_id = $1
-   OR a.comment_id IN (SELECT c.id FROM comment c WHERE c.issue_id = $1)
+WHERE a.pending_comment = FALSE
+  AND (a.issue_id = $1
+   OR a.comment_id IN (SELECT c.id FROM comment c WHERE c.issue_id = $1))
 `
 
 func (q *Queries) ListAttachmentURLsByIssueOrComments(ctx context.Context, issueID pgtype.UUID) ([]string, error) {
@@ -864,7 +917,7 @@ func (q *Queries) ListAttachmentsByIDs(ctx context.Context, arg ListAttachmentsB
 
 const listAttachmentsByIssue = `-- name: ListAttachmentsByIssue :many
 SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
-WHERE issue_id = $1 AND workspace_id = $2
+WHERE issue_id = $1 AND workspace_id = $2 AND pending_comment = FALSE
 ORDER BY created_at ASC
 `
 
@@ -957,6 +1010,79 @@ func (q *Queries) ListAttachmentsBySourceContext(ctx context.Context, arg ListAt
 	return items, nil
 }
 
+const listStaleCommentAttachmentDrafts = `-- name: ListStaleCommentAttachmentDrafts :many
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+WHERE pending_comment = TRUE
+  AND comment_id IS NULL
+  AND source_context_id IS NULL
+  AND created_at <= $1
+ORDER BY created_at ASC, id ASC
+LIMIT $2
+`
+
+type ListStaleCommentAttachmentDraftsParams struct {
+	CreatedBefore pgtype.Timestamptz `json:"created_before"`
+	RowLimit      int32              `json:"row_limit"`
+}
+
+func (q *Queries) ListStaleCommentAttachmentDrafts(ctx context.Context, arg ListStaleCommentAttachmentDraftsParams) ([]Attachment, error) {
+	rows, err := q.db.Query(ctx, listStaleCommentAttachmentDrafts, arg.CreatedBefore, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Attachment{}
+	for rows.Next() {
+		var i Attachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IssueID,
+			&i.CommentID,
+			&i.UploaderType,
+			&i.UploaderID,
+			&i.Filename,
+			&i.Url,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.ChatSessionID,
+			&i.ChatMessageID,
+			&i.TaskID,
+			&i.SourceContextID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteCommentAttachmentDraft = `-- name: DeleteCommentAttachmentDraft :execrows
+DELETE FROM attachment
+WHERE id = $1
+  AND workspace_id = $2
+  AND pending_comment = TRUE
+  AND comment_id IS NULL
+  AND source_context_id IS NULL
+`
+
+type DeleteCommentAttachmentDraftParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteCommentAttachmentDraft(ctx context.Context, arg DeleteCommentAttachmentDraftParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCommentAttachmentDraft, arg.ID, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listSourceContextAttachmentURLsByWorkspace = `-- name: ListSourceContextAttachmentURLsByWorkspace :many
 SELECT url FROM attachment
 WHERE workspace_id = $1
@@ -989,6 +1115,7 @@ SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filen
 WHERE workspace_id = $1
   AND issue_id = $2
   AND comment_id = ANY($3::uuid[])
+  AND pending_comment = FALSE
   AND source_context_id IS NULL
 ORDER BY created_at ASC, id ASC
 `
@@ -1042,6 +1169,7 @@ SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filen
 WHERE workspace_id = $1
   AND issue_id = $2
   AND comment_id IS NULL
+  AND pending_comment = FALSE
   AND source_context_id IS NULL
 ORDER BY created_at ASC, id ASC
 `
@@ -1094,6 +1222,7 @@ const lockAttachmentsForIssueLink = `-- name: LockAttachmentsForIssueLink :many
 SELECT id FROM attachment
 WHERE workspace_id = $1
   AND issue_id IS NULL
+  AND pending_comment = FALSE
   AND source_context_id IS NULL
   AND id = ANY($2::uuid[])
 ORDER BY id
@@ -1133,12 +1262,23 @@ UPDATE attachment
 SET comment_id = CASE
   WHEN id = ANY($3::uuid[]) THEN $1
   ELSE NULL
-END
+END,
+    pending_comment = CASE
+      WHEN id = ANY($3::uuid[]) THEN FALSE
+      ELSE pending_comment
+    END
 WHERE issue_id = $2
+  AND workspace_id = $4
   AND source_context_id IS NULL
   AND (
     (comment_id = $1 AND NOT id = ANY($3::uuid[]))
-    OR (comment_id IS NULL AND id = ANY($3::uuid[]))
+    OR (
+      comment_id IS NULL
+      AND pending_comment = TRUE
+      AND uploader_type = $5
+      AND uploader_id = $6
+      AND id = ANY($3::uuid[])
+    )
   )
 `
 
@@ -1146,10 +1286,13 @@ type ReplaceCommentAttachmentsParams struct {
 	CommentID     pgtype.UUID   `json:"comment_id"`
 	IssueID       pgtype.UUID   `json:"issue_id"`
 	AttachmentIds []pgtype.UUID `json:"attachment_ids"`
+	WorkspaceID   pgtype.UUID   `json:"workspace_id"`
+	UploaderType  string        `json:"uploader_type"`
+	UploaderID    pgtype.UUID   `json:"uploader_id"`
 }
 
 func (q *Queries) ReplaceCommentAttachments(ctx context.Context, arg ReplaceCommentAttachmentsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, replaceCommentAttachments, arg.CommentID, arg.IssueID, arg.AttachmentIds)
+	result, err := q.db.Exec(ctx, replaceCommentAttachments, arg.CommentID, arg.IssueID, arg.AttachmentIds, arg.WorkspaceID, arg.UploaderType, arg.UploaderID)
 	if err != nil {
 		return 0, err
 	}

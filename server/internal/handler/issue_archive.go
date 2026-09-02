@@ -16,8 +16,10 @@ import (
 // retention feature remains easy to carry across upstream upgrades.
 
 // rejectArchivedIssueMutation blocks operations that change task progress or
-// launch new work. Read-only views, comments, reactions, and attachments are
-// intentionally unaffected by archive state.
+// launch new work. Comments, reactions, and comment attachments remain
+// writable because they are part of the task conversation. Task-owned
+// attachments are task-body mutations and are blocked while the issue is
+// archived.
 func rejectArchivedIssueMutation(w http.ResponseWriter, issue db.Issue) bool {
 	if !issue.ArchivedAt.Valid {
 		return false

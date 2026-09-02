@@ -52,7 +52,8 @@ DELETE FROM project WHERE id = $1 AND workspace_id = $2;
 
 -- name: CountIssuesByProject :one
 SELECT count(*) FROM issue
-WHERE project_id = $1;
+WHERE project_id = $1
+  AND archived_at IS NULL;
 
 -- name: GetProjectIssueStats :many
 SELECT project_id,
@@ -61,4 +62,5 @@ SELECT project_id,
 FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')::uuid
   AND project_id = ANY(sqlc.arg('project_ids')::uuid[])
+  AND archived_at IS NULL
 GROUP BY project_id;

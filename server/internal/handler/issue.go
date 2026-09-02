@@ -3404,6 +3404,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 		return
 	}
+	if errors.Is(err, service.ErrArchivedParentIssue) {
+		writeError(w, http.StatusConflict, "cannot create a child issue under an archived parent; restore the parent first")
+		return
+	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
 		return

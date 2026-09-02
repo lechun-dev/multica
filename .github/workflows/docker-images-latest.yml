@@ -90,10 +90,6 @@ jobs:
             NEXT_PUBLIC_APP_VERSION=latest
             NEXT_PUBLIC_PRODUCT_NAME=MissionOS
 
-  deploy:
-    # 2026-08-26 coder(lq): Do not let production pull a stale `latest` tag;
-    # both application images must be published before deployment starts.
-    needs: publish
-    if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/deploy.yml
-    secrets: inherit
+# 2026-09-02 coder(lq): Publishing mutable `latest` images must not deploy
+# production implicitly. Production rollout stays behind the explicit
+# `Deploy Multica Production` workflow/environment approval.

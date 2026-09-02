@@ -7,6 +7,7 @@ SELECT p.*,
         SELECT COUNT(*) FROM issue i
         WHERE i.workspace_id = p.workspace_id
           AND i.properties ? p.id::text
+          AND i.archived_at IS NULL
     )::bigint AS usage_count
 FROM issue_property p
 WHERE p.workspace_id = sqlc.arg('workspace_id')::uuid
@@ -60,6 +61,7 @@ SET properties = jsonb_set(properties, ARRAY[sqlc.arg('key')::text], sqlc.arg('v
     END,
     updated_at = CASE WHEN properties -> sqlc.arg('key')::text IS DISTINCT FROM sqlc.arg('value')::jsonb THEN now() ELSE updated_at END
 WHERE id = sqlc.arg('id')::uuid AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: DeleteIssuePropertyValue :one
@@ -73,6 +75,7 @@ SET properties = properties - sqlc.arg('key')::text,
     END,
     updated_at = CASE WHEN properties ? sqlc.arg('key')::text THEN now() ELSE updated_at END
 WHERE id = sqlc.arg('id')::uuid AND workspace_id = sqlc.arg('workspace_id')::uuid
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: CountIssuesUsingPropertyOptions :many
@@ -83,6 +86,7 @@ SELECT opt::text AS option_id, COUNT(i.id) AS usage_count
 FROM unnest(sqlc.arg('option_ids')::text[]) AS opt
 LEFT JOIN issue i
   ON i.workspace_id = sqlc.arg('workspace_id')::uuid
+ AND i.archived_at IS NULL
  AND (i.properties -> sqlc.arg('property_key')::text) ? opt
 GROUP BY opt
 HAVING COUNT(i.id) > 0;

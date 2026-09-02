@@ -14,6 +14,7 @@ import (
 const countIssuesByProject = `-- name: CountIssuesByProject :one
 SELECT count(*) FROM issue
 WHERE project_id = $1
+  AND archived_at IS NULL
 `
 
 func (q *Queries) CountIssuesByProject(ctx context.Context, projectID pgtype.UUID) (int64, error) {
@@ -134,6 +135,7 @@ SELECT project_id,
 FROM issue
 WHERE workspace_id = $2::uuid
   AND project_id = ANY($3::uuid[])
+  AND archived_at IS NULL
 GROUP BY project_id
 `
 

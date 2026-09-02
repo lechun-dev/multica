@@ -792,6 +792,16 @@ func inboxIssueProjectVisibilityPredicateWithWorkspaceScope(inboxAlias, workspac
 		issueProjectVisibilityPredicateWithWorkspaceScope("acl_issue", workspaceRef, userRef, includeWorkspaceOwned))
 }
 
+// 2026-09-02 coder(lq): Archived issues stay out of live inbox counts, but
+// bare system notifications with no issue_id still count as normal.
+func inboxIssueNotArchivedPredicate(inboxAlias string) string {
+	return fmt.Sprintf(`(%s.issue_id IS NULL OR EXISTS (
+		SELECT 1 FROM issue active_issue
+		WHERE active_issue.id = %s.issue_id
+		  AND active_issue.archived_at IS NULL
+	))`, inboxAlias, inboxAlias)
+}
+
 // 2026-08-27 coder(lq): Batch the project View check for issue ids used by
 // inbox and pin endpoints. The one round trip avoids an authorization N+1
 // while preserving the same workspace-owner/admin and project-member rules.

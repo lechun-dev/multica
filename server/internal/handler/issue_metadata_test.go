@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,58 @@ import (
 	"strings"
 	"testing"
 )
+
+// 2026-09-02 coder(lq): Metadata is part of task content, so archiving must
+// freeze it just like title, description, assignment, and status.
+func TestArchivedIssueMetadataCannotBeSet(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "Archived metadata set guard")
+	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET archived_at = now() WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("archive issue: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/pipeline_status", json.RawMessage(`{"value":"waiting"}`))
+	req = withURLParams(req, "id", issueID, "key", "pipeline_status")
+	testHandler.SetIssueMetadataKey(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("set archived issue metadata: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var hasKey bool
+	if err := testPool.QueryRow(context.Background(), `SELECT metadata ? 'pipeline_status' FROM issue WHERE id = $1`, issueID).Scan(&hasKey); err != nil {
+		t.Fatalf("read archived issue metadata: %v", err)
+	}
+	if hasKey {
+		t.Fatal("rejected metadata key was persisted on archived issue")
+	}
+}
+
+func TestArchivedIssueMetadataCannotBeDeleted(t *testing.T) {
+	issueID := createMetadataTestIssue(t, "Archived metadata delete guard")
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE issue
+		SET metadata = '{"pipeline_status":"waiting"}'::jsonb, archived_at = now()
+		WHERE id = $1
+	`, issueID); err != nil {
+		t.Fatalf("seed and archive issue: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("DELETE", "/api/issues/"+issueID+"/metadata/pipeline_status", nil)
+	req = withURLParams(req, "id", issueID, "key", "pipeline_status")
+	testHandler.DeleteIssueMetadataKey(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("delete archived issue metadata: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var hasKey bool
+	if err := testPool.QueryRow(context.Background(), `SELECT metadata ? 'pipeline_status' FROM issue WHERE id = $1`, issueID).Scan(&hasKey); err != nil {
+		t.Fatalf("read archived issue metadata: %v", err)
+	}
+	if !hasKey {
+		t.Fatal("metadata key was deleted from archived issue")
+	}
+}
 
 // Round-trip: set primitives of each type, list, get them back, delete, confirm gone.
 func TestIssueMetadataSetGetDelete(t *testing.T) {

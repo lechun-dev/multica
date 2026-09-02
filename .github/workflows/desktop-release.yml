@@ -24,6 +24,9 @@ concurrency:
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+  STAGING_WS_URL: ${{ vars.STAGING_WS_URL }}
+  STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
   # electron-builder otherwise tries to discover a signing identity on hosted
   # macOS runners. The private distribution is intentionally unsigned.
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -84,14 +87,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 2026-09-02 coder(lq): Prerelease desktop bundles should point at
-          # the staging backend/web pair so beta testers never land on the
-          # production private deployment by accident.
-          if [[ "${RELEASE_TAG}" == *-* ]]; then
-            export VITE_API_URL="https://multica-api.copilothub.ai"
-            export VITE_WS_URL="wss://multica-api.copilothub.ai/ws"
-            export VITE_APP_URL="https://multica-app.copilothub.ai"
-          fi
           pnpm --filter @multica/desktop package:lechun -- \
             --${{ matrix.platform == 'windows' && 'win' || matrix.platform }} \
             --${{ matrix.arch }} \

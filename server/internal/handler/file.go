@@ -506,7 +506,13 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			ContentType:  contentType,
 			SizeBytes:    int64(len(data)),
 		}
+		commentDraft := strings.EqualFold(strings.TrimSpace(r.FormValue("comment_draft")), "true")
 
+		// Comment attachments belong to the conversation and remain writable
+		// after the parent task is archived. Direct task attachments are part of
+		// the immutable task body and are rejected once archived.
+		var targetIssue db.Issue
+		var hasTargetIssue bool
 		if issueID := r.FormValue("issue_id"); issueID != "" {
 			issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue_id")
 			if !ok {
@@ -520,12 +526,15 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid issue_id")
 				return
 			}
-			if !h.requireAttachmentProjectEdit(w, r, workspaceID, issue.ID, pgtype.UUID{}) {
-				return
-			}
+			targetIssue = issue
+			hasTargetIssue = true
 			params.IssueID = issue.ID
 		}
 		if commentID := r.FormValue("comment_id"); commentID != "" {
+			if commentDraft {
+				writeError(w, http.StatusBadRequest, "comment_draft cannot be combined with comment_id")
+				return
+			}
 			commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment_id")
 			if !ok {
 				return
@@ -535,10 +544,42 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
 				return
 			}
+			if hasTargetIssue && comment.IssueID != targetIssue.ID {
+				writeError(w, http.StatusBadRequest, "comment_id does not belong to issue_id")
+				return
+			}
 			if !h.requireAttachmentProjectComment(w, r, workspaceID, comment.ID) {
 				return
 			}
 			params.CommentID = comment.ID
+			if !hasTargetIssue {
+				// Keep the existing ownership shape for clients that send only a
+				// comment id: comment attachments still retain their issue id.
+				params.IssueID = comment.IssueID
+			}
+		} else if hasTargetIssue {
+			if commentDraft {
+				// A draft upload is temporarily owned by the conversation. It is
+				// linked to the newly-created comment after the user submits it,
+				// so archived tasks can still accept comment attachments without
+				// reopening the immutable task body.
+				// 2026-09-02 coder(lq): Keep draft attachment authorization on the
+				// same project.issue_comment permission as comment creation.
+				if !h.requireIssueProjectPermission(w, r, targetIssue, projectauth.IssueComment) {
+					return
+				}
+				params.PendingComment = true
+			} else {
+				if !h.requireAttachmentProjectEdit(w, r, workspaceID, targetIssue.ID, pgtype.UUID{}) {
+					return
+				}
+				if rejectArchivedIssueMutation(w, targetIssue) {
+					return
+				}
+			}
+		} else if commentDraft {
+			writeError(w, http.StatusBadRequest, "comment_draft requires issue_id")
+			return
 		}
 		if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
 			// Require the member-visible Chat projection as well as private-agent
@@ -1480,6 +1521,14 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
+	pendingComment, pendingErr := h.Queries.IsAttachmentPendingComment(r.Context(), db.IsAttachmentPendingCommentParams{
+		ID:          att.ID,
+		WorkspaceID: att.WorkspaceID,
+	})
+	if pendingErr != nil {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
 	// 2026-09-02 coder(lq): Comment attachments follow the conversation
 	// permission, while issue-owned attachments remain project-edit scoped.
 	// Keep the uploader/admin ownership check below as the second boundary.
@@ -1487,8 +1536,37 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		if !h.requireAttachmentProjectComment(w, r, workspaceID, att.CommentID) {
 			return
 		}
-	} else if !h.requireAttachmentProjectEdit(w, r, workspaceID, att.IssueID, pgtype.UUID{}) {
-		return
+	} else if pendingComment && att.IssueID.Valid {
+		// A comment draft has no comment row yet, but it is still governed by
+		// the issue's comment permission and remains deletable after archiving.
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          att.IssueID,
+			WorkspaceID: att.WorkspaceID,
+		})
+		if issueErr != nil {
+			writeError(w, http.StatusNotFound, "attachment target not found")
+			return
+		}
+		if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+			return
+		}
+	} else {
+		if !h.requireAttachmentProjectEdit(w, r, workspaceID, att.IssueID, pgtype.UUID{}) {
+			return
+		}
+		if att.IssueID.Valid {
+			issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+				ID:          att.IssueID,
+				WorkspaceID: att.WorkspaceID,
+			})
+			if issueErr != nil {
+				writeError(w, http.StatusNotFound, "attachment target not found")
+				return
+			}
+			if rejectArchivedIssueMutation(w, issue) {
+				return
+			}
+		}
 	}
 
 	// Only the uploader (or workspace admin) can delete
@@ -1559,11 +1637,14 @@ func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, worksp
 
 // linkAttachmentsByIDs links the given attachment IDs to a comment.
 // Only updates attachments that belong to the same issue and have no comment_id yet.
-func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID pgtype.UUID, ids []pgtype.UUID) {
+func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID, workspaceID pgtype.UUID, uploaderType string, uploaderID pgtype.UUID, ids []pgtype.UUID) {
 	if err := h.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
-		CommentID: commentID,
-		IssueID:   issueID,
-		Column3:   ids,
+		CommentID:     commentID,
+		IssueID:       issueID,
+		AttachmentIds: ids,
+		WorkspaceID:   workspaceID,
+		UploaderType:  uploaderType,
+		UploaderID:    uploaderID,
 	}); err != nil {
 		slog.Error("failed to link attachments to comment", "error", err)
 	}
