@@ -132,6 +132,49 @@ func TestCanonicalIssueTableFingerprintBindsWorkspace(t *testing.T) {
 	}
 }
 
+// 2026-09-03 coder(lq): Keep the archived-board request field covered so the
+// strict JSON decoder cannot regress to rejecting archive filters as unknown.
+func TestIssueTableRequestAcceptsArchiveState(t *testing.T) {
+	r := newRequest(http.MethodPost, "/api/issues/table/rows", map[string]any{
+		"query": map[string]any{
+			"scope":   map[string]any{"kind": "workspace"},
+			"filters": map[string]any{"archive_state": "archived"},
+			"sort":    map[string]any{"field": "position", "direction": "asc"},
+		},
+		"group":     map[string]any{"kind": "none"},
+		"hierarchy": map[string]any{"enabled": false},
+		"page":      map[string]any{"limit": 10},
+	})
+	w := httptest.NewRecorder()
+	var request issueTableRowsRequest
+	if !decodeIssueTableJSON(w, r, &request) {
+		t.Fatalf("archive_state request was rejected: %d %s", w.Code, w.Body.String())
+	}
+	if request.Query.Filters.ArchiveState != "archived" {
+		t.Fatalf("archive_state = %q, want archived", request.Query.Filters.ArchiveState)
+	}
+}
+
+func TestIssueTableArchivePredicate(t *testing.T) {
+	tests := []struct {
+		state string
+		want  string
+	}{
+		{state: "active", want: "i.archived_at IS NULL"},
+		{state: "archived", want: "i.archived_at IS NOT NULL"},
+		{state: "all", want: "i.workspace_id = $1"},
+	}
+	for _, test := range tests {
+		t.Run(test.state, func(t *testing.T) {
+			where := appendIssueArchivePredicate([]string{"i.workspace_id = $1"}, test.state, "i")
+			joined := strings.Join(where, " AND ")
+			if !strings.Contains(joined, test.want) {
+				t.Fatalf("archive predicate = %q, want %q", joined, test.want)
+			}
+		})
+	}
+}
+
 func TestIssueTableExplicitEmptyAssigneesMatchesNone(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

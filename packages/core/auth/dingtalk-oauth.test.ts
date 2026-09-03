@@ -56,11 +56,13 @@ describe("DingTalk OAuth helpers", () => {
     expect(isDesktopDingTalkState("random.desktop")).toBe(true);
     expect(isDesktopDingTalkState("random.desktop-dev")).toBe(true);
     expect(isDesktopDingTalkState("random.desktop-lechun")).toBe(true);
+    expect(isDesktopDingTalkState("random.desktop-lechun-preview")).toBe(true);
     expect(isDesktopDingTalkState("random.web")).toBe(false);
     expect(isDesktopDingTalkState("desktop.random")).toBe(false);
     expect(dingtalkCallbackProtocol("random.desktop")).toBe("multica");
     expect(dingtalkCallbackProtocol("random.desktop-dev")).toBe("multica-dev");
     expect(dingtalkCallbackProtocol("random.desktop-lechun")).toBe("multica-lechun");
+    expect(dingtalkCallbackProtocol("random.desktop-lechun-preview")).toBe("multica-lechun-preview");
     expect(dingtalkCallbackProtocol("random.desktop.next.LQ")).toBe("multica");
   });
 

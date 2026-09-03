@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-label="Multica">
   <!-- 2026-09-02 coder(lq): Full-bleed source for launchers that apply their own mask. -->
+  <!-- 2026-09-03 coder(lq): Keep the M mark at 90% scale for balanced safe-area spacing. -->
   <defs>
     <linearGradient id="background" x1="104" y1="64" x2="496" y2="536" gradientUnits="userSpaceOnUse">
       <stop stop-color="#5c78a2"/>
@@ -11,5 +12,5 @@
     </linearGradient>
   </defs>
   <rect width="600" height="600" fill="url(#background)"/>
-  <path d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216" fill="none" stroke="url(#mark)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216" transform="translate(30 30) scale(0.9)" fill="none" stroke="url(#mark)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -122,6 +122,9 @@ type issueTableDateFilterRequest struct {
 }
 
 type issueTableFiltersRequest struct {
+	// 2026-09-03 coder(lq): Keep archive filtering in the shared table query
+	// contract so rows, groups, and facets apply the same lifecycle boundary.
+	ArchiveState          string                       `json:"archive_state,omitempty"`
 	Statuses              []string                     `json:"statuses,omitempty"`
 	Priorities            []string                     `json:"priorities,omitempty"`
 	Assignees             []issueTableActorRef         `json:"assignees,omitempty"`
@@ -457,6 +460,11 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 
 	where := []string{"i.workspace_id = $1"}
 	args := []any{workspaceUUID}
+	archiveState, ok := parseIssueArchiveState(w, spec.Filters.ArchiveState)
+	if !ok {
+		return issueTableSQL{}, false
+	}
+	where = appendIssueArchivePredicate(where, archiveState, "i")
 	addArg := func(value any) string {
 		args = append(args, value)
 		return "$" + strconv.Itoa(len(args))

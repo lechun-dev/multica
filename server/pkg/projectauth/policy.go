@@ -39,7 +39,9 @@ func DefaultPolicy() Policy {
 			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
 			IssueArchive: true, AgentUse: true,
 		},
-		ProjectMember: {View: true, IssueCreate: true, IssueComment: true, AgentUse: true},
+		// 2026-09-03 coder(lq): Project members may archive tasks, while the
+		// separate issue-management permission remains reserved for managers.
+		ProjectMember: {View: true, IssueCreate: true, IssueComment: true, IssueArchive: true, AgentUse: true},
 		ProjectViewer: {View: true},
 	}}
 }

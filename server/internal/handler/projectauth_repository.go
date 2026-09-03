@@ -19,7 +19,7 @@ import (
 // generated code and upstream handler structure.
 type projectAuthRepository struct{ db dbExecutor }
 
-var projectPermissionValues = []string{"project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.agent.use", "project.member.manage", "project.settings.manage"}
+var projectPermissionValues = []string{"project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.issue.archive", "project.agent.use", "project.member.manage", "project.settings.manage"}
 
 func (r *projectAuthRepository) RecordAuthorizationAudit(ctx context.Context, event projectauth.AuthorizationAuditEvent) error {
 	details, err := json.Marshal(event.Details)
@@ -493,10 +493,10 @@ func (r *projectAuthRepository) ensureSystemRoleDefinitions(ctx context.Context,
 		FROM inserted_roles inserted
 		JOIN (VALUES
 			('owner','project.view'), ('owner','project.edit'), ('owner','project.issue.create'),
-			('owner','project.issue.comment'), ('owner','project.issue.manage'), ('owner','project.agent.use'), ('owner','project.member.manage'),
+			('owner','project.issue.comment'), ('owner','project.issue.manage'), ('owner','project.issue.archive'), ('owner','project.agent.use'), ('owner','project.member.manage'),
 			('owner','project.settings.manage'), ('manager','project.view'), ('manager','project.edit'),
-			('manager','project.issue.create'), ('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.agent.use'),
-			('member','project.view'), ('member','project.issue.create'), ('member','project.issue.comment'), ('member','project.agent.use'),
+			('manager','project.issue.create'), ('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'), ('manager','project.agent.use'),
+			('member','project.view'), ('member','project.issue.create'), ('member','project.issue.comment'), ('member','project.issue.archive'), ('member','project.agent.use'),
 			('viewer','project.view')
 		) AS defaults(role_key, permission) ON defaults.role_key = inserted.role_key
 		ON CONFLICT DO NOTHING`, workspaceID)
@@ -794,7 +794,8 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = ou.user_id
 			JOIN "user" u ON u.id::text = ou.user_id
 			CROSS JOIN (VALUES ('project.view'), ('project.edit'), ('project.issue.create'),
-				('project.issue.manage'), ('project.agent.use'), ('project.member.manage'),
+				('project.issue.comment'), ('project.issue.manage'), ('project.issue.archive'),
+				('project.agent.use'), ('project.member.manage'),
 				('project.settings.manage')) AS pm(permission)
 			WHERE p.workspace_id = $1
 
@@ -811,7 +812,8 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			JOIN owner_users ou ON ou.workspace_id = p.workspace_id::text
 			JOIN "user" u ON u.id::text = ou.user_id
 			CROSS JOIN (VALUES ('project.view'), ('project.edit'), ('project.issue.create'),
-				('project.issue.manage'), ('project.agent.use'), ('project.member.manage'),
+				('project.issue.comment'), ('project.issue.manage'), ('project.issue.archive'),
+				('project.agent.use'), ('project.member.manage'),
 				('project.settings.manage')) AS pm(permission)
 			WHERE p.workspace_id = $1
 		), all_rows AS (

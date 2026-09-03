@@ -67,9 +67,10 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	// their original names so deployments that already applied them continue
 	// to upgrade safely; the migration bodies are independent and idempotent.
 	"445": {"445_comment_delegated_failure_unsettled_index", "445_projectauth_unified_grants"},
-	"446": {"446_project_issue_comment_permission", "446_projectauth_access_grants_project_unique"},
-	"447": {"447_issue_archive", "447_projectauth_access_grants_issue_unique"},
-	"448": {"448_attachment_pending_comment", "448_projectauth_access_grants_workspace_project_index"},
+	"446": {"446_issue_properties_bigm_index", "446_project_issue_comment_permission", "446_projectauth_access_grants_project_unique"},
+	"447": {"447_issue_archive", "447_issue_properties_bigm_index_statistics", "447_projectauth_access_grants_issue_unique"},
+	"448": {"448_attachment_pending_comment", "448_autopilot_quota_rejection_notified_at", "448_projectauth_access_grants_workspace_project_index"},
+	"449": {"449_autopilot_trigger_created_by", "449_project_issue_archive_permission", "449_projectauth_access_grants_subject_index"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
