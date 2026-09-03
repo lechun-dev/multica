@@ -5,6 +5,7 @@ import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  builderRetryDelays,
   deriveVersion,
   DESCRIBE_ARGS,
   envWithLocalBins,
@@ -560,6 +561,17 @@ describe("envWithLocalBins", () => {
       workspaceBin,
       "runner-bin",
     ]);
+  });
+});
+
+describe("electron-builder retry policy", () => {
+  it("retries transient Windows packaging failures", () => {
+    expect(builderRetryDelays("win32")).toEqual([0, 5_000, 15_000]);
+  });
+
+  it("does not retry packaging failures on other platforms", () => {
+    expect(builderRetryDelays("darwin")).toEqual([0]);
+    expect(builderRetryDelays("linux")).toEqual([0]);
   });
 });
 

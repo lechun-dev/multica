@@ -67,6 +67,11 @@ const ARCH_FLAGS = new Map([
 ]);
 
 const SUPPORTED_CLI_ARCHS = new Set(["x64", "arm64"]);
+// 2026-09-03 coder(lq): Windows hosted runners can briefly lock files that
+// electron-builder has just created (for example resources/LICENSE) while
+// Defender or the runner's file indexer scans them. Keep retries limited to
+// Windows so deterministic failures on other platforms remain immediate.
+const WINDOWS_BUILDER_RETRY_DELAYS_MS = [0, 5_000, 15_000];
 const MAC_ALL_PLATFORM_TARGETS = [
   { platform: "mac", arch: "arm64" },
   { platform: "mac", arch: "x64" },
@@ -409,6 +414,15 @@ export function builderArgsForTarget(
   return builderArgs;
 }
 
+export function builderRetryDelays(hostPlatform = process.platform) {
+  return hostPlatform === "win32" ? WINDOWS_BUILDER_RETRY_DELAYS_MS : [0];
+}
+
+function sleepSync(milliseconds) {
+  if (milliseconds <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
 function main() {
   const passthrough = stripLeadingSeparator(process.argv.slice(2));
   const parsed = parsePackageArgs(passthrough);
@@ -517,23 +531,58 @@ function main() {
     // Step 4: invoke electron-builder for the current target only.
     // `shell: true` for the same Windows `.cmd` shim reason as the
     // electron-vite invocation above.
-    const result = spawnSync("electron-builder", builderArgs, {
-      stdio: "inherit",
-      cwd: desktopRoot,
-      env: envWithLocalBins(),
-      shell: true,
-    });
+    const retryDelays = builderRetryDelays(process.platform);
+    const targetOutputDir = useScopedOutputDir
+      ? resolve(distDir, `${target.platform}-${target.arch}`)
+      : distDir;
+    let builderSucceeded = false;
+    for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+      const delay = retryDelays[attempt];
+      if (delay > 0) {
+        console.warn(
+          `[package] electron-builder failed; retrying in ${delay / 1000}s ` +
+            `(attempt ${attempt + 1}/${retryDelays.length})`,
+        );
+        // A synchronous wait keeps the packaging sequence deterministic and
+        // avoids starting a second builder while the runner still scans the
+        // previous output. This branch only runs after a failed Windows build.
+        sleepSync(delay);
+        // 2026-09-03 coder(lq): Remove only generated output before a retry.
+        // This releases partially copied files while preserving source and
+        // dependency trees for the next electron-builder invocation. A
+        // lingering scanner lock must not prevent the retry itself.
+        try {
+          rmSync(targetOutputDir, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(
+            `[package] could not clean output before retry: ${error.message}`,
+          );
+        }
+      }
 
-    if (result.error) {
-      console.error(
-        "[package] failed to spawn electron-builder:",
-        result.error.message,
-      );
-      process.exit(1);
+      const result = spawnSync("electron-builder", builderArgs, {
+        stdio: "inherit",
+        cwd: desktopRoot,
+        env: envWithLocalBins(),
+        shell: true,
+      });
+
+      if (result.error) {
+        console.error(
+          "[package] failed to spawn electron-builder:",
+          result.error.message,
+        );
+      } else if (result.status === 0) {
+        builderSucceeded = true;
+        break;
+      } else {
+        console.error(
+          `[package] electron-builder exited with status ${result.status ?? 1}`,
+        );
+      }
     }
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
-    }
+
+    if (!builderSucceeded) process.exit(1);
   }
 }
 
