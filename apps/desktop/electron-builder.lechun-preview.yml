@@ -20,13 +20,13 @@ protocols:
     schemes:
       - multica-lechun-preview
 
+# 2026-09-03 coder(lq): License and NOTICE are inherited from the stable
+# Lechun config. Do not redeclare them here: electron-builder merges
+# extraResources arrays across extends and would copy the same destination
+# twice on Windows.
 extraResources:
   - from: build-beta/icon.png
     to: resources/icon.png
-  - from: ../../LICENSE
-    to: LICENSE
-  - from: ../../NOTICE
-    to: NOTICE
 
 mac:
   artifactName: multica-lechun-preview-${version}-mac-${arch}.${ext}
