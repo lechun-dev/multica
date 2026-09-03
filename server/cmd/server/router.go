@@ -1614,6 +1614,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// because opening an issue is what asks for it; executable
 					// bytes stay off the authenticated app/API origin.
 					r.Get("/plugins/{installationId}/surfaces/{surfaceKey}/launch", h.GetPluginSurfaceLaunch)
+					// Retry policy configuration is readable by every workspace member.
+					r.Get("/task-retry-policies", h.ListTaskRetryPolicies)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
@@ -1672,6 +1674,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/plugins/{installationId}", h.UninstallPlugin)
 				})
 				// Owner-only access
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+					r.Post("/task-retry-policies", h.CreateTaskRetryPolicy)
+					r.Patch("/task-retry-policies/{policyId}", h.UpdateTaskRetryPolicy)
+					r.Put("/task-retry-policies/{policyId}", h.UpdateTaskRetryPolicy)
+					r.Delete("/task-retry-policies/{policyId}", h.DeleteTaskRetryPolicy)
+				})
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
 
 				// GitHub integration — connect / disconnect remain admin-only;
