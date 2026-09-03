@@ -176,6 +176,38 @@ export interface ProjectAuthorizationOrganizationsResponse {
   total: number;
 }
 
+export type ProjectAuthorizationImportKind = "organizations" | "members";
+export interface ProjectAuthorizationOrganizationImportRow {
+  external_id: string;
+  name: string;
+  parent_external_id?: string;
+  status: string;
+}
+export interface ProjectAuthorizationMemberImportRow {
+  external_id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  organization_external_id: string;
+  status: string;
+}
+export interface ProjectAuthorizationImportPreview {
+  kind: ProjectAuthorizationImportKind;
+  organizations?: ProjectAuthorizationOrganizationImportRow[];
+  members?: ProjectAuthorizationMemberImportRow[];
+  errors: string[];
+  warnings: string[];
+  rows: number;
+}
+export interface ProjectAuthorizationImportResult {
+  organizations_created: number;
+  organizations_updated: number;
+  members_created: number;
+  members_updated: number;
+  disabled: number;
+  unmatched: string[];
+}
+
 export interface ProjectAccessGrantRequest {
   subject_type: ProjectAccessGrantSubjectType;
   subject_id?: string;

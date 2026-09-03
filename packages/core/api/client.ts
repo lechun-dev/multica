@@ -108,6 +108,8 @@ import type {
   ProjectAccessGrantRequest,
   ProjectAccessGrantsResponse,
   ProjectAuthorizationOrganizationsResponse,
+  ProjectAuthorizationImportPreview,
+  ProjectAuthorizationImportResult,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
@@ -402,6 +404,8 @@ import {
   ProjectAccessGrantsResponseSchema,
   EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE,
   ProjectAuthorizationOrganizationsResponseSchema,
+  ProjectAuthorizationImportPreviewSchema,
+  ProjectAuthorizationImportResultSchema,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
   IssuePropertySchema,
@@ -3646,6 +3650,61 @@ export class ApiClient {
     return parseWithFallback(raw, ProjectAuthorizationOrganizationsResponseSchema, { organizations: [], total: 0 }, {
       endpoint: "GET /api/workspaces/:id/projectauth/organizations",
     });
+  }
+
+  // 2026-09-01 coder(lq): Keep organization imports behind the shared client
+  // so multipart uploads receive the same auth, CSRF, and workspace headers as
+  // every other API request.
+  async previewProjectAuthorizationOrganizationImport(
+    workspaceId: string,
+    kind: "organizations" | "members",
+    file: File,
+  ): Promise<ProjectAuthorizationImportPreview> {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await this.fetchRaw(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/import/preview?kind=${encodeURIComponent(kind)}`,
+      { method: "POST", body: form },
+    );
+    const raw = await response.json();
+    return parseWithFallback(raw, ProjectAuthorizationImportPreviewSchema, {
+      kind,
+      errors: [],
+      warnings: [],
+      rows: 0,
+    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import/preview" });
+  }
+
+  async importProjectAuthorizationOrganizations(
+    workspaceId: string,
+    data: {
+      kind: "organizations" | "members";
+      organizations?: ProjectAuthorizationImportPreview["organizations"];
+      members?: ProjectAuthorizationImportPreview["members"];
+    },
+  ): Promise<ProjectAuthorizationImportResult> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/import`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, ProjectAuthorizationImportResultSchema, {
+      organizations_created: 0,
+      organizations_updated: 0,
+      members_created: 0,
+      members_updated: 0,
+      disabled: 0,
+      unmatched: [],
+    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import" });
+  }
+
+  async downloadProjectAuthorizationOrganizationTemplate(
+    workspaceId: string,
+    kind: "organizations" | "members",
+  ): Promise<Blob> {
+    const response = await this.fetchRaw(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/template?kind=${encodeURIComponent(kind)}`,
+    );
+    return response.blob();
   }
 
   async createProjectAccessGrant(projectId: string, data: ProjectAccessGrantRequest): Promise<ProjectAccessGrant> {

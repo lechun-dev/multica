@@ -3403,6 +3403,22 @@ export const ProjectAuthorizationOrganizationsResponseSchema = z.object({
 
 export type ProjectAuthorizationOrganizationsResponse = z.infer<typeof ProjectAuthorizationOrganizationsResponseSchema>;
 
+export const ProjectAuthorizationImportPreviewSchema = z.object({
+  kind: z.enum(["organizations", "members"]),
+  organizations: z.array(z.object({ external_id: z.string(), name: z.string(), parent_external_id: z.string().optional(), status: z.string() }).loose()).optional(),
+  members: z.array(z.object({ external_id: z.string(), name: z.string(), email: z.string().optional(), phone: z.string().optional(), organization_external_id: z.string(), status: z.string() }).loose()).optional(),
+  errors: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).default([]),
+  rows: z.number().default(0),
+}).loose();
+export type ProjectAuthorizationImportPreview = z.infer<typeof ProjectAuthorizationImportPreviewSchema>;
+export const ProjectAuthorizationImportResultSchema = z.object({
+  organizations_created: z.number().default(0), organizations_updated: z.number().default(0),
+  members_created: z.number().default(0), members_updated: z.number().default(0),
+  disabled: z.number().default(0), unmatched: z.array(z.string()).default([]),
+}).loose();
+export type ProjectAuthorizationImportResult = z.infer<typeof ProjectAuthorizationImportResultSchema>;
+
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,
   workspace_id: z.string(),

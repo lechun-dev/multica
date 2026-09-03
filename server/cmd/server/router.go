@@ -1562,6 +1562,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Admin-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Get("/projectauth/organizations/template", h.ProjectAuthorizationOrganizationTemplate)
+					r.Post("/projectauth/organizations/import/preview", h.PreviewProjectAuthorizationOrganizationImport)
+					r.Post("/projectauth/organizations/import", h.ImportProjectAuthorizationOrganizations)
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
