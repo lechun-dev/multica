@@ -108,6 +108,7 @@ import type {
   ProjectAccessGrantRequest,
   ProjectAccessGrantsResponse,
   ProjectAuthorizationOrganizationsResponse,
+  ProjectAuthorizationDingTalkSyncResult,
   ProjectAuthorizationImportPreview,
   ProjectAuthorizationImportResult,
   ProjectResource,
@@ -404,6 +405,7 @@ import {
   ProjectAccessGrantsResponseSchema,
   EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE,
   ProjectAuthorizationOrganizationsResponseSchema,
+  ProjectAuthorizationDingTalkSyncResultSchema,
   ProjectAuthorizationImportPreviewSchema,
   ProjectAuthorizationImportResultSchema,
   ListIssueStatusesResponseSchema,
@@ -3753,8 +3755,28 @@ export class ApiClient {
       members_created: 0,
       members_updated: 0,
       disabled: 0,
+      users_created: 0,
+      workspace_members_created: 0,
       unmatched: [],
     }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import" });
+  }
+
+  async syncProjectAuthorizationDingTalk(workspaceId: string): Promise<ProjectAuthorizationDingTalkSyncResult> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/sync`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return parseWithFallback(raw, ProjectAuthorizationDingTalkSyncResultSchema, {
+      organizations_created: 0,
+      organizations_updated: 0,
+      organizations_disabled: 0,
+      members_created: 0,
+      members_removed: 0,
+      users_created: 0,
+      users_matched: 0,
+      workspace_members_created: 0,
+      unmatched: [],
+    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/sync" });
   }
 
   async downloadProjectAuthorizationOrganizationTemplate(

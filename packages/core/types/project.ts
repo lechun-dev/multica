@@ -207,6 +207,20 @@ export interface ProjectAuthorizationImportResult {
   members_created: number;
   members_updated: number;
   disabled: number;
+  users_created: number;
+  workspace_members_created: number;
+  unmatched: string[];
+}
+
+export interface ProjectAuthorizationDingTalkSyncResult {
+  organizations_created: number;
+  organizations_updated: number;
+  organizations_disabled: number;
+  members_created: number;
+  members_removed: number;
+  users_created: number;
+  users_matched: number;
+  workspace_members_created: number;
   unmatched: string[];
 }
 

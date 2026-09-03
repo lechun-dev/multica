@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
@@ -21,12 +22,14 @@ type organizationImportRequest struct {
 }
 
 type organizationImportResult struct {
-	OrganizationsCreated int      `json:"organizations_created"`
-	OrganizationsUpdated int      `json:"organizations_updated"`
-	MembersCreated       int      `json:"members_created"`
-	MembersUpdated       int      `json:"members_updated"`
-	Disabled             int      `json:"disabled"`
-	Unmatched            []string `json:"unmatched"`
+	OrganizationsCreated    int      `json:"organizations_created"`
+	OrganizationsUpdated    int      `json:"organizations_updated"`
+	MembersCreated          int      `json:"members_created"`
+	MembersUpdated          int      `json:"members_updated"`
+	Disabled                int      `json:"disabled"`
+	Unmatched               []string `json:"unmatched"`
+	UsersCreated            int      `json:"users_created"`
+	WorkspaceMembersCreated int      `json:"workspace_members_created"`
 }
 
 func (h *Handler) ProjectAuthorizationOrganizationTemplate(w http.ResponseWriter, r *http.Request) {
@@ -194,11 +197,29 @@ func importMembers(ctx context.Context, tx dbExecutor, workspaceID string, rows 
 			return fmt.Errorf("人员 %s 的部门不存在或已停用", row.Name)
 		}
 		var userID string
-		err := tx.QueryRow(ctx, `SELECT u.id::text FROM "user" u JOIN member m ON m.user_id=u.id AND m.workspace_id=$1
-			WHERE (($2 <> '' AND u.id::text=$2) OR ($3 <> '' AND lower(u.email)=lower($3))) LIMIT 1`, workspaceID, row.ExternalID, row.Email).Scan(&userID)
+		err := tx.QueryRow(ctx, `SELECT u.id::text FROM "user" u
+			WHERE (($1 <> '' AND u.id::text=$1) OR ($2 <> '' AND lower(u.email)=lower($2))) LIMIT 1`, row.ExternalID, row.Email).Scan(&userID)
 		if err != nil {
-			result.Unmatched = append(result.Unmatched, row.Name)
-			continue
+			// 2026-09-03 coder(lq): A directory upload is authoritative for
+			// people as well as departments. Create the local account when this
+			// person has not logged in yet, then attach it to the workspace.
+			accountEmail := strings.ToLower(strings.TrimSpace(row.Email))
+			if accountEmail == "" {
+				stable := strings.TrimSpace(row.ExternalID)
+				if stable == "" {
+					stable = strings.ReplaceAll(strings.ToLower(strings.TrimSpace(row.Name)), " ", "-")
+				}
+				accountEmail = "directory-" + stable + "@invalid.local"
+			}
+			name := strings.TrimSpace(row.Name)
+			if name == "" {
+				name = accountEmail
+			}
+			if err := tx.QueryRow(ctx, `INSERT INTO "user" (name,email) VALUES ($1,$2) ON CONFLICT (email) DO UPDATE SET email=EXCLUDED.email RETURNING id::text`, name, accountEmail).Scan(&userID); err != nil {
+				result.Unmatched = append(result.Unmatched, row.Name)
+				continue
+			}
+			result.UsersCreated++
 		}
 		if row.Status == "disabled" {
 			if _, err := tx.Exec(ctx, `DELETE FROM projectauth_organization_members WHERE workspace_id=$1 AND organization_id=$2::uuid AND user_id=$3::uuid`, workspaceID, orgID, userID); err != nil {
@@ -206,6 +227,13 @@ func importMembers(ctx context.Context, tx dbExecutor, workspaceID string, rows 
 			}
 			result.Disabled++
 			continue
+		}
+		memberInsert, err := tx.Exec(ctx, `INSERT INTO member (workspace_id,user_id,role) VALUES ($1,$2::uuid,'member') ON CONFLICT (workspace_id,user_id) DO NOTHING`, workspaceID, userID)
+		if err != nil {
+			return err
+		}
+		if memberInsert.RowsAffected() > 0 {
+			result.WorkspaceMembersCreated++
 		}
 		var existed bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM projectauth_organization_members WHERE workspace_id=$1 AND organization_id=$2::uuid AND user_id=$3::uuid)`, workspaceID, orgID, userID).Scan(&existed); err != nil {

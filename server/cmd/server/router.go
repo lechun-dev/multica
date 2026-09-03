@@ -1621,6 +1621,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/projectauth/organizations/template", h.ProjectAuthorizationOrganizationTemplate)
 					r.Post("/projectauth/organizations/import/preview", h.PreviewProjectAuthorizationOrganizationImport)
 					r.Post("/projectauth/organizations/import", h.ImportProjectAuthorizationOrganizations)
+					r.Post("/projectauth/organizations/sync", dingtalkLogin.SyncDingTalkOrganizations)
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)

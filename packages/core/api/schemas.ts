@@ -3434,8 +3434,22 @@ export const ProjectAuthorizationImportResultSchema = z.object({
   organizations_created: z.number().default(0), organizations_updated: z.number().default(0),
   members_created: z.number().default(0), members_updated: z.number().default(0),
   disabled: z.number().default(0), unmatched: z.array(z.string()).default([]),
+  users_created: z.number().default(0), workspace_members_created: z.number().default(0),
 }).loose();
 export type ProjectAuthorizationImportResult = z.infer<typeof ProjectAuthorizationImportResultSchema>;
+
+export const ProjectAuthorizationDingTalkSyncResultSchema = z.object({
+  organizations_created: z.number().default(0),
+  organizations_updated: z.number().default(0),
+  organizations_disabled: z.number().default(0),
+  members_created: z.number().default(0),
+  members_removed: z.number().default(0),
+  users_created: z.number().default(0),
+  users_matched: z.number().default(0),
+  workspace_members_created: z.number().default(0),
+  unmatched: z.array(z.string()).default([]),
+}).loose();
+export type ProjectAuthorizationDingTalkSyncResult = z.infer<typeof ProjectAuthorizationDingTalkSyncResultSchema>;
 
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,

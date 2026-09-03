@@ -194,6 +194,7 @@ export type {
   ProjectAuthorizationMemberImportRow,
   ProjectAuthorizationImportPreview,
   ProjectAuthorizationImportResult,
+  ProjectAuthorizationDingTalkSyncResult,
   ProjectAccessGrantRequest,
   ProjectResource,
   ProjectResourceType,

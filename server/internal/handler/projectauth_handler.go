@@ -357,12 +357,22 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 			(%s.subject_type = 'user' AND %s.subject_id = a.user_id::text)
 			OR (%s.subject_type = 'everyone' AND (%s.subject_id = '' OR %s.subject_id = a.workspace_id::text))
 			OR (%s.subject_type = 'organization' AND %s.subject_id IN (
-				SELECT om.organization_id::text
-				FROM projectauth_organization_members om
-				JOIN projectauth_organizations org ON org.id = om.organization_id
-				WHERE om.workspace_id = a.workspace_id
-				  AND om.user_id = a.user_id
-				  AND org.status = 'active'
+				WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+					SELECT org.id, org.parent_id
+					FROM projectauth_organization_members om
+					JOIN projectauth_organizations org ON org.id = om.organization_id
+					WHERE om.workspace_id = a.workspace_id
+					  AND om.user_id = a.user_id
+					  AND org.workspace_id = a.workspace_id
+					  AND org.status = 'active'
+					UNION
+					SELECT parent.id, parent.parent_id
+					FROM user_orgs child
+					JOIN projectauth_organizations parent ON parent.id = child.parent_id
+					WHERE parent.workspace_id = a.workspace_id
+					  AND parent.status = 'active'
+				)
+				SELECT organization_id::text FROM user_orgs
 			))
 		)`, alias, alias, alias, alias, alias, alias, alias)
 	}

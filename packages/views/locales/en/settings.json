@@ -1327,7 +1327,19 @@
     "created": "{{count}} created",
     "updated": "{{count}} updated",
     "disabled": "{{count}} disabled",
-    "unmatched": "Workspace members not matched ({{count}})"
+    "unmatched": "People not imported ({{count}})",
+    "sync_dingtalk": "Sync all from DingTalk",
+    "sync_success": "DingTalk directory synced",
+    "sync_failed": "DingTalk directory sync failed",
+    "sync_result_title": "DingTalk sync result",
+    "sync_created": "{{count}} departments created",
+    "sync_updated": "{{count}} departments updated",
+    "sync_disabled": "{{count}} departments disabled",
+    "sync_members": "{{count}} member links added",
+    "sync_removed": "{{count}} member links removed",
+    "sync_users_created": "{{count}} users created",
+    "sync_users_matched": "{{count}} existing users matched",
+    "sync_workspace_members": "{{count}} workspace members added"
   },
   "members": {
     "section_title": "Members ({{count}})",

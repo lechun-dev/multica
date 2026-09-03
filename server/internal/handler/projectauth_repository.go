@@ -84,12 +84,23 @@ func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, user
 		WHERE project_id=$1 AND issue_id IS NULL AND role_key IS NOT NULL
 		  AND ((subject_type='user' AND subject_id=$2)
 		    OR (subject_type='everyone' AND (subject_id='' OR subject_id=(SELECT workspace_id::text FROM project WHERE id=$1)))
-		    OR (subject_type='organization' AND subject_id IN (
-		        SELECT om.organization_id::text
-		        FROM projectauth_organization_members om
-		        JOIN projectauth_organizations org ON org.id = om.organization_id
-		        WHERE om.user_id=$2 AND om.workspace_id=(SELECT workspace_id FROM project WHERE id=$1)
-		          AND org.status = 'active'
+			OR (subject_type='organization' AND subject_id IN (
+		        WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+		            SELECT org.id, org.parent_id
+		            FROM projectauth_organization_members om
+		            JOIN projectauth_organizations org ON org.id = om.organization_id
+		            WHERE om.user_id=$2
+		              AND om.workspace_id=(SELECT workspace_id FROM project WHERE id=$1)
+		              AND org.workspace_id=(SELECT workspace_id FROM project WHERE id=$1)
+		              AND org.status = 'active'
+		            UNION
+		            SELECT parent.id, parent.parent_id
+		            FROM user_orgs child
+		            JOIN projectauth_organizations parent ON parent.id = child.parent_id
+		            WHERE parent.workspace_id=(SELECT workspace_id FROM project WHERE id=$1)
+		              AND parent.status = 'active'
+		        )
+		        SELECT organization_id::text FROM user_orgs
 		    )))
 		ORDER BY CASE role_key WHEN 'owner' THEN 4 WHEN 'manager' THEN 3 WHEN 'member' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END DESC
 		LIMIT 1`, projectID, userID).Scan(&role)
@@ -184,10 +195,23 @@ func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID,
 
 func (r *projectAuthRepository) ListUserOrganizations(ctx context.Context, workspaceID, userID string) ([]string, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT organization_id::text
-		FROM projectauth_organization_members om
-		JOIN projectauth_organizations org ON org.id = om.organization_id
-		WHERE om.workspace_id = $1 AND om.user_id = $2 AND org.status = 'active'`, workspaceID, userID)
+		-- 2026-09-03 coder(lq): A user's effective organization set includes
+		-- every active ancestor, so a grant on a parent department is inherited
+		-- by members of all descendant departments. UNION (rather than UNION ALL)
+		-- also makes malformed parent cycles terminate safely.
+		WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+			SELECT org.id, org.parent_id
+			FROM projectauth_organization_members om
+			JOIN projectauth_organizations org ON org.id = om.organization_id
+			WHERE om.workspace_id = $1 AND om.user_id = $2
+			  AND org.workspace_id = $1 AND org.status = 'active'
+			UNION
+			SELECT parent.id, parent.parent_id
+			FROM user_orgs child
+			JOIN projectauth_organizations parent ON parent.id = child.parent_id
+			WHERE parent.workspace_id = $1 AND parent.status = 'active'
+		)
+		SELECT organization_id::text FROM user_orgs`, workspaceID, userID)
 	if err != nil {
 		return nil, wrapProjectPermissionRepositoryError(err)
 	}
@@ -274,10 +298,19 @@ func (r *projectAuthRepository) CurrentProjectRoles(ctx context.Context, workspa
 			(g.subject_type='user' AND g.subject_id=$2)
 			OR (g.subject_type='everyone' AND (g.subject_id='' OR g.subject_id=$1))
 			OR (g.subject_type='organization' AND g.subject_id IN (
-				SELECT organization_id::text
-				FROM projectauth_organization_members
-				WHERE workspace_id=$1 AND user_id=$2
-				  AND organization_id IN (SELECT id FROM projectauth_organizations WHERE workspace_id=$1 AND status='active')
+				WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+					SELECT org.id, org.parent_id
+					FROM projectauth_organization_members om
+					JOIN projectauth_organizations org ON org.id = om.organization_id
+					WHERE om.workspace_id=$1 AND om.user_id=$2
+					  AND org.workspace_id=$1 AND org.status='active'
+					UNION
+					SELECT parent.id, parent.parent_id
+					FROM user_orgs child
+					JOIN projectauth_organizations parent ON parent.id = child.parent_id
+					WHERE parent.workspace_id=$1 AND parent.status='active'
+				)
+				SELECT organization_id::text FROM user_orgs
 			))
 		  )
 		ORDER BY 1`, workspaceID, userID)
@@ -678,7 +711,7 @@ func (r *projectAuthRepository) ListProjectMembers(ctx context.Context, projectI
 // overlay is enabled; migration 453 is responsible for backfilling them.
 func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter projectauth.PermissionReportFilter) (projectauth.PermissionReportResult, error) {
 	rows, err := r.db.Query(ctx, `
-		WITH canonical AS (
+		WITH RECURSIVE canonical AS (
 			SELECT g.id::text AS grant_id, g.workspace_id::text AS workspace_id,
 				g.project_id::text AS project_id, COALESCE(g.issue_id::text, '') AS issue_id,
 				g.subject_type, COALESCE(g.subject_id, '') AS subject_id,
@@ -700,6 +733,18 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			  ON rd.workspace_id = c.workspace_id::uuid AND rd.role_key = c.role_key
 			JOIN project_permission_role_permissions rp ON rp.role_id = rd.id
 			WHERE c.role_key IS NOT NULL
+		), effective_org_members(workspace_id, organization_id, parent_id, user_id) AS (
+			-- 2026-09-03 coder(lq): Materialize each user's active department and
+			-- all active ancestors so reports reflect inherited parent grants too.
+			SELECT org.workspace_id, org.id, org.parent_id, om.user_id
+			FROM projectauth_organization_members om
+			JOIN projectauth_organizations org ON org.id = om.organization_id
+			WHERE om.workspace_id = $1 AND org.workspace_id = $1 AND org.status = 'active'
+			UNION
+			SELECT parent.workspace_id, parent.id, parent.parent_id, eom.user_id
+			FROM effective_org_members eom
+			JOIN projectauth_organizations parent ON parent.id = eom.parent_id
+			WHERE parent.workspace_id = $1 AND parent.status = 'active'
 		), role_members AS (
 			-- A role subject targets users who hold that project role. Expand
 			-- every project-level role grant source, including organization and
@@ -710,12 +755,8 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			UNION
 			SELECT DISTINCT c.project_id, om.user_id::text, c.role_key
 			FROM canonical c
-			JOIN projectauth_organizations org
-			  ON org.workspace_id::text = c.workspace_id
-			 AND org.id::text = c.subject_id
-			 AND org.status = 'active'
-			JOIN projectauth_organization_members om
-			  ON om.organization_id = org.id
+			JOIN effective_org_members om
+			  ON om.organization_id::text = c.subject_id
 			 AND om.workspace_id::text = c.workspace_id
 			WHERE c.issue_id = '' AND c.subject_type = 'organization' AND c.role_key IS NOT NULL
 			UNION
@@ -729,10 +770,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			UNION ALL
 			SELECT pr.*, om.user_id::text
 			FROM permission_rows pr
-			JOIN projectauth_organizations org
-			  ON org.workspace_id::text = pr.workspace_id AND org.id::text = pr.subject_id
-			JOIN projectauth_organization_members om ON om.organization_id = org.id
-			WHERE pr.subject_type = 'organization' AND org.status = 'active'
+			JOIN effective_org_members om
+			  ON om.workspace_id::text = pr.workspace_id AND om.organization_id::text = pr.subject_id
+			WHERE pr.subject_type = 'organization'
 			UNION ALL
 			SELECT pr.*, m.user_id::text
 			FROM permission_rows pr

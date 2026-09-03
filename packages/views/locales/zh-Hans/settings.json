@@ -1320,7 +1320,19 @@
     "created": "新增 {{count}} 条",
     "updated": "更新 {{count}} 条",
     "disabled": "停用 {{count}} 条",
-    "unmatched": "未匹配到工作区成员（{{count}}）"
+    "unmatched": "未导入人员（{{count}}）",
+    "sync_dingtalk": "从钉钉全量同步",
+    "sync_success": "钉钉组织目录同步成功",
+    "sync_failed": "钉钉组织目录同步失败",
+    "sync_result_title": "钉钉同步结果",
+    "sync_created": "新增部门 {{count}} 个",
+    "sync_updated": "更新部门 {{count}} 个",
+    "sync_disabled": "停用部门 {{count}} 个",
+    "sync_members": "新增成员关系 {{count}} 条",
+    "sync_removed": "移除成员关系 {{count}} 条",
+    "sync_users_created": "新建用户 {{count}} 个",
+    "sync_users_matched": "匹配已有用户 {{count}} 个",
+    "sync_workspace_members": "加入工作区成员 {{count}} 个"
   },
   "members": {
     "section_title": "成员（{{count}}）",

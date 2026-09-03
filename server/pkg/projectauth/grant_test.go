@@ -100,6 +100,21 @@ func TestUnifiedGrantsResolveUserOrganizationAndEveryone(t *testing.T) {
 	}
 }
 
+func TestOrganizationGrantUsesEffectiveAncestorOrganizations(t *testing.T) {
+	ctx := context.Background()
+	subject := Subject{UserID: "u-child", WorkspaceID: "ws-1"}
+	parentGrant := AccessGrant{ProjectID: "p-1", SubjectType: SubjectOrganization, SubjectID: "org-parent", Permission: View}
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember), projectWorkspace: "ws-1"}, grants: []AccessGrant{parentGrant}, orgs: []string{"org-child", "org-parent"}}
+	if err := New(repo, true).Check(ctx, subject, "p-1", View); err != nil {
+		t.Fatalf("child department did not inherit parent grant: %v", err)
+	}
+
+	repo.orgs = []string{"org-child", "org-other"}
+	if err := New(repo, true).Check(ctx, subject, "p-1", View); err == nil {
+		t.Fatal("unrelated department unexpectedly inherited parent grant")
+	}
+}
+
 func TestEnabledAuthorizationRejectsLegacyOnlyRepository(t *testing.T) {
 	repo := legacyOnlyRepo{workspace: WorkspaceMember, projectWorkspace: "ws-1"}
 	err := New(repo, true).Check(
