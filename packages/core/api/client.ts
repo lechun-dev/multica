@@ -104,6 +104,12 @@ import type {
   ProjectPermissionReportResponse,
   ProjectPermissionRole,
   ProjectPermissionRolesResponse,
+  ProjectAccessGrant,
+  ProjectAccessGrantRequest,
+  ProjectAccessGrantsResponse,
+  ProjectAuthorizationOrganizationsResponse,
+  ProjectAuthorizationImportPreview,
+  ProjectAuthorizationImportResult,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
@@ -394,6 +400,12 @@ import {
   EMPTY_PROJECT_MEMBERS_RESPONSE,
   type ProjectMembersResponse,
   ProjectPermissionRolesResponseSchema,
+  ProjectAccessGrantSchema,
+  ProjectAccessGrantsResponseSchema,
+  EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE,
+  ProjectAuthorizationOrganizationsResponseSchema,
+  ProjectAuthorizationImportPreviewSchema,
+  ProjectAuthorizationImportResultSchema,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
   IssuePropertySchema,
@@ -3684,14 +3696,138 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" });
   }
 
+  /** Unified project/task authorization API. Kept additive so legacy member
+   * endpoints remain available during migration and upstream rebases. */
+  async listProjectAccessGrants(projectId: string): Promise<ProjectAccessGrantsResponse> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/access-grants`);
+    return parseWithFallback(raw, ProjectAccessGrantsResponseSchema, EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE, {
+      endpoint: "GET /api/projects/:id/access-grants",
+    });
+  }
+
+  async listProjectAuthorizationOrganizations(workspaceId: string): Promise<ProjectAuthorizationOrganizationsResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations`);
+    return parseWithFallback(raw, ProjectAuthorizationOrganizationsResponseSchema, { organizations: [], total: 0 }, {
+      endpoint: "GET /api/workspaces/:id/projectauth/organizations",
+    });
+  }
+
+  // 2026-09-01 coder(lq): Keep organization imports behind the shared client
+  // so multipart uploads receive the same auth, CSRF, and workspace headers as
+  // every other API request.
+  async previewProjectAuthorizationOrganizationImport(
+    workspaceId: string,
+    kind: "organizations" | "members",
+    file: File,
+  ): Promise<ProjectAuthorizationImportPreview> {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await this.fetchRaw(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/import/preview?kind=${encodeURIComponent(kind)}`,
+      { method: "POST", body: form },
+    );
+    const raw = await response.json();
+    return parseWithFallback(raw, ProjectAuthorizationImportPreviewSchema, {
+      kind,
+      errors: [],
+      warnings: [],
+      rows: 0,
+    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import/preview" });
+  }
+
+  async importProjectAuthorizationOrganizations(
+    workspaceId: string,
+    data: {
+      kind: "organizations" | "members";
+      organizations?: ProjectAuthorizationImportPreview["organizations"];
+      members?: ProjectAuthorizationImportPreview["members"];
+    },
+  ): Promise<ProjectAuthorizationImportResult> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/import`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+    return parseWithFallback(raw, ProjectAuthorizationImportResultSchema, {
+      organizations_created: 0,
+      organizations_updated: 0,
+      members_created: 0,
+      members_updated: 0,
+      disabled: 0,
+      unmatched: [],
+    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import" });
+  }
+
+  async downloadProjectAuthorizationOrganizationTemplate(
+    workspaceId: string,
+    kind: "organizations" | "members",
+  ): Promise<Blob> {
+    const response = await this.fetchRaw(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/template?kind=${encodeURIComponent(kind)}`,
+    );
+    return response.blob();
+  }
+
+  async createProjectAccessGrant(projectId: string, data: ProjectAccessGrantRequest): Promise<ProjectAccessGrant> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/access-grants`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ProjectAccessGrantSchema, {
+      id: "",
+      workspace_id: "",
+      project_id: projectId,
+      subject_type: data.subject_type,
+      subject_id: data.subject_id,
+      role: data.role,
+      permission: data.permission,
+      source: "manual",
+    }, { endpoint: "POST /api/projects/:id/access-grants" });
+  }
+
+  async revokeProjectAccessGrant(projectId: string, data: ProjectAccessGrantRequest): Promise<void> {
+    await this.fetch(`/api/projects/${projectId}/access-grants`, { method: "DELETE", body: JSON.stringify(data) });
+  }
+
+  async listIssueAccessGrants(issueId: string): Promise<ProjectAccessGrantsResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/access-grants`);
+    return parseWithFallback(raw, ProjectAccessGrantsResponseSchema, EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE, {
+      endpoint: "GET /api/issues/:id/access-grants",
+    });
+  }
+
+  async createIssueAccessGrant(issueId: string, data: ProjectAccessGrantRequest): Promise<ProjectAccessGrant> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/access-grants`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ProjectAccessGrantSchema, {
+      id: "",
+      workspace_id: "",
+      project_id: "",
+      issue_id: issueId,
+      subject_type: data.subject_type,
+      subject_id: data.subject_id,
+      role: data.role,
+      permission: data.permission,
+      source: "manual",
+    }, { endpoint: "POST /api/issues/:id/access-grants" });
+  }
+
+  async revokeIssueAccessGrant(issueId: string, data: ProjectAccessGrantRequest): Promise<void> {
+    await this.fetch(`/api/issues/${issueId}/access-grants`, { method: "DELETE", body: JSON.stringify(data) });
+  }
+
   async listProjectPermissionReport(
     params: ProjectPermissionReportParams = {},
   ): Promise<ProjectPermissionReportResponse> {
     const q = new URLSearchParams();
     if (params.project_id) q.set("project_id", params.project_id);
+    if (params.issue_id) q.set("issue_id", params.issue_id);
     if (params.user_id) q.set("user_id", params.user_id);
     if (params.role) q.set("role", params.role);
     if (params.permission) q.set("permission", params.permission);
+    if (params.subject_type) q.set("subject_type", params.subject_type);
+    if (params.subject_id) q.set("subject_id", params.subject_id);
     if (params.scope) q.set("scope", params.scope);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.offset !== undefined) q.set("offset", String(params.offset));

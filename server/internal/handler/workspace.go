@@ -285,6 +285,19 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2026-09-01 coder(lq): Seed the canonical project-role catalog in the
+	// workspace transaction. Without this, a newly created workspace could
+	// pass single-resource checks (which have in-memory defaults) while its
+	// SQL-backed project list hid every project until a role was edited.
+	// Keep the call behind the rollout flag so older deployments can still
+	// create workspaces before the authorization migrations are applied.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if err := (&projectAuthRepository{db: tx}).ensureSystemRoleDefinitions(r.Context(), uuidToString(ws.ID)); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to seed project permission roles: "+err.Error())
+			return
+		}
+	}
+
 	// Seed the 7 built-in issue statuses inside the same transaction, so a
 	// workspace is never visible without its status catalog — an issue cannot
 	// be created before its status can be resolved. (MUL-6243)

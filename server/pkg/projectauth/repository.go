@@ -43,6 +43,73 @@ type ProjectRoleReader interface {
 	CurrentProjectRoles(ctx context.Context, workspaceID, userID string) (map[string]ProjectRole, error)
 }
 
+// GrantRepository is the additive persistence seam for the unified grants
+// table. Legacy Repository methods remain available during migration.
+type GrantRepository interface {
+	Repository
+	ListAccessGrants(ctx context.Context, workspaceID, projectID, issueID string) ([]AccessGrant, error)
+	ListUserOrganizations(ctx context.Context, workspaceID, userID string) ([]string, error)
+	UpsertAccessGrant(ctx context.Context, grant AccessGrant) error
+	DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType SubjectType, subjectID string, role ProjectRole, permission Permission) error
+}
+
+// AuthorizationAuditEvent is the storage-neutral audit record emitted for
+// authorization mutations. The Handler adapter persists it in Multica's
+// existing activity_log table; keeping the event here avoids coupling the
+// authorization package to PostgreSQL or generated sqlc models.
+// 2026-08-31 coder(lq): Add one audit seam for grants and role definitions so
+// every authorization write can be committed atomically with its audit row.
+type AuthorizationAuditEvent struct {
+	WorkspaceID string
+	ProjectID   string
+	IssueID     string
+	ActorUserID string
+	Action      string
+	Details     map[string]any
+}
+
+type AuditRepository interface {
+	RecordAuthorizationAudit(ctx context.Context, event AuthorizationAuditEvent) error
+}
+
+// AccessGrantReader is an optional read-after-write seam. HTTP adapters can
+// return the canonical persisted grant (including its generated ID) without
+// coupling the authorization package to a database driver.
+// 2026-08-31 coder(lq): Keep POST grant responses consistent with the
+// provider-neutral API contract while older adapters remain source-compatible.
+type AccessGrantReader interface {
+	GetAccessGrant(ctx context.Context, workspaceID, projectID, issueID string,
+		subjectType SubjectType, subjectID string, role ProjectRole, permission Permission) (AccessGrant, error)
+}
+
+// ResourceRepository is an optional consistency seam for adapters that can
+// verify task ownership before reading or writing a task grant. Keeping it
+// optional lets older test/dry-run adapters compile while production adapters
+// fail closed when the resource cannot be resolved.
+// 2026-08-31 coder(lq): Validate task-to-project binding at the authorization
+// boundary instead of relying on callers to pass a matching project ID.
+type ResourceRepository interface {
+	IssueProject(ctx context.Context, issueID string) (workspaceID, projectID string, err error)
+}
+
+// SubjectRepository is an optional provider-neutral directory boundary. The
+// authorization core never calls DingTalk, WeCom, Feishu, or another OA API;
+// adapters expose the last synchronized MissionOS directory snapshot here.
+// 2026-09-01 coder(lq): Validate grant subjects before persisting them so a
+// stale or cross-workspace external identifier cannot create an unusable ACL.
+type SubjectRepository interface {
+	UserInWorkspace(ctx context.Context, workspaceID, userID string) (bool, error)
+	ActiveOrganizationInWorkspace(ctx context.Context, workspaceID, organizationID string) (bool, error)
+}
+
+// OrganizationDirectoryRepository is intentionally separate from Repository:
+// older adapters can continue authorizing existing grants without having to
+// implement a directory listing before the organization picker is enabled.
+// 2026-09-01 coder(lq): Keep organization synchronization/storage additive.
+type OrganizationDirectoryRepository interface {
+	ListOrganizations(ctx context.Context, workspaceID string) ([]Organization, error)
+}
+
 type RoleDefinition struct {
 	ID          string       `json:"id"`
 	WorkspaceID string       `json:"workspace_id"`

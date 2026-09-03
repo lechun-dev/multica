@@ -36,9 +36,12 @@ func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 	filter := projectauth.PermissionReportFilter{
 		WorkspaceID: workspaceID,
 		ProjectID:   q.Get("project_id"),
+		IssueID:     q.Get("issue_id"),
 		UserID:      q.Get("user_id"),
 		Role:        q.Get("role"),
 		Permission:  projectauth.Permission(q.Get("permission")),
+		SubjectType: projectauth.SubjectType(q.Get("subject_type")),
+		SubjectID:   q.Get("subject_id"),
 		Scope:       q.Get("scope"),
 	}
 	if raw := q.Get("limit"); raw != "" {
@@ -67,6 +70,10 @@ func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 	result, err := h.ProjectAuth.ListPermissionReport(r.Context(), subject, filter)
 	if err != nil {
 		switch {
+		case errors.Is(err, projectauth.ErrMigrationRequired):
+			writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_migration_required", "project permission migration is required")
+		case errors.Is(err, projectauth.ErrStorageUnavailable), errors.Is(err, projectauth.ErrDisabled):
+			writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
 		case errors.Is(err, projectauth.ErrInvalidReportFilter):
 			writeErrorCode(w, http.StatusBadRequest, "invalid_permission_report_filter", "invalid permission report filter")
 		case errors.Is(err, projectauth.ErrForbidden):

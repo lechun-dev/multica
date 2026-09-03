@@ -276,6 +276,15 @@ var concurrentIndexCleanups = map[string]string{
 	"443_issue_project_status_index":                            "idx_issue_project_status",
 	"444_github_pr_head_sha_index":                              "idx_github_pull_request_head_sha",
 	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
+	"446_projectauth_access_grants_project_unique":              "projectauth_access_grants_project_uniq",
+	"447_projectauth_access_grants_issue_unique":                "projectauth_access_grants_issue_uniq",
+	"448_projectauth_access_grants_workspace_project_index":     "projectauth_access_grants_workspace_project_idx",
+	"449_projectauth_access_grants_subject_index":               "projectauth_access_grants_subject_idx",
+	"450_projectauth_organizations_unique":                      "projectauth_organizations_workspace_provider_external_uniq",
+	"451_projectauth_organization_members_unique":               "projectauth_organization_members_pkey",
+	"452_projectauth_organization_members_user_index":           "projectauth_organization_members_user_idx",
+	"454_projectauth_access_grants_id_unique":                   "projectauth_access_grants_id_uniq",
+	"455_projectauth_organizations_id_unique":                   "projectauth_organizations_id_uniq",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

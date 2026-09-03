@@ -27,6 +27,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -37,6 +38,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -54,6 +56,14 @@ const (
 	onboardingAssistantName       = "Multica Helper"
 	onboardingIssueTitle          = "Start here: learn Multica with Multica Helper"
 	onboardingAgentCreationSource = "multica_helper"
+	// onboardingProjectTitle is intentionally stable so the deprecated desktop
+	// bootstrap can be retried without creating a projectless issue or a second
+	// system project. The project is created only while project permissions are
+	// enabled; the flag-off path preserves the upstream shim contract.
+	// 2026-09-01 coder(lq): Keep legacy onboarding compatible while enforcing
+	// the project binding invariant for permission-enabled workspaces.
+	onboardingProjectTitle       = "MissionOS Onboarding"
+	onboardingProjectDescription = "System project for the MissionOS onboarding guide."
 
 	// noRuntimeIssueTitle MUST match the pre-v3 service constant so
 	// LockAndFindActiveDuplicate dedupes correctly across desktop versions.
@@ -126,6 +136,46 @@ type bootstrapOnboardingNoRuntimeResponse struct {
 	IssueID     string `json:"issue_id"`
 }
 
+// ensureOnboardingProject returns the stable system project used by the
+// deprecated onboarding endpoints when project authorization is enabled. A
+// transaction-scoped advisory lock closes the race between two old desktop
+// clients bootstrapping the same workspace at the same time.
+// 2026-09-01 coder(lq): Make every newly seeded onboarding issue satisfy the
+// task-must-have-a-project invariant without changing the disabled rollout.
+func (h *Handler) ensureOnboardingProject(ctx context.Context, tx pgx.Tx, q *db.Queries, workspaceID, userID pgtype.UUID) (pgtype.UUID, bool, error) {
+	var empty pgtype.UUID
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return empty, false, nil
+	}
+	lockKey := fmt.Sprintf("missionos-onboarding-project:%s", uuidToString(workspaceID))
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+		return empty, false, err
+	}
+	var projectID pgtype.UUID
+	err := tx.QueryRow(ctx, `
+		SELECT id FROM project
+		WHERE workspace_id = $1 AND title = $2 AND description = $3
+		ORDER BY created_at ASC LIMIT 1`, workspaceID, onboardingProjectTitle, onboardingProjectDescription).Scan(&projectID)
+	if err == nil {
+		return projectID, false, nil
+	}
+	if err != pgx.ErrNoRows {
+		return empty, false, err
+	}
+	project, err := q.CreateProject(ctx, db.CreateProjectParams{
+		WorkspaceID: workspaceID,
+		CreatedBy:   userID,
+		Title:       onboardingProjectTitle,
+		Description: pgtype.Text{String: onboardingProjectDescription, Valid: true},
+		Status:      "planned",
+		Priority:    "none",
+	})
+	if err != nil {
+		return empty, false, err
+	}
+	return project.ID, true, nil
+}
+
 // BootstrapOnboardingRuntime — DEPRECATED, kept for desktop < v3.
 //
 // Creates or reuses one "Multica Helper" agent on the supplied runtime,
@@ -195,6 +245,26 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "this runtime is private; only its owner can create agents on it")
 		return
 	}
+	onboardingProjectID, onboardingProjectCreated, err := h.ensureOnboardingProject(r.Context(), tx, qtx, wsUUID, parseUUID(userID))
+	if err != nil {
+		slog.Warn("bootstrap onboarding (shim): ensure project failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to prepare onboarding project")
+		return
+	}
+	if onboardingProjectID.Valid {
+		access := projectauth.New(newProjectAuthRepository(tx), true)
+		var accessErr error
+		if onboardingProjectCreated {
+			accessErr = access.EnsureOwner(r.Context(), uuidToString(onboardingProjectID), userID)
+		} else {
+			accessErr = access.PromoteMember(r.Context(), uuidToString(onboardingProjectID), userID, projectauth.ProjectViewer)
+		}
+		if accessErr != nil {
+			slog.Warn("bootstrap onboarding (shim): grant project access failed", append(logger.RequestAttrs(r), "error", accessErr, "workspace_id", req.WorkspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to grant onboarding project access")
+			return
+		}
+	}
 
 	agents, err := qtx.ListAgents(r.Context(), wsUUID)
 	if err != nil {
@@ -239,7 +309,7 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 
 	var emptyUUID pgtype.UUID
 	issue, foundIssue, err := issueguard.LockAndFindActiveDuplicate(
-		r.Context(), qtx, wsUUID, emptyUUID, emptyUUID, onboardingIssueTitle, false,
+		r.Context(), qtx, wsUUID, onboardingProjectID, emptyUUID, onboardingIssueTitle, false,
 	)
 	if err != nil {
 		slog.Warn("bootstrap onboarding (shim): duplicate issue check failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
@@ -274,7 +344,7 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 			ParentIssueID: emptyUUID,
 			Position:      0,
 			Number:        issueNumber,
-			ProjectID:     emptyUUID,
+			ProjectID:     onboardingProjectID,
 		})
 		if err != nil {
 			slog.Warn("bootstrap onboarding (shim): create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
@@ -400,10 +470,30 @@ func (h *Handler) BootstrapOnboardingNoRuntime(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusForbidden, "not a member of this workspace")
 		return
 	}
+	onboardingProjectID, onboardingProjectCreated, err := h.ensureOnboardingProject(r.Context(), tx, qtx, wsUUID, parseUUID(userID))
+	if err != nil {
+		slog.Warn("bootstrap no-runtime onboarding (shim): ensure project failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to prepare onboarding project")
+		return
+	}
+	if onboardingProjectID.Valid {
+		access := projectauth.New(newProjectAuthRepository(tx), true)
+		var accessErr error
+		if onboardingProjectCreated {
+			accessErr = access.EnsureOwner(r.Context(), uuidToString(onboardingProjectID), userID)
+		} else {
+			accessErr = access.PromoteMember(r.Context(), uuidToString(onboardingProjectID), userID, projectauth.ProjectViewer)
+		}
+		if accessErr != nil {
+			slog.Warn("bootstrap no-runtime onboarding (shim): grant project access failed", append(logger.RequestAttrs(r), "error", accessErr, "workspace_id", req.WorkspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to grant onboarding project access")
+			return
+		}
+	}
 
 	var emptyUUID pgtype.UUID
 	existing, foundIssue, err := issueguard.LockAndFindActiveDuplicate(
-		r.Context(), qtx, wsUUID, emptyUUID, emptyUUID, noRuntimeIssueTitle, false,
+		r.Context(), qtx, wsUUID, onboardingProjectID, emptyUUID, noRuntimeIssueTitle, false,
 	)
 	if err != nil {
 		slog.Warn("bootstrap no-runtime onboarding (shim): duplicate issue check failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
@@ -438,7 +528,7 @@ func (h *Handler) BootstrapOnboardingNoRuntime(w http.ResponseWriter, r *http.Re
 			ParentIssueID: emptyUUID,
 			Position:      0,
 			Number:        issueNumber,
-			ProjectID:     emptyUUID,
+			ProjectID:     onboardingProjectID,
 		})
 		if err != nil {
 			slog.Warn("bootstrap no-runtime onboarding (shim): create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)

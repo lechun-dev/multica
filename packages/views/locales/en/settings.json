@@ -332,7 +332,8 @@
       "mcp": "MCP",
       "billing": "Billing",
       "project_permissions": "Project Permissions",
-      "project_permission_roles": "Permission Roles"
+      "project_permission_roles": "Permission Roles",
+      "project_authorization_organizations": "Directory Import"
     }
   },
   "plugins": {
@@ -1301,6 +1302,32 @@
     "save_failed": "Could not save the role.",
     "deleted": "Role deleted.",
     "delete_failed": "Could not delete the role. It may still be in use."
+  },
+  "project_authorization_organizations": {
+    "title": "Directory Import",
+    "description": "Upload department and people directories for organization-based project authorization. People are matched to existing workspace members by user UUID or email.",
+    "kind": "Import type",
+    "organizations": "Departments",
+    "members": "People",
+    "download_template": "Download template",
+    "download_failed": "Template download failed",
+    "upload_file": "Choose CSV file",
+    "preview": "Preview",
+    "confirm_import": "Import",
+    "preview_title": "Import preview",
+    "rows": "{{count}} rows",
+    "errors": "{{count}} errors",
+    "warnings": "{{count}} warnings",
+    "admin_only": "Only workspace owners and admins can import the directory.",
+    "no_file": "Choose a CSV file first",
+    "import_success": "Directory imported successfully",
+    "import_failed": "Directory import failed",
+    "empty": "There is no data to preview.",
+    "result_title": "Import result",
+    "created": "{{count}} created",
+    "updated": "{{count}} updated",
+    "disabled": "{{count}} disabled",
+    "unmatched": "Workspace members not matched ({{count}})"
   },
   "members": {
     "section_title": "Members ({{count}})",

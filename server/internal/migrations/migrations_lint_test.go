@@ -62,6 +62,14 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"442": {"442_agent_runtime_offline_last_seen_index", "442_vcs_reference_only_repair"},
 	"443": {"443_issue_project_status_index", "443_project_created_by"},
 	"444": {"444_comment_recovery_settled_at", "444_github_pr_head_sha_index"},
+	// 2026-09-03 coder(lq): Project authorization migrations were introduced
+	// on the private stream while upstream used the same numeric range. Keep
+	// their original names so deployments that already applied them continue
+	// to upgrade safely; the migration bodies are independent and idempotent.
+	"445": {"445_comment_delegated_failure_unsettled_index", "445_projectauth_unified_grants"},
+	"446": {"446_project_issue_comment_permission", "446_projectauth_access_grants_project_unique"},
+	"447": {"447_issue_archive", "447_projectauth_access_grants_issue_unique"},
+	"448": {"448_attachment_pending_comment", "448_projectauth_access_grants_workspace_project_index"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

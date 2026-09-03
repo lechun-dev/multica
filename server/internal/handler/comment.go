@@ -3421,7 +3421,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil && promoteMentionAccess {
-			err = promoteIssueMentionedMembersWithExecutor(r.Context(), tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), req.Content)
+			err = syncIssueMentionAccessWithExecutor(r.Context(), tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), issue.Description.String)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())

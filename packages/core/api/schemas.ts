@@ -3367,6 +3367,61 @@ export const ProjectPermissionRolesResponseSchema = z.object({
 
 export type ProjectPermissionRolesResponse = z.infer<typeof ProjectPermissionRolesResponseSchema>;
 
+export const ProjectAccessGrantSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  issue_id: z.string().optional(),
+  subject_type: z.enum(["user", "role", "organization", "everyone"]),
+  subject_id: z.string().optional(),
+  role: z.string().optional(),
+  permission: z.string().optional(),
+  source: z.string().default("manual"),
+  granted_by: z.string().optional(),
+}).loose();
+
+export const ProjectAccessGrantsResponseSchema = z.object({
+  grants: z.array(ProjectAccessGrantSchema).default([]),
+  total: z.number().default(0),
+  project_id: z.string().optional(),
+}).loose();
+
+export type ProjectAccessGrantsResponse = z.infer<typeof ProjectAccessGrantsResponseSchema>;
+export const EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE: ProjectAccessGrantsResponse = { grants: [], total: 0 };
+
+export const ProjectAuthorizationOrganizationSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  provider: z.string().default(""),
+  external_id: z.string().default(""),
+  name: z.string().default(""),
+  parent_id: z.string().optional(),
+  status: z.string().default("active"),
+}).loose();
+
+export const ProjectAuthorizationOrganizationsResponseSchema = z.object({
+  organizations: z.array(ProjectAuthorizationOrganizationSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export type ProjectAuthorizationOrganizationsResponse = z.infer<typeof ProjectAuthorizationOrganizationsResponseSchema>;
+
+export const ProjectAuthorizationImportPreviewSchema = z.object({
+  kind: z.enum(["organizations", "members"]),
+  organizations: z.array(z.object({ external_id: z.string(), name: z.string(), parent_external_id: z.string().optional(), status: z.string() }).loose()).optional(),
+  members: z.array(z.object({ external_id: z.string(), name: z.string(), email: z.string().optional(), phone: z.string().optional(), organization_external_id: z.string(), status: z.string() }).loose()).optional(),
+  errors: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).default([]),
+  rows: z.number().default(0),
+}).loose();
+export type ProjectAuthorizationImportPreview = z.infer<typeof ProjectAuthorizationImportPreviewSchema>;
+export const ProjectAuthorizationImportResultSchema = z.object({
+  organizations_created: z.number().default(0), organizations_updated: z.number().default(0),
+  members_created: z.number().default(0), members_updated: z.number().default(0),
+  disabled: z.number().default(0), unmatched: z.array(z.string()).default([]),
+}).loose();
+export type ProjectAuthorizationImportResult = z.infer<typeof ProjectAuthorizationImportResultSchema>;
+
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,
   workspace_id: z.string(),
