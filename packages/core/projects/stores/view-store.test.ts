@@ -47,6 +47,7 @@ describe("useProjectViewStore", () => {
     expect(Object.keys(parsed.state).sort()).toEqual([
       "filters",
       "hiddenColumns",
+      "showWorkspaceOwnedItems",
       "sortDirection",
       "sortField",
       "viewMode",

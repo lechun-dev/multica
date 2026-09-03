@@ -19,26 +19,32 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ShortcutKeycaps } from "../../common/shortcut-keycaps";
 import { useT } from "../../i18n";
+import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 
 const logger = createLogger("chat.ui");
 
 export function ChatFab() {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const isOpen = useChatStore((s) => s.isOpen);
   const toggle = useChatStore((s) => s.toggle);
   // The keyboard route to this button is only useful if it's discoverable, so
   // the tooltip carries the current binding (Settings → Shortcuts can rebind or
   // clear it, hence the null case).
   const shortcut = useShortcut("toggleChat");
-  const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
+  const { data: sessions = [] } = useQuery({
+    ...chatSessionsOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   // FAB only needs a boolean "is anything running", and only while the window
   // is closed (when open, ChatWindow owns the detailed pending query). Gating
   // on `enabled: !isOpen` keeps the minimised button off the per-message
   // aggregate hot path entirely (MUL-4159).
   const { data: hasPending } = useQuery({
-    ...hasPendingChatTasksOptions(wsId),
-    enabled: !isOpen,
+    ...hasPendingChatTasksOptions(wsId, includeWorkspaceOwned),
+    enabled: !isOpen && visibilityReady,
   });
 
   if (isOpen) return null;

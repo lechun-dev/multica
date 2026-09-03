@@ -1,7 +1,6 @@
 "use client";
 
 import { issueStatusCategory } from "@multica/core/issues";
-import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { useStatusLabel } from "./../utils/status-label";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -20,6 +19,7 @@ import { descriptionPreview } from "./description-preview";
 import { PriorityIcon } from "./priority-icon";
 import { ProgressRing } from "./progress-ring";
 import { StatusIcon } from "./status-icon";
+import { useWorkspaceTaskVisibility } from "../surface/visibility-context";
 
 interface IssueHoverCardProps {
   issueId: string;
@@ -118,12 +118,19 @@ function IssueHoverCardBody({
   fallbackLabel?: string;
 }) {
   const wsId = useWorkspaceId();
-  const { colorOf: statusColorOf } = useIssueStatuses(wsId);
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
   const resolveStatusLabel = useStatusLabel(wsId);
-  const detail = useQuery(issueDetailOptions(wsId, issueId));
+  const detail = useQuery({
+    ...issueDetailOptions(wsId, issueId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   // One workspace-wide progress snapshot shared with the issues list and issue
   // detail, not a per-issue children fetch: opening a card reuses the cache.
-  const { data: childProgress } = useQuery(childIssueProgressOptions(wsId));
+  const { data: childProgress } = useQuery({
+    ...childIssueProgressOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const { t } = useT("issues");
 
   // A skeleton rather than localized loading text: only the pending phase gets
@@ -190,7 +197,6 @@ function IssueHoverCardBody({
           <StatusIcon
             status={issue.status}
             category={issueStatusCategory(issue) ?? undefined}
-            color={statusColorOf(issue.status)}
             className="h-3.5 w-3.5 shrink-0"
           />
         </span>

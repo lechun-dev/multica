@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -474,6 +475,9 @@ func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.requireProjectPermission(w, r, uuidToString(project.ID), uuidToString(project.WorkspaceID), projectauth.View) {
+		return
+	}
 	resources, err := h.Queries.ListProjectResources(r.Context(), project.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list project resources")
@@ -490,6 +494,9 @@ func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) {
 	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
 	if !ok {
+		return
+	}
+	if !h.requireProjectPermission(w, r, uuidToString(project.ID), uuidToString(project.WorkspaceID), projectauth.Edit) {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -576,6 +583,9 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) {
 	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
 	if !ok {
+		return
+	}
+	if !h.requireProjectPermission(w, r, uuidToString(project.ID), uuidToString(project.WorkspaceID), projectauth.Edit) {
 		return
 	}
 	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
@@ -806,6 +816,9 @@ func (h *Handler) DeleteProjectResource(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !h.requireProjectPermission(w, r, uuidToString(project.ID), uuidToString(project.WorkspaceID), projectauth.Edit) {
+		return
+	}
 	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
 	if !ok {
 		return
@@ -877,6 +890,8 @@ type claimProjectContext struct {
 	Resources   []ProjectResourceData
 	Repos       []RepoData
 }
+
+var errIssueProjectRequired = errors.New("issue task requires a valid project")
 
 // applyTo copies the resolved context onto a claim response. Callers assign the
 // whole context or none of it, so a claim can never carry a project's title
@@ -964,6 +979,26 @@ func (h *Handler) resolveClaimProjectContext(ctx context.Context, projectID, wor
 		}
 	}
 	return out, nil
+}
+
+// resolveRequiredIssueClaimProjectContext is the strict Issue wrapper around
+// the shared project resolver. Chat, Autopilot and quick-create tasks may keep
+// their historical workspace-repository fallback, but an Issue claim cannot
+// run without a project that still exists in the task's workspace.
+// 2026-08-27 coder(lq): Keep the strict policy isolated so disabling the
+// project-permission overlay preserves Multica's native claim behavior.
+func (h *Handler) resolveRequiredIssueClaimProjectContext(ctx context.Context, projectID, workspaceID pgtype.UUID) (claimProjectContext, error) {
+	if !projectID.Valid {
+		return claimProjectContext{}, errIssueProjectRequired
+	}
+	resolved, err := h.resolveClaimProjectContext(ctx, projectID, workspaceID)
+	if err != nil {
+		return claimProjectContext{}, err
+	}
+	if resolved.ProjectID == "" {
+		return claimProjectContext{}, errIssueProjectRequired
+	}
+	return resolved, nil
 }
 
 // projectResourcesForClaim maps resource rows onto the claim wire shape and

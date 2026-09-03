@@ -885,7 +885,20 @@
     "tool_kind_command": "命令",
     "tool_kind_write": "编辑",
     "tool_kind_read": "读取",
-    "tool_kind_misc": "其他"
+    "tool_kind_misc": "其他",
+    "view_details": "执行详情",
+    "view_human": "执行摘要",
+    "human_agent_message": "智能体发送了一条消息。",
+    "human_thinking": "智能体正在思考",
+    "human_running": "正在{{action}}",
+    "human_completed": "已完成{{action}}",
+    "human_command": "执行命令：{{subject}}",
+    "human_read": "读取：{{subject}}",
+    "human_search": "搜索：{{subject}}",
+    "human_edit": "修改：{{subject}}",
+    "human_tool": "使用工具：{{subject}}",
+    "human_error": "执行遇到问题：{{text}}",
+    "human_group": "执行 {{count}} 次{{tool}}操作"
   },
   "task_failure": {
     "cancelled_by_system": "系统已取消",

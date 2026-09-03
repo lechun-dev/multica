@@ -419,6 +419,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
+		ProjectPermissionEnabled: os.Getenv("PROJECT_PERMISSION_ENABLED") == "true",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
 		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
@@ -522,6 +523,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	channelRegistry := channel.NewRegistry()
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{
 		Logger: slog.Default(), Lifecycle: h,
+		ProjectPermissionEnabled: signupConfig.ProjectPermissionEnabled,
 	})
 	// Debounce the per-session run trigger so a burst of messages collapses
 	// into one agent run instead of one per message (MUL-2968).
@@ -889,6 +891,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
 	}
+	// Member @mentions use the deployment-wide DingTalk login application and
+	// are intentionally independent from the optional per-Agent BYO robot
+	// integration above.
+	registerDingTalkNotifyRuntime(bus, pool)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
@@ -1383,9 +1389,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
+	dingtalkRedirectURI := strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_REDIRECT_URI"))
+	if dingtalkRedirectURI == "" && signupConfig.AppURL != "" {
+		dingtalkRedirectURI = strings.TrimRight(signupConfig.AppURL, "/") + "/auth/dingtalk/callback"
+	}
+	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI)
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	r.With(authRL).Get("/auth/dingtalk/start", dingtalkLogin.ServeHTTP)
+	r.With(authRL).Post("/auth/dingtalk", dingtalkLogin.ServeHTTP)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -1527,6 +1540,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// no workspace in the path to gate on.
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
+		r.Get("/api/me/dingtalk-profile", h.GetDingTalkProfile)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
@@ -1573,6 +1587,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
+					r.Get("/projectauth/organizations", h.ListProjectAuthorizationOrganizations)
 					r.Post("/leave", h.LeaveWorkspace)
 					r.Get("/invitations", h.ListWorkspaceInvitations)
 					// Listing GitHub installations is member-visible so the
@@ -1606,6 +1621,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Admin-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Get("/projectauth/organizations/template", h.ProjectAuthorizationOrganizationTemplate)
+					r.Post("/projectauth/organizations/import/preview", h.PreviewProjectAuthorizationOrganizationImport)
+					r.Post("/projectauth/organizations/import", h.ImportProjectAuthorizationOrganizations)
+					r.Post("/projectauth/organizations/sync", dingtalkLogin.SyncDingTalkOrganizations)
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
@@ -1857,6 +1876,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
+			r.Get("/api/project-permissions/report", h.ListPermissionReport)
+			r.Route("/api/project-permission-roles", func(r chi.Router) {
+				r.Get("/", h.ListProjectPermissionRoles)
+				r.Post("/", h.CreateProjectPermissionRole)
+				r.Route("/{key}", func(r chi.Router) {
+					r.Patch("/", h.UpdateProjectPermissionRole)
+					r.Delete("/", h.DeleteProjectPermissionRole)
+				})
+			})
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
@@ -1882,7 +1910,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/access-grants", h.ListIssueAccessGrants)
+					r.Post("/access-grants", h.CreateIssueAccessGrant)
+					r.Delete("/access-grants", h.RevokeIssueAccessGrant)
 					r.Put("/", h.UpdateIssue)
+					r.Post("/archive", h.ArchiveIssue)
+					r.Post("/restore", h.RestoreIssue)
 					r.Post("/move", h.MoveIssue)
 					r.Delete("/", h.DeleteIssue)
 					r.Post("/comments/trigger-preview", h.PreviewCommentTriggers)
@@ -1972,8 +2005,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/", h.CreateProject)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetProject)
+					r.Get("/access-grants", h.ListProjectAccessGrants)
+					r.Post("/access-grants", h.CreateProjectAccessGrant)
+					r.Delete("/access-grants", h.RevokeProjectAccessGrant)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
+					r.Get("/members", h.ListProjectMembers)
+					r.Post("/members", h.AddProjectMember)
+					r.Delete("/members/{userId}", h.RemoveProjectMember)
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)

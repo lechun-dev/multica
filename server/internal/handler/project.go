@@ -18,12 +18,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type ProjectResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
+	CreatedBy   *string `json:"created_by"`
 	Title       string  `json:"title"`
 	Description *string `json:"description"`
 	Icon        *string `json:"icon"`
@@ -44,12 +46,19 @@ type ProjectResponse struct {
 	// payload to keep parent metadata and child collections separate; clients
 	// that need the list call ListProjectResources directly.
 	ResourceCount int64 `json:"resource_count"`
+	// CurrentUserRole is the caller's explicit role on this project. Workspace
+	// owner inheritance is an access-control rule, not a project membership, so
+	// it is intentionally omitted from this display field. It stays null for
+	// legacy deployments with permissions disabled.
+	// 2026-08-31 coder(lq): Keep project-role display separate from workspace role.
+	CurrentUserRole *string `json:"current_user_role"`
 }
 
 func projectToResponse(p db.Project) ProjectResponse {
 	return ProjectResponse{
 		ID:          uuidToString(p.ID),
 		WorkspaceID: uuidToString(p.WorkspaceID),
+		CreatedBy:   uuidToPtr(p.CreatedBy),
 		Title:       p.Title,
 		Description: textToPtr(p.Description),
 		Icon:        textToPtr(p.Icon),
@@ -109,6 +118,17 @@ type CreateProjectRequest struct {
 	StartDate   *string                               `json:"start_date"`
 	DueDate     *string                               `json:"due_date"`
 	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
+	// 2026-09-01 coder(lq): Persist creation-time grants in the same
+	// transaction as the project so a failed authorization cannot leave a
+	// project with only a partial or legacy membership state.
+	AccessGrants []CreateProjectAccessGrantRequest `json:"access_grants,omitempty"`
+}
+
+type CreateProjectAccessGrantRequest struct {
+	SubjectType projectauth.SubjectType `json:"subject_type"`
+	SubjectID   string                  `json:"subject_id"`
+	Role        projectauth.ProjectRole `json:"role"`
+	Permission  projectauth.Permission  `json:"permission"`
 }
 
 // CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
@@ -156,6 +176,41 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list projects")
 		return
 	}
+	var currentUserID string
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return
+		}
+		currentUserID = userID
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visible, err := h.ProjectAuth.ScopeWithWorkspaceOwned(r.Context(), projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}, includeWorkspaceOwned)
+		if err != nil {
+			writeProjectAuthError(w, err)
+			return
+		}
+		allowed := make(map[string]struct{}, len(visible))
+		for _, id := range visible {
+			allowed[id] = struct{}{}
+		}
+		filtered := projects[:0]
+		for _, project := range projects {
+			if _, ok := allowed[uuidToString(project.ID)]; ok {
+				filtered = append(filtered, project)
+			}
+		}
+		projects = filtered
+	}
+	// 2026-08-28 coder(lq): Resolve roles with one optional batch read so the
+	// additive metadata cannot turn a valid list request into an N+1 query.
+	roleMap := map[string]projectauth.ProjectRole{}
+	if currentUserID != "" {
+		if roles, roleErr := h.ProjectAuth.CurrentProjectRoles(r.Context(), workspaceID, currentUserID); roleErr == nil {
+			roleMap = roles
+		} else {
+			slog.Warn("failed to load current project roles", "workspace_id", workspaceID, "user_id", currentUserID, "error", roleErr)
+		}
+	}
 
 	// Batch-fetch issue stats and resource counts for all projects
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
@@ -192,6 +247,10 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			resp[i].DoneCount = s.DoneCount
 		}
 		resp[i].ResourceCount = resourceCountMap[resp[i].ID]
+		if role, ok := roleMap[resp[i].ID]; ok {
+			value := string(role)
+			resp[i].CurrentUserRole = &value
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
 }
@@ -214,9 +273,27 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
+	if !h.requireProjectPermission(w, r, id, workspaceID, projectauth.View) {
+		return
+	}
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	// 2026-09-03 coder(lq): Return the caller's explicit project role on the
+	// detail endpoint as well as the list endpoint. Workspace-owner bypass is
+	// intentionally not converted into a project Owner role here.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if userID := requestUserID(r); userID != "" {
+			if roles, roleErr := h.ProjectAuth.CurrentProjectRoles(r.Context(), workspaceID, userID); roleErr == nil {
+				if role, found := roles[uuidToString(project.ID)]; found {
+					value := string(role)
+					resp.CurrentUserRole = &value
+				}
+			} else {
+				slog.Warn("failed to load current project role", "workspace_id", workspaceID, "project_id", id, "user_id", userID, "error", roleErr)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -255,6 +332,46 @@ func (h *Handler) writeProjectWriteError(w http.ResponseWriter, r *http.Request,
 	writeError(w, http.StatusInternalServerError, "failed to "+action+" project")
 }
 
+// 2026-08-27 coder(lq): Bind owner initialization to the project transaction
+// so enabling project permissions cannot leave a committed project without an
+// owner when the membership insert fails.
+func (h *Handler) ensureProjectOwnerInTx(ctx context.Context, tx pgx.Tx, projectID, userID string) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return nil
+	}
+	return projectauth.New(newProjectAuthRepository(tx), true).EnsureOwner(ctx, projectID, userID)
+}
+
+// 2026-09-01 coder(lq): Creation-time grants share the project transaction.
+// This keeps the project row, its owner, and every requested user/organization/
+// everyone grant atomic; a bad subject or role rolls back the whole create.
+func (h *Handler) initializeProjectAccessInTx(ctx context.Context, tx pgx.Tx, workspaceID, projectID, userID string, requests []CreateProjectAccessGrantRequest) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(requests) == 0 {
+		return nil
+	}
+	repo := newProjectAuthRepository(tx)
+	workspaceRole, err := repo.WorkspaceRole(ctx, workspaceID, userID)
+	if err != nil {
+		return err
+	}
+	actor := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: workspaceRole}
+	service := projectauth.New(repo, true)
+	for _, request := range requests {
+		grant := projectauth.AccessGrant{
+			WorkspaceID: workspaceID,
+			ProjectID:   projectID,
+			SubjectType: request.SubjectType,
+			SubjectID:   strings.TrimSpace(request.SubjectID),
+			Role:        request.Role,
+			Permission:  request.Permission,
+		}
+		if err := service.GrantAccess(ctx, actor, grant); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -268,6 +385,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	userID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+	if len(req.AccessGrants) > 0 && (h.ProjectAuth == nil || !h.ProjectAuth.Enabled()) {
+		writeErrorCode(w, http.StatusBadRequest, "project_permission_disabled", "creation-time project permissions are disabled")
 		return
 	}
 	status := req.Status
@@ -367,8 +488,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	creator, _ := h.parseUserUUIDOrZero(userID)
 	createParams := db.CreateProjectParams{
 		WorkspaceID: wsUUID,
+		CreatedBy:   creator,
 		Title:       req.Title,
 		Description: ptrToText(req.Description),
 		Icon:        ptrToText(req.Icon),
@@ -380,8 +503,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		DueDate:     dueDate,
 	}
 
-	// Without resources, keep the simple non-tx path.
-	if len(req.Resources) == 0 {
+	// Preserve the upstream non-transactional path while the overlay is off.
+	if len(req.Resources) == 0 && (h.ProjectAuth == nil || !h.ProjectAuth.Enabled()) {
 		project, err := h.Queries.CreateProject(r.Context(), createParams)
 		if err != nil {
 			h.writeProjectWriteError(w, r, err, "create")
@@ -393,7 +516,59 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep project creation and owner initialization atomic when the overlay is
+	// enabled, even when no resources are attached.
+	if len(req.Resources) == 0 {
+		// 2026-09-01 coder(lq): Permission-enabled project creation must have a
+		// transaction boundary; fail closed instead of panicking on miswired
+		// handlers or partially persisting the project.
+		if h.TxStarter == nil {
+			writeError(w, http.StatusInternalServerError, "project creation requires transaction support")
+			return
+		}
+		tx, err := h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start transaction")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		project, err := h.Queries.WithTx(tx).CreateProject(r.Context(), createParams)
+		if err != nil {
+			h.writeProjectWriteError(w, r, err, "create")
+			return
+		}
+		if err := h.ensureProjectOwnerInTx(r.Context(), tx, uuidToString(project.ID), userID); err != nil {
+			slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
+			return
+		}
+		if err := h.initializeProjectAccessInTx(r.Context(), tx, workspaceID, uuidToString(project.ID), userID, req.AccessGrants); err != nil {
+			slog.Error("initialize project access grants failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit project create")
+			return
+		}
+		resp := projectToResponse(project)
+		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
 	// Transactional path: project + all resources are atomic.
+	// 2026-09-01 coder(lq): Keep the bundled resource path fail-closed too when
+	// permission initialization requires a transaction.
+	if h.TxStarter == nil {
+		writeError(w, http.StatusInternalServerError, "project creation requires transaction support")
+		return
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -408,7 +583,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creator, _ := h.parseUserUUIDOrZero(userID)
 	resourceRows := make([]db.ProjectResource, 0, len(req.Resources))
 	for i, res := range req.Resources {
 		var label pgtype.Text
@@ -437,6 +611,21 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resourceRows = append(resourceRows, row)
+	}
+	if err := h.ensureProjectOwnerInTx(r.Context(), tx, uuidToString(project.ID), userID); err != nil {
+		slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
+		return
+	}
+	if err := h.initializeProjectAccessInTx(r.Context(), tx, workspaceID, uuidToString(project.ID), userID, req.AccessGrants); err != nil {
+		slog.Error("initialize project access grants failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+		slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
+		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project create")
@@ -484,6 +673,9 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if !h.requireProjectPermission(w, r, id, workspaceID, projectauth.Edit) {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -585,7 +777,30 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
 		}
 	}
-	project, err := h.Queries.UpdateProject(r.Context(), params)
+	var project db.Project
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		// 2026-08-27 coder(lq): Project metadata and its automatic access grants
+		// commit together, so selecting a lead never produces an inaccessible project.
+		if h.TxStarter == nil {
+			writeError(w, http.StatusInternalServerError, "project update requires transaction support")
+			return
+		}
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start project update")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		project, err = h.Queries.WithTx(tx).UpdateProject(r.Context(), params)
+		if err == nil {
+			err = promoteMemberLeadWithExecutor(r.Context(), tx, id, project.LeadType, project.LeadID)
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
+	} else {
+		project, err = h.Queries.UpdateProject(r.Context(), params)
+	}
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "update")
 		return
@@ -615,11 +830,22 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
-	requester, ok := h.requireWorkspaceRole(w, r, uuidToString(project.WorkspaceID), "project not found", "owner", "admin")
-	if !ok {
-		return
+	var userID string
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if !h.requireProjectPermission(w, r, id, workspaceID, projectauth.SettingsManage) {
+			return
+		}
+		userID, ok = requireUserID(w, r)
+		if !ok {
+			return
+		}
+	} else {
+		requester, ok := h.requireWorkspaceRole(w, r, uuidToString(project.WorkspaceID), "project not found", "owner", "admin")
+		if !ok {
+			return
+		}
+		userID = uuidToString(requester.UserID)
 	}
-	userID := uuidToString(requester.UserID)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -679,6 +905,14 @@ type SearchProjectResponse struct {
 
 // buildProjectSearchQuery builds a dynamic SQL query for project search.
 func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
+	return buildProjectSearchQueryForUser(phrase, terms, includeClosed, "")
+}
+
+// 2026-08-27 coder(lq): Keep the upstream search builder's legacy signature
+// for callers/tests while allowing the authenticated endpoint to push project
+// visibility into SQL before LIMIT/OFFSET. Filtering after pagination could
+// hide an authorized project that was ranked beyond an unauthorized row.
+func buildProjectSearchQueryForUser(phrase string, terms []string, includeClosed bool, userID string) (string, []any) {
 	phrase = strings.ToLower(phrase)
 	for i, t := range terms {
 		terms[i] = strings.ToLower(t)
@@ -699,6 +933,10 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	phraseStartsWith := phraseParam + " || '%'"
 
 	wsParam := nextArg(nil) // workspace_id placeholder
+	userParam := ""
+	if userID != "" {
+		userParam = nextArg(userID)
+	}
 
 	var termParams []string
 	if len(terms) > 1 {
@@ -735,6 +973,25 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 
 	if !includeClosed {
 		whereClause += " AND p.status NOT IN ('completed', 'cancelled')"
+	}
+	if userParam != "" {
+		// 2026-09-01 coder(lq): Search is a project-list surface and must use
+		// the same canonical grant predicate as ListProjects. Filtering with
+		// project_members here would let a migrated-away legacy row leak an
+		// otherwise inaccessible project before LIMIT/OFFSET is applied.
+		// 2026-09-04 coder(lq): Workspace-owner visibility is a deployment
+		// controlled bypass. Keep search aligned with the regular project list;
+		// an unconditional owner clause would leak owner-only projects whenever
+		// PROJECT_OWNER_BYPASS_ENABLED=false.
+		ownerPredicate := fmt.Sprintf(
+			"(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = p.workspace_id AND m.user_id = %s::uuid AND m.role = 'owner'))",
+			workspaceOwnerBypassPredicate("p.workspace_id"),
+			userParam,
+		)
+		whereClause += fmt.Sprintf(" AND (%s OR %s)",
+			ownerPredicate,
+			projectAccessPredicate("p.id", wsParam, userParam),
+		)
 	}
 
 	// --- ORDER BY ranking ---
@@ -798,7 +1055,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	offsetParam := nextArg(nil)
 
 	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
-		p.status, p.priority, p.lead_type, p.lead_id,
+		p.created_by, p.status, p.priority, p.lead_type, p.lead_id,
 		p.start_date, p.due_date,
 		p.created_at, p.updated_at,
 		COUNT(*) OVER() AS total_count,
@@ -853,7 +1110,15 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed)
+	userID := ""
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		var userOK bool
+		userID, userOK = requireUserID(w, r)
+		if !userOK {
+			return
+		}
+	}
+	sqlQuery, args := buildProjectSearchQueryForUser(q, terms, includeClosed, userID)
 	args[1] = wsUUID
 	args[len(args)-2] = limit
 	args[len(args)-1] = offset
@@ -874,6 +1139,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				&row.project.Title,
 				&row.project.Description,
 				&row.project.Icon,
+				&row.project.CreatedBy,
 				&row.project.Status,
 				&row.project.Priority,
 				&row.project.LeadType,
@@ -906,7 +1172,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to search projects")
 		return
 	}
-
 	var total int64
 	if len(results) > 0 {
 		total = results[0].totalCount

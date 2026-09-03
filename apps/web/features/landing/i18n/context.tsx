@@ -11,6 +11,8 @@ import {
 import { useRouter } from "next/navigation";
 import { useConfigStore } from "@multica/core/config";
 import { createBrowserCookieLocaleAdapter } from "@multica/core/i18n/browser";
+import { brandObject } from "@multica/core/i18n/branding";
+import { PRODUCT_NAME } from "@/config/product-brand";
 import { createEnDict } from "./en";
 import { createJaDict } from "./ja";
 import { createKoDict } from "./ko";
@@ -53,7 +55,11 @@ export function LocaleProvider({
   const localeAdapter = useMemo(() => createBrowserCookieLocaleAdapter(), []);
   const allowSignup = useConfigStore((state) => state.allowSignup);
   const t = useMemo(
-    () => dictionaryFactories[toLandingDictionaryLocale(locale)](allowSignup),
+    () =>
+      brandObject(
+        dictionaryFactories[toLandingDictionaryLocale(locale)](allowSignup),
+        PRODUCT_NAME,
+      ),
     [allowSignup, locale],
   );
 

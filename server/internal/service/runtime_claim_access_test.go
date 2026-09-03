@@ -20,6 +20,7 @@ type runtimeClaimAccessFixture struct {
 	pool      *pgxpool.Pool
 	agentID   pgtype.UUID
 	runtimeID pgtype.UUID
+	issueID   pgtype.UUID
 	taskID    string
 }
 
@@ -87,8 +88,71 @@ func newRuntimeClaimAccessFixture(
 		pool:      pool,
 		agentID:   util.MustParseUUID(agentID),
 		runtimeID: util.MustParseUUID(taskRuntimeID),
+		issueID:   util.MustParseUUID(issueID),
 		taskID:    taskID,
 	}
+}
+
+// 2026-09-02 coder(lq): Keep every daemon hand-off fenced when an issue is
+// archived, not just the initial claim. This regression test exercises the
+// queued, deferred, dispatched, and running-admission transitions together.
+func TestArchivedIssueCannotReenterRuntimeQueue(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRuntimeClaimAccessFixture(t, "public", true, true, "queued")
+	q := db.New(fixture.pool)
+
+	if _, err := fixture.pool.Exec(ctx, `UPDATE issue SET archived_at = now() WHERE id = $1`, fixture.issueID); err != nil {
+		t.Fatalf("archive issue: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = fixture.pool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, fixture.taskID)
+	})
+
+	if candidates, err := q.ListQueuedClaimCandidatesByRuntime(ctx, fixture.runtimeID); err != nil {
+		t.Fatalf("list queued candidates: %v", err)
+	} else if len(candidates) != 0 {
+		t.Fatalf("archived issue returned %d queued candidate(s), want 0", len(candidates))
+	}
+	if candidates, err := q.ListQueuedClaimCandidatesByRuntimes(ctx, []pgtype.UUID{fixture.runtimeID}); err != nil {
+		t.Fatalf("list batch queued candidates: %v", err)
+	} else if len(candidates) != 0 {
+		t.Fatalf("archived issue returned %d batch queued candidate(s), want 0", len(candidates))
+	}
+	if _, err := q.ClaimAgentTask(ctx, db.ClaimAgentTaskParams{
+		AgentID:          fixture.agentID,
+		RuntimeID:        fixture.runtimeID,
+		PrepareLeaseSecs: 60,
+		RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("claim archived issue error = %v, want no rows", err)
+	}
+
+	if _, err := fixture.pool.Exec(ctx, `UPDATE agent_task_queue SET status = 'deferred', fire_at = now() - interval '1 minute' WHERE id = $1`, fixture.taskID); err != nil {
+		t.Fatalf("make task deferred: %v", err)
+	}
+	if promoted, err := q.PromoteDueDeferredTasksForRuntime(ctx, db.PromoteDueDeferredTasksForRuntimeParams{
+		RuntimeID: fixture.runtimeID, RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
+	}); err != nil {
+		t.Fatalf("promote deferred archived issue: %v", err)
+	} else if len(promoted) != 0 {
+		t.Fatalf("promoted %d deferred task(s) for archived issue, want 0", len(promoted))
+	}
+
+	if _, err := fixture.pool.Exec(ctx, `UPDATE agent_task_queue SET status = 'dispatched', dispatched_at = now() - interval '10 minutes', prepare_lease_expires_at = now() - interval '1 minute' WHERE id = $1`, fixture.taskID); err != nil {
+		t.Fatalf("make task dispatched: %v", err)
+	}
+	if _, err := q.ReclaimStaleDispatchedTaskForRuntime(ctx, db.ReclaimStaleDispatchedTaskForRuntimeParams{
+		RuntimeID: fixture.runtimeID, PrepareLeaseSecs: 60, ClaimRecoverySecs: 30, RuntimeStaleSecs: RuntimeClaimFreshnessSeconds,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("reclaim archived issue error = %v, want no rows", err)
+	}
+	if _, err := q.StartAgentTask(ctx, fixture.taskIDUUID()); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("start archived issue error = %v, want no rows", err)
+	}
+}
+
+func (f runtimeClaimAccessFixture) taskIDUUID() pgtype.UUID {
+	return util.MustParseUUID(f.taskID)
 }
 
 func TestRuntimeAccessGatesQueuedTaskClaims(t *testing.T) {

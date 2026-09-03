@@ -174,7 +174,29 @@ export type {
   ProjectPriority,
   CreateProjectRequest,
   UpdateProjectRequest,
+  ListProjectsParams,
   ListProjectsResponse,
+  ProjectPermissionReportRole,
+  ProjectPermissionRole,
+  ProjectPermissionRolesResponse,
+  ProjectPermissionReportPermission,
+  ProjectPermissionReportRow,
+  ProjectPermissionReportParams,
+  ProjectPermissionReportResponse,
+  ProjectAccessGrantSubjectType,
+  ProjectAccessGrantSource,
+  ProjectAccessGrant,
+  ProjectAccessGrantsResponse,
+  ProjectAuthorizationOrganization,
+  ProjectAuthorizationOrganizationMember,
+  ProjectAuthorizationOrganizationsResponse,
+  ProjectAuthorizationImportKind,
+  ProjectAuthorizationOrganizationImportRow,
+  ProjectAuthorizationMemberImportRow,
+  ProjectAuthorizationImportPreview,
+  ProjectAuthorizationImportResult,
+  ProjectAuthorizationDingTalkSyncResult,
+  ProjectAccessGrantRequest,
   ProjectResource,
   ProjectResourceType,
   ProjectResourceRef,
@@ -185,6 +207,7 @@ export type {
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
 } from "./project";
+export { PROJECT_PERMISSION_KEYS } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,
@@ -227,6 +250,7 @@ export type {
 } from "./slack";
 export type {
   DingTalkInstallation,
+  DingTalkProfile,
   ListDingTalkInstallationsResponse,
   DingTalkGroupBot,
   DingTalkGroup,

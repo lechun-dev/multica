@@ -4,10 +4,10 @@
  * manifests, checksums) and the CLI tarballs — only desktop
  * installer artifacts are relevant on the /download page.
  *
- * Desktop artifact naming (see apps/desktop/electron-builder.yml):
- *   multica-desktop-{version}-mac-{arch}.{dmg|zip}
- *   multica-desktop-{version}-windows-{arch}.exe
- *   multica-desktop-{version}-linux-{arch}.{AppImage|deb|rpm}
+ * Desktop artifact naming (see apps/desktop/electron-builder.lechun.yml):
+ *   multica-lechun-{version}-mac-{arch}.{dmg|zip}
+ *   multica-lechun-{version}-windows-{arch}.exe
+ *   multica-lechun-{version}-linux-{arch}.{AppImage|deb|rpm}
  *
  * Linux arch appears as amd64 / x86_64 / arm64 / aarch64 depending
  * on the format; we normalize to amd64 and arm64.
@@ -24,7 +24,6 @@ export interface DownloadAssets {
   macX64Dmg?: string;
   macX64Zip?: string;
   winX64Exe?: string;
-  winArm64Exe?: string;
   linuxAmd64AppImage?: string;
   linuxAmd64Deb?: string;
   linuxAmd64Rpm?: string;
@@ -34,7 +33,7 @@ export interface DownloadAssets {
 }
 
 const DESKTOP_ARTIFACT_RE =
-  /^multica-desktop-[^-]+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
+  /^multica-lechun-[^-]+-(mac|windows|linux)-([a-z0-9_]+)\.(dmg|zip|exe|AppImage|deb|rpm)$/i;
 
 function normalizeLinuxArch(arch: string): "amd64" | "arm64" | null {
   const a = arch.toLowerCase();
@@ -75,7 +74,6 @@ export function parseReleaseAssets(raw: GitHubAsset[]): DownloadAssets {
     } else if (platform === "windows") {
       if (extLower !== "exe") continue;
       if (archLower === "x64") out.winX64Exe = url;
-      else if (archLower === "arm64") out.winArm64Exe = url;
     } else if (platform === "linux") {
       const normalized = normalizeLinuxArch(arch);
       if (!normalized) continue;
@@ -100,10 +98,15 @@ export function hasAnyAsset(assets: DownloadAssets): boolean {
 }
 
 /**
- * The twelve desktop artifacts a finished release carries: four Mac,
- * two Windows, six Linux. Listed explicitly rather than counted, so
- * adding an optional key to `DownloadAssets` later (a universal Mac
- * build, say) can't silently redefine what "complete" means.
+ * The five desktop artifacts currently published by the private release
+ * workflow: four Mac and one Windows. Linux assets remain parseable for
+ * older releases, but are optional because the Lechun workflow no longer
+ * builds Linux packages. Listed explicitly rather than counted, so adding an
+ * optional key to `DownloadAssets` later cannot redefine "complete".
+ *
+ * 2026-08-28 coder(lq): Keep completeness aligned with the supported release
+ * matrix; otherwise a newer five-package release is incorrectly hidden
+ * behind an older eleven-package release that still includes Linux.
  */
 const REQUIRED_ASSET_KEYS: (keyof DownloadAssets)[] = [
   "macArm64Dmg",
@@ -111,22 +114,14 @@ const REQUIRED_ASSET_KEYS: (keyof DownloadAssets)[] = [
   "macX64Dmg",
   "macX64Zip",
   "winX64Exe",
-  "winArm64Exe",
-  "linuxAmd64AppImage",
-  "linuxAmd64Deb",
-  "linuxAmd64Rpm",
-  "linuxArm64AppImage",
-  "linuxArm64Deb",
-  "linuxArm64Rpm",
 ];
 
 /**
  * Whether every platform/arch/format the /download page offers resolved
- * to a URL. A release that fails this is either mid-flight (CI has
- * uploaded Linux + Windows but the manually notarized Mac builds haven't
- * landed) or permanently broken (a packaging job failed and was never
- * re-run) — both render dead buttons, so both are worth stepping back
- * from. See `pickRelease` in `github-release.ts`.
+ * to a URL. A release that fails this is either mid-flight (some of the
+ * platform jobs have not finished) or permanently broken (a packaging job
+ * failed and was never re-run) — both render dead buttons, so both are worth
+ * stepping back from. See `pickRelease` in `github-release.ts`.
  */
 export function hasCompleteAssetSet(assets: DownloadAssets): boolean {
   return REQUIRED_ASSET_KEYS.every((key) => typeof assets[key] === "string");

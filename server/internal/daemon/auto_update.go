@@ -37,8 +37,9 @@ var detectSelfVersion = func(ctx context.Context, path string) (string, error) {
 	return ParseSelfVersion(string(out)), nil
 }
 
-// ParseSelfVersion pulls the version out of `multica --version` output, whose
-// first line is rendered by cmd/multica's version template:
+// ParseSelfVersion pulls the version out of `missionos --version` or the
+// legacy `multica --version` output, whose first line is rendered by
+// cmd/multica's version template:
 //
 //	multica 0.3.7 (commit: abc1234, built: 2026-07-29T10:00:00Z)
 //	go: go1.26.1, os/arch: darwin/arm64
@@ -54,7 +55,8 @@ var detectSelfVersion = func(ctx context.Context, path string) (string, error) {
 func ParseSelfVersion(raw string) string {
 	line, _, _ := strings.Cut(raw, "\n")
 	line = strings.TrimSpace(line)
-	if fields := strings.Fields(line); len(fields) >= 2 && fields[0] == "multica" {
+	if fields := strings.Fields(line); len(fields) >= 2 &&
+		(fields[0] == "missionos" || fields[0] == "multica") {
 		return fields[1]
 	}
 	return line
@@ -196,6 +198,15 @@ func (d *Daemon) autoUpdateLoop(ctx context.Context) {
 // network blip to escalate to a process-level shutdown.
 func (d *Daemon) tryAutoUpdate(ctx context.Context) {
 	if ctx.Err() != nil {
+		return
+	}
+	// 2026-08-25 coder(lq): The public updater is hard-coded to GitHub. Keep
+	// self-hosted daemons fail-closed even when MULTICA_DAEMON_AUTO_UPDATE=true;
+	// that switch must never turn a private deployment into an upstream binary.
+	// Empty ServerBaseURL is retained for focused unit tests that construct a
+	// partial Daemon directly; production configs always normalize this value.
+	if d.cfg.ServerBaseURL != "" && !isOfficialCloudServer(d.cfg.ServerBaseURL) {
+		d.logger.Info("auto-update: skipped (private deployment)", "server", d.cfg.ServerBaseURL)
 		return
 	}
 	// Don't race the server-triggered update path. If a manual update from

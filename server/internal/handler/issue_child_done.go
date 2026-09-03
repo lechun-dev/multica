@@ -94,6 +94,11 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 			"parent_id", uuidToString(issue.ParentIssueID))
 		return
 	}
+	// 2026-09-02 coder(lq): An archived parent remains readable, but child
+	// completion must not append a new system trigger or wake its assignee.
+	if issueArchiveSuppressesAgentTriggers(parent) {
+		return
+	}
 	// Custom statuses inherit the canonical status they name, so a custom
 	// terminal status closes this out and a custom backlog status parks it,
 	// exactly like Done/Cancelled and Backlog do. (MUL-6243)
@@ -193,6 +198,11 @@ func (h *Handler) notifyParentsOfBatchChildDone(ctx context.Context, completed [
 		if err != nil {
 			slog.Warn("batch child done: failed to load parent",
 				"error", err, "parent_id", uuidToString(g.parentID))
+			continue
+		}
+		// 2026-09-02 coder(lq): Keep archived parents inert during batch child
+		// completion; their history remains available for inspection.
+		if issueArchiveSuppressesAgentTriggers(parent) {
 			continue
 		}
 		// Same parent guards as the single path (see notifyParentOfChildDone).
@@ -618,6 +628,9 @@ func sanitizeMentionLabel(name string) string {
 //   - Readiness: archived agents / missing runtimes are silently skipped
 //     so a closed-out agent does not surface as a phantom assignee.
 func (h *Handler) dispatchParentAssigneeTrigger(ctx context.Context, parent db.Issue, systemComment db.Comment) {
+	if issueArchiveSuppressesAgentTriggers(parent) {
+		return
+	}
 	if !parent.AssigneeType.Valid || !parent.AssigneeID.Valid {
 		return
 	}

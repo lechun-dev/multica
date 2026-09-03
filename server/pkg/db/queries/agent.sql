@@ -329,6 +329,14 @@ SELECT
     sqlc.narg(trigger_evidence_ref_id),
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows($1, $3, $2)
+  AND (
+      $3 IS NULL
+      OR EXISTS (
+          SELECT 1 FROM issue i
+          WHERE i.id = $3
+            AND i.archived_at IS NULL
+      )
+  )
 RETURNING *;
 
 -- name: CreateDeferredChannelIssueTask :one
@@ -372,6 +380,11 @@ SELECT
     @fire_at,
     COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 WHERE lock_task_owner_rows($1, $3, $2)
+  AND EXISTS (
+      SELECT 1 FROM issue i
+      WHERE i.id = $3
+        AND i.archived_at IS NULL
+  )
 RETURNING *;
 
 -- name: PromoteDeferredChannelIssueTask :one
@@ -379,7 +392,14 @@ RETURNING *;
 -- by the fire_at sweeper no longer matches and is treated as settled.
 UPDATE agent_task_queue
 SET status = 'queued', fire_at = NULL
-WHERE id = $1 AND issue_id IS NOT NULL AND status = 'deferred'
+WHERE agent_task_queue.id = $1
+  AND issue_id IS NOT NULL
+  AND status = 'deferred'
+  AND EXISTS (
+      SELECT 1 FROM issue i
+      WHERE i.id = agent_task_queue.issue_id
+        AND i.archived_at IS NULL
+  )
 RETURNING *;
 
 -- name: SetDeferredChannelIssueTaskRuntimeOverlay :execrows
@@ -640,8 +660,9 @@ WHERE id = sqlc.arg(task_id)
 -- Cancels every active task on the issue and returns the affected rows so the
 -- caller can reconcile each agent's status and broadcast task:cancelled events
 -- (#1587). Prior :exec form silently dropped that info, leaving agents stuck at
--- status="working" with no self-correction. Only issue-deletion cleanup calls
--- this now; a status flip to cancelled/done no longer does (MUL-4465).
+-- status="working" with no self-correction. Issue deletion and issue archive
+-- cleanup call this; a status flip to cancelled/done no longer does
+-- (MUL-4465).
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
@@ -755,6 +776,14 @@ WHERE id = (
     WHERE atq.agent_id = @agent_id
       AND atq.runtime_id = @runtime_id
       AND atq.status = 'queued'
+      AND (
+          atq.issue_id IS NULL
+          OR EXISTS (
+              SELECT 1 FROM issue i
+              WHERE i.id = atq.issue_id
+                AND i.archived_at IS NULL
+          )
+      )
       AND EXISTS (
           SELECT 1
           FROM agent a
@@ -861,6 +890,14 @@ WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = $1
       AND atq.status = 'dispatched'
+      AND (
+          atq.issue_id IS NULL
+          OR EXISTS (
+              SELECT 1 FROM issue i
+              WHERE i.id = atq.issue_id
+                AND i.archived_at IS NULL
+          )
+      )
       AND atq.started_at IS NULL
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
@@ -907,6 +944,14 @@ WHERE id IN (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
       AND atq.status = 'dispatched'
+      AND (
+          atq.issue_id IS NULL
+          OR EXISTS (
+              SELECT 1 FROM issue i
+              WHERE i.id = atq.issue_id
+                AND i.archived_at IS NULL
+          )
+      )
       AND atq.started_at IS NULL
       AND atq.dispatched_at < now() - make_interval(secs => @claim_recovery_secs::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
@@ -945,10 +990,18 @@ RETURNING *;
 -- for a long global recovery window.
 UPDATE agent_task_queue
 SET prepare_lease_expires_at = now() + make_interval(secs => @lease_secs::double precision)
-WHERE id = $1
+WHERE agent_task_queue.id = $1
   AND runtime_id = $2
   AND status IN ('dispatched', 'waiting_local_directory')
   AND started_at IS NULL
+  AND (
+      issue_id IS NULL
+      OR EXISTS (
+          SELECT 1 FROM issue i
+          WHERE i.id = agent_task_queue.issue_id
+            AND i.archived_at IS NULL
+      )
+  )
 RETURNING *;
 
 -- name: StartAgentTask :one
@@ -963,7 +1016,16 @@ SET status = 'running',
     started_at = now(),
     wait_reason = NULL,
     prepare_lease_expires_at = NULL
-WHERE id = $1 AND status IN ('dispatched', 'waiting_local_directory')
+WHERE agent_task_queue.id = $1
+  AND status IN ('dispatched', 'waiting_local_directory')
+  AND (
+      issue_id IS NULL
+      OR EXISTS (
+          SELECT 1 FROM issue i
+          WHERE i.id = agent_task_queue.issue_id
+            AND i.archived_at IS NULL
+      )
+  )
 RETURNING *;
 
 -- name: MarkAgentTaskWaitingLocalDirectory :one
@@ -980,7 +1042,16 @@ UPDATE agent_task_queue
 SET status = 'waiting_local_directory',
     wait_reason = $2,
     prepare_lease_expires_at = now() + make_interval(secs => @prepare_lease_secs::double precision)
-WHERE id = $1 AND status = 'dispatched'
+WHERE agent_task_queue.id = $1
+  AND status = 'dispatched'
+  AND (
+      issue_id IS NULL
+      OR EXISTS (
+          SELECT 1 FROM issue i
+          WHERE i.id = agent_task_queue.issue_id
+            AND i.archived_at IS NULL
+      )
+  )
 RETURNING *;
 
 -- name: CompleteAgentTask :one
@@ -2170,6 +2241,14 @@ ORDER BY priority DESC, created_at ASC;
 SELECT atq.* FROM agent_task_queue atq
 WHERE atq.runtime_id = $1
   AND atq.status = 'queued'
+  AND (
+      atq.issue_id IS NULL
+      OR EXISTS (
+          SELECT 1 FROM issue i
+          WHERE i.id = atq.issue_id
+            AND i.archived_at IS NULL
+      )
+  )
   AND EXISTS (
       -- Keep this authorization fence in sync with ClaimAgentTask.
       SELECT 1
@@ -2260,6 +2339,14 @@ WITH due AS (
     WHERE t.runtime_id = @runtime_id
       AND t.status = 'deferred'
       AND t.fire_at <= now()
+      AND (
+          t.issue_id IS NULL
+          OR EXISTS (
+              SELECT 1 FROM issue i
+              WHERE i.id = t.issue_id
+                AND i.archived_at IS NULL
+          )
+      )
       AND EXISTS (
         SELECT 1 FROM agent_runtime r
         WHERE r.id = t.runtime_id
@@ -2297,6 +2384,14 @@ RETURNING *;
 SELECT atq.* FROM agent_task_queue atq
 WHERE atq.runtime_id = ANY(@runtime_ids::uuid[])
   AND atq.status = 'queued'
+  AND (
+      atq.issue_id IS NULL
+      OR EXISTS (
+          SELECT 1 FROM issue i
+          WHERE i.id = atq.issue_id
+            AND i.archived_at IS NULL
+      )
+  )
   AND EXISTS (
       -- Keep this authorization fence in sync with ClaimAgentTask.
       SELECT 1
@@ -2333,6 +2428,14 @@ WITH due AS (
     WHERE t.runtime_id = ANY(@runtime_ids::uuid[])
       AND t.status = 'deferred'
       AND t.fire_at <= now()
+      AND (
+          t.issue_id IS NULL
+          OR EXISTS (
+              SELECT 1 FROM issue i
+              WHERE i.id = t.issue_id
+                AND i.archived_at IS NULL
+          )
+      )
       AND EXISTS (
         SELECT 1 FROM agent_runtime r
         WHERE r.id = t.runtime_id

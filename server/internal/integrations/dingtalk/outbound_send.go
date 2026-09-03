@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // This file is the OUTBOUND send path shared by the EventChatDone subscriber
@@ -37,6 +41,35 @@ type sender struct {
 	robotCode string
 	appKey    string
 	appSecret string
+}
+
+// SendP2PFromInstallation is the narrow outbound adapter used by optional
+// extensions that need to send a proactive member notification. It reuses the
+// same per-installation credentials, token cache, retry-on-401 behaviour, and
+// markdown chunking as normal DingTalk replies.
+func SendP2PFromInstallation(ctx context.Context, q interface {
+	GetChannelInstallation(context.Context, db.GetChannelInstallationParams) (db.ChannelInstallation, error)
+}, decrypt Decrypter, client *Client, installationID pgtype.UUID, staffID, text string) error {
+	if !installationID.Valid || staffID == "" {
+		return errors.New("dingtalk: installation and staff id are required")
+	}
+	inst, err := q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{ID: installationID, ChannelType: string(TypeDingTalk)})
+	if err != nil {
+		return err
+	}
+	if inst.Status != "active" {
+		return errors.New("dingtalk: installation is not active")
+	}
+	creds, err := decodeCredentials(inst.Config, decrypt)
+	if err != nil {
+		return err
+	}
+	if client == nil {
+		client = NewClient(nil, "")
+	}
+	s := &sender{client: client, robotCode: creds.RobotCode, appKey: creds.AppKey, appSecret: creds.AppSecret}
+	_, err = s.send(ctx, sendTarget{ConversationType: convTypeP2P, StaffID: staffID}, text)
+	return err
 }
 
 // markdownParam is the msgParam payload for a sampleMarkdown message.

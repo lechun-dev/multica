@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   ArrowDown,
   ArrowUp,
+  Archive,
   Calendar,
   CalendarClock,
   ExternalLink,
@@ -15,6 +16,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCcw,
   Trash2,
   Unlink,
   UserMinus,
@@ -120,7 +122,10 @@ export function IssueActionsMenuItems({
     removeParent,
     openAddChild,
     openDeleteConfirm,
+    archive,
+    restore,
   } = actions;
+  const isArchived = Boolean(issue.archived_at);
 
   // Subscribe to the issue's task list so the cache is warm by the time the
   // user clicks "Copy local workdir path". The query only fires while the
@@ -171,6 +176,7 @@ export function IssueActionsMenuItems({
 
   return (
     <>
+      {!isArchived && <>
       {/* Status */}
       <P.Sub>
         <P.SubTrigger>
@@ -294,6 +300,7 @@ export function IssueActionsMenuItems({
         </P.SubContent>
       </P.Sub>
 
+      </>}
       <P.Separator />
 
       {/* Leads the "do something with this issue itself" group: the only
@@ -324,6 +331,7 @@ export function IssueActionsMenuItems({
 
       <P.Separator />
 
+      {!isArchived && <>
       {/* Relationship actions live under "Relations" — a semantically explicit
           label (unlike the old "More") so the first level tells you what the
           submenu does. Holds parent/sub-issue links today, and will grow
@@ -364,16 +372,26 @@ export function IssueActionsMenuItems({
           party's UI taking over the screen, so it opens because a person chose
           it, never on the plugin's own initiative. */}
       <PluginModalMenuItems issueId={issue.id} Item={P.Item} />
+      </>}
 
       <P.Separator />
-
-      <P.Item
-        variant="destructive"
-        onClick={() => openDeleteConfirm({ onDeletedFallbackPath })}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        {t(($) => $.actions.delete_issue)}
-      </P.Item>
+      {isArchived ? (
+        <P.Item onClick={restore}>
+          <RotateCcw className="h-3.5 w-3.5" />
+          {t(($) => $.actions.restore)}
+        </P.Item>
+      ) : (
+        <>
+          <P.Item onClick={archive}>
+            <Archive className="h-3.5 w-3.5" />
+            {t(($) => $.actions.archive)}
+          </P.Item>
+          <P.Item variant="destructive" onClick={() => openDeleteConfirm({ onDeletedFallbackPath })}>
+            <Trash2 className="h-3.5 w-3.5" />
+            {t(($) => $.actions.delete_issue)}
+          </P.Item>
+        </>
+      )}
     </>
   );
 }

@@ -9,16 +9,17 @@ import { tmpdir } from "os";
 import { Readable } from "stream";
 
 import { selectPlatformReleaseAssetName } from "./cli-release-asset";
+import { isSupportedReleaseServerUrl } from "../shared/runtime-config";
 
 // Desktop prefers the bundled `multica` CLI shipped inside the app for
 // same-repo builds, but it can also repair or bootstrap a managed copy in
 // userData on first launch when the bundled binary is missing or unusable.
 
 const GITHUB_LATEST_BASE =
-  "https://github.com/multica-ai/multica/releases/latest/download";
+  "https://github.com/lechun-dev/multica/releases/latest/download";
 
 function binaryName(): string {
-  return process.platform === "win32" ? "multica.exe" : "multica";
+  return process.platform === "win32" ? "missionos.exe" : "missionos";
 }
 
 export function managedCliPath(): string {
@@ -90,7 +91,12 @@ async function extractArchive(archive: string, dest: string): Promise<void> {
   await run("tar", ["-xf", archive, "-C", dest]);
 }
 
-async function installFresh(): Promise<string> {
+async function installFresh(serverUrl?: string): Promise<string> {
+  if (!isSupportedReleaseServerUrl(serverUrl ?? "")) {
+    throw new Error(
+      "CLI auto-install is only enabled for supported MissionOS release servers",
+    );
+  }
   const target = managedCliPath();
   const checksums = await fetchChecksums();
   const assetName = selectPlatformReleaseAssetName(checksums.keys());
@@ -116,7 +122,10 @@ async function installFresh(): Promise<string> {
     console.log(`[cli-bootstrap] extracting ${assetName}`);
     await extractArchive(archivePath, workDir);
 
-    const extractedBin = join(workDir, binaryName());
+    let extractedBin = join(workDir, binaryName());
+    if (!existsSync(extractedBin)) {
+      extractedBin = join(workDir, process.platform === "win32" ? "multica.exe" : "multica");
+    }
     if (!existsSync(extractedBin)) {
       throw new Error(
         `archive ${assetName} did not contain ${binaryName()} at its root`,
@@ -144,14 +153,14 @@ async function installFresh(): Promise<string> {
 }
 
 /**
- * Returns the path to a usable `multica` binary. If one is already present at
+ * Returns the path to a usable `missionos` binary. If one is already present at
  * the managed userData location, returns it immediately. Otherwise downloads
  * the latest release asset for the current platform and installs it.
  */
 export async function ensureManagedCli(
-  options: { forceInstall?: boolean } = {},
+  options: { forceInstall?: boolean; serverUrl?: string } = {},
 ): Promise<string> {
   const target = managedCliPath();
   if (existsSync(target) && !options.forceInstall) return target;
-  return installFresh();
+  return installFresh(options.serverUrl);
 }

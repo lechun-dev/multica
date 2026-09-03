@@ -34,6 +34,7 @@ import type {
   CreateWorkspaceSubscriptionPortalResponse,
   CronPreviewResponse,
   DingTalkInstallation,
+  DingTalkProfile,
   ListDingTalkInstallationsResponse,
   ListDingTalkGroupsResponse,
   RedeemDingTalkBindingTokenResponse,
@@ -737,6 +738,8 @@ export interface AppConfigResponse {
   daemon_server_url?: string;
   daemon_app_url?: string;
   workspace_creation_disabled?: boolean;
+  /** Whether the backend project-permission overlay is enabled. */
+  project_permissions_enabled?: boolean;
   /** Whether this deployment offers the self-hosted Git provider integration
    * (self-host only; off on the managed cloud). Absent/false hides the whole
    * Settings → Integrations "Git providers" section. */
@@ -948,6 +951,7 @@ export const AppConfigSchema = z.object({
   daemon_server_url: OptionalStringSchema,
   daemon_app_url: OptionalStringSchema,
   workspace_creation_disabled: BooleanWithDefaultSchema(false).optional(),
+  project_permissions_enabled: BooleanWithDefaultSchema(false).optional(),
   vcs_integration_available: BooleanWithDefaultSchema(false).optional(),
   feature_flags: FeatureFlagsSchema,
   local_worktree_supported: BooleanWithDefaultSchema(false),
@@ -1240,6 +1244,8 @@ export const IssueSchema = z.object({
   labels: z.array(z.unknown()).optional(),
   created_at: z.string(),
   updated_at: z.string(),
+  // Optional for mixed-version self-hosted deployments; old servers omit it.
+  archived_at: z.string().nullable().optional().default(null),
   revision: z.number().int().positive().optional(),
   // Optional for compatibility with older self-hosted backends; a current
   // backend emits null until its historical backfill reaches the issue.
@@ -1315,6 +1321,8 @@ const ProjectSchema = z.object({
   issue_count: z.number().default(0),
   done_count: z.number().default(0),
   resource_count: z.number().default(0),
+  // 2026-08-28 coder(lq): Keep role metadata optional for older self-hosted servers.
+  current_user_role: z.string().nullable().default(null),
 }).loose();
 
 const SearchProjectResultSchema = ProjectSchema.extend({
@@ -2376,6 +2384,11 @@ export const EMPTY_USER: User = {
   updated_at: "",
 };
 
+export const LoginResponseSchema = z.object({
+  token: z.string().min(1),
+  user: UserSchema,
+}).loose();
+
 // ---------------------------------------------------------------------------
 // Cross-workspace unread inbox summary (`/api/inbox/unread-summary` GET).
 // One entry per workspace the user belongs to that has unread items; the
@@ -3250,6 +3263,18 @@ export const WorkspaceMcpServerSchema = z.object({
   updated_at: z.string().default(""),
 });
 
+export const DingTalkProfileSchema = z.object({
+  bound: z.boolean().default(false),
+  name: z.string().optional(),
+  email: z.string().optional(),
+  avatar_url: z.string().optional(),
+  departments: z.array(z.string()).optional().catch(undefined),
+});
+
+export const EMPTY_DINGTALK_PROFILE: DingTalkProfile = {
+  bound: false,
+};
+
 export const WorkspaceMcpServerListSchema = z.array(WorkspaceMcpServerSchema);
 
 export const EMPTY_WORKSPACE_MCP_SERVER: WorkspaceMcpServer = {
@@ -3316,6 +3341,124 @@ export const MemberWithUserSchema = z.object({
   email: z.string().optional().default(""),
   avatar_url: z.string().nullable().optional().default(null),
 }).loose();
+
+export const ProjectMemberSchema = z.object({
+  project_id: z.string(),
+  user_id: z.string(),
+  role: z.string(),
+}).loose();
+
+export const ProjectMembersResponseSchema = z.object({
+  members: z.array(ProjectMemberSchema).default([]),
+  total: z.number().default(0),
+  // 2026-08-27 coder(lq): Default closed when an older or malformed server
+  // omits this capability bit, so the client never exposes an unusable action.
+  can_manage: z.boolean().default(false),
+}).loose();
+
+export type ProjectMembersResponse = z.infer<typeof ProjectMembersResponseSchema>;
+
+export const EMPTY_PROJECT_MEMBERS_RESPONSE: ProjectMembersResponse = {
+  members: [],
+  total: 0,
+  can_manage: false,
+};
+
+export const ProjectPermissionRoleSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  is_system: z.boolean().default(false),
+  permissions: z.array(z.string()).default([]),
+}).loose();
+
+export const ProjectPermissionRolesResponseSchema = z.object({
+  roles: z.array(ProjectPermissionRoleSchema).default([]),
+}).loose();
+
+export type ProjectPermissionRolesResponse = z.infer<typeof ProjectPermissionRolesResponseSchema>;
+
+export const ProjectAccessGrantSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  project_id: z.string().default(""),
+  issue_id: z.string().optional(),
+  subject_type: z.enum(["user", "role", "organization", "everyone"]),
+  subject_id: z.string().optional(),
+  role: z.string().optional(),
+  permission: z.string().optional(),
+  source: z.string().default("manual"),
+  granted_by: z.string().optional(),
+}).loose();
+
+export const ProjectAccessGrantsResponseSchema = z.object({
+  grants: z.array(ProjectAccessGrantSchema).default([]),
+  total: z.number().default(0),
+  project_id: z.string().optional(),
+}).loose();
+
+export type ProjectAccessGrantsResponse = z.infer<typeof ProjectAccessGrantsResponseSchema>;
+export const EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE: ProjectAccessGrantsResponse = { grants: [], total: 0 };
+
+export const ProjectAuthorizationOrganizationSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  provider: z.string().default(""),
+  external_id: z.string().default(""),
+  name: z.string().default(""),
+  parent_id: z.string().optional(),
+  status: z.string().default("active"),
+}).loose();
+
+export const ProjectAuthorizationOrganizationMemberSchema = z.object({
+  organization_id: z.string(),
+  user_id: z.string(),
+  name: z.string().default(""),
+  email: z.string().default(""),
+  avatar_url: z.string().optional(),
+  workspace_role: z.string().default("member"),
+}).loose();
+
+export const ProjectAuthorizationOrganizationsResponseSchema = z.object({
+  organizations: z.array(ProjectAuthorizationOrganizationSchema).default([]),
+  members: z.array(ProjectAuthorizationOrganizationMemberSchema).default([]),
+  total: z.number().default(0),
+  member_total: z.number().default(0),
+}).loose();
+
+export type ProjectAuthorizationOrganizationsResponse = z.infer<typeof ProjectAuthorizationOrganizationsResponseSchema>;
+
+export const ProjectAuthorizationImportPreviewSchema = z.object({
+  kind: z.enum(["organizations", "members"]),
+  organizations: z.array(z.object({ external_id: z.string(), name: z.string(), parent_external_id: z.string().optional(), status: z.string() }).loose()).optional(),
+  members: z.array(z.object({ external_id: z.string(), name: z.string(), email: z.string().optional(), phone: z.string().optional(), organization_external_id: z.string(), status: z.string() }).loose()).optional(),
+  errors: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).default([]),
+  rows: z.number().default(0),
+}).loose();
+export type ProjectAuthorizationImportPreview = z.infer<typeof ProjectAuthorizationImportPreviewSchema>;
+export const ProjectAuthorizationImportResultSchema = z.object({
+  organizations_created: z.number().default(0), organizations_updated: z.number().default(0),
+  members_created: z.number().default(0), members_updated: z.number().default(0),
+  disabled: z.number().default(0), unmatched: z.array(z.string()).default([]),
+  users_created: z.number().default(0), workspace_members_created: z.number().default(0),
+}).loose();
+export type ProjectAuthorizationImportResult = z.infer<typeof ProjectAuthorizationImportResultSchema>;
+
+export const ProjectAuthorizationDingTalkSyncResultSchema = z.object({
+  organizations_created: z.number().default(0),
+  organizations_updated: z.number().default(0),
+  organizations_disabled: z.number().default(0),
+  members_created: z.number().default(0),
+  members_removed: z.number().default(0),
+  users_created: z.number().default(0),
+  users_matched: z.number().default(0),
+  workspace_members_created: z.number().default(0),
+  unmatched: z.array(z.string()).default([]),
+}).loose();
+export type ProjectAuthorizationDingTalkSyncResult = z.infer<typeof ProjectAuthorizationDingTalkSyncResultSchema>;
 
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,

@@ -9,6 +9,7 @@ import {
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
+import { useWorkspaceTaskVisibility } from "../issues/surface/visibility-context";
 
 export function SetParentIssueModal({
   onClose,
@@ -21,10 +22,12 @@ export function SetParentIssueModal({
   const issueId = (data?.issueId as string) || "";
   const wsId = useWorkspaceId();
   const updateIssue = useUpdateIssue();
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
 
   const { data: children = [] } = useQuery({
-    ...childIssuesOptions(wsId, issueId),
-    enabled: !!issueId,
+    ...childIssuesOptions(wsId, issueId, includeWorkspaceOwned),
+    enabled: visibilityReady && !!issueId,
   });
 
   const excludeIds = [issueId, ...children.map((c) => c.id)];

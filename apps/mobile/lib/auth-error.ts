@@ -1,3 +1,5 @@
+import { DEFAULT_PRODUCT_NAME } from "@multica/core/i18n/branding";
+
 /**
  * Map backend auth errors to user-facing strings. The backend returns raw
  * English messages that are fine for logs but should not surface as-is —
@@ -17,7 +19,7 @@ export function mapAuthError(err: unknown, fallback: string): string {
     return "Too many attempts. Wait a moment and try again.";
   }
   if (/network|fetch|timeout|unreachable/.test(msg)) {
-    return "Can't reach Multica. Check your connection and retry.";
+    return `Can't reach ${DEFAULT_PRODUCT_NAME}. Check your connection and retry.`;
   }
   return fallback;
 }

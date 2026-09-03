@@ -39,7 +39,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
-import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider } from "../../editor";
+import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, ReadonlyContent, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, ImageSequenceProvider } from "../../editor";
 import { collectImageSequence, type ImageSequenceBlock } from "@multica/core/attachments/image-sequence";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import {
@@ -77,6 +77,7 @@ import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
 import { ProjectPicker } from "../../projects/components/project-picker";
+import { IssueAccessGrantsDialog } from "./issue-access-grants-dialog";
 import { LocalDirectoryHint } from "../../projects/components/local-directory-hint";
 import { CommentCard } from "./comment-card";
 import { SourceContextBadge } from "./source-context-viewer";
@@ -103,7 +104,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useModalStore } from "@multica/core/modals";
 import { issueListOptions, issueDetailOptions, childIssuesOptions, childIssueProgressOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
-import { projectDetailOptions } from "@multica/core/projects/queries";
+import { projectDetailAllowMissingOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
 import { propertyListOptions } from "@multica/core/properties";
@@ -138,6 +139,10 @@ import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
+import {
+  useIssueSurfaceIncludeWorkspaceOwned,
+  useIssueSurfaceVisibilityReady,
+} from "../surface/visibility-context";
 import { useInPageFind } from "../hooks/use-in-page-find";
 import { useStickyComposer } from "../hooks/use-sticky-composer";
 import { FindBar } from "./find-bar";
@@ -627,16 +632,7 @@ function ActivityBlock({
         } else if (isDueDateChange) {
           leadIcon = <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />;
         } else {
-          leadIcon = (
-            <ActorAvatar
-              actorType={entry.actor_type}
-              actorId={entry.actor_id}
-              name={entry.actor_name}
-              avatarUrl={entry.actor_avatar_url}
-              profileRequiresDirectoryEntry
-              size="sm"
-            />
-          );
+          leadIcon = <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="sm" />;
         }
 
         return (
@@ -645,9 +641,7 @@ function ActivityBlock({
               {leadIcon}
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-1">
-              <span className="shrink-0 font-medium">
-                {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
-              </span>
+              <span className="shrink-0 font-medium">{getActorName(entry.actor_type, entry.actor_id)}</span>
               <span className="truncate">{formatActivity(entry, t, locale, getActorName, resolveStatusLabel)}</span>
               {(entry.coalesced_count ?? 1) > 1 &&
                 entry.action !== "task_completed" &&
@@ -1144,6 +1138,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const wsId = useWorkspaceId();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const includeWorkspaceOwned = useIssueSurfaceIncludeWorkspaceOwned();
+  const visibilityReady = useIssueSurfaceVisibilityReady();
   // Workspace owners and admins moderate any comment authored by anyone
   // (mirrors backend `comment.go:507-512`). Computed here so per-comment
   // rendering doesn't have to re-derive it for every row.
@@ -1151,7 +1147,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const { data: allIssues = [] } = useQuery({
+    ...issueListOptions(wsId, undefined, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const { getActorName } = useActorName();
   const resolveStatusLabel = useStatusLabel(wsId);
   // The glyph set is per CATEGORY (MUL-6243), so a status-change entry for a
@@ -1355,7 +1354,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Only seed when description is present; the list API omits it, so a partial
   // list row must not masquerade as a hydrated issue detail.
   const { data: issue = null, isLoading: issueLoading, refetch: refetchIssue } = useQuery({
-    ...issueDetailOptions(wsId, id),
+    ...issueDetailOptions(wsId, id, includeWorkspaceOwned),
+    enabled: visibilityReady,
     // List rows and issue-created realtime payloads intentionally omit the
     // detail-only source-context snapshot. They can still seed this query via
     // initialData, so always reconcile with the authoritative detail endpoint
@@ -1804,8 +1804,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Sub-issue queries
   const parentIssueId = issue?.parent_issue_id;
   const { data: parentIssue = null } = useQuery({
-    ...issueDetailOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...issueDetailOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
     initialData: () => allIssues.find((i) => i.id === parentIssueId),
   });
 
@@ -1813,7 +1813,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // truth — same URL renders the same breadcrumb regardless of entry path.
   const issueProjectId = issue?.project_id;
   const { data: breadcrumbProject = null } = useQuery({
-    ...projectDetailOptions(wsId, issueProjectId ?? ""),
+    ...projectDetailAllowMissingOptions(wsId, issueProjectId ?? ""),
     enabled: !!issueProjectId,
   });
   const {
@@ -1821,8 +1821,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     isSuccess: childIssuesLoaded,
     isFetching: childIssuesFetching,
   } = useQuery({
-    ...childIssuesOptions(wsId, id),
-    enabled: !!issue,
+    ...childIssuesOptions(wsId, id, includeWorkspaceOwned),
+    enabled: visibilityReady && !!issue,
   });
   // Whether this issue has sub-issues, as opposed to "we have not looked yet".
   // childIssuesOptions sets refetchOnMount: "always", so a cached snapshot is
@@ -1834,15 +1834,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Parent's children — used to render the "x/y" progress next to the
   // "Sub-issue of …" breadcrumb under the title.
   const { data: parentChildIssues = [] } = useQuery({
-    ...childIssuesOptions(wsId, parentIssueId ?? ""),
-    enabled: !!parentIssueId,
+    ...childIssuesOptions(wsId, parentIssueId ?? "", includeWorkspaceOwned),
+    enabled: visibilityReady && !!parentIssueId,
   });
   // Workspace-wide parent→(done/total) map; lets each sub-issue row show its
   // OWN nested progress ring without opening it. Same query the list
   // surfaces use, so it's usually already cached.
   const { data: subIssueProgress } = useQuery({
-    ...childIssueProgressOptions(wsId),
-    enabled: childIssues.length > 0,
+    ...childIssueProgressOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady && childIssues.length > 0,
   });
   // User-level display preference for sub-issue rows (built-in field toggles
   // + opted-in workspace custom properties). `subIssueCustomProps` resolves
@@ -2003,6 +2003,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);
+  const [descriptionConflictDraft, setDescriptionConflictDraft] = useState<string | null>(null);
+  const descriptionAttachmentIdsRef = useRef<string[]>([]);
   const descriptionSaveInFlightRef = useRef(false);
   const descriptionSaveIssueIdRef = useRef(id);
   const pendingDescriptionSaveRef = useRef<{
@@ -2024,7 +2026,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [titleResetToken, setTitleResetToken] = useState(0);
   useEffect(() => {
     setTitleConflictDraft(null);
+    setDescriptionConflictDraft(null);
     titleBaseRef.current = undefined;
+    descriptionAttachmentIdsRef.current = [];
     descriptionSaveInFlightRef.current = false;
     descriptionSaveIssueIdRef.current = id;
     pendingDescriptionSaveRef.current = null;
@@ -2263,6 +2267,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return <IssueNotFound showBackLink={!onDelete} leading={leadingAction} />;
   }
 
+  const isArchived = Boolean(issue.archived_at);
+
   const persistDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
   ) => {
@@ -2277,6 +2283,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       {
         onSuccess: (serverIssue) => {
           if (descriptionSaveIssueIdRef.current !== id) return;
+          setDescriptionConflictDraft(null);
           descriptionSaveInFlightRef.current = false;
           const pending = pendingDescriptionSaveRef.current;
           pendingDescriptionSaveRef.current = null;
@@ -2291,10 +2298,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             persistDescriptionSave({ ...pending, baseMarkdown: nextBase });
           }
         },
-        onError: () => {
+        onError: (error) => {
           if (descriptionSaveIssueIdRef.current !== id) return;
           descriptionSaveInFlightRef.current = false;
+          const pending = pendingDescriptionSaveRef.current;
           pendingDescriptionSaveRef.current = null;
+          if (errorCode(error) === "revision_conflict") {
+            const latest = pending ?? draft;
+            descriptionAttachmentIdsRef.current = latest.attachmentIds;
+            setDescriptionConflictDraft(latest.markdown);
+          }
         },
       },
     );
@@ -2303,6 +2316,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const queueDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
   ) => {
+    descriptionAttachmentIdsRef.current = draft.attachmentIds;
     if (descriptionSaveInFlightRef.current) {
       pendingDescriptionSaveRef.current = draft;
       return;
@@ -2323,6 +2337,68 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${propertiesOpen ? "rotate-90" : ""}`} />
         </button>
         {propertiesOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
+          {isArchived ? (
+            <>
+              <PropRow label={t(($) => $.detail.prop_status)} interactive={false}>
+                <StatusIcon status={issue.status} className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{resolveStatusLabel(issue.status)}</span>
+              </PropRow>
+              <PropRow label={t(($) => $.detail.prop_assignee)} interactive={false}>
+                {issue.assignee_type && issue.assignee_id ? (
+                  <>
+                    <ActorAvatar actorType={issue.assignee_type} actorId={issue.assignee_id} size="sm" />
+                    <span className="truncate">{getActorName(issue.assignee_type, issue.assignee_id)}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">{t(($) => $.actions.unassigned)}</span>
+                )}
+              </PropRow>
+              <PropRow label={t(($) => $.detail.prop_project)} interactive={false}>
+                {breadcrumbProject ? (
+                  <>
+                    <ProjectIcon project={breadcrumbProject} size="sm" />
+                    <span className="truncate">{breadcrumbProject.title}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">{issue.project_id ?? t(($) => $.table.no_value)}</span>
+                )}
+              </PropRow>
+              {visibleOptionalProps.has("priority") && (
+                <PropRow label={t(($) => $.detail.prop_priority)} interactive={false}>
+                  <PriorityIcon priority={issue.priority} className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{t(($) => $.priority[issue.priority])}</span>
+                </PropRow>
+              )}
+              {issue.parent_issue_id != null && visibleOptionalProps.has("stage") && (
+                <PropRow label={t(($) => $.detail.prop_stage)} interactive={false}>
+                  <span className="truncate">{issue.stage == null ? t(($) => $.table.no_value) : `Stage ${issue.stage}`}</span>
+                </PropRow>
+              )}
+              {visibleOptionalProps.has("start_date") && (
+                <PropRow label={t(($) => $.detail.prop_start_date)} interactive={false}>
+                  <span className="truncate">{issue.start_date ? formatDateOnly(issue.start_date, { month: "short", day: "numeric" }, locale) : t(($) => $.table.no_value)}</span>
+                </PropRow>
+              )}
+              {visibleOptionalProps.has("due_date") && (
+                <PropRow label={t(($) => $.detail.prop_due_date)} interactive={false}>
+                  <span className="truncate">{issue.due_date ? formatDateOnly(issue.due_date, { month: "short", day: "numeric" }, locale) : t(($) => $.table.no_value)}</span>
+                </PropRow>
+              )}
+              {visibleOptionalProps.has("labels") && (
+                <PropRow label={t(($) => $.detail.prop_labels)} interactive={false}>
+                  {attachedLabels.length > 0 ? attachedLabels.map((label) => <LabelChip key={label.id} label={label} />) : <span className="text-muted-foreground">{t(($) => $.table.no_value)}</span>}
+                </PropRow>
+              )}
+              {workspaceProperties
+                .filter((p) => issue.properties?.[p.id] !== undefined)
+                .map((p) => (
+                  <PropRow key={p.id} label={<><PropertyIcon property={p} className="size-3.5 text-caption" /><span className="truncate">{p.name}</span></>} interactive={false}>
+                    <CustomPropertyValueDisplay property={p} value={issue.properties?.[p.id]} />
+                  </PropRow>
+                ))}
+            </>
+          ) : (
+            <>
           {/* Core props — always rendered. */}
           <PropRow label={t(($) => $.detail.prop_status)}>
             <StatusPicker status={issue.status} onUpdate={handleUpdateField} align="start" />
@@ -2499,6 +2575,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 </PopoverContent>
               </Popover>
             </div>
+          )}
+            </>
           )}
         </div>}
       </div>
@@ -2852,6 +2930,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 </Button>
               }
             />
+            {issue.project_id && <IssueAccessGrantsDialog issueId={issue.id} projectId={issue.project_id} />}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -2889,7 +2968,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             `useStickyComposer`), so it lands here — right where the launcher
             floats — once the reader scrolls to the bottom. */}
         <div className="mx-auto w-full max-w-4xl px-3 py-6 max-md:pb-chat-launcher md:px-8 md:py-8">
-          {titleLazy.active && (
+          {isArchived ? (
+            <h1 className="w-full text-display-sm font-bold leading-snug tracking-tight">
+              {issue.title}
+            </h1>
+          ) : titleLazy.active ? (
             <div className={titleLazy.ready ? undefined : "hidden"}>
               <TitleEditor
                 key={`title-${id}-${titleResetToken}`}
@@ -2919,8 +3002,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 }}
               />
             </div>
-          )}
-          {!titleLazy.ready && (
+          ) : null}
+          {!isArchived && !titleLazy.ready && (
             <div
               role="button"
               tabIndex={0}
@@ -3040,25 +3123,31 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
 
           <div
-            {...descDropZoneProps}
+            {...(isArchived ? {} : descDropZoneProps)}
             className="relative mt-5 rounded-lg"
-            onFocusCapture={() => {
+            onFocusCapture={isArchived ? undefined : () => {
               if (!descriptionEditingRef.current) {
                 descriptionEditingRef.current = true;
               }
             }}
-            onBlurCapture={(event) => {
+            onBlurCapture={isArchived ? undefined : (event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) {
                 descriptionEditingRef.current = false;
               }
             }}
           >
-            <ContentEditor
-              ref={descEditorRef}
-              key={id}
-              value={issue.description ?? ""}
-              placeholder={t(($) => $.detail.desc_placeholder)}
-              onUpdate={(md, baseMarkdown) => {
+            {isArchived ? (
+              <ReadonlyContent
+                content={issue.description ?? ""}
+                attachments={descEditorAttachments}
+              />
+            ) : (
+              <ContentEditor
+                ref={descEditorRef}
+                key={id}
+                value={descriptionConflictDraft ?? issue.description ?? ""}
+                placeholder={t(($) => $.detail.desc_placeholder)}
+                onUpdate={(md, baseMarkdown) => {
                 // Bind any pending uploads still referenced in the markdown
                 // so they appear in `issueAttachments` after refresh and the
                 // editor's text/code preview keeps working past reload.
@@ -3079,21 +3168,80 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 const ids = descPendingAttachmentsRef.current
                   .filter((a) => contentReferencesAttachment(md, a))
                   .map((a) => a.id);
-                queueDescriptionSave({
-                  markdown: md,
-                  baseMarkdown,
-                  attachmentIds: ids,
-                });
-              }}
-              onUploadFile={handleDescriptionUpload}
-              debounceMs={1500}
-              // Closing the issue modal must save what the user last saw —
-              // without the flush, a paste followed by a quick close loses
-              // the image markdown and its attachment_ids bind (MUL-3254).
-              flushPendingOnUnmount
-              currentIssueId={id}
-              attachments={descEditorAttachments}
-            />
+                  queueDescriptionSave({
+                    markdown: md,
+                    baseMarkdown,
+                    attachmentIds: ids,
+                  });
+                }}
+                onUploadFile={handleDescriptionUpload}
+                debounceMs={1500}
+                // Closing the issue modal must save what the user last saw —
+                // without the flush, a paste followed by a quick close loses
+                // the image markdown and its attachment_ids bind (MUL-3254).
+                flushPendingOnUnmount
+                currentIssueId={id}
+                attachments={descEditorAttachments}
+              />
+            )}
+
+            {!isArchived && descriptionConflictDraft !== null ? (
+              <RevisionConflictCompare
+                className="mt-3"
+                title={t(($) => $.revision.compare_description)}
+                serverLabel={t(($) => $.revision.server_version)}
+                localLabel={t(($) => $.revision.local_version)}
+                serverValue={issue.description || ""}
+                localValue={descriptionConflictDraft}
+                serverAction={(
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      // The editor is dirty — that is why this conflict
+                      // exists — so the `value` prop cannot land: ContentEditor
+                      // deliberately refuses to clobber unsaved bytes.
+                      // adoptContent is the explicit "take this content"
+                      // channel and applies without emitting an update, so
+                      // discarding never writes.
+                      descEditorRef.current?.adoptContent(issue.description || "");
+                      descriptionAttachmentIdsRef.current = [];
+                      pendingDescriptionSaveRef.current = null;
+                      setDescriptionConflictDraft(null);
+                    }}
+                  >
+                    {t(($) => $.revision.use_server)}
+                  </Button>
+                )}
+                localAction={(
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      handleUpdateField(
+                        {
+                          description: descriptionConflictDraft,
+                          description_base: issue.description || "",
+                          attachment_ids:
+                            descriptionAttachmentIdsRef.current.length > 0
+                              ? descriptionAttachmentIdsRef.current
+                              : undefined,
+                        },
+                        {
+                          onSuccess: () => {
+                            setDescriptionConflictDraft(null);
+                          },
+                        },
+                      );
+                    }}
+                  >
+                    {t(($) => $.revision.keep_local)}
+                  </Button>
+                )}
+              />
+            ) : null}
 
             <div className="flex items-center gap-1 mt-3">
               <ReactionBar
@@ -3102,13 +3250,15 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 onToggle={handleToggleIssueReaction}
                 getActorName={getActorName}
               />
-              <FileUploadButton
-                size="sm"
-                multiple
-                onSelect={(file) => descEditorRef.current?.uploadFile(file)}
-              />
+              {!isArchived && (
+                <FileUploadButton
+                  size="sm"
+                  multiple
+                  onSelect={(file) => descEditorRef.current?.uploadFile(file)}
+                />
+              )}
             </div>
-            {descDragOver && <FileDropOverlay />}
+            {!isArchived && descDragOver && <FileDropOverlay />}
           </div>
 
           {/* Sub-issues — Linear-style */}

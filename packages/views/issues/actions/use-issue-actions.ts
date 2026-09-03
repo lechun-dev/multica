@@ -8,7 +8,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
-import { useUpdateIssue } from "@multica/core/issues/mutations";
+import { useArchiveIssue, useRestoreIssue, useUpdateIssue } from "@multica/core/issues/mutations";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
 import { errorCode } from "@multica/core/api";
 import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
@@ -33,6 +33,8 @@ export interface UseIssueActionsResult {
   removeParent: () => void;
   openAddChild: () => void;
   openDeleteConfirm: (opts?: { onDeletedFallbackPath?: string }) => void;
+  archive: () => void;
+  restore: () => void;
 }
 
 /**
@@ -60,6 +62,8 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     );
 
   const updateIssue = useUpdateIssue();
+  const archiveIssue = useArchiveIssue();
+  const restoreIssue = useRestoreIssue();
   const surfaceActions = useIssueSurfaceActionsOptional();
   const createPin = useCreatePin();
   const deletePin = useDeletePin();
@@ -260,6 +264,22 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     [openModal, issueId, issueIdentifier],
   );
 
+  const archive = useCallback(() => {
+    if (!issueId) return;
+    archiveIssue.mutate(issueId, {
+      onSuccess: () => toast.success(t(($) => $.actions.archive_success)),
+      onError: (err) => toast.error(err instanceof Error && err.message ? err.message : t(($) => $.actions.archive_failed)),
+    });
+  }, [issueId, archiveIssue, t]);
+
+  const restore = useCallback(() => {
+    if (!issueId) return;
+    restoreIssue.mutate(issueId, {
+      onSuccess: () => toast.success(t(($) => $.actions.restore_success)),
+      onError: (err) => toast.error(err instanceof Error && err.message ? err.message : t(($) => $.actions.restore_failed)),
+    });
+  }, [issueId, restoreIssue, t]);
+
   return {
     isPinned,
     updateField,
@@ -271,5 +291,7 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     removeParent,
     openAddChild,
     openDeleteConfirm,
+    archive,
+    restore,
   };
 }

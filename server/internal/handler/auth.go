@@ -171,6 +171,28 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 	return token.SignedString(auth.JWTSecret())
 }
 
+// FindOrCreateUserForOAuth is a narrow host adapter for independently-owned
+// OAuth modules. It preserves the same signup restrictions and disabled-user
+// checks as the built-in email and Google login flows without exporting the
+// handler's internal account policy implementation.
+func (h *Handler) FindOrCreateUserForOAuth(ctx context.Context, email string) (db.User, bool, error) {
+	return h.findOrCreateUser(ctx, strings.ToLower(strings.TrimSpace(email)))
+}
+
+// IssueLoginTokenForOAuth exposes the existing JWT issuance contract to a
+// separately-owned OAuth adapter. It intentionally does not implement a
+// second token format or authentication policy.
+func (h *Handler) IssueLoginTokenForOAuth(user db.User) (string, error) {
+	return h.issueJWT(user)
+}
+
+// UserResponseForOAuth uses the same public user shape as the built-in login
+// handlers so an external OAuth adapter cannot drift from /auth/verify-code or
+// /auth/google responses.
+func (h *Handler) UserResponseForOAuth(user db.User) UserResponse {
+	return h.userToResponse(user)
+}
+
 // findOrCreateUser returns the existing user for an email, or creates one if
 // none exists. isNew reports whether this call created the user — the signup
 // event fires on that edge, covering both the verification-code and Google

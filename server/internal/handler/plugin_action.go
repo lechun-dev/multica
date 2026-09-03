@@ -16,6 +16,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
 	"github.com/multica-ai/multica/server/pkg/plugincontract"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
@@ -240,7 +241,61 @@ func (h *Handler) pluginIssueForUser(w http.ResponseWriter, r *http.Request, cal
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
 		return db.Issue{}, false
 	}
+	// 2026-08-27 coder(lq): Plugin Action calls made on behalf of a member
+	// must inherit the same project visibility as the ordinary issue API. The
+	// installation scope is not a substitute for project membership; otherwise
+	// a project viewer could bypass the project boundary through a plugin.
+	if caller.UserID.Valid && !h.requirePluginIssueProjectView(w, r, caller, issue) {
+		return db.Issue{}, false
+	}
+	if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "plugin") {
+		return db.Issue{}, false
+	}
 	return issue, true
+}
+
+// requirePluginIssueProjectPermission applies the project overlay using the
+// caller resolved by plugin authentication rather than trusting X-User-ID.
+// Install tokens act as the plugin itself and intentionally have no project
+// subject; member callback/session calls carry a valid UserID and are checked
+// here. Keeping this adapter parameterized makes every plugin issue mutation
+// inherit the same permission matrix as the ordinary API.
+// 2026-09-02 coder(lq): Parameterize the plugin project gate so comment writes
+// cannot rely on the weaker issue-view check.
+func (h *Handler) requirePluginIssueProjectPermission(w http.ResponseWriter, r *http.Request, caller service.PluginActionCaller, issue db.Issue, permission projectauth.Permission) bool {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return true
+	}
+	if !issue.ProjectID.Valid {
+		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
+		return false
+	}
+	workspaceID := uuidToString(issue.WorkspaceID)
+	member, err := h.getWorkspaceMember(r.Context(), uuidToString(caller.UserID), workspaceID)
+	if err != nil {
+		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
+		return false
+	}
+	subject := projectauth.Subject{
+		UserID:        uuidToString(caller.UserID),
+		WorkspaceID:   workspaceID,
+		WorkspaceRole: projectauth.WorkspaceRole(member.Role),
+	}
+	if err := h.ProjectAuth.CheckIssue(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission); err != nil {
+		if errors.Is(err, projectauth.ErrDisabled) {
+			publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to check project permissions")
+		} else {
+			publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
+		}
+		return false
+	}
+	return true
+}
+
+// requirePluginIssueProjectView keeps the existing call-site name explicit for
+// issue reads while delegating to the shared permission gate.
+func (h *Handler) requirePluginIssueProjectView(w http.ResponseWriter, r *http.Request, caller service.PluginActionCaller, issue db.Issue) bool {
+	return h.requirePluginIssueProjectPermission(w, r, caller, issue, projectauth.View)
 }
 
 // resolvePluginIssue finds an issue inside the caller's workspace, by
@@ -356,6 +411,13 @@ func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 2026-09-04 coder(lq): Reading a task and editing its content are separate
+	// capabilities. Keep the existing plugin scope check, then require the
+	// project Edit permission for member-backed plugin sessions so a project
+	// viewer cannot mutate a task through issues:write.
+	if caller.UserID.Valid && !h.requirePluginIssueProjectPermission(w, r, caller, issue, projectauth.Edit) {
+		return
+	}
 
 	var req publicapiv1.PatchIssueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -396,8 +458,13 @@ func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 		Title:            title,
 		Description:      description,
 		ExpectedRevision: expectedRevision,
+		BeforeCommit:     h.issueAccessBeforeCommit(),
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrArchivedIssue) {
+			publicapiv1.WriteProblem(w, r, http.StatusConflict, "archived_issue", "archived task cannot be modified; restore it first")
+			return
+		}
 		if errors.Is(err, service.ErrIssueRevisionConflict) {
 			writePublicIssueRevisionConflict(w, r)
 			return
@@ -534,6 +601,13 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 	}
 	issue, ok := h.pluginIssueForUser(w, r, caller, chi.URLParam(r, "issue_ref"))
 	if !ok {
+		return
+	}
+	// 2026-09-02 coder(lq): A plugin session is still acting for the signed-in
+	// member, so posting a comment must require the dedicated project comment
+	// permission after the issue-view boundary has passed. Install-token calls
+	// have no member subject and retain their existing plugin-actor behavior.
+	if caller.UserID.Valid && !h.requirePluginIssueProjectPermission(w, r, caller, issue, projectauth.IssueComment) {
 		return
 	}
 

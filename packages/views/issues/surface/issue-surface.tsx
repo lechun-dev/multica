@@ -36,6 +36,7 @@ import { useT } from "../../i18n";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
 import { IssueSurfaceSelectionProvider } from "./selection-context";
+import { IssueSurfaceVisibilityProvider } from "./visibility-context";
 import type { IssueCreateDefaults, IssueSurfaceProps } from "./types";
 import {
   useIssueSurfaceController,
@@ -232,6 +233,10 @@ function IssueSurfaceContent({
       controller.viewMode === "table");
 
   return (
+    <IssueSurfaceVisibilityProvider
+      includeWorkspaceOwned={controller.includeWorkspaceOwned}
+      ready={controller.visibilityReady}
+    >
     <IssueSurfaceActionsProvider actions={controller.actions}>
       {/* One shared right-click menu for every card/row this surface renders
           — see IssueContextMenuProvider. Inside the actions provider so the
@@ -354,6 +359,7 @@ function IssueSurfaceContent({
                 childProgressMap={controller.childProgressMap}
                 projectMap={controller.projectMap}
                 projectId={controller.projectId}
+                includeWorkspaceOwned={controller.includeWorkspaceOwned}
                 onCreateIssue={openCreateIssue}
                 groupBranches={controller.groupBranches}
               />
@@ -370,6 +376,7 @@ function IssueSurfaceContent({
       </IssueSurfaceSelectionProvider>
       </IssueContextMenuProvider>
     </IssueSurfaceActionsProvider>
+    </IssueSurfaceVisibilityProvider>
   );
 }
 

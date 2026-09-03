@@ -31,6 +31,10 @@ type AppConfig struct {
 	// from the JSON when false to keep responses identical to the
 	// previous shape for the common managed-cloud case (#3433).
 	WorkspaceCreationDisabled bool `json:"workspace_creation_disabled,omitempty"`
+	// ProjectPermissionsEnabled mirrors PROJECT_PERMISSION_ENABLED so the web
+	// app does not render permission screens that are guaranteed to return 404.
+	// Omitted while disabled to preserve the response shape for older clients.
+	ProjectPermissionsEnabled bool `json:"project_permissions_enabled,omitempty"`
 	// Public daemon setup config consumed by the web app at runtime so
 	// self-hosted instances can show `multica setup self-host` commands
 	// with the operator's own domains instead of Multica Cloud defaults.
@@ -102,6 +106,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		ProjectPermissionsEnabled:          h.cfg.ProjectPermissionEnabled,
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

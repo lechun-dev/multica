@@ -1,0 +1,50 @@
+# 2026-09-03 coder(lq): Keep preview installers independently identifiable and
+# installable alongside the stable private MissionOS build.
+extends: electron-builder.lechun.yml
+
+directories:
+  buildResources: build-beta
+
+appId: ai.multica.desktop.lechun.preview
+productName: MissionOS Preview
+
+extraMetadata:
+  productName: MissionOS Preview
+  multicaDesktopVariant: lechun-preview
+
+publish:
+  channel: latest-lechun-preview
+
+protocols:
+  - name: MissionOS Preview
+    schemes:
+      - multica-lechun-preview
+
+extraResources:
+  - from: build-beta/icon.png
+    to: resources/icon.png
+
+mac:
+  artifactName: multica-lechun-preview-${version}-mac-${arch}.${ext}
+  icon: build-beta/icon.icns
+
+dmg:
+  artifactName: multica-lechun-preview-${version}-mac-${arch}.${ext}
+
+linux:
+  artifactName: multica-lechun-preview-${version}-linux-${arch}.${ext}
+  executableName: multica-lechun-preview
+  icon: build-beta/icons
+  desktop:
+    entry:
+      StartupWMClass: MissionOS Preview
+
+win:
+  artifactName: multica-lechun-preview-${version}-windows-${arch}.${ext}
+  icon: build-beta/icon.ico
+
+deb:
+  packageName: multica-lechun-preview
+
+rpm:
+  packageName: multica-lechun-preview

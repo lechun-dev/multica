@@ -55,7 +55,7 @@ export function InlineCommentComposer({ issueId }: { issueId: string }) {
         pathname: "/[workspace]/mention-picker",
         params: { workspace: wsSlug ?? "", mode: "comment" },
       }}
-      uploadContext={{ issueId }}
+      uploadContext={{ issueId, commentDraft: true }}
       placeholder="Add a comment…"
       pillLabel="Add a comment, @ to mention…"
       pillIcon="chatbubble-ellipses-outline"

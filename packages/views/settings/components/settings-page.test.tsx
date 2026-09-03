@@ -32,6 +32,8 @@ vi.mock("./quick-actions-tab", stub("QuickActionsTab"));
 vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
 vi.mock("./plugins-tab", stub("PluginsTab"));
 vi.mock("./billing-tab", stub("BillingTab"));
+vi.mock("./project-permissions-tab", stub("ProjectPermissionsTab"));
+vi.mock("./project-permission-roles-tab", stub("ProjectPermissionRolesTab"));
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Acme" }),
@@ -71,6 +73,10 @@ beforeEach(() => {
   layout.compact = true;
   navigationState.search = "";
   configStore.getState().setFeatureFlags({});
+  configStore.getState().setAuthConfig({
+    allowSignup: true,
+    projectPermissionsEnabled: false,
+  });
   replace.mockClear();
 });
 
@@ -162,5 +168,53 @@ describe("SettingsPage workspace subscription feature flag", () => {
 
     expect(screen.getByRole("tab", { name: "Billing" })).toBeInTheDocument();
     expect(screen.getByText("BillingTab")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage project permissions switch", () => {
+  it("hides project permission tabs and falls back when the server disables them", () => {
+    navigationState.search = "tab=project-permissions";
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.queryByRole("tab", { name: "Project Permissions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Permission Roles" })).not.toBeInTheDocument();
+    expect(screen.queryByText("ProjectPermissionsTab")).not.toBeInTheDocument();
+    expect(screen.getByText("WorkspaceTab")).toBeInTheDocument();
+  });
+
+  it("also falls back from the organization directory tab when disabled", () => {
+    navigationState.search = "tab=project-authorization-organizations";
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.queryByRole("tab", { name: "Organization Directory" })).not.toBeInTheDocument();
+    expect(screen.getByText("WorkspaceTab")).toBeInTheDocument();
+  });
+
+  it("shows and mounts project permission tabs only when explicitly enabled", () => {
+    navigationState.search = "tab=project-permission-roles";
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+    });
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.getByRole("tab", { name: "Project Permissions" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Permission Roles" })).toBeInTheDocument();
+    expect(screen.getByText("ProjectPermissionRolesTab")).toBeInTheDocument();
+  });
+
+  it("uses the wider content tier for project permission settings", () => {
+    navigationState.search = "tab=project-permission-roles";
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+    });
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.getByTestId("settings-content").className).toContain("max-w-5xl");
   });
 });

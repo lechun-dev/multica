@@ -20,8 +20,8 @@ import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "@multica/views/i18n";
 import { Loader2 } from "lucide-react";
 import { callbackErrorFrom, type CallbackError } from "./callback-error";
-
 const authLogger = createLogger("auth.callback");
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 function CallbackContent() {
   const { t } = useT("auth");
@@ -186,11 +186,10 @@ function CallbackContent() {
       <div className="flex min-h-screen items-center justify-center">
         <Card className="w-full max-w-sm">
           <CardHeader className="text-center">
-            <CardTitle className="text-display-sm">
-              {t(($) => $.web.desktop_handoff.opening_title)}
-            </CardTitle>
+            <CardTitle className="text-display-sm">Opening {PRODUCT_NAME}</CardTitle>
             <CardDescription>
-              {t(($) => $.web.desktop_handoff.opening_description)}
+              You should see a prompt to open the {PRODUCT_NAME} desktop app. If
+              nothing happens, click the button below.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center">
@@ -200,7 +199,7 @@ function CallbackContent() {
                 window.location.href = `multica://auth/callback?token=${encodeURIComponent(desktopToken)}`;
               }}
             >
-              {t(($) => $.web.desktop_handoff.open_button)}
+              Open {PRODUCT_NAME} Desktop
             </Button>
           </CardContent>
         </Card>

@@ -1,7 +1,7 @@
 import { normalizeStatusPatch } from "./status-category";
 import { hashKey, useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api } from "../api";
-import { issueKeys } from "./queries";
+import { issueKeys, issueListIncludesWorkspaceOwned } from "./queries";
 import { projectKeys } from "../projects/queries";
 import { inboxKeys } from "../inbox/queries";
 import {
@@ -85,7 +85,14 @@ function useIssueCreateMutation<TVariables>(
     mutationFn,
     onSuccess: (newIssue) => {
       for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
-        if (data) qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
+        if (!data) continue;
+        // 2026-09-01 coder(lq): Restricted caches must refetch so the server
+        // can decide whether the newly-created issue is visible.
+        if (!issueListIncludesWorkspaceOwned(key)) {
+          qc.invalidateQueries({ queryKey: key });
+          continue;
+        }
+        qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
       }
       // Surface the just-created issue in cmd+k's Recent list without
       // requiring the user to open it first.
@@ -423,6 +430,42 @@ export function useDeleteIssue() {
       if (ctx?.metadata) invalidateDeletedIssueParentCaches(qc, wsId, ctx.metadata);
     },
   });
+}
+
+/** Archive/restore mutations share the same broad invalidation surface because
+ * archiving changes membership in every issue projection (board, table, mine,
+ * grouped and gantt) while keeping the detail route readable. */
+function useIssueArchiveMutation(action: "archive" | "restore") {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (id: string) =>
+      action === "archive" ? api.archiveIssue(id) : api.restoreIssue(id),
+    onSuccess: (issue) => {
+      qc.setQueryData(issueKeys.detail(wsId, issue.id), issue);
+    },
+    onSettled: (_data, _error, id) => {
+      qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.childrenAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
+      qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, id) });
+    },
+  });
+}
+
+export function useArchiveIssue() {
+  return useIssueArchiveMutation("archive");
+}
+
+export function useRestoreIssue() {
+  return useIssueArchiveMutation("restore");
 }
 
 export function useBatchUpdateIssues() {

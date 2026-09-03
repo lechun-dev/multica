@@ -5,6 +5,7 @@ import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  builderRetryDelays,
   deriveVersion,
   DESCRIBE_ARGS,
   envWithLocalBins,
@@ -12,7 +13,80 @@ import {
   parsePackageArgs,
   resolveBuildMatrix,
   stripLeadingSeparator,
+  updateChannelForTarget,
 } from "./package.mjs";
+import { stripForwardedSeparator } from "./package-lechun.mjs";
+import {
+  applyReleaseRuntimeConfig,
+  isPrereleaseTag,
+  resolveReleaseRuntimeConfig,
+} from "./release-runtime-config.mjs";
+
+describe("release runtime config", () => {
+  it("recognizes semver prerelease tags only", () => {
+    expect(isPrereleaseTag("v0.4.71-beta.6")).toBe(true);
+    expect(isPrereleaseTag("v0.4.71")).toBe(false);
+    expect(isPrereleaseTag("release-beta.6")).toBe(false);
+  });
+
+  it("uses the private staging deployment for prerelease builds", () => {
+    expect(resolveReleaseRuntimeConfig("v0.4.71-beta.6", {})).toEqual({
+      apiUrl: "https://mission-staging.lechun.cc",
+      wsUrl: "wss://mission-staging.lechun.cc/ws",
+      appUrl: "https://mission-staging.lechun.cc",
+    });
+  });
+
+  it("allows GitHub variables to override the staging deployment", () => {
+    expect(
+      resolveReleaseRuntimeConfig("v0.4.71-rc.1", {
+        STAGING_API_URL: "https://api.preview.lechun.cc/",
+        STAGING_WS_URL: "wss://api.preview.lechun.cc/ws/",
+        STAGING_APP_URL: "https://preview.lechun.cc/",
+      }),
+    ).toEqual({
+      apiUrl: "https://api.preview.lechun.cc",
+      wsUrl: "wss://api.preview.lechun.cc/ws",
+      appUrl: "https://preview.lechun.cc",
+    });
+  });
+
+  it("blocks official infrastructure in Lechun prerelease builds", () => {
+    expect(() =>
+      resolveReleaseRuntimeConfig("v0.4.71-beta.6", {
+        STAGING_API_URL: "https://multica-api.copilothub.ai",
+      }),
+    ).toThrow(/must not point a Lechun prerelease/);
+  });
+
+  it("injects prerelease Vite values without changing stable builds", () => {
+    const prereleaseEnv = { RELEASE_TAG: "v0.4.71-beta.6" };
+    applyReleaseRuntimeConfig(prereleaseEnv);
+    expect(prereleaseEnv).toMatchObject({
+      VITE_API_URL: "https://mission-staging.lechun.cc",
+      VITE_WS_URL: "wss://mission-staging.lechun.cc/ws",
+      VITE_APP_URL: "https://mission-staging.lechun.cc",
+    });
+
+    const stableEnv = { RELEASE_TAG: "v0.4.71" };
+    expect(applyReleaseRuntimeConfig(stableEnv)).toBeNull();
+    expect(stableEnv).toEqual({ RELEASE_TAG: "v0.4.71" });
+  });
+});
+
+describe("stripForwardedSeparator (Lechun wrapper)", () => {
+  it("removes pnpm's leading separator before config injection", () => {
+    expect(stripForwardedSeparator(["--", "--linux", "--x64", "--publish", "never"])).toEqual([
+      "--linux", "--x64", "--publish", "never",
+    ]);
+  });
+
+  it("does not remove a separator that is not leading", () => {
+    expect(stripForwardedSeparator(["--config", "electron-builder.lechun.yml", "--"])).toEqual([
+      "--config", "electron-builder.lechun.yml", "--",
+    ]);
+  });
+});
 
 describe("normalizeGitVersion", () => {
   it("returns null for empty / nullish input", () => {
@@ -127,6 +201,20 @@ describe("deriveVersion (real git describe)", () => {
     const { dir, run } = initRepo();
     run("tag", "v1.4.2");
     expect(deriveVersion(dir)).toBe("1.4.2");
+  });
+
+  it("prefers the explicit release tag when multiple tags point at one commit", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v0.4.51");
+    run("tag", "v0.4.52");
+    run("tag", "v0.4.53");
+    expect(deriveVersion(dir, "v0.4.53")).toBe("0.4.53");
+  });
+
+  it("ignores an invalid release tag and falls back to git describe", () => {
+    const { dir, run } = initRepo();
+    run("tag", "v1.4.2");
+    expect(deriveVersion(dir, "release_iteration/Sprint_0705")).toBe("1.4.2");
   });
 
   it("selects the semver tag even when a nearer non-semver tag exists", () => {
@@ -264,6 +352,50 @@ describe("resolveBuildMatrix", () => {
 });
 
 describe("builderArgsForTarget", () => {
+  it("maps each Lechun architecture to a non-official feed", () => {
+    expect(updateChannelForTarget({ platform: "mac", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+    expect(updateChannelForTarget({ platform: "mac", arch: "x64" }, "lechun")).toBe(
+      "latest-lechun-x64",
+    );
+    expect(updateChannelForTarget({ platform: "win", arch: "x64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+    expect(updateChannelForTarget({ platform: "win", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun-arm64",
+    );
+    expect(updateChannelForTarget({ platform: "linux", arch: "arm64" }, "lechun")).toBe(
+      "latest-lechun",
+    );
+  });
+
+  it("uses a separate Lechun update namespace", () => {
+    expect(
+      builderArgsForTarget(
+        { platform: "win", arch: "x64" },
+        {
+          allPlatforms: false,
+          sharedArgs: ["--publish", "always"],
+          platformTargets: { mac: [], win: ["nsis"], linux: [] },
+          requestedPlatforms: ["win"],
+          requestedArchs: ["x64"],
+        },
+        "1.2.3",
+        { hostPlatform: "win32", useScopedOutputDir: true, variant: "lechun" },
+      ),
+    ).toEqual([
+      "-c.extraMetadata.version=1.2.3",
+      "--win",
+      "nsis",
+      "--x64",
+      "--publish",
+      "always",
+      "-c.directories.output=dist/win-x64",
+      "-c.publish.channel=latest-lechun",
+    ]);
+  });
+
   it("adds scoped output directories for multi-target builds", () => {
     expect(
       builderArgsForTarget(
@@ -429,6 +561,38 @@ describe("envWithLocalBins", () => {
   });
 });
 
+describe("electron-builder retry policy", () => {
+  it("retries transient Windows filesystem locks with bounded backoff", () => {
+    expect(
+      builderRetryDelays(
+        "win32",
+        "Error: EBUSY: resource busy or locked, copyfile 'LICENSE'",
+      ),
+    ).toEqual([0, 5_000, 15_000]);
+    expect(
+      builderRetryDelays("win32", "Error: EPERM: operation not permitted"),
+    ).toEqual([0, 5_000, 15_000]);
+  });
+
+  it("does not retry deterministic failures or failures on other hosts", () => {
+    expect(
+      builderRetryDelays("win32", "Invalid configuration object"),
+    ).toEqual([0]);
+    expect(builderRetryDelays("darwin", "Error: EBUSY: resource busy")).toEqual([
+      0,
+    ]);
+    expect(
+      builderRetryDelays("linux", "Error: EACCES: permission denied"),
+    ).toEqual([0]);
+  });
+
+  it("keeps the policy bounded to the lock failure that triggered it", () => {
+    expect(builderRetryDelays("win32", "configuration validation failed")).toEqual([
+      0,
+    ]);
+  });
+});
+
 describe("electron-builder.yml packaging config", () => {
   // Regression guard for github.com/multica-ai/multica/issues/5595. The
   // multi-arch release build writes each target's output to
@@ -472,5 +636,39 @@ describe("electron-builder.yml packaging config", () => {
     const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries).toContain("!dist/**");
+  });
+
+  it("keeps the Lechun packaging overrides in a separate config", () => {
+    const lechunConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun.yml"),
+      resolve(process.cwd(), "apps/desktop/electron-builder.lechun.yml"),
+    ].find((candidate) => existsSync(candidate));
+    expect(lechunConfigPath, "Lechun electron-builder config not found").toBeTruthy();
+    if (!lechunConfigPath) return;
+    const config = readFileSync(lechunConfigPath, "utf-8");
+    expect(config).toContain("extends: electron-builder.yml");
+    expect(config).toContain("appId: ai.multica.desktop.lechun");
+    expect(config).toContain("productName: MissionOS");
+    expect(config).toContain("deb:\n  packageName: multica-lechun");
+    expect(config).toContain("rpm:\n  packageName: multica-lechun");
+    expect(config).toContain("channel: latest-lechun");
+    expect(config).toContain("multica-lechun");
+  });
+
+  it("inherits license resources only once in the Lechun preview config", () => {
+    const previewConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun-preview.yml"),
+      resolve(process.cwd(), "apps/desktop/electron-builder.lechun-preview.yml"),
+    ].find((candidate) => existsSync(candidate));
+    expect(previewConfigPath, "Lechun preview config not found").toBeTruthy();
+    if (!previewConfigPath || !configPath) return;
+
+    const baseConfig = readFileSync(configPath, "utf-8");
+    const previewConfig = readFileSync(previewConfigPath, "utf-8");
+    expect(baseConfig.match(/from: \.\.\/\.\.\/LICENSE/g)).toHaveLength(1);
+    expect(baseConfig.match(/from: \.\.\/\.\.\/NOTICE/g)).toHaveLength(1);
+    expect(previewConfig).not.toContain("../../LICENSE");
+    expect(previewConfig).not.toContain("../../NOTICE");
+    expect(previewConfig).toContain("from: build-beta/icon.png");
   });
 });

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -44,9 +43,9 @@ func issueTableQueryWithoutFacet(input issueTableQuerySpec, facet issueTableFace
 	output := input
 	output.Filters = input.Filters
 	if input.Filters.Properties != nil {
-		output.Filters.Properties = make(map[string][]json.RawMessage, len(input.Filters.Properties))
+		output.Filters.Properties = make(map[string][]string, len(input.Filters.Properties))
 		for propertyID, values := range input.Filters.Properties {
-			output.Filters.Properties[propertyID] = append([]json.RawMessage(nil), values...)
+			output.Filters.Properties[propertyID] = append([]string(nil), values...)
 		}
 	}
 

@@ -11,17 +11,15 @@ const mocks = vi.hoisted(() => ({
   role: "admin",
   copyText: vi.fn(),
   deleteProject: vi.fn(),
+  invalidateQueries: vi.fn(),
   getShareableUrl: vi.fn((path: string) => `https://app.example${path}`),
   push: vi.fn(),
   recordVisit: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 
-vi.mock("@multica/ui/lib/clipboard", () => ({
-  copyText: mocks.copyText,
-}));
-
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
@@ -38,6 +36,11 @@ vi.mock("@tanstack/react-query", () => ({
         return { data: undefined, isLoading: false };
     }
   },
+  useQueryClient: () => ({ invalidateQueries: mocks.invalidateQueries }),
+}));
+
+vi.mock("@multica/ui/lib/clipboard", () => ({
+  copyText: mocks.copyText,
 }));
 
 vi.mock("@multica/core/projects/queries", () => ({
@@ -222,6 +225,14 @@ vi.mock("./project-resources-section", () => ({
   ProjectResourcesSection: () => null,
 }));
 
+vi.mock("./project-permissions-panel", () => ({
+  ProjectPermissionsPanel: ({ projectId }: { projectId: string }) => (
+    <button type="button" aria-label={`Manage permissions for ${projectId}`}>
+      Project permissions
+    </button>
+  ),
+}));
+
 vi.mock("./project-start-date-picker", () => ({
   ProjectStartDatePicker: () => null,
 }));
@@ -259,6 +270,7 @@ vi.mock("../../layout/animated-right-sidebar", () => ({
 const PROJECT: Project = {
   id: "project-1",
   workspace_id: "workspace-1",
+  created_by: null,
   title: "Launch Plan",
   description: null,
   icon: null,
@@ -354,5 +366,15 @@ describe("ProjectDetail project deletion", () => {
     expect(
       screen.queryByRole("button", { name: "Delete project" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("ProjectDetail project permissions", () => {
+  it("shows the project permissions entry in the details sidebar", () => {
+    renderProjectDetail();
+
+    expect(
+      screen.getByRole("button", { name: "Manage permissions for project-1" }),
+    ).toBeInTheDocument();
   });
 });

@@ -238,7 +238,9 @@ export function useIssueStatusBranches({
     () =>
       pageTargets.map(({ status, cursor }) => {
         const placeholder =
-          cursor === null ? headPlaceholderRef.current.get(status) : undefined;
+          cursor === null && query.filters.include_workspace_owned !== false
+            ? headPlaceholderRef.current.get(status)
+            : undefined;
         return {
           ...issueTableRowPageOptions(wsId, {
             query,

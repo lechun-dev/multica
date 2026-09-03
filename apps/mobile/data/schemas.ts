@@ -169,6 +169,8 @@ export const ProjectSchema = z.object({
   due_date: z.string().nullable().default(null),
   created_at: z.string(),
   updated_at: z.string(),
+  // 2026-08-28 coder(lq): Keep project creator optional for older self-hosted backends.
+  created_by: z.string().nullable().default(null),
   issue_count: z.number().default(0),
   done_count: z.number().default(0),
   resource_count: z.number().default(0),
@@ -204,6 +206,7 @@ export const EMPTY_PROJECT: Project = {
   due_date: null,
   created_at: "",
   updated_at: "",
+  created_by: null,
   issue_count: 0,
   done_count: 0,
   resource_count: 0,

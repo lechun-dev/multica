@@ -51,20 +51,24 @@ export interface CanonicalIssue {
  * own. Seeding the cache from an effect instead would run after that decision
  * and leave the single-request property resting on hook ordering.
  */
-export function useCanonicalIssue(wsId: string, routeId: string): CanonicalIssue {
+export function useCanonicalIssue(
+  wsId: string,
+  routeId: string,
+  includeWorkspaceOwned = true,
+): CanonicalIssue {
   const qc = useQueryClient();
   const isUuid = isIssueUuid(routeId);
   const resolveEnabled = !isUuid && !!wsId && !!routeId;
 
   const resolve = useQuery({
-    ...issueDetailOptions(wsId, routeId),
+    ...issueDetailOptions(wsId, routeId, includeWorkspaceOwned),
     enabled: resolveEnabled,
   });
 
   const canonicalId = isUuid ? routeId : (resolve.data?.id ?? null);
 
   const detail = useQuery({
-    ...issueDetailOptions(wsId, canonicalId ?? ""),
+    ...issueDetailOptions(wsId, canonicalId ?? "", includeWorkspaceOwned),
     enabled: !!canonicalId && !!wsId,
     // Ignored once the entry holds data, so a row already patched by a realtime
     // event is never overwritten by this older resolution response.

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, WebContents } from "electron";
+import { autoUpdater } from "electron-updater";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,9 +55,49 @@ vi.mock("electron", () => ({
 
 import {
   configureMacX64UpdateChannel,
+  formatUpdaterError,
   setupAutoUpdater,
 } from "./updater";
 import { updaterPreferencesPath } from "./updater-preferences";
+
+describe("updater error formatting", () => {
+  it("turns transient private-release 404s into a short retryable message", () => {
+    expect(
+      formatUpdaterError(
+        new Error(
+          'Cannot find latest-lechun-mac.yml in the latest release artifacts (https://github.com/lechun-dev/multica/releases/download/v0.4.66/latest-lechun-mac.yml): HttpError: 404 Headers: {"x-github-request-id":"redacted"}',
+        ),
+      ),
+    ).toBe("Update files are temporarily unavailable. Please try again later.");
+  });
+
+  it("turns network failures into an actionable retry message", () => {
+    expect(formatUpdaterError(new Error("Update download timed out"))).toBe(
+      "Unable to reach the update server. We’ll retry automatically.",
+    );
+  });
+
+  it("hides Chromium network error codes from users", () => {
+    expect(formatUpdaterError(new Error("net::ERR_INTERNET_DISCONNECTED"))).toBe(
+      "Unable to reach the update server. We’ll retry automatically.",
+    );
+    expect(formatUpdaterError(new Error("net::ERR_CONNECTION_RESET"))).toBe(
+      "Unable to reach the update server. We’ll retry automatically.",
+    );
+  });
+
+  it("keeps short non-provider errors intact", () => {
+    expect(formatUpdaterError(new Error("downloaded package is missing"))).toBe(
+      "downloaded package is missing",
+    );
+  });
+
+  it("truncates unexpectedly verbose errors", () => {
+    const result = formatUpdaterError(new Error("x".repeat(500)));
+    expect(result).toHaveLength(240);
+    expect(result.endsWith("…")).toBe(true);
+  });
+});
 
 describe("macOS x64 update channel", () => {
   it("does not touch established architecture paths", () => {
@@ -80,7 +121,7 @@ describe("macOS x64 update channel", () => {
     configureMacX64UpdateChannel(updater, "darwin", "x64");
 
     expect(updater).toEqual({
-      channel: "latest-x64",
+      channel: "latest-lechun-x64",
       allowDowngrade: false,
     });
   });
@@ -167,6 +208,8 @@ describe("setupAutoUpdater", () => {
     ctx.downloadUpdate.mockClear();
     ctx.quitAndInstall.mockClear();
     ctx.getVersion.mockClear();
+    autoUpdater.channel = null;
+    autoUpdater.allowDowngrade = false;
   });
 
   afterEach(() => {
@@ -176,14 +219,31 @@ describe("setupAutoUpdater", () => {
   });
 
   it("enables automatic background updates by default", async () => {
-    setupAutoUpdater(() => null);
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
 
     await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
       automaticUpdates: true,
+      updatesAvailable: true,
     });
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the Lechun build on its own update feed", async () => {
+    setupAutoUpdater(() => null, {
+      serverUrl: "https://api.multica.ai",
+      channel: "latest-lechun",
+    });
+
+    await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
+      automaticUpdates: true,
+      updatesAvailable: true,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(autoUpdater.channel).toBe("latest-lechun");
+    expect(autoUpdater.allowDowngrade).toBe(false);
   });
 
   it("skips startup and periodic checks when automatic updates are disabled", async () => {
@@ -191,7 +251,7 @@ describe("setupAutoUpdater", () => {
       updaterPreferencesPath(ctx.userDataPath),
       JSON.stringify({ automaticUpdates: false }),
     );
-    setupAutoUpdater(() => null);
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
 
     // Let the async preference load settle before advancing timers; otherwise
     // the in-flight readFile can resolve after afterEach() removes the temp
@@ -205,11 +265,11 @@ describe("setupAutoUpdater", () => {
   });
 
   it("persists the automatic update preference and stops future background checks", async () => {
-    setupAutoUpdater(() => null);
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
 
     await expect(
       invokeIpc("updater:set-automatic-updates", false),
-    ).resolves.toEqual({ automaticUpdates: false });
+    ).resolves.toEqual({ automaticUpdates: false, updatesAvailable: true });
     expect(
       JSON.parse(
         readFileSync(updaterPreferencesPath(ctx.userDataPath), "utf-8"),
@@ -225,7 +285,7 @@ describe("setupAutoUpdater", () => {
       updaterPreferencesPath(ctx.userDataPath),
       JSON.stringify({ automaticUpdates: false }),
     );
-    setupAutoUpdater(() => null);
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
 
     await expect(invokeIpc("updater:check")).resolves.toMatchObject({
       ok: true,
@@ -234,9 +294,23 @@ describe("setupAutoUpdater", () => {
     expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
+  it("enables the configured updater for a private deployment", async () => {
+    setupAutoUpdater(() => null, {
+      serverUrl: "https://multica.example.internal",
+    });
+
+    await expect(invokeIpc("updater:get-preferences")).resolves.toEqual({
+      automaticUpdates: true,
+      updatesAvailable: true,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+    await expect(invokeIpc("updater:check")).resolves.toMatchObject({ ok: true });
+  });
+
   it("forwards update progress to a live renderer", () => {
     const { win, send } = makeWindow();
-    setupAutoUpdater(() => win);
+    setupAutoUpdater(() => win, { serverUrl: "https://api.multica.ai" });
 
     emitUpdater("download-progress", { percent: 42 });
 
@@ -245,15 +319,49 @@ describe("setupAutoUpdater", () => {
     });
   });
 
+  it("reports a successful update installation through IPC", async () => {
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
+
+    await expect(invokeIpc("updater:install")).resolves.toEqual({
+      success: true,
+    });
+    expect(ctx.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it("returns update installation failures through IPC", async () => {
+    ctx.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error("installer is unavailable");
+    });
+    setupAutoUpdater(() => null, { serverUrl: "https://api.multica.ai" });
+
+    await expect(invokeIpc("updater:install")).resolves.toEqual({
+      success: false,
+      error: "installer is unavailable",
+    });
+  });
+
+  it("forwards asynchronous updater errors to a live renderer", () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => win, { serverUrl: "https://api.multica.ai" });
+
+    emitUpdater("error", new Error("downloaded package is missing"));
+
+    expect(send).toHaveBeenCalledWith("updater:update-error", {
+      message: "downloaded package is missing",
+    });
+  });
+
   it("skips update progress when the BrowserWindow has already been destroyed", () => {
-    setupAutoUpdater(() => makeDestroyedWindow());
+    setupAutoUpdater(() => makeDestroyedWindow(), {
+      serverUrl: "https://api.multica.ai",
+    });
 
     expect(() => emitUpdater("download-progress", { percent: 42 })).not.toThrow();
   });
 
   it("skips update progress when the BrowserWindow webContents has already been destroyed", () => {
     const { win, send } = makeWindowWithDestroyedWebContents();
-    setupAutoUpdater(() => win);
+    setupAutoUpdater(() => win, { serverUrl: "https://api.multica.ai" });
 
     expect(() => emitUpdater("download-progress", { percent: 42 })).not.toThrow();
     expect(send).not.toHaveBeenCalled();
@@ -263,7 +371,7 @@ describe("setupAutoUpdater", () => {
     const { win, send } = makeWindowWithThrowingSend(
       new TypeError("Object has been destroyed"),
     );
-    setupAutoUpdater(() => win);
+    setupAutoUpdater(() => win, { serverUrl: "https://api.multica.ai" });
 
     expect(() => emitUpdater("download-progress", { percent: 42 })).not.toThrow();
     expect(send).toHaveBeenCalledWith("updater:download-progress", {
@@ -273,7 +381,7 @@ describe("setupAutoUpdater", () => {
 
   it("rethrows non-destroy errors from webContents.send", () => {
     const { win } = makeWindowWithThrowingSend(new Error("boom"));
-    setupAutoUpdater(() => win);
+    setupAutoUpdater(() => win, { serverUrl: "https://api.multica.ai" });
 
     expect(() => emitUpdater("download-progress", { percent: 42 })).toThrow(
       "boom",

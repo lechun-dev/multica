@@ -18,9 +18,13 @@ export interface Project {
   due_date: string | null;
   created_at: string;
   updated_at: string;
+  /** User who created the project; null for projects created before attribution was added. */
+  created_by: string | null;
   issue_count: number;
   done_count: number;
   resource_count: number;
+  /** Explicit role on this project for the signed-in user; omitted by legacy backends. */
+  current_user_role?: string | null;
 }
 
 export interface CreateProjectRequest {
@@ -36,6 +40,15 @@ export interface CreateProjectRequest {
   // Resources to attach in the same transaction as the project. Server returns
   // 4xx (and rolls back) if any one is invalid or duplicate.
   resources?: CreateProjectResourceRequest[];
+  /** Optional project-level grants persisted atomically with project creation. */
+  access_grants?: CreateProjectAccessGrantRequest[];
+}
+
+export interface CreateProjectAccessGrantRequest {
+  subject_type: ProjectAccessGrantSubjectType;
+  subject_id?: string;
+  role?: string;
+  permission?: ProjectPermissionReportPermission | string;
 }
 
 export interface UpdateProjectRequest {
@@ -54,6 +67,194 @@ export interface UpdateProjectRequest {
 export interface ListProjectsResponse {
   projects: Project[];
   total: number;
+}
+
+export interface ListProjectsParams {
+  status?: string;
+  /** 2026-08-28 coder(lq): Include workspace-owner-only projects in list results. */
+  include_workspace_owned?: boolean;
+}
+
+export type ProjectPermissionReportRole = string;
+
+export interface ProjectPermissionRole {
+  id: string;
+  workspace_id: string;
+  key: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+  permissions: ProjectPermissionReportPermission[];
+}
+
+export interface ProjectPermissionRolesResponse {
+  roles: ProjectPermissionRole[];
+}
+
+export type ProjectPermissionReportPermission =
+  | "project.view"
+  | "project.edit"
+  | "project.issue.create"
+  | "project.issue.comment"
+  | "project.issue.manage"
+  | "project.issue.archive"
+  | "project.agent.use"
+  | "project.member.manage"
+  | "project.settings.manage";
+
+// 2026-09-03 coder(lq): Keep the canonical permission vocabulary in the
+// shared type package so project creation, project dialogs, and role settings
+// cannot silently drift when a new task action is introduced.
+export const PROJECT_PERMISSION_KEYS: ProjectPermissionReportPermission[] = [
+  "project.view",
+  "project.edit",
+  "project.issue.create",
+  "project.issue.comment",
+  "project.issue.manage",
+  "project.issue.archive",
+  "project.agent.use",
+  "project.member.manage",
+  "project.settings.manage",
+];
+
+export interface ProjectPermissionReportRow {
+  scope: "project" | "issue";
+  project_id: string;
+  project_title: string;
+  issue_id?: string;
+  issue_title?: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  subject_type: ProjectAccessGrantSubjectType;
+  subject_id?: string;
+  workspace_role?: ProjectPermissionReportRole;
+  project_role?: ProjectPermissionReportRole;
+  permission: ProjectPermissionReportPermission;
+  source: string;
+  granted_by?: string;
+  inherited_from_project: boolean;
+}
+
+export interface ProjectPermissionReportParams {
+  project_id?: string;
+  issue_id?: string;
+  user_id?: string;
+  role?: ProjectPermissionReportRole;
+  permission?: ProjectPermissionReportPermission;
+  subject_type?: ProjectAccessGrantSubjectType;
+  subject_id?: string;
+  scope?: "all" | "project" | "issue";
+  limit?: number;
+  offset?: number;
+}
+
+export interface ProjectPermissionReportResponse {
+  rows: ProjectPermissionReportRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export type ProjectAccessGrantSubjectType = "user" | "role" | "organization" | "everyone";
+export type ProjectAccessGrantSource = "manual" | "organization" | "everyone" | "migration" | "system" | string;
+
+export interface ProjectAccessGrant {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  issue_id?: string;
+  subject_type: ProjectAccessGrantSubjectType;
+  subject_id?: string;
+  role?: string;
+  permission?: ProjectPermissionReportPermission | string;
+  source: ProjectAccessGrantSource;
+  granted_by?: string;
+}
+
+export interface ProjectAccessGrantsResponse {
+  grants: ProjectAccessGrant[];
+  total: number;
+  project_id?: string;
+}
+
+export interface ProjectAuthorizationOrganization {
+  id: string;
+  workspace_id: string;
+  provider: string;
+  external_id: string;
+  name: string;
+  parent_id?: string;
+  status: string;
+}
+
+export interface ProjectAuthorizationOrganizationMember {
+  organization_id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  avatar_url?: string;
+  workspace_role: "owner" | "admin" | "member" | string;
+}
+
+export interface ProjectAuthorizationOrganizationsResponse {
+  organizations: ProjectAuthorizationOrganization[];
+  members: ProjectAuthorizationOrganizationMember[];
+  total: number;
+  member_total: number;
+}
+
+export type ProjectAuthorizationImportKind = "organizations" | "members";
+export interface ProjectAuthorizationOrganizationImportRow {
+  external_id: string;
+  name: string;
+  parent_external_id?: string;
+  status: string;
+}
+export interface ProjectAuthorizationMemberImportRow {
+  external_id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  organization_external_id: string;
+  status: string;
+}
+export interface ProjectAuthorizationImportPreview {
+  kind: ProjectAuthorizationImportKind;
+  organizations?: ProjectAuthorizationOrganizationImportRow[];
+  members?: ProjectAuthorizationMemberImportRow[];
+  errors: string[];
+  warnings: string[];
+  rows: number;
+}
+export interface ProjectAuthorizationImportResult {
+  organizations_created: number;
+  organizations_updated: number;
+  members_created: number;
+  members_updated: number;
+  disabled: number;
+  users_created: number;
+  workspace_members_created: number;
+  unmatched: string[];
+}
+
+export interface ProjectAuthorizationDingTalkSyncResult {
+  organizations_created: number;
+  organizations_updated: number;
+  organizations_disabled: number;
+  members_created: number;
+  members_removed: number;
+  users_created: number;
+  users_matched: number;
+  workspace_members_created: number;
+  unmatched: string[];
+}
+
+export interface ProjectAccessGrantRequest {
+  subject_type: ProjectAccessGrantSubjectType;
+  subject_id?: string;
+  role?: string;
+  permission?: ProjectPermissionReportPermission | string;
 }
 
 // ProjectResource is a typed pointer from a project to an external resource.

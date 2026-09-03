@@ -3,7 +3,11 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
+import {
+  buildDingTalkLoginURL,
+  sanitizeNextUrl,
+  useAuthStore,
+} from "@multica/core/auth";
 import { useConfigStore } from "@multica/core/config";
 import {
   workspaceKeys,
@@ -24,11 +28,20 @@ import {
   CardContent,
 } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 import Link from "next/link";
-import { LoginPage, validateCliCallback } from "@multica/views/auth";
+import {
+  DingTalkFirstLoginFrame,
+  LoginPage,
+  validateCliCallback,
+} from "@multica/views/auth";
 import { useT } from "@multica/views/i18n";
+
+// Local presentation choice for this self-hosted deployment. The shared
+// LoginPage still supports Google for other consumers and can be restored here
+// later without changing any authentication code.
+const ENABLE_GOOGLE_LOGIN = false;
 
 /**
  * Pick where a logged-in user with no explicit `?next=` should land.
@@ -216,35 +229,46 @@ function LoginPageContent() {
   }
 
   return (
-    <LoginPage
-      onSuccess={handleSuccess}
-      google={
-        googleClientId
-          ? {
-              clientId: googleClientId,
-              redirectUri: `${window.location.origin}/auth/callback`,
-              state: googleState,
-            }
-          : undefined
-      }
-      cliCallback={
-        cliCallbackRaw && validateCliCallback(cliCallbackRaw)
-          ? { url: cliCallbackRaw, state: cliState }
-          : undefined
-      }
-      onTokenObtained={setLoggedInCookie}
-      extra={
-        <span className="text-caption text-muted-foreground">
-          {t(($) => $.web.prefer_desktop)}{" "}
-          <Link
-            href="/download"
-            className="font-medium text-foreground underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground/70"
-          >
-            {t(($) => $.web.download)}
-          </Link>
-        </span>
-      }
-    />
+    <DingTalkFirstLoginFrame>
+      <LoginPage
+        hideEmailLogin
+        onSuccess={handleSuccess}
+        google={
+          ENABLE_GOOGLE_LOGIN && googleClientId
+            ? {
+                clientId: googleClientId,
+                redirectUri: `${window.location.origin}/auth/callback`,
+                state: googleState,
+              }
+            : undefined
+        }
+        cliCallback={
+          cliCallbackRaw && validateCliCallback(cliCallbackRaw)
+            ? { url: cliCallbackRaw, state: cliState }
+            : undefined
+        }
+        onTokenObtained={setLoggedInCookie}
+        onDingTalkLogin={() => {
+          window.location.href = buildDingTalkLoginURL(
+            api.getBaseUrl(),
+            platform === "desktop" ? "desktop" : "web",
+            window.location.origin,
+            nextUrl,
+          );
+        }}
+        extra={
+          <div className="download-prompt">
+            <Link href="/download" className="download-link">
+              <Download className="download-icon" aria-hidden="true" />
+              <span>{t(($) => $.web.download_desktop)}</span>
+            </Link>
+            <span className="download-supporting">
+              {t(($) => $.web.download_platforms)}
+            </span>
+          </div>
+        }
+      />
+    </DingTalkFirstLoginFrame>
   );
 }
 

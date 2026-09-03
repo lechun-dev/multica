@@ -2,6 +2,7 @@
 
 import { cloneElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   CalendarDays,
@@ -86,6 +87,7 @@ import {
   SWIMLANE_GROUPINGS,
   CARD_PROPERTY_OPTIONS,
   type ActorFilterValue,
+  type IssueArchiveState,
   type IssueDateField,
   type IssueDateFilter,
   type SortField,
@@ -122,6 +124,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { WorkspaceAgentWorkingChip } from "./workspace-agent-working-chip";
 import { TableColumnPicker } from "./table-view";
+import { ProjectPermissionsDialog } from "../../projects/components/project-permissions-dialog";
 
 type LocalDateRange = {
   from: Date | undefined;
@@ -143,6 +146,7 @@ function getActiveFilterCount(
     includeNoProject: boolean;
     labelFilters: string[];
     propertyFilters?: Record<string, PropertyFilterValue[]>;
+    archiveState: IssueArchiveState;
     dateFilter?: IssueDateFilter | null;
   },
   // Inside a saved view only the user's additions on top of the view's own
@@ -164,6 +168,12 @@ function getActiveFilterCount(
     (state.includeNoProject && !(baseline?.includeNoProject ?? false));
   if (projectDelta) count++;
   if (delta(state.labelFilters, baseline?.label) > 0) count++;
+  if (
+    state.archiveState !== "active" &&
+    state.archiveState !== baseline?.archiveState
+  ) {
+    count++;
+  }
   for (const [id, selected] of Object.entries(state.propertyFilters ?? {})) {
     // Property members can be operator objects — compare through their
     // canonical keys so a view-fixed operator still cancels out.
@@ -1326,6 +1336,7 @@ export function IssuesHeader({
               {t(($) => $.agent_activity.filter_active_label)}
             </span>
           )}
+          {dialogProjectId && <ProjectPermissionsDialog projectId={dialogProjectId} />}
           <WorkspaceAgentWorkingChip
             value={agentRunningFilter}
             onToggle={toggleAgentRunningFilter}
@@ -1431,6 +1442,7 @@ export function IssueFilterMenu({
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
+  const archiveState = useViewStore((s) => s.archiveState);
   const viewStoreApi = useViewStoreApi();
   const act = viewStoreApi.getState();
   const wsId = useWorkspaceId();
@@ -1464,6 +1476,7 @@ export function IssueFilterMenu({
         projectFilters,
         includeNoProject,
         labelFilters,
+        archiveState,
         dateFilter: showDateFilter ? dateFilter : null,
       },
       viewBaseline,
@@ -1507,6 +1520,47 @@ export function IssueFilterMenu({
         <DropdownMenuTrigger render={anchoredTrigger} />
       )}
           <DropdownMenuContent align="end" className="w-auto" anchor={frozenAnchor ?? undefined}>
+            {/* Archive state */}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Archive className="size-3.5" />
+                <span className="flex-1">{t(($) => $.filters.section_archive)}</span>
+                {archiveState !== "active" && (
+                  <span className="text-caption text-primary font-medium">
+                    {t(($) => archiveState === "archived" ? $.filters.archive_archived : $.filters.archive_all)}
+                  </span>
+                )}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-auto min-w-44">
+                <DropdownMenuRadioGroup
+                  value={archiveState}
+                  onValueChange={(value) => act.setArchiveState(value as IssueArchiveState)}
+                >
+                  {(["active", "archived", "all"] as const).map((state) => {
+                    const fixed = viewBaseline?.archiveState !== undefined &&
+                      viewBaseline.archiveState !== "active";
+                    const label =
+                      state === "active"
+                        ? t(($) => $.filters.archive_active)
+                        : state === "archived"
+                          ? t(($) => $.filters.archive_archived)
+                          : t(($) => $.filters.archive_all);
+                    return (
+                      <DropdownMenuRadioItem
+                        key={state}
+                        value={state}
+                        disabled={fixed}
+                        title={fixed ? fixedTitle : undefined}
+                        className={FILTER_ITEM_CLASS}
+                      >
+                        {label}
+                      </DropdownMenuRadioItem>
+                    );
+                  })}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+
             {/* Status */}
             <DropdownMenuSub
               onOpenChange={(open) =>
@@ -1851,6 +1905,7 @@ export function IssueDisplayControls({
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
+  const archiveState = useViewStore((s) => s.archiveState);
   const cardPropertyIds = useViewStore((s) => s.cardPropertyIds);
   const sortBy = useViewStore((s) => s.sortBy);
   const sortDirection = useViewStore((s) => s.sortDirection);
@@ -1860,8 +1915,16 @@ export function IssueDisplayControls({
   const tableGrouping = useViewStore((s) => s.tableGrouping ?? "none");
   const tableHierarchy = useViewStore((s) => s.tableHierarchy ?? true);
   const showSubIssues = useViewStore((s) => s.showSubIssues);
+  const showWorkspaceOwnedItems = useViewStore((s) => s.showWorkspaceOwnedItems);
   const act = useViewStoreApi().getState();
   const headerWsId = useWorkspaceId();
+  const { data: workspaceMembers = [], isSuccess: workspaceMembersReady } = useQuery(
+    memberListOptions(headerWsId),
+  );
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const isWorkspaceOwner = workspaceMembersReady && !!currentUserId && workspaceMembers.some(
+    (member) => member.user_id === currentUserId && member.role === "owner",
+  );
   // Active custom-property catalog: drives the filter sections, dynamic
   // sort/grouping options, and the card-property toggles below.
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(headerWsId));
@@ -1913,6 +1976,7 @@ export function IssueDisplayControls({
       projectFilters,
       includeNoProject,
       labelFilters,
+      archiveState,
       dateFilter: showDateFilter ? dateFilter : null,
     },
     viewBaseline,
@@ -2268,6 +2332,18 @@ export function IssueDisplayControls({
                   onCheckedChange={() => act.toggleShowSubIssues()}
                 />
               </label>
+              {isWorkspaceOwner && (
+                <label className="flex cursor-pointer items-center justify-between gap-3">
+                  <span className="text-caption font-medium text-muted-foreground">
+                    {t(($) => $.display.show_workspace_owned_items)}
+                  </span>
+                  <Switch
+                    size="sm"
+                    checked={showWorkspaceOwnedItems}
+                    onCheckedChange={act.setShowWorkspaceOwnedItems}
+                  />
+                </label>
+              )}
               {viewMode !== "table" && (
                 <div>
                   <span className="text-caption font-medium text-muted-foreground">

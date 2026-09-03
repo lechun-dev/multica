@@ -45,6 +45,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 // randomID returns a random 16-byte hex string used as a request ID for
@@ -66,9 +67,12 @@ type dbExecutor interface {
 }
 
 type Config struct {
-	AllowSignup         bool
-	AllowedEmails       []string
-	AllowedEmailDomains []string
+	// ProjectPermissionEnabled enables the additive projectauth overlay. Keep
+	// false during rollout so upstream-compatible workspace behavior is retained.
+	ProjectPermissionEnabled bool
+	AllowSignup              bool
+	AllowedEmails            []string
+	AllowedEmailDomains      []string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
@@ -181,10 +185,15 @@ type RuntimeGoneNotifier interface {
 }
 
 type Handler struct {
-	Queries                *db.Queries
-	ReadSelector           *dbreader.Selector
-	DB                     dbExecutor
-	TxStarter              txStarter
+	Queries      *db.Queries
+	ReadSelector *dbreader.Selector
+	DB           dbExecutor
+	TxStarter    txStarter
+	ProjectAuth  *projectauth.Service
+	// issueTableWindowCache is initialized only on the request-local Handler
+	// copy used by a repeatable-read table request. It lets facets reuse one
+	// visible-id snapshot without adding mutable state to the shared Handler.
+	issueTableWindowCache  *issueTableWindowCache
 	Hub                    *realtime.Hub
 	DaemonHub              *daemonws.Hub
 	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
@@ -451,6 +460,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
 	taskSvc.SourceContextStorage = store
+	taskSvc.CommentAttachmentStorage = store
 	// Chat follow-up suggestions run through the same internal LLM layer that
 	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
 	// a disabled client, which turns the feature off rather than failing.
@@ -460,6 +470,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
 		TxStarter:                    txStarter,
+		ProjectAuth:                  projectauth.New(newProjectAuthRepository(executor), cfg.ProjectPermissionEnabled),
 		Hub:                          hub,
 		DaemonHub:                    daemonHub,
 		DaemonProfileRefresh:         daemonProfileRefresh,
@@ -1007,6 +1018,12 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+		if !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+			return db.Issue{}, false
+		}
+		if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "direct") {
+			return db.Issue{}, false
+		}
 		return issue, true
 	}
 
@@ -1028,6 +1045,12 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "issue not found")
+		return db.Issue{}, false
+	}
+	if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "direct") {
+		return db.Issue{}, false
+	}
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
 		return db.Issue{}, false
 	}
 	return issue, true
@@ -1199,6 +1222,23 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 
 	if item.RecipientType != "member" || uuidToString(item.RecipientID) != userID {
 		writeError(w, http.StatusNotFound, "inbox item not found")
+		return db.InboxItem{}, false
+	}
+	// 2026-08-27 coder(lq): A notification is an alternate issue lookup path;
+	// enforce the same project View boundary before allowing read/archive state
+	// changes, otherwise a hidden task could still be mutated by its inbox id.
+	if item.IssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID: item.IssueID, WorkspaceID: item.WorkspaceID,
+		})
+		if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+			if err != nil {
+				writeError(w, http.StatusNotFound, "inbox item not found")
+			}
+			return db.InboxItem{}, false
+		}
+	}
+	if item.IssueID.Valid && !h.authorizeIssueWindow(w, r, item.IssueID, item.WorkspaceID, "inbox") {
 		return db.InboxItem{}, false
 	}
 	return item, true

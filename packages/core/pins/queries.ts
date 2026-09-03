@@ -6,9 +6,15 @@ export const pinKeys = {
   list: (wsId: string, userId: string) => [...pinKeys.all(wsId, userId), "list"] as const,
 };
 
-export function pinListOptions(wsId: string, userId: string) {
+export function pinListOptions(
+  wsId: string,
+  userId: string,
+  includeWorkspaceOwned = true,
+) {
   return queryOptions({
-    queryKey: pinKeys.list(wsId, userId),
-    queryFn: () => api.listPins(),
+    queryKey: includeWorkspaceOwned
+      ? pinKeys.list(wsId, userId)
+      : ([...pinKeys.list(wsId, userId), { includeWorkspaceOwned }] as const),
+    queryFn: () => api.listPins(includeWorkspaceOwned),
   });
 }

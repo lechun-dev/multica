@@ -3,6 +3,7 @@ import { electronAPI } from "@electron-toolkit/preload";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 import type {
+  InstallUpdateResult,
   ManualUpdateCheckResult,
   UpdaterPreferences,
 } from "../shared/updater-types";
@@ -319,8 +320,14 @@ const updaterAPI = {
     ipcRenderer.on("updater:update-downloaded", handler);
     return () => ipcRenderer.removeListener("updater:update-downloaded", handler);
   },
+  onUpdateError: (callback: (error: { message: string }) => void) => {
+    const handler = (_: unknown, error: { message: string }) => callback(error);
+    ipcRenderer.on("updater:update-error", handler);
+    return () => ipcRenderer.removeListener("updater:update-error", handler);
+  },
   downloadUpdate: () => ipcRenderer.invoke("updater:download"),
-  installUpdate: () => ipcRenderer.invoke("updater:install"),
+  installUpdate: (): Promise<InstallUpdateResult> =>
+    ipcRenderer.invoke("updater:install"),
   getPreferences: (): Promise<UpdaterPreferences> =>
     ipcRenderer.invoke("updater:get-preferences"),
   setAutomaticUpdates: (enabled: boolean): Promise<UpdaterPreferences> =>

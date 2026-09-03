@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -405,32 +406,65 @@ type UpdateAutopilotTriggerRequest struct {
 
 func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
+	caller, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
 
 	var statusFilter pgtype.Text
 	if s := r.URL.Query().Get("status"); s != "" {
 		statusFilter = pgtype.Text{String: s, Valid: true}
 	}
 
+	viewerRole := caller.Role
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		// 2026-08-27 coder(lq): The SQL query carries the project overlay
+		// predicate, so explicitly bypass it while the feature is disabled and
+		// preserve Multica's native Autopilot list behavior.
+		viewerRole = "owner"
+	}
 	autopilots, err := h.Queries.ListAutopilots(r.Context(), db.ListAutopilotsParams{
-		WorkspaceID: parseUUID(workspaceID),
-		Status:      statusFilter,
+		WorkspaceID:  parseUUID(workspaceID),
+		Status:       statusFilter,
+		ViewerRole:   viewerRole,
+		ViewerUserID: caller.UserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list autopilots")
 		return
 	}
+	// 2026-08-27 coder(lq): A project-bound Autopilot is a project resource;
+	// filter it with the same project visibility boundary as issues and task
+	// history. Projectless legacy rows remain visible for native compatibility.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r), includeWorkspaceOwned)
+		if scopeErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+			return
+		}
+		filtered := make([]db.ListAutopilotsRow, 0, len(autopilots))
+		for _, row := range autopilots {
+			if !row.Autopilot.ProjectID.Valid {
+				filtered = append(filtered, row)
+				continue
+			}
+			if _, allowed := visibleProjects[row.Autopilot.ProjectID]; allowed {
+				filtered = append(filtered, row)
+			}
+		}
+		autopilots = filtered
+	}
 
 	// Resolve the caller's write access for per-row can_write. The collaborator
 	// grants are fetched once as a set (keyed by autopilot id) so the flag
-	// costs no per-row query. A missing member (shouldn't happen behind the
-	// workspace-member middleware) just yields can_write=false everywhere.
-	caller, callerErr := h.getWorkspaceMember(r.Context(), requestUserID(r), workspaceID)
+	// costs no per-row query. Visibility has already been enforced by the list
+	// query; collaborator grants affect write capability only and cannot add a
+	// hidden Autopilot to the response.
 	collabSet := map[string]struct{}{}
-	if callerErr == nil {
-		if ids, err := h.Queries.ListAutopilotIDsForCollaborator(r.Context(), caller.UserID); err == nil {
-			for _, id := range ids {
-				collabSet[uuidToString(id)] = struct{}{}
-			}
+	if ids, err := h.Queries.ListAutopilotIDsForCollaborator(r.Context(), caller.UserID); err == nil {
+		for _, id := range ids {
+			collabSet[uuidToString(id)] = struct{}{}
 		}
 	}
 
@@ -476,11 +510,9 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 			s := row.LastRunStatus
 			r.LastRunStatus = &s
 		}
-		if callerErr == nil {
-			_, isCollaborator := collabSet[uuidToString(row.Autopilot.ID)]
-			cw := autopilotWriteByOwnership(row.Autopilot, caller) || isCollaborator
-			r.CanWrite = &cw
-		}
+		_, isCollaborator := collabSet[uuidToString(row.Autopilot.ID)]
+		cw := autopilotWriteByOwnership(row.Autopilot, caller) || isCollaborator
+		r.CanWrite = &cw
 		resp[i] = r
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"autopilots": resp, "total": len(resp)})
@@ -575,7 +607,66 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "autopilot not found")
 		return db.Autopilot{}, false
 	}
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return db.Autopilot{}, false
+	}
+	// 2026-08-27 coder(lq): Enforce the same discoverability boundary for
+	// detail, mutation, runs, deliveries, triggers, and collaborator routes.
+	// Return 404 for both absent and hidden rows so guessed UUIDs cannot reveal
+	// whether another member's Autopilot exists.
+	if !h.memberCanViewAutopilot(r.Context(), autopilot, member) {
+		writeError(w, http.StatusNotFound, "autopilot not found")
+		return db.Autopilot{}, false
+	}
+	// 2026-08-27 coder(lq): Keep every authenticated Autopilot read and write
+	// path behind project View when the automation is bound to a project. This
+	// central guard covers detail, runs, deliveries, triggers, and mutations
+	// without changing generated queries or public webhook ingress.
+	if autopilot.ProjectID.Valid && !h.requireProjectPermission(
+		w,
+		r,
+		uuidToString(autopilot.ProjectID),
+		workspaceID,
+		projectauth.View,
+	) {
+		return db.Autopilot{}, false
+	}
 	return autopilot, true
+}
+
+// 2026-08-27 coder(lq): memberCanViewAutopilot reports whether a workspace
+// member belongs to the deliberately narrow Autopilot audience: creator,
+// effective executor, or workspace owner. Admin and collaborator status do
+// not independently grant visibility. Assignment lookups fail closed.
+func (h *Handler) memberCanViewAutopilot(ctx context.Context, ap db.Autopilot, member db.Member) bool {
+	if member.Role == "owner" {
+		return true
+	}
+	if ap.CreatedByType == "member" && uuidToString(ap.CreatedByID) == uuidToString(member.UserID) {
+		return true
+	}
+
+	switch ap.AssigneeType {
+	case "", "agent":
+		agent, err := h.Queries.GetAgent(ctx, ap.AssigneeID)
+		return err == nil &&
+			uuidToString(agent.WorkspaceID) == uuidToString(ap.WorkspaceID) &&
+			agent.OwnerID.Valid &&
+			uuidToString(agent.OwnerID) == uuidToString(member.UserID)
+	case "squad":
+		squad, err := h.Queries.GetSquad(ctx, ap.AssigneeID)
+		if err != nil || uuidToString(squad.WorkspaceID) != uuidToString(ap.WorkspaceID) {
+			return false
+		}
+		leader, err := h.Queries.GetAgent(ctx, squad.LeaderID)
+		return err == nil &&
+			uuidToString(leader.WorkspaceID) == uuidToString(ap.WorkspaceID) &&
+			leader.OwnerID.Valid &&
+			uuidToString(leader.OwnerID) == uuidToString(member.UserID)
+	default:
+		return false
+	}
 }
 
 // autopilotWriteByOwnership is the implicit, query-free part of the write
@@ -1164,6 +1255,13 @@ func (h *Handler) parseAutopilotProjectID(
 		writeError(w, http.StatusBadRequest, "project_id must reference a project in this workspace")
 		return pgtype.UUID{}, false
 	}
+	// 2026-08-27 coder(lq): Binding an automation to a project must not create
+	// a resource the caller cannot subsequently read. View is the narrowest
+	// safe prerequisite; write/execute rights remain governed by the existing
+	// Autopilot ownership and collaborator policy.
+	if !h.requireProjectPermission(w, r, uuidToString(projectID), uuidToString(workspaceID), projectauth.View) {
+		return pgtype.UUID{}, false
+	}
 	return projectID, true
 }
 
@@ -1171,21 +1269,12 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
 
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "autopilot id")
+	// 2026-08-27 coder(lq): Deletion must share the same discoverability and
+	// project boundary as every other Autopilot resource path. Loading the row
+	// directly here previously let a workspace admin archive an otherwise
+	// invisible Autopilot by guessing its UUID.
+	ap, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
 	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	ap, err := h.Queries.GetAutopilotInWorkspace(r.Context(), db.GetAutopilotInWorkspaceParams{
-		ID:          idUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
 		return
 	}
 	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
@@ -1210,7 +1299,7 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
-	if err := qtx.ArchiveAutopilot(r.Context(), idUUID); err != nil {
+	if err := qtx.ArchiveAutopilot(r.Context(), ap.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
 		return
 	}
@@ -1224,7 +1313,7 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{"autopilot_id": uuidToString(idUUID)})
+	h.publish(protocol.EventAutopilotDeleted, workspaceID, "member", userID, map[string]any{"autopilot_id": uuidToString(ap.ID)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1884,25 +1973,15 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	triggerID := chi.URLParam(r, "triggerId")
 	workspaceID := h.resolveWorkspaceID(r)
 
-	autopilotUUID, ok := parseUUIDOrBadRequest(w, autopilotID, "autopilot id")
-	if !ok {
-		return
-	}
 	triggerUUID, ok := parseUUIDOrBadRequest(w, triggerID, "trigger id")
 	if !ok {
 		return
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	// 2026-08-27 coder(lq): Keep trigger deletion behind the parent
+	// Autopilot's visibility guard; write role alone cannot make a hidden
+	// parent resource discoverable.
+	ap, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
 	if !ok {
-		return
-	}
-
-	ap, err := h.Queries.GetAutopilotInWorkspace(r.Context(), db.GetAutopilotInWorkspaceParams{
-		ID:          autopilotUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
 		return
 	}
 	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
@@ -1910,7 +1989,7 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	}
 
 	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerUUID)
-	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(autopilotUUID) {
+	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(ap.ID) {
 		writeError(w, http.StatusNotFound, "trigger not found")
 		return
 	}
@@ -1945,7 +2024,7 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(autopilotUUID),
+		"autopilot_id": uuidToString(ap.ID),
 		"trigger_id":   uuidToString(triggerUUID),
 	})
 	w.WriteHeader(http.StatusNoContent)

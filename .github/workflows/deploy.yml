@@ -1,0 +1,73 @@
+name: Deploy Multica
+
+on:
+  workflow_call:
+    inputs:
+      deploy_path:
+        description: Target directory on the deploy host
+        required: false
+        type: string
+        default: /deploy/multica
+      compose_project:
+        description: Docker Compose project name
+        required: false
+        type: string
+        default: multica
+      image_tag:
+        description: Optional image tag to deploy
+        required: false
+        type: string
+        default: ""
+      environment_name:
+        description: GitHub environment name
+        required: false
+        type: string
+        default: production
+  workflow_dispatch:
+    inputs:
+      deploy_path:
+        description: Target directory on the deploy host
+        required: false
+        type: string
+        default: /deploy/multica
+      compose_project:
+        description: Docker Compose project name
+        required: false
+        type: string
+        default: multica
+      image_tag:
+        description: Optional image tag to deploy
+        required: false
+        type: string
+        default: ""
+      environment_name:
+        description: GitHub environment name
+        required: false
+        type: string
+        default: production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name || 'production' }}
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd "${{ inputs.deploy_path || '/deploy/multica' }}"
+            image_tag="${{ inputs.image_tag || '' }}"
+            if [ -n "$image_tag" ]; then
+              export MULTICA_IMAGE_TAG="$image_tag"
+            fi
+            # 2026-09-02 coder(lq): Keep the compose sequence identical between
+            # staging and production. Only the target directory and compose
+            # project name vary, so both environments reuse the same image pull
+            # and recreate flow.
+            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml pull backend frontend
+            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml up -d --no-build backend frontend
+            docker image prune -f

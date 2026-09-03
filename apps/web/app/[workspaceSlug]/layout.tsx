@@ -9,6 +9,7 @@ import { setCurrentWorkspace } from "@multica/core/platform";
 import { useAuthStore } from "@multica/core/auth";
 import { NoAccessPage } from "@multica/views/workspace/no-access-page";
 import { WelcomeAfterOnboarding } from "@multica/views/workspace/welcome-after-onboarding";
+import { PRODUCT_NAME } from "@/config/product-brand";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
 import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
 import { workspaceSlugFromPathname } from "@/lib/workspace-slug-from-pathname";
@@ -31,7 +32,10 @@ export default function WorkspaceLayout({
   // to /login. Without this, the layout renders null and the user sees a
   // blank page stuck on /{slug}/...
   useEffect(() => {
-    if (!isAuthLoading && !user) router.replace(paths.login());
+    if (!isAuthLoading && !user) {
+      const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      router.replace(`${paths.login()}?next=${encodeURIComponent(next)}`);
+    }
   }, [isAuthLoading, user, router]);
 
   // Hard onboarding gate. Authenticated user but onboarded_at NULL means
@@ -127,7 +131,7 @@ export default function WorkspaceLayout({
        *  OnboardingFlow.handleRuntimeNext. Runtime path → loading veil →
        *  blocking Modal with Helper + starter cards. Skip path → Modal
        *  with two seeded issues. No signal → null. */}
-      <WelcomeAfterOnboarding />
+      <WelcomeAfterOnboarding productName={PRODUCT_NAME} />
     </WorkspaceSlugProvider>
   );
 }

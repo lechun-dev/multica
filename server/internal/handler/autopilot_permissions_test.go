@@ -93,6 +93,17 @@ func grantAutopilotAccess(t *testing.T, caller, apID, targetUserID string, wantS
 	}
 }
 
+func setAutopilotDirectExecutor(t *testing.T, autopilotID, userID string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent
+		SET owner_id = $1
+		WHERE id = (SELECT assignee_id FROM autopilot WHERE id = $2 AND assignee_type = 'agent')
+	`, userID, autopilotID); err != nil {
+		t.Fatalf("set direct autopilot executor: %v", err)
+	}
+}
+
 // autopilotCanWrite fetches the detail as the given caller and returns the
 // can_write flag the server stamped for them.
 func autopilotCanWrite(t *testing.T, caller, apID string) bool {
@@ -161,6 +172,10 @@ func TestAutopilotCollaborator_GrantedMemberCanWrite(t *testing.T) {
 
 	apID := createAutopilotAs(t, "", "ap-collab-grant")
 	member := createPlainMember(t, "ap-collab-grantee@multica.test")
+	// 2026-08-27 coder(lq): A collaborator grant controls write access only.
+	// Make the member the executor so the new visibility boundary independently
+	// allows them to discover the Autopilot before and after the grant.
+	setAutopilotDirectExecutor(t, apID, member)
 
 	updateAs := func(caller string) int {
 		w := httptest.NewRecorder()
@@ -214,6 +229,7 @@ func TestAutopilotCollaborator_NonWriterCannotGrant(t *testing.T) {
 	apID := createAutopilotAs(t, "", "ap-collab-guard")
 	stranger := createPlainMember(t, "ap-collab-stranger@multica.test")
 	victim := createPlainMember(t, "ap-collab-victim@multica.test")
+	setAutopilotDirectExecutor(t, apID, stranger)
 
 	// A non-writer cannot grant access to anyone.
 	grantAutopilotAccess(t, stranger, apID, victim, http.StatusForbidden)
@@ -235,6 +251,7 @@ func TestAutopilotCollaborator_CannotManageAccessList(t *testing.T) {
 	carol := createPlainMember(t, "ap-collab-carol@multica.test")
 	dave := createPlainMember(t, "ap-collab-dave@multica.test")
 	bob := createPlainMember(t, "ap-collab-bob2@multica.test")
+	setAutopilotDirectExecutor(t, apID, carol)
 
 	// Owner grants two collaborators.
 	grantAutopilotAccess(t, "", apID, carol, http.StatusCreated)
@@ -286,8 +303,8 @@ func TestAutopilotWrite_PlainMemberCannotMutateOthers(t *testing.T) {
 	r := newRequestAs(member, "PATCH", "/api/autopilots/"+apID+"?workspace_id="+testWorkspaceID, map[string]any{"title": "hijacked"})
 	r = withURLParam(r, "id", apID)
 	testHandler.UpdateAutopilot(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("UpdateAutopilot by stranger: expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("UpdateAutopilot by stranger: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Trigger.
@@ -295,8 +312,8 @@ func TestAutopilotWrite_PlainMemberCannotMutateOthers(t *testing.T) {
 	r = newRequestAs(member, "POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
 	r = withURLParam(r, "id", apID)
 	testHandler.TriggerAutopilot(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("TriggerAutopilot by stranger: expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("TriggerAutopilot by stranger: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Delete.
@@ -304,8 +321,8 @@ func TestAutopilotWrite_PlainMemberCannotMutateOthers(t *testing.T) {
 	r = newRequestAs(member, "DELETE", "/api/autopilots/"+apID+"?workspace_id="+testWorkspaceID, nil)
 	r = withURLParam(r, "id", apID)
 	testHandler.DeleteAutopilot(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("DeleteAutopilot by stranger: expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("DeleteAutopilot by stranger: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -359,6 +376,7 @@ func TestAutopilotWrite_WebhookSecretRedactedForNonWriter(t *testing.T) {
 
 	apID := createAutopilotAs(t, "", "ap-perm-secret")
 	stranger := createPlainMember(t, "ap-perm-secret-stranger@multica.test")
+	setAutopilotDirectExecutor(t, apID, stranger)
 
 	// Owner adds a webhook trigger.
 	w := httptest.NewRecorder()
@@ -394,7 +412,8 @@ func TestAutopilotWrite_WebhookSecretRedactedForNonWriter(t *testing.T) {
 		t.Fatalf("owner view: expected webhook_path to be present")
 	}
 
-	// Plain member (non-writer) sees the trigger but not the secret.
+	// The executor is in the read audience but is not a writer, so they see the
+	// trigger metadata without the trigger-granting secret.
 	w = httptest.NewRecorder()
 	r = withURLParam(newRequestAs(stranger, "GET", "/api/autopilots/"+apID+"?workspace_id="+testWorkspaceID, nil), "id", apID)
 	testHandler.GetAutopilot(w, r)

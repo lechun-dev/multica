@@ -1,12 +1,57 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_RUNTIME_CONFIG,
   deriveWsUrl,
+  isOfficialCloudServerUrl,
   parseRuntimeConfig,
+  runtimeConfigFromBuildEnv,
   runtimeConfigFromDevEnv,
 } from "./runtime-config";
 
 describe("runtime config", () => {
+  it("recognizes only approved release servers as update sources", () => {
+    expect(isOfficialCloudServerUrl("https://api.multica.ai")).toBe(true);
+    expect(isOfficialCloudServerUrl("https://mission.lechun.cc")).toBe(true);
+    expect(
+      isOfficialCloudServerUrl("https://mission-staging.lechun.cc"),
+    ).toBe(true);
+    expect(isOfficialCloudServerUrl("https://api.multica.ai.evil.example")).toBe(
+      false,
+    );
+    expect(isOfficialCloudServerUrl("https://multica.example.internal")).toBe(
+      false,
+    );
+  });
+
+  it("uses private deployment defaults without a desktop.json file", () => {
+    expect(DEFAULT_RUNTIME_CONFIG).toEqual({
+      schemaVersion: 1,
+      apiUrl: "https://mission.lechun.cc",
+      wsUrl: "wss://mission.lechun.cc/ws",
+      appUrl: "https://mission.lechun.cc",
+    });
+  });
+
+  it("derives packaged staging defaults from build-time env", () => {
+    expect(
+      runtimeConfigFromBuildEnv({
+        apiUrl: "https://staging-api.example.com",
+        wsUrl: "wss://staging-ws.example.com/ws",
+        appUrl: "https://staging.example.com",
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      apiUrl: "https://staging-api.example.com",
+      wsUrl: "wss://staging-ws.example.com/ws",
+      appUrl: "https://staging.example.com",
+    });
+  });
+
+  it("keeps the private production fallback when no packaged env is set", () => {
+    expect(runtimeConfigFromBuildEnv({})).toBeNull();
+  });
+
   it("derives https/wss compatible URLs from apiUrl", () => {
     expect(
       parseRuntimeConfig(

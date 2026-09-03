@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { buttonVariants } from "@multica/ui/components/ui/button";
 import { useT } from "@multica/views/i18n";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 export default function NotFound() {
   const { t } = useT("common");
@@ -16,7 +17,7 @@ export default function NotFound() {
         {t(($) => $.not_found.description)}
       </p>
       <Link href="/" className={buttonVariants({ className: "mt-2" })}>
-        {t(($) => $.not_found.back_to_multica)}
+        Back to {PRODUCT_NAME}
       </Link>
     </main>
   );

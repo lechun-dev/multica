@@ -786,7 +786,20 @@
     "tool_kind_command": "명령",
     "tool_kind_write": "편집",
     "tool_kind_read": "읽기",
-    "tool_kind_misc": "기타"
+    "tool_kind_misc": "기타",
+    "view_details": "실행 세부정보",
+    "view_human": "실행 요약",
+    "human_agent_message": "에이전트가 메시지를 보냈습니다.",
+    "human_thinking": "에이전트가 생각하는 중",
+    "human_running": "진행 중: {{action}}",
+    "human_completed": "완료: {{action}}",
+    "human_command": "명령 실행 {{subject}}",
+    "human_read": "읽기 {{subject}}",
+    "human_search": "검색 {{subject}}",
+    "human_edit": "수정 {{subject}}",
+    "human_tool": "도구 사용 {{subject}}",
+    "human_error": "실행 중 문제가 발생했습니다: {{text}}",
+    "human_group": "{{tool}} 작업 {{count}}회 실행"
   },
   "task_failure": {
     "cancelled_by_system": "시스템에서 취소함",

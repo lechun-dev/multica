@@ -328,7 +328,7 @@ function useEditAttachmentState(
   // `gate` widens the editor gate with coordinator-owned placeholders — see
   // CommentInput.
   const { uploads, attachments: pendingAttachments, handleUpload, removeUpload, gate } =
-    useCommentUploads(draftKey, { issueId }, uploadGate, editorRef);
+    useCommentUploads(draftKey, { issueId, commentDraft: true }, uploadGate, editorRef);
   const [retainedStandaloneIds, setRetainedStandaloneIds] = useState<Set<string> | null>(null);
   const triggerPreview = useCommentTriggerPreview({
     issueId,

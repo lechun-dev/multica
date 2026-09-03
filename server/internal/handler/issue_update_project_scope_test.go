@@ -9,7 +9,78 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
+
+// 2026-09-02 coder(lq): Projectless work must remain actionable until it is
+// assigned to a project. This covers the regression where UpdateIssue checked
+// the old projectless task before it could persist the new project_id.
+func TestProjectlessIssueCanProgressAndAttachToProject(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	actorID := createSecondWorkspaceMember(t)
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
+	previous := testHandler.ProjectAuth
+	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
+	t.Cleanup(func() { testHandler.ProjectAuth = previous })
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_type, creator_id,
+			number, position
+		)
+		VALUES ($1, $2, 'todo', 'none', 'member', $3,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 100)
+		RETURNING id
+	`, testWorkspaceID, "Projectless progress "+suffix, actorID).Scan(&issueID); err != nil {
+		t.Fatalf("insert projectless issue: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Projectless target "+suffix).Scan(&projectID); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'member')
+	`, projectID, actorID); err != nil {
+		t.Fatalf("add project member: %v", err)
+	}
+
+	progress := httptest.NewRecorder()
+	progressReq := newRequestAs(actorID, http.MethodPut, "/api/issues/"+issueID,
+		map[string]any{"title": "Progressed before project"})
+	progressReq = withURLParam(progressReq, "id", issueID)
+	testHandler.UpdateIssue(progress, progressReq)
+	if progress.Code != http.StatusOK {
+		t.Fatalf("projectless UpdateIssue: expected 200, got %d: %s", progress.Code, progress.Body.String())
+	}
+
+	attach := httptest.NewRecorder()
+	attachReq := newRequestAs(actorID, http.MethodPut, "/api/issues/"+issueID,
+		map[string]any{"project_id": projectID})
+	attachReq = withURLParam(attachReq, "id", issueID)
+	testHandler.UpdateIssue(attach, attachReq)
+	if attach.Code != http.StatusOK {
+		t.Fatalf("projectless attach: expected 200, got %d: %s", attach.Code, attach.Body.String())
+	}
+
+	var storedProjectID string
+	if err := testPool.QueryRow(ctx, `SELECT project_id FROM issue WHERE id = $1`, issueID).Scan(&storedProjectID); err != nil {
+		t.Fatalf("read attached project: %v", err)
+	}
+	if storedProjectID != projectID {
+		t.Fatalf("attached project = %s, want %s", storedProjectID, projectID)
+	}
+}
 
 // TestUpdateIssueProjectStaysInWorkspace mirrors
 // TestCreateIssueRejectsCrossWorkspaceProject on the update path. UpdateIssue

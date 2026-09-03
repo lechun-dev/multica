@@ -67,6 +67,12 @@ export function proxy(req: NextRequest) {
 
     if (!hasSession) {
       url.pathname = "/login";
+      // Preserve the legacy deep-link path through login. URL fragments are
+      // browser-only and cannot reach the proxy, but the client-side workspace
+      // layout preserves them for the current slug-based route.
+      const next = `${pathname}${req.nextUrl.search}`;
+      url.search = "";
+      url.searchParams.set("next", next);
       return NextResponse.redirect(url);
     }
 

@@ -15,7 +15,7 @@ var updateDownloadTimeout time.Duration = cli.DefaultUpdateDownloadTimeout
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Update multica to the latest version",
+	Short: "Update MissionOS to the latest version",
 	RunE:  runUpdate,
 }
 
@@ -23,9 +23,20 @@ func init() {
 	updateCmd.Flags().DurationVar(&updateDownloadTimeout, "download-timeout", cli.DefaultUpdateDownloadTimeout, "Maximum time to wait for the release archive download")
 }
 
-func runUpdate(_ *cobra.Command, _ []string) error {
+func runUpdate(cmd *cobra.Command, _ []string) error {
 	if updateDownloadTimeout <= 0 {
 		return fmt.Errorf("download timeout must be greater than zero")
+	}
+
+	serverURL := ""
+	if cmd != nil {
+		serverURL = tryResolveHumanServerURL(cmd)
+	}
+	if !cli.IsSupportedReleaseServerURL(serverURL) {
+		if serverURL == "" {
+			return fmt.Errorf("official updates are disabled because no MissionOS server is configured; set the server URL or upgrade from your organization's release channel")
+		}
+		return fmt.Errorf("official updates are disabled for unsupported MissionOS server %q; upgrade the CLI from your organization's release channel", serverURL)
 	}
 
 	fmt.Fprintf(os.Stderr, "Current version: %s (commit: %s, built: %s)\n", version, commit, date)
@@ -50,7 +61,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		output, err := cli.UpdateViaBrew()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", output)
-			return fmt.Errorf("brew upgrade failed: %w\nYou can try manually: brew upgrade multica-ai/tap/multica", err)
+			return fmt.Errorf("brew upgrade failed: %w\nYou can try manually: brew upgrade multica", err)
 		}
 		fmt.Fprintln(os.Stderr, "Update complete.")
 		return nil
@@ -58,7 +69,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 
 	// Not installed via brew — download binary directly from GitHub Releases.
 	if latest == nil {
-		return fmt.Errorf("could not determine latest version; check https://github.com/multica-ai/multica/releases/latest")
+		return fmt.Errorf("could not determine latest version; check https://github.com/%s/releases/latest", cli.ReleaseRepository)
 	}
 	targetVersion := latest.TagName
 	fmt.Fprintf(os.Stderr, "Downloading %s from GitHub Releases...\n", targetVersion)

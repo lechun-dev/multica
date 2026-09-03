@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { PRODUCT_NAME } from "@/config/product-brand";
 
 /**
  * Web app manifest — what makes the mobile web app installable and lets it run
@@ -24,7 +25,9 @@ import type { MetadataRoute } from "next";
  *
  * The two `any` icons come from the desktop app icon so an installed web app
  * and an installed desktop app show the same artwork; the maskable one is
- * full-bleed because Android crops it to the launcher's shape.
+ * full-bleed because Android crops it to the launcher's shape. The desktop
+ * source already contains transparent rounded corners for platforms that do
+ * not impose a mask of their own.
  */
 
 /** Launch path. Exported so manifest.test.ts can run it through the proxy. */
@@ -33,8 +36,8 @@ export const PWA_START_URL = "/inbox";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Multica",
-    short_name: "Multica",
+    name: PRODUCT_NAME,
+    short_name: PRODUCT_NAME,
     description:
       "Assign tasks to coding agents, track progress, and keep your team's work in one place.",
     start_url: PWA_START_URL,

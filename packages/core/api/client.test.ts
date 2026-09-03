@@ -73,6 +73,48 @@ describe("ApiClient agent conversation-starter compatibility", () => {
   });
 });
 
+describe("ApiClient project authorization compatibility", () => {
+  it("falls back to an empty project grant list when the response is malformed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ grants: [{ subject_type: "unknown" }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").listProjectAccessGrants("project-1"))
+      .resolves.toEqual({ grants: [], total: 0 });
+  });
+
+  it("falls back to an empty task grant list when the response is malformed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ grants: [{ subject_type: "unknown" }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").listIssueAccessGrants("issue-1"))
+      .resolves.toEqual({ grants: [], total: 0 });
+  });
+
+  it("returns a safe request-shaped fallback when a grant write response is malformed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ subject_type: "unknown" }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").createProjectAccessGrant("project-1", {
+      subject_type: "everyone",
+      role: "viewer",
+    })).resolves.toMatchObject({
+      project_id: "project-1",
+      subject_type: "everyone",
+      role: "viewer",
+      source: "manual",
+    });
+  });
+});
+
 describe("ApiClient edit guards", () => {
   it("serializes field baselines for issue and comment writes", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
@@ -139,6 +181,24 @@ describe("ApiClient edit guards", () => {
     expect(parsedLegacy).toMatchObject({ issues: [{ id: "issue-1" }], total: 1 });
     expect(parsedLegacy.issues[0]).not.toHaveProperty("revision");
     await expect(client.listIssues()).resolves.toEqual({ issues: [], total: 0 });
+  });
+});
+
+describe("ApiClient DingTalk login response schema", () => {
+  it("rejects a successful response without a usable token", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ token: "", user: { id: "user-1" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").dingTalkLogin("code", "state.web"),
+    ).rejects.toThrow("malformed login response");
   });
 });
 

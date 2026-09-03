@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import { DashboardLayout } from "@multica/views/layout";
 import { MulticaIcon } from "@multica/ui/components/common/multica-icon";
+import { PRODUCT_NAME } from "@/config/product-brand";
 import { SearchCommand, SearchTrigger } from "@multica/views/search";
 import { FloatingChat } from "@multica/views/chat";
 import { WebNotificationBridge } from "@/components/web-notification-bridge";
@@ -18,6 +19,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <WorkspaceDocumentTitle />
       </Suspense>
       <DashboardLayout
+        productName={PRODUCT_NAME}
         loadingIndicator={<MulticaIcon className="size-6" />}
         searchSlot={<SearchTrigger />}
         extra={

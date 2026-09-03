@@ -3,21 +3,22 @@
   "productName": "Multica",
   "version": "0.1.0",
   "private": true,
-  "description": "Multica Desktop — native desktop client for the Multica platform.",
-  "homepage": "https://multica.ai",
+  "description": "MissionOS Desktop — native desktop client for the MissionOS platform.",
+  "homepage": "https://mission.lechun.cc",
   "repository": {
     "type": "git",
-    "url": "https://github.com/multica-ai/multica.git",
+    "url": "https://github.com/lechun-dev/multica.git",
     "directory": "apps/desktop"
   },
   "author": {
-    "name": "Multica",
-    "email": "support@multica.ai"
+    "name": "MissionOS",
+    "email": "support@lechun.cc"
   },
   "license": "SEE LICENSE IN ../../LICENSE",
   "main": "./out/main/index.js",
   "scripts": {
     "bundle-cli": "node scripts/bundle-cli.mjs",
+    "generate-beta-icons": "node scripts/generate-beta-icons.mjs",
     "brand-dev-electron": "node scripts/brand-dev-electron.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:staging": "node scripts/dev.mjs --mode staging",
@@ -27,6 +28,8 @@
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "preview": "electron-vite preview",
     "package": "node scripts/package.mjs",
+    "package:lechun": "node scripts/package-lechun.mjs",
+    "package:lechun-preview": "node scripts/package-lechun-preview.mjs",
     "package:all": "node scripts/package.mjs --all-platforms --publish never",
     "lint": "eslint .",
     "test": "vitest run",

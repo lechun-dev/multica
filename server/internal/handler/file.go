@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -51,6 +52,48 @@ const (
 // to "please download". Sized so a typical README/source-file fits but a
 // 100 MB log dump can't blow up the renderer.
 const maxPreviewTextSize = 2 << 20 // 2 MB
+
+// 2026-08-27 coder(lq): Attachments inherit the project boundary of their
+// issue, including when they are submitted through a comment. Keep this
+// adapter local to the file handler so the independent projectauth package is
+// not coupled to attachment models or HTTP details.
+func (h *Handler) requireAttachmentProjectPermission(w http.ResponseWriter, r *http.Request, workspaceID string, issueID, commentID pgtype.UUID, permission projectauth.Permission) bool {
+	if !issueID.Valid && !commentID.Valid {
+		return true
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace_id")
+		return false
+	}
+	var issue db.Issue
+	if issueID.Valid {
+		issue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceUUID})
+	} else {
+		comment, commentErr := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{ID: commentID, WorkspaceID: workspaceUUID})
+		if commentErr == nil {
+			issue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: workspaceUUID})
+		} else {
+			err = commentErr
+		}
+	}
+	if err != nil {
+		writeError(w, http.StatusNotFound, "attachment target not found")
+		return false
+	}
+	return h.requireIssueProjectPermission(w, r, issue, permission)
+}
+
+func (h *Handler) requireAttachmentProjectEdit(w http.ResponseWriter, r *http.Request, workspaceID string, issueID, commentID pgtype.UUID) bool {
+	return h.requireAttachmentProjectPermission(w, r, workspaceID, issueID, commentID, projectauth.Edit)
+}
+
+// 2026-09-02 coder(lq): A comment attachment is part of the task conversation,
+// not project metadata. Keep its gate aligned with comment create/edit while
+// issue-owned attachments continue to require project.edit.
+func (h *Handler) requireAttachmentProjectComment(w http.ResponseWriter, r *http.Request, workspaceID string, commentID pgtype.UUID) bool {
+	return h.requireAttachmentProjectPermission(w, r, workspaceID, pgtype.UUID{}, commentID, projectauth.IssueComment)
+}
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -167,7 +210,7 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 		UploaderID:   uuidToString(a.UploaderID),
 		Filename:     a.Filename,
 		URL:          a.Url,
-		DownloadURL:  util.AttachmentDownloadPath(id),
+		DownloadURL:  attachmentDownloadPath(id),
 		MarkdownURL:  h.buildMarkdownURL(a, id),
 		ContentType:  a.ContentType,
 		SizeBytes:    a.SizeBytes,
@@ -196,6 +239,10 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 		resp.ChatMessageID = &s
 	}
 	return resp
+}
+
+func attachmentDownloadPath(id string) string {
+	return "/api/attachments/" + id + "/download"
 }
 
 // buildMarkdownURL chooses the durable URL the client persists into
@@ -232,7 +279,7 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 //     already broken before MUL-3192 and stay broken here, but we
 //     don't make them worse.
 func (h *Handler) buildMarkdownURL(a db.Attachment, id string) string {
-	relPath := util.AttachmentDownloadPath(id)
+	relPath := attachmentDownloadPath(id)
 	publicURL := strings.TrimRight(h.cfg.PublicURL, "/")
 
 	if h.storageURLIsPubliclyReadable(a.Url) {
@@ -459,7 +506,13 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			ContentType:  contentType,
 			SizeBytes:    int64(len(data)),
 		}
+		commentDraft := strings.EqualFold(strings.TrimSpace(r.FormValue("comment_draft")), "true")
 
+		// Comment attachments belong to the conversation and remain writable
+		// after the parent task is archived. Direct task attachments are part of
+		// the immutable task body and are rejected once archived.
+		var targetIssue db.Issue
+		var hasTargetIssue bool
 		if issueID := r.FormValue("issue_id"); issueID != "" {
 			issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue_id")
 			if !ok {
@@ -473,9 +526,15 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid issue_id")
 				return
 			}
+			targetIssue = issue
+			hasTargetIssue = true
 			params.IssueID = issue.ID
 		}
 		if commentID := r.FormValue("comment_id"); commentID != "" {
+			if commentDraft {
+				writeError(w, http.StatusBadRequest, "comment_draft cannot be combined with comment_id")
+				return
+			}
 			commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment_id")
 			if !ok {
 				return
@@ -485,7 +544,42 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "invalid comment_id")
 				return
 			}
+			if hasTargetIssue && comment.IssueID != targetIssue.ID {
+				writeError(w, http.StatusBadRequest, "comment_id does not belong to issue_id")
+				return
+			}
+			if !h.requireAttachmentProjectComment(w, r, workspaceID, comment.ID) {
+				return
+			}
 			params.CommentID = comment.ID
+			if !hasTargetIssue {
+				// Keep the existing ownership shape for clients that send only a
+				// comment id: comment attachments still retain their issue id.
+				params.IssueID = comment.IssueID
+			}
+		} else if hasTargetIssue {
+			if commentDraft {
+				// A draft upload is temporarily owned by the conversation. It is
+				// linked to the newly-created comment after the user submits it,
+				// so archived tasks can still accept comment attachments without
+				// reopening the immutable task body.
+				// 2026-09-02 coder(lq): Keep draft attachment authorization on the
+				// same project.issue_comment permission as comment creation.
+				if !h.requireIssueProjectPermission(w, r, targetIssue, projectauth.IssueComment) {
+					return
+				}
+				params.PendingComment = true
+			} else {
+				if !h.requireAttachmentProjectEdit(w, r, workspaceID, targetIssue.ID, pgtype.UUID{}) {
+					return
+				}
+				if rejectArchivedIssueMutation(w, targetIssue) {
+					return
+				}
+			}
+		} else if commentDraft {
+			writeError(w, http.StatusBadRequest, "comment_draft requires issue_id")
+			return
 		}
 		if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
 			// Require the member-visible Chat projection as well as private-agent
@@ -750,6 +844,9 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return db.Attachment{}, false
 	}
+	if !h.requireAttachmentProjectPermission(w, r, workspaceID, att.IssueID, att.CommentID, projectauth.View) {
+		return db.Attachment{}, false
+	}
 
 	return att, true
 }
@@ -798,6 +895,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		return db.Attachment{}, false
 	}
 	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
+		if !h.requireAttachmentProjectPermission(w, r, workspaceID, att.IssueID, att.CommentID, projectauth.View) {
+			return db.Attachment{}, false
+		}
 		return att, true
 	}
 	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
@@ -805,6 +905,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 		return db.Attachment{}, false
 	}
 	h.MembershipCache.Set(r.Context(), userID, workspaceID)
+	if !h.requireAttachmentProjectPermission(w, r, workspaceID, att.IssueID, att.CommentID, projectauth.View) {
+		return db.Attachment{}, false
+	}
 	return att, true
 }
 
@@ -1418,11 +1521,52 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
-	// Captured-context attachments are immutable historical copies. They are
-	// deleted only with their target issue, workspace, or abandoned context.
-	if att.SourceContextID.Valid {
+	pendingComment, pendingErr := h.Queries.IsAttachmentPendingComment(r.Context(), db.IsAttachmentPendingCommentParams{
+		ID:          att.ID,
+		WorkspaceID: att.WorkspaceID,
+	})
+	if pendingErr != nil {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
+	}
+	// 2026-09-02 coder(lq): Comment attachments follow the conversation
+	// permission, while issue-owned attachments remain project-edit scoped.
+	// Keep the uploader/admin ownership check below as the second boundary.
+	if att.CommentID.Valid {
+		if !h.requireAttachmentProjectComment(w, r, workspaceID, att.CommentID) {
+			return
+		}
+	} else if pendingComment && att.IssueID.Valid {
+		// A comment draft has no comment row yet, but it is still governed by
+		// the issue's comment permission and remains deletable after archiving.
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          att.IssueID,
+			WorkspaceID: att.WorkspaceID,
+		})
+		if issueErr != nil {
+			writeError(w, http.StatusNotFound, "attachment target not found")
+			return
+		}
+		if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+			return
+		}
+	} else {
+		if !h.requireAttachmentProjectEdit(w, r, workspaceID, att.IssueID, pgtype.UUID{}) {
+			return
+		}
+		if att.IssueID.Valid {
+			issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+				ID:          att.IssueID,
+				WorkspaceID: att.WorkspaceID,
+			})
+			if issueErr != nil {
+				writeError(w, http.StatusNotFound, "attachment target not found")
+				return
+			}
+			if rejectArchivedIssueMutation(w, issue) {
+				return
+			}
+		}
 	}
 
 	// Only the uploader (or workspace admin) can delete
@@ -1443,6 +1587,12 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("failed to delete attachment", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete attachment")
+		return
+	}
+	// 2026-08-28 coder(lq): Source-context snapshots are immutable; a no-op
+	// delete must not remove their object or report a false success.
+	if !deleted.Changed {
+		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 	if deleted.Changed && att.IssueID.Valid {
@@ -1487,11 +1637,14 @@ func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, worksp
 
 // linkAttachmentsByIDs links the given attachment IDs to a comment.
 // Only updates attachments that belong to the same issue and have no comment_id yet.
-func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID pgtype.UUID, ids []pgtype.UUID) {
+func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID, workspaceID pgtype.UUID, uploaderType string, uploaderID pgtype.UUID, ids []pgtype.UUID) {
 	if err := h.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
-		CommentID: commentID,
-		IssueID:   issueID,
-		Column3:   ids,
+		CommentID:     commentID,
+		IssueID:       issueID,
+		AttachmentIds: ids,
+		WorkspaceID:   workspaceID,
+		UploaderType:  uploaderType,
+		UploaderID:    uploaderID,
 	}); err != nil {
 		slog.Error("failed to link attachments to comment", "error", err)
 	}

@@ -8,9 +8,10 @@
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
@@ -81,6 +82,22 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: ArchiveIssue :one
+UPDATE issue
+SET archived_at = now(),
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL
+RETURNING *;
+
+-- name: RestoreIssue :one
+UPDATE issue
+SET archived_at = NULL,
+    revision = revision + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND archived_at IS NOT NULL
+RETURNING *;
+
 -- name: LockIssueForChannelMediaBind :one
 -- Channel media resolves after /issue creation. Hold a key-share lock while
 -- the attachment row is written so a concurrent issue delete cannot land
@@ -118,6 +135,7 @@ SET description = CASE
     updated_at = now()
 WHERE id = sqlc.arg(id)
   AND workspace_id = sqlc.arg(workspace_id)
+  AND archived_at IS NULL
 RETURNING *;
 
 -- name: LockIssueForDelete :one
@@ -138,6 +156,7 @@ SET parent_issue_id = NULL,
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now())
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND parent_issue_id = sqlc.arg(parent_issue_id)
+  AND archived_at IS NULL
   AND NOT COALESCE(id = ANY(sqlc.arg(excluded_issue_ids)::uuid[]), false)
 RETURNING *;
 
@@ -190,6 +209,7 @@ WITH candidate AS (
                     SELECT COALESCE(MIN(target.position), 0) - 1
                     FROM issue AS target
                     WHERE target.workspace_id = i.workspace_id
+                      AND target.archived_at IS NULL
                       AND target.status = sqlc.narg('status')::text
                 )
             ELSE i.position
@@ -201,6 +221,7 @@ WITH candidate AS (
         sqlc.narg('stage')::integer AS next_stage
     FROM issue AS i
     WHERE i.id = $1
+      AND i.archived_at IS NULL
       AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
 ), changed AS (
     SELECT
@@ -249,6 +270,7 @@ WHERE i.id = changed.id
   -- from the same snapshot; EvalPlanQual re-evaluates this target-row predicate
   -- after waiting for the first writer, leaving the stale writer with 0 rows.
   AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
+  AND i.archived_at IS NULL
 RETURNING i.*;
 
 -- name: UpdateIssueStatus :one
@@ -271,7 +293,7 @@ UPDATE issue AS i SET
         ELSE i.last_activity_at
     END,
     updated_at = now()
-WHERE i.id = $1 AND i.workspace_id = $3
+WHERE i.id = $1 AND i.workspace_id = $3 AND i.archived_at IS NULL
 RETURNING *;
 
 -- name: CreateIssueWithOrigin :one
@@ -350,9 +372,10 @@ DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.archived_at
 FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   -- Negate only known terminal keys so an unknown legacy key remains visible.
   AND NOT (i.status = ANY(sqlc.arg('terminal_status_keys')::text[]))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
@@ -456,6 +479,7 @@ ORDER BY i.position ASC, i.created_at DESC;
 -- See ListIssues for the semantics of involves_user_id.
 SELECT count(*) FROM issue i
 WHERE i.workspace_id = $1
+  AND i.archived_at IS NULL
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
   AND (sqlc.narg('priority')::text IS NULL OR i.priority = sqlc.narg('priority'))
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
@@ -506,6 +530,7 @@ WHERE i.workspace_id = $1
 -- monotonic counter and is sibling-stable.
 SELECT * FROM issue
 WHERE parent_issue_id = $1
+  AND archived_at IS NULL
 ORDER BY number ASC;
 
 -- name: ListChildrenByParents :many
@@ -519,6 +544,7 @@ ORDER BY number ASC;
 SELECT * FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')
   AND parent_issue_id = ANY(sqlc.arg('parent_ids')::uuid[])
+  AND archived_at IS NULL
 ORDER BY parent_issue_id, number ASC;
 
 -- name: GetIssueByOrigin :one
@@ -531,6 +557,7 @@ SELECT * FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
+  AND archived_at IS NULL
 LIMIT 1;
 
 -- name: CountCreatedIssueAssignees :many
@@ -545,6 +572,7 @@ WHERE workspace_id = $1
   AND creator_type = 'member'
   AND assignee_type IS NOT NULL
   AND assignee_id IS NOT NULL
+  AND archived_at IS NULL
 GROUP BY assignee_type, assignee_id;
 
 -- name: ChildIssueProgress :many
@@ -554,6 +582,7 @@ SELECT parent_issue_id,
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  AND archived_at IS NULL
 GROUP BY parent_issue_id;
 
 -- SearchIssues: moved to handler (dynamic SQL for multi-word search support).
@@ -571,7 +600,7 @@ UPDATE issue SET
         ELSE last_activity_at
     END,
     updated_at = now()
-WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id')
+WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
 RETURNING *;
 
 -- name: DeleteIssueMetadataKey :one
@@ -586,7 +615,7 @@ UPDATE issue SET
         ELSE last_activity_at
     END,
     updated_at = now()
-WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id')
+WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
 RETURNING *;
 
 -- name: MarkIssueFirstExecuted :one
@@ -596,7 +625,7 @@ RETURNING *;
 -- retries and re-assignments hit the WHERE clause and no-op.
 UPDATE issue
 SET first_executed_at = now()
-WHERE id = $1 AND first_executed_at IS NULL
+WHERE id = $1 AND first_executed_at IS NULL AND archived_at IS NULL
 RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
 
 -- name: CountIssuesUpTo :one
@@ -606,7 +635,8 @@ RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
 SELECT COUNT(*)::bigint
 FROM (
     SELECT 1
-    FROM issue
-    WHERE workspace_id = $1
+FROM issue
+WHERE workspace_id = $1
+  AND archived_at IS NULL
     LIMIT sqlc.arg('limit')::bigint
 ) bounded_issues;

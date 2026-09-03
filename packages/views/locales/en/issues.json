@@ -69,6 +69,7 @@
   "revision": {
     "conflict": "The issue or comment changed. The latest version was refreshed; compare it before saving again.",
     "compare_title": "The title was changed concurrently. Compare both versions.",
+    "compare_description": "The description was changed concurrently. Compare both versions.",
     "compare_comment": "The comment was changed concurrently. Compare both versions.",
     "server_version": "Latest server version",
     "local_version": "Your local version",
@@ -128,6 +129,10 @@
     "section_project": "Project",
     "section_label": "Label",
     "section_date": "Date",
+    "section_archive": "Archive",
+    "archive_active": "Active",
+    "archive_archived": "Archived",
+    "archive_all": "All",
     "date_field": "Field",
     "date_field_created": "Created",
     "date_field_updated": "Updated",
@@ -182,7 +187,8 @@
     "card_project": "Project",
     "card_labels": "Labels",
     "card_child_progress": "Sub-issue progress",
-    "show_sub_issues": "Show sub-issues"
+    "show_sub_issues": "Show sub-issues",
+    "show_workspace_owned_items": "Show workspace-owned tasks"
   },
   "view": {
     "tooltip_board": "Board view",
@@ -722,6 +728,12 @@
     "remove_parent_issue_success": "Removed parent issue",
     "add_sub_issue": "Add sub-issue...",
     "delete_issue": "Delete issue"
+    ,"archive": "Archive issue"
+    ,"restore": "Restore issue"
+    ,"archive_success": "Issue archived"
+    ,"restore_success": "Issue restored"
+    ,"archive_failed": "Failed to archive issue"
+    ,"restore_failed": "Failed to restore issue"
   },
   "pickers": {
     "custom_property": {

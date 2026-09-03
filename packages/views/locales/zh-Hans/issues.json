@@ -68,6 +68,7 @@
   "revision": {
     "conflict": "任务或评论已发生变化。已刷新到最新版本，请比较后重新保存。",
     "compare_title": "标题存在并发修改，请比较两个版本。",
+    "compare_description": "描述存在并发修改，请比较两个版本。",
     "compare_comment": "评论存在并发修改，请比较两个版本。",
     "server_version": "服务端最新版本",
     "local_version": "你的本地版本",
@@ -127,6 +128,10 @@
     "section_project": "项目",
     "section_label": "标签",
     "section_date": "日期",
+    "section_archive": "归档",
+    "archive_active": "未归档",
+    "archive_archived": "已归档",
+    "archive_all": "全部",
     "date_field": "字段",
     "date_field_created": "创建时间",
     "date_field_updated": "更新时间",
@@ -179,7 +184,8 @@
     "card_project": "项目",
     "card_labels": "标签",
     "card_child_progress": "子任务进度",
-    "show_sub_issues": "显示子任务"
+    "show_sub_issues": "显示子任务",
+    "show_workspace_owned_items": "显示空间权限任务"
   },
   "view": {
     "tooltip_board": "看板视图",
@@ -691,6 +697,12 @@
     "remove_parent_issue_success": "已移除父任务",
     "add_sub_issue": "添加子任务...",
     "delete_issue": "删除任务"
+    ,"archive": "归档任务"
+    ,"restore": "恢复任务"
+    ,"archive_success": "任务已归档"
+    ,"restore_success": "任务已恢复"
+    ,"archive_failed": "归档任务失败"
+    ,"restore_failed": "恢复任务失败"
   },
   "pickers": {
     "custom_property": {

@@ -23,7 +23,7 @@ Two commands to set up everything — server, CLI, and configuration.
 
 ```bash
 # 1. Install CLI + provision the self-host server
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+curl -fsSL https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.sh | bash -s -- --with-server
 
 # 2. Configure CLI, authenticate, and start the daemon
 multica setup self-host
@@ -36,7 +36,7 @@ multica setup self-host
 
 ```powershell
 # 1. Install CLI + provision the self-host server
-$env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+$env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.ps1 | iex
 
 # 2. Configure CLI, authenticate, and start the daemon
 multica setup self-host
@@ -66,7 +66,7 @@ If you prefer to run each step manually:
 **Prerequisites:** Docker and Docker Compose.
 
 ```bash
-git clone https://github.com/multica-ai/multica.git
+git clone https://github.com/lechun-dev/multica.git
 cd multica
 make selfhost
 ```
@@ -88,11 +88,47 @@ Once ready:
 
 Open http://localhost:3000 in your browser. The Docker self-host stack defaults to `APP_ENV=production` (set in `docker-compose.selfhost.yml`), and there is no fixed verification code by default. Pick one of the following to log in:
 
+## Upgrade policy for private deployments
+
+Self-hosting means the organization owns the compatible release set: backend,
+web, PostgreSQL migrations, CLI/daemon, and any desktop or mobile builds that
+connect to the private server. The public desktop updater and `multica update`
+are disabled when the configured API URL is not `api.multica.ai`; users should
+upgrade from the organization's private build or release channel. This avoids
+silently replacing a private build with an official release that does not
+contain the same server changes or permission features.
+
+If a private desktop build is distributed, bundle the matching CLI with it (or
+install that CLI on the host). The desktop app will not download a public CLI as
+a fallback for a private API URL.
+
 - **Recommended (production):** configure `RESEND_API_KEY` in `.env`, then restart the backend. Real verification codes will be sent to the email address you enter. See [Advanced Configuration → Email](SELF_HOSTING_ADVANCED.md#email-required-for-authentication).
 - **Without email configured:** the verification code is generated server-side and printed to the backend container logs (look for `[DEV] Verification code for ...:`). Useful for one-off testing on a single machine.
 - **Deterministic local/private testing:** set `APP_ENV=development` and `MULTICA_DEV_VERIFICATION_CODE=888888` in `.env`, then restart the backend. This fixed code is ignored when `APP_ENV=production`.
 
 Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` also take effect after restarting the backend / compose stack. The web UI reads all three from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
+
+### Project permissions (optional)
+
+Project-level permissions are disabled by default for compatibility with the
+upstream workspace-only behavior. After applying the database migrations, set
+`PROJECT_PERMISSION_ENABLED=true` in `.env` and restart the backend/Compose
+stack. This is a backend feature flag; changing it does not require rebuilding
+the web image.
+
+When enabled:
+
+- Workspace owners can access and manage every project.
+- The owner bypass can be toggled from `.env` with
+  `PROJECT_OWNER_BYPASS_ENABLED`; set it to `false` to require explicit
+  project access for workspace owners too.
+- Project owners can manage that project's authorization entries.
+- Project creators and member leads are automatically granted the `owner` role;
+  the migration also backfills owners for existing member-led projects.
+- Other members must have a project role to see its tasks and resources.
+- Tasks inherit project permissions and have no separate task-level ACL. A task
+  assignee is promoted to project `member`, and users mentioned in a project or
+  task are promoted to project `viewer`.
 
 > **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 
@@ -171,7 +207,7 @@ multica daemon status
 
 ## Kubernetes Deployment (Alternative)
 
-If you already run a Kubernetes cluster, you can deploy Multica there instead of Docker Compose using the released OCI Helm chart at `oci://ghcr.io/multica-ai/charts/multica` or the source chart at [`deploy/helm/multica/`](deploy/helm/multica/). It targets a typical k3s / k8s setup with an Ingress controller and a default `ReadWriteOnce` StorageClass — authored against k3s + Traefik + `local-path`, and should work on any cluster with minor tweaks.
+If you already run a Kubernetes cluster, you can deploy Multica there instead of Docker Compose using the released OCI Helm chart at `oci://ghcr.io/lechun-dev/charts/multica` or the source chart at [`deploy/helm/multica/`](deploy/helm/multica/). It targets a typical k3s / k8s setup with an Ingress controller and a default `ReadWriteOnce` StorageClass — authored against k3s + Traefik + `local-path`, and should work on any cluster with minor tweaks.
 
 The chart creates the following resources in the target namespace:
 
@@ -228,7 +264,7 @@ Leave optional values empty for now — you can fill them in later (see [Step 5 
 ### Step 4 — Install the chart
 
 ```bash
-helm install multica oci://ghcr.io/multica-ai/charts/multica \
+helm install multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica
 ```
@@ -238,10 +274,10 @@ Released chart versions strip the leading `v` from the Git tag. For example, rel
 To override defaults, export the chart values, edit them, and pass them with `-f`:
 
 ```bash
-helm show values oci://ghcr.io/multica-ai/charts/multica \
+helm show values oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> > my-values.yaml
 # edit my-values.yaml — e.g. change ingress hosts, image tags, resource limits
-helm install multica oci://ghcr.io/multica-ai/charts/multica \
+helm install multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
@@ -291,7 +327,7 @@ The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.
 - **Deterministic local/private testing:** set `backend.config.appEnv: development` in your values file and `MULTICA_DEV_VERIFICATION_CODE=888888` in the Secret, then `helm upgrade` and restart. This fixed code is ignored when `APP_ENV=production`.
 
   ```bash
-  helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
+  helm upgrade multica oci://ghcr.io/lechun-dev/charts/multica \
     --version <chart-version> \
     -n multica \
     -f my-values.yaml --set backend.config.appEnv=development
@@ -327,7 +363,7 @@ kubectl -n multica rollout restart deploy/multica-backend deploy/multica-fronten
 To upgrade to a specific Multica release, upgrade to the matching chart version. The released chart defaults its app images to the matching Git tag:
 
 ```bash
-helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
+helm upgrade multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
@@ -346,7 +382,7 @@ images:
 Then run the same upgrade command with `-f my-values.yaml`:
 
 ```bash
-helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
+helm upgrade multica oci://ghcr.io/lechun-dev/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
@@ -431,7 +467,7 @@ External cron / systemd timer / Kubernetes `CronJob` setups that call `SELECT ro
 If you installed via the install script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --stop
+curl -fsSL https://raw.githubusercontent.com/lechun-dev/multica/main/scripts/install.sh | bash -s -- --stop
 ```
 
 If you cloned the repo manually:
@@ -475,7 +511,7 @@ If the selected GHCR tag has not been published yet, fall back to `make selfhost
 If you prefer running Docker Compose steps manually instead of `make selfhost`:
 
 ```bash
-git clone https://github.com/multica-ai/multica.git
+git clone https://github.com/lechun-dev/multica.git
 cd multica
 cp .env.example .env
 ```

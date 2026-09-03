@@ -88,7 +88,7 @@ interface Props {
   /** Attachment upload context — forwarded to `api.uploadFile`. Comment
    *  passes `issueId`; chat omits both (uploads are session-scoped via
    *  the message id assigned by the server post-send). */
-  uploadContext?: { issueId?: string; commentId?: string };
+  uploadContext?: { issueId?: string; commentId?: string; commentDraft?: boolean };
 
   placeholder?: string;
   pillLabel?: string;

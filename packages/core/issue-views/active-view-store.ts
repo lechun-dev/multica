@@ -42,6 +42,9 @@ export function lockedDimensionsFromQuery(
 ): Set<FilterDimension> {
   const locked = new Set<FilterDimension>();
   const nonEmptyArray = (v: unknown) => Array.isArray(v) && v.length > 0;
+  if (query.archiveState === "archived" || query.archiveState === "all") {
+    locked.add("archive");
+  }
   if (nonEmptyArray(query.statusFilters)) locked.add("status");
   if (nonEmptyArray(query.priorityFilters)) locked.add("priority");
   if (nonEmptyArray(query.assigneeFilters) || query.includeNoAssignee === true) {

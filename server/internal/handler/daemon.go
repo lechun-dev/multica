@@ -31,6 +31,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
@@ -2406,7 +2407,29 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		}
 
-		projectCtx, projectErr := h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		var projectCtx claimProjectContext
+		var projectErr error
+		// 2026-08-29 coder(lq): Projectless Issues are valid Agent tasks. Keep
+		// the strict resolver for an explicitly project-bound Issue so stale or
+		// cross-workspace references still fail closed, while a NULL project_id
+		// receives the workspace context fallback.
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid {
+			projectCtx, projectErr = h.resolveRequiredIssueClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		} else {
+			projectCtx, projectErr = h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		}
+		if errors.Is(projectErr, errIssueProjectRequired) {
+			// 2026-08-27 coder(lq): An Issue is project-scoped when the
+			// permission overlay is enabled. Settle stale/cross-workspace
+			// references terminally instead of dispatching with workspace repos.
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task,
+				"This task cannot run because its issue is not attached to a valid project in this workspace.",
+				taskfailure.ReasonInvalidTaskIdentity,
+				"error_issue_project_required", http.StatusConflict,
+				"issue task must reference a valid project",
+			)
+		}
 		if projectErr != nil {
 			slog.Error("issue claim: load project context failed; preserving task for redelivery",
 				"task_id", uuidToString(task.ID),
@@ -4862,6 +4885,12 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 2026-08-27 coder(lq): Cancelling a task mutates the issue execution
+	// state, so issue visibility alone is insufficient; require the project's
+	// manage permission before allowing this issue-scoped cancellation route.
+	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueManage) {
+		return
+	}
 
 	taskID := chi.URLParam(r, "taskId")
 	existing, err := h.Queries.GetAgentTask(r.Context(), parseUUID(taskID))
@@ -4912,6 +4941,70 @@ const familyActiveRunCap = 20
 // signal rides a header because the response body is a bare array that existing
 // callers parse positionally.
 const HeaderActiveRunsTruncated = "X-Active-Runs-Truncated"
+
+// 2026-09-03 coder(lq): Family coordination reads span several issues, so
+// they cannot rely on loadIssueForUser's single-issue check. Keep the same
+// project visibility predicate in SQL before applying the response cap; a
+// post-query filter could hide visible siblings behind unauthorized rows.
+func (h *Handler) listActiveTasksByIssueFamilyWithProjectPermission(
+	ctx context.Context,
+	workspaceID, rootIssueID, userID pgtype.UUID,
+	rowLimit int32,
+	includeWorkspaceOwned bool,
+) ([]db.ListActiveTasksByIssueFamilyRow, error) {
+	query := fmt.Sprintf(`
+SELECT
+    atq.id AS task_id,
+    atq.agent_id,
+    atq.issue_id,
+    atq.status,
+    atq.created_at,
+    atq.started_at,
+    w.issue_prefix,
+    i.number AS issue_number,
+    i.title AS issue_title
+FROM agent_task_queue atq
+JOIN issue i ON i.id = atq.issue_id
+JOIN workspace w ON w.id = i.workspace_id
+WHERE i.workspace_id = $1
+  AND (i.id = $2 OR i.parent_issue_id = $2)
+  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND %s
+ORDER BY
+    CASE atq.status
+        WHEN 'running' THEN 0
+        WHEN 'dispatched' THEN 1
+        WHEN 'waiting_local_directory' THEN 2
+        ELSE 3
+    END,
+    atq.created_at DESC
+LIMIT $3`, projectVisibleTaskPredicateWithWorkspaceScope("atq", "$1", "$4", includeWorkspaceOwned))
+
+	rows, err := h.DB.Query(ctx, query, workspaceID, rootIssueID, rowLimit, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]db.ListActiveTasksByIssueFamilyRow, 0)
+	for rows.Next() {
+		var row db.ListActiveTasksByIssueFamilyRow
+		if err := rows.Scan(
+			&row.TaskID,
+			&row.AgentID,
+			&row.IssueID,
+			&row.Status,
+			&row.CreatedAt,
+			&row.StartedAt,
+			&row.IssuePrefix,
+			&row.IssueNumber,
+			&row.IssueTitle,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
 
 // ActiveRunSummary is one in-flight run as the coordination read reports it:
 // which issue, which agent, what state, since when, and the task id to follow
@@ -4990,11 +5083,20 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		// One row beyond the cap, so a full page can be told apart from a
 		// truncated one without a second count query.
-		rows, err := h.Queries.ListActiveTasksByIssueFamily(r.Context(), db.ListActiveTasksByIssueFamilyParams{
-			WorkspaceID: issue.WorkspaceID,
-			RootIssueID: root,
-			RowLimit:    familyActiveRunCap + 1,
-		})
+		var rows []db.ListActiveTasksByIssueFamilyRow
+		var err error
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			rows, err = h.listActiveTasksByIssueFamilyWithProjectPermission(
+				r.Context(), issue.WorkspaceID, root, parseUUID(requestUserID(r)),
+				familyActiveRunCap+1, includeWorkspaceOwnedFromRequest(r),
+			)
+		} else {
+			rows, err = h.Queries.ListActiveTasksByIssueFamily(r.Context(), db.ListActiveTasksByIssueFamilyParams{
+				WorkspaceID: issue.WorkspaceID,
+				RootIssueID: root,
+				RowLimit:    familyActiveRunCap + 1,
+			})
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list tasks")
 			return
@@ -5121,6 +5223,27 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
+	}
+	// 2026-08-27 coder(lq): User-visible task transcripts inherit the issue's
+	// project View permission. Daemon endpoints intentionally stay on the
+	// machine-identity path above; this guard only applies to regular users.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if !task.IssueID.Valid {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		workspaceUUID, parseErr := util.ParseUUID(wsID)
+		if parseErr != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: task.IssueID, WorkspaceID: workspaceUUID})
+		if issueErr != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+			if issueErr != nil {
+				writeError(w, http.StatusNotFound, "task not found")
+			}
+			return
+		}
 	}
 
 	var (

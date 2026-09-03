@@ -37,8 +37,6 @@ const {
   searchParamsState: { params: new URLSearchParams() },
   authStateRef: {
     state: {
-      sendCode: vi.fn(),
-      verifyCode: vi.fn(),
       user: null as null | { id: string; email: string; onboarded_at?: string | null },
       isLoading: false,
     },
@@ -53,10 +51,9 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => searchParamsState.params,
 }));
 
-// Mock auth store — shared LoginPage uses getState().sendCode/verifyCode,
-// web wrapper uses useAuthStore((s) => s.user/isLoading). Keep the real
-// sanitizeNextUrl so the redirect-sanitization rules are exercised rather
-// than silently drifting behind a mock reimplementation.
+// Mock auth store — the web wrapper uses useAuthStore((s) => s.user/isLoading).
+// Keep the real sanitizeNextUrl so the redirect-sanitization rules are
+// exercised rather than silently drifting behind a mock reimplementation.
 vi.mock("@multica/core/auth", async () => {
   const actual =
     await vi.importActual<typeof import("@multica/core/auth")>(
@@ -102,6 +99,15 @@ describe("LoginPage", () => {
   // Shared LoginPage behavior is canonical in
   // packages/views/auth/login-page.test.tsx. This wrapper suite only owns web
   // platform handoff and redirect behavior.
+
+  it("renders DingTalk login without exposing email login controls", () => {
+    render(<LoginPage />, { wrapper: createWrapper() });
+
+    expect(screen.getByText("Sign in to Multica")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with DingTalk" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+  });
 
   // Regression: MUL-1080 — if the user is already authenticated on the web
   // and the Desktop app redirects them to /login?platform=desktop, the web

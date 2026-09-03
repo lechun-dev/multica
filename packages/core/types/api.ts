@@ -102,6 +102,7 @@ export interface MoveIssueRequest
 export interface IssueTriggerPreviewParams {
   issueIds?: string[];
   isCreate?: boolean;
+  projectId?: string | null;
   assigneeType?: IssueAssigneeType | null;
   assigneeId?: string | null;
   status?: IssueStatus;
@@ -121,6 +122,10 @@ export interface IssueTriggerPreview {
 }
 
 export interface ListIssuesParams {
+  /** Filter archived issues; defaults to active on the server. */
+  archive_state?: "active" | "archived" | "all";
+  /** 2026-08-28 coder(lq): Include workspace-owner-only issues in list results. */
+  include_workspace_owned?: boolean;
   limit?: number;
   offset?: number;
   workspace_id?: string;
@@ -213,6 +218,10 @@ export interface IssueActorRef {
 }
 
 export interface ListGroupedIssuesParams {
+  /** Filter archived issues; defaults to active on the server. */
+  archive_state?: "active" | "archived" | "all";
+  /** 2026-08-28 coder(lq): Include workspace-owner-only issues in grouped results. */
+  include_workspace_owned?: boolean;
   group_by: "assignee";
   limit?: number;
   offset?: number;
@@ -287,6 +296,10 @@ export type IssueTableScope =
   | { kind: "my"; relation: "assigned" | "created" | "involved" | "any" };
 
 export interface IssueTableFilters {
+  /** Issue lifecycle filter; omitted by older clients means active. */
+  archive_state?: "active" | "archived" | "all";
+  /** 2026-08-28 coder(lq): Include workspace-owner-only issues in table results. */
+  include_workspace_owned?: boolean;
   statuses?: IssueStatus[];
   priorities?: IssuePriority[];
   assignees?: IssueActorRef[];

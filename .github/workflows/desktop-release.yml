@@ -1,0 +1,203 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish (for example v0.4.35)
+        required: true
+        type: string
+
+# 2026-08-28 coder(lq): Build the isolated Lechun desktop installers in
+# GitHub Actions and attach the three supported macOS/Windows packages to the
+# private fork's Release so desktop downloads consume one source of truth.
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+  STAGING_WS_URL: ${{ vars.STAGING_WS_URL }}
+  STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
+  # electron-builder otherwise tries to discover a signing identity on hosted
+  # macOS runners. The private distribution is intentionally unsigned.
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: arm64
+            runner: macos-14
+          - platform: mac
+            arch: x64
+            # electron-builder cross-builds Intel from the Apple Silicon
+            # runner, avoiding the retired Intel-host runner pool.
+            runner: macos-14
+          - platform: windows
+            arch: x64
+            runner: windows-latest
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Install rpmbuild
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_script=package:lechun
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            package_script=package:lechun-preview
+          fi
+          pnpm --filter @multica/desktop "$package_script" -- \
+            --${{ matrix.platform == 'windows' && 'win' || matrix.platform }} \
+            --${{ matrix.arch }} \
+            --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: apps/desktop/dist/**
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: desktop-*
+          merge-multiple: true
+
+      - name: Publish assets to private Release
+        # 2026-08-26 coder(lq): Upload one asset at a time with retries and a
+        # short delay. A single bulk upload can hit GitHub's secondary API
+        # rate limit before all desktop assets are attached to the Release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 2026-08-26 coder(lq): download-artifact preserves the platform
+          # directory for each matrix artifact. Recursively collect files so
+          # installers inside those directories are attached as well as the
+          # update metadata files.
+          # 2026-08-26 coder(lq): electron-builder leaves unpacked app
+          # directories beside the installers. Do not
+          # publish their Chromium/runtime files as Release assets; only keep
+          # distributable installers, updater metadata, blockmaps, and the
+          # licenses that electron-builder emits next to them.
+          mapfile -d '' files < <(
+            find release-assets -type f -print0 |
+              while IFS= read -r -d '' file; do
+                base=${file##*/}
+                case "$base" in
+                  multica-lechun-*.dmg|multica-lechun-*.zip|multica-lechun-*.exe|\
+                  multica-lechun-*.AppImage|multica-lechun-*.deb|multica-lechun-*.rpm|\
+                  multica-lechun-preview-*.dmg|multica-lechun-preview-*.zip|\
+                  multica-lechun-preview-*.exe|multica-lechun-preview-*.AppImage|\
+                  multica-lechun-preview-*.deb|multica-lechun-preview-*.rpm|\
+                  latest*.yml|builder-debug.yml|*.blockmap|LICENSE.electron.txt|LICENSES.chromium.html)
+                    printf '%s\0' "$file"
+                    ;;
+                esac
+              done |
+              sort -z
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo "No desktop assets were downloaded" >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "${files[@]}" | grep -Eq '\.(dmg|zip|exe|AppImage|deb|rpm)$'; then
+            echo "No desktop installer assets were downloaded" >&2
+            exit 1
+          fi
+          printf 'Selected release assets:\n%s\n' "$(printf '%s\n' "${files[@]}")"
+
+          # 2026-08-26 coder(lq): A previous attempt may have created the
+          # Release before being interrupted by an upload/API limit. Reuse
+          # that Release so reruns can finish attaching the remaining files.
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_args=(
+              "$RELEASE_TAG"
+              --repo "$GITHUB_REPOSITORY"
+              --verify-tag
+              --title "MissionOS Lechun $RELEASE_TAG"
+              --notes "MissionOS Lechun desktop installers for macOS and Windows."
+            )
+            # A prerelease must never become GitHub's Latest release: the
+            # public download page and CLI updater intentionally consume the
+            # stable /releases/latest channel only.
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              release_args+=(--prerelease)
+            else
+              release_args+=(--latest)
+            fi
+            gh release create "${release_args[@]}"
+          else
+            echo "Reusing existing Release $RELEASE_TAG"
+          fi
+
+          for file in "${files[@]}"; do
+            uploaded=false
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$file" \
+                --repo "$GITHUB_REPOSITORY" --clobber; then
+                uploaded=true
+                break
+              fi
+              sleep $((attempt * 20))
+            done
+            if [[ "$uploaded" != true ]]; then
+              echo "Failed to upload $file after three attempts" >&2
+              exit 1
+            fi
+            sleep 8
+          done

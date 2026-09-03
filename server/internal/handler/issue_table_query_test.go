@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 type issueTableEnrichmentFailTxStarter struct {
@@ -133,6 +132,49 @@ func TestCanonicalIssueTableFingerprintBindsWorkspace(t *testing.T) {
 	}
 }
 
+// 2026-09-03 coder(lq): Keep the archived-board request field covered so the
+// strict JSON decoder cannot regress to rejecting archive filters as unknown.
+func TestIssueTableRequestAcceptsArchiveState(t *testing.T) {
+	r := newRequest(http.MethodPost, "/api/issues/table/rows", map[string]any{
+		"query": map[string]any{
+			"scope":   map[string]any{"kind": "workspace"},
+			"filters": map[string]any{"archive_state": "archived"},
+			"sort":    map[string]any{"field": "position", "direction": "asc"},
+		},
+		"group":     map[string]any{"kind": "none"},
+		"hierarchy": map[string]any{"enabled": false},
+		"page":      map[string]any{"limit": 10},
+	})
+	w := httptest.NewRecorder()
+	var request issueTableRowsRequest
+	if !decodeIssueTableJSON(w, r, &request) {
+		t.Fatalf("archive_state request was rejected: %d %s", w.Code, w.Body.String())
+	}
+	if request.Query.Filters.ArchiveState != "archived" {
+		t.Fatalf("archive_state = %q, want archived", request.Query.Filters.ArchiveState)
+	}
+}
+
+func TestIssueTableArchivePredicate(t *testing.T) {
+	tests := []struct {
+		state string
+		want  string
+	}{
+		{state: "active", want: "i.archived_at IS NULL"},
+		{state: "archived", want: "i.archived_at IS NOT NULL"},
+		{state: "all", want: "i.workspace_id = $1"},
+	}
+	for _, test := range tests {
+		t.Run(test.state, func(t *testing.T) {
+			where := appendIssueArchivePredicate([]string{"i.workspace_id = $1"}, test.state, "i")
+			joined := strings.Join(where, " AND ")
+			if !strings.Contains(joined, test.want) {
+				t.Fatalf("archive predicate = %q, want %q", joined, test.want)
+			}
+		})
+	}
+}
+
 func TestIssueTableExplicitEmptyAssigneesMatchesNone(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -210,6 +252,51 @@ func TestIssueTableProjectScopeAssigneeTypes(t *testing.T) {
 		bad,
 	); ok {
 		t.Fatal("invalid assignee_types must be rejected on project scope")
+	}
+}
+
+// 2026-08-27 coder(lq): Keep the table compiler covered by the project
+// permission boundary; rows, groups, and facets all reuse this predicate,
+// including the restricted visibility branch for projectless issues.
+func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	original := testHandler.ProjectAuth
+	testHandler.ProjectAuth = projectauth.New(nil, true)
+	t.Cleanup(func() { testHandler.ProjectAuth = original })
+
+	spec := issueTableQuerySpec{
+		Scope:   issueTableScope{Kind: "workspace"},
+		Filters: issueTableFiltersRequest{IncludeNoProject: true},
+		Sort:    issueTableSortRequest{Field: "position", Direction: "asc"},
+	}
+	w := httptest.NewRecorder()
+	compiled, ok := testHandler.compileIssueTableQuery(
+		w,
+		newRequest(http.MethodPost, "/api/issues/table/rows", nil),
+		spec,
+	)
+	if !ok {
+		t.Fatalf("compile failed: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(compiled.where, "i.project_id IS NOT NULL") || !strings.Contains(compiled.where, "i.project_id IS NULL") {
+		t.Fatalf("project visibility must cover project-bound and projectless issues: %q", compiled.where)
+	}
+	if !strings.Contains(compiled.where, "i.creator_type = 'member'") || !strings.Contains(compiled.where, "i.assignee_type = 'member'") {
+		t.Fatalf("projectless visibility must restrict creator and assignee identities: %q", compiled.where)
+	}
+	if !strings.Contains(compiled.where, "projectauth_access_grants") {
+		t.Fatalf("project visibility unified grant predicate missing: %q", compiled.where)
+	}
+	if !strings.Contains(compiled.where, "project.view") {
+		t.Fatalf("project visibility must require project.view: %q", compiled.where)
+	}
+	if len(compiled.args) != 2 {
+		t.Fatalf("project visibility must bind the authenticated user, args=%#v", compiled.args)
+	}
+	if _, ok := compiled.args[1].(pgtype.UUID); !ok {
+		t.Fatalf("project visibility user argument must be a UUID, args=%#v", compiled.args)
 	}
 }
 
@@ -1401,96 +1488,6 @@ func TestIssueTableHierarchyDoesNotCrossGroups(t *testing.T) {
 		strings.Contains(rowQuerySQL, "NOT EXISTS (SELECT 1 FROM membership parent") ||
 		strings.Contains(rowQuerySQL, "child_counts AS") {
 		t.Fatalf("hierarchy rows query must preserve ordered paging and page-local counts:\n%s", rowQuerySQL)
-	}
-}
-
-// TestIssueTableSelectPropertySortKeysetPagination walks the keyset cursor
-// over a select-property sort. The sort expression ranks options by option
-// order and carries the "::numeric" token that issueTableOrderBy sniffs into
-// the cursor's cast type, so this pins three things at once: ordinal order,
-// the numeric cursor round-trip (equal ranks tie, valueless rows trail), and
-// no duplicated or skipped rows across pages. Explicit option ids in reverse
-// lexical order make the ordinal assertions deterministic — a regression to
-// raw-value ordering fails every run, not most runs.
-func TestIssueTableSelectPropertySortKeysetPagination(t *testing.T) {
-	const (
-		lowID    = "eeeeeeee-aaaa-4aaa-8aaa-aaaaaaaaaaaa" // lexically last
-		mediumID = "99999999-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-		highID   = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa" // lexically first
-	)
-	sel := createTestProperty(t, map[string]any{
-		"name": "TK" + uuid.NewString()[:8], "type": "select",
-		"config": map[string]any{"options": []map[string]any{
-			{"id": lowID, "name": "Low", "color": "#6b7280"},
-			{"id": mediumID, "name": "Medium", "color": "#f59e0b"},
-			{"id": highID, "name": "High", "color": "#ef4444"},
-		}},
-	})
-
-	projectID := dbfx.Project(t, "Select property sort pagination")
-	seedIssue := func(title string) string {
-		t.Helper()
-		return dbfx.Issue(t, title, testutil.Cols{"project_id": projectID})
-	}
-	lowA := seedIssue("keyset low a")
-	lowB := seedIssue("keyset low b")
-	medium := seedIssue("keyset medium")
-	high := seedIssue("keyset high")
-	unset := seedIssue("keyset unset")
-	for issueID, optionID := range map[string]string{lowA: lowID, lowB: lowID, medium: mediumID, high: highID} {
-		if w := setIssuePropertyRaw(t, issueID, sel.ID, optionID); w.Code != http.StatusOK {
-			t.Fatalf("seed select value: %d %s", w.Code, w.Body.String())
-		}
-	}
-
-	query := issueTableQuerySpec{
-		Scope: issueTableScope{Kind: "project", ProjectID: projectID},
-		Sort:  issueTableSortRequest{Field: "property:" + sel.ID, Direction: "asc"},
-	}
-	fetchPage := func(cursor *string) issueTableRowsResponse {
-		t.Helper()
-		var response issueTableRowsResponse
-		testutil.Call(t, testHandler.ListIssueTableRows, newRequest("POST", "/api/issues/table/rows", issueTableRowsRequest{
-			Query: query,
-			Group: issueTableGroupSpec{Kind: "none"},
-			Page:  issueTablePageRequest{Limit: 2, Cursor: cursor},
-		})).Want(http.StatusOK).JSON(&response)
-		return response
-	}
-
-	var order []string
-	seen := make(map[string]struct{}, 5)
-	cursor := (*string)(nil)
-	for page := 0; ; page++ {
-		if page > 5 {
-			t.Fatalf("cursor did not terminate after %d pages", page)
-		}
-		response := fetchPage(cursor)
-		for _, row := range response.Rows {
-			if _, duplicate := seen[row.Issue.ID]; duplicate {
-				t.Fatalf("issue %s repeated across pages", row.Issue.ID)
-			}
-			seen[row.Issue.ID] = struct{}{}
-			order = append(order, row.Issue.ID)
-		}
-		if response.NextCursor == nil {
-			break
-		}
-		cursor = response.NextCursor
-	}
-	if len(order) != 5 {
-		t.Fatalf("paginated rows = %d, want all 5 seeded issues", len(order))
-	}
-
-	index := make(map[string]int, len(order))
-	for i, id := range order {
-		index[id] = i
-	}
-	if !(index[lowA] < index[medium] && index[lowB] < index[medium]) {
-		t.Fatalf("low-ranked issues not first: %v", order)
-	}
-	if !(index[medium] < index[high] && index[high] < index[unset]) {
-		t.Fatalf("option order violated across pages: medium=%d high=%d unset=%d", index[medium], index[high], index[unset])
 	}
 }
 

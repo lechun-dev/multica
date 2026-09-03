@@ -50,6 +50,7 @@ import {
 } from "@multica/core/inbox/filter-store";
 
 import { IssueDetail, issueHighlightMementoKey } from "../../issues/components";
+import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 import { useViewStateWriter } from "../../platform";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 import { useNavigation, useReportNavigating } from "../../navigation";
@@ -124,7 +125,12 @@ export function InboxPage() {
   }, [urlView]);
 
   const wsId = useWorkspaceId();
-  const { data: rawItems = [], isLoading: loading } = useQuery(inboxListOptions(wsId));
+  const { includeWorkspaceOwned, ready: visibilityReady } =
+    useWorkspaceTaskVisibility();
+  const { data: rawItems = [], isLoading: loading } = useQuery({
+    ...inboxListOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const items = useMemo(() => deduplicateInboxItems(rawItems), [rawItems]);
 
   // Fetched in both views, not just the archived one: the main list's entry
@@ -134,7 +140,10 @@ export function InboxPage() {
     data: rawArchivedItems = [],
     isLoading: archivedLoading,
     isError: archivedError,
-  } = useQuery(archivedInboxListOptions(wsId));
+  } = useQuery({
+    ...archivedInboxListOptions(wsId, includeWorkspaceOwned),
+    enabled: visibilityReady,
+  });
   const archivedItems = useMemo(
     () => deduplicateArchivedInboxItems(rawArchivedItems),
     [rawArchivedItems],
@@ -298,7 +307,11 @@ export function InboxPage() {
   });
 
   const isCompact = useIsCompact();
-  const unreadCount = useInboxUnreadCount(wsId);
+  const unreadCount = useInboxUnreadCount(
+    wsId,
+    includeWorkspaceOwned,
+    visibilityReady,
+  );
 
   const markReadMutation = useMarkInboxRead();
   const markUnreadMutation = useMarkInboxUnread();

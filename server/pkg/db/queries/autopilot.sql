@@ -34,6 +34,43 @@ WHERE a.workspace_id = $1
     (sqlc.narg('status')::text IS NULL AND a.status <> 'archived')
     OR a.status = sqlc.narg('status')
   )
+  -- 2026-08-27 coder(lq): Autopilot data is private to its creator, its
+  -- effective executor, and the workspace owner. A squad executes through
+  -- its leader Agent, so that Agent's owner is the squad executor.
+  AND (
+    -- 2026-08-27 coder(lq): Projectless Autopilots retain the native
+    -- workspace visibility boundary. Project-scoped rows use the overlay
+    -- below; the handler passes viewer_role=owner while the feature is off
+    -- so the generated query remains backward compatible.
+    a.project_id IS NULL
+    OR sqlc.arg('viewer_role')::text = 'owner'
+    OR (
+      a.created_by_type = 'member'
+      AND a.created_by_id = sqlc.arg('viewer_user_id')::uuid
+    )
+    OR (
+      a.assignee_type = 'agent'
+      AND EXISTS (
+        SELECT 1
+        FROM agent executor
+        WHERE executor.id = a.assignee_id
+          AND executor.workspace_id = a.workspace_id
+          AND executor.owner_id = sqlc.arg('viewer_user_id')::uuid
+      )
+    )
+    OR (
+      a.assignee_type = 'squad'
+      AND EXISTS (
+        SELECT 1
+        FROM squad executor_squad
+        JOIN agent leader ON leader.id = executor_squad.leader_id
+        WHERE executor_squad.id = a.assignee_id
+          AND executor_squad.workspace_id = a.workspace_id
+          AND leader.workspace_id = a.workspace_id
+          AND leader.owner_id = sqlc.arg('viewer_user_id')::uuid
+      )
+    )
+  )
 ORDER BY a.created_at DESC;
 
 -- name: GetAutopilot :one

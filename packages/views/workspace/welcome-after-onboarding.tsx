@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
+import { brandText, DEFAULT_PRODUCT_NAME } from "@multica/core/i18n/branding";
 import { issueKeys } from "@multica/core/issues/queries";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { paths, useCurrentWorkspace } from "@multica/core/paths";
@@ -32,7 +33,11 @@ import {
  * Runtime-connected onboarding creates Mika before entering the workspace
  * and therefore never writes this no-runtime signal.
  */
-export function WelcomeAfterOnboarding() {
+export function WelcomeAfterOnboarding({
+  productName = DEFAULT_PRODUCT_NAME,
+}: {
+  productName?: string;
+}) {
   const me = useAuthStore((state) => state.user);
   const currentWorkspace = useCurrentWorkspace();
   const signal = useWelcomeStore((state) => state.signal);
@@ -55,6 +60,7 @@ export function WelcomeAfterOnboarding() {
     <SkipWelcome
       workspaceId={signal.workspaceId}
       onDismiss={dismiss}
+      productName={productName}
     />
   );
 }
@@ -91,6 +97,7 @@ interface SkipBundle {
 interface SkipWelcomeProps {
   workspaceId: string;
   onDismiss: () => void;
+  productName: string;
 }
 
 /**
@@ -98,7 +105,7 @@ interface SkipWelcomeProps {
  * Once a runtime appears, the Runtimes page offers "Start with Mika" and
  * runs the same real bootstrap used by connected onboarding.
  */
-function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
+function SkipWelcome({ workspaceId, onDismiss, productName }: SkipWelcomeProps) {
   const { t, i18n } = useT("onboarding");
   const navigation = useNavigation();
   const queryClient = useQueryClient();
@@ -117,8 +124,10 @@ function SkipWelcome({ workspaceId, onDismiss }: SkipWelcomeProps) {
         const installRuntime = await seedIssueDeduped(
           `${workspaceId}:install-runtime`,
           {
-            title: INSTALL_RUNTIME_ISSUE_TITLE[lang],
-            description: INSTALL_RUNTIME_ISSUE_BODY[lang],
+            // 2026-08-30 coder(lq): Brand seeded onboarding content at the
+            // app boundary so upstream templates remain untouched.
+            title: brandText(INSTALL_RUNTIME_ISSUE_TITLE[lang], productName),
+            description: brandText(INSTALL_RUNTIME_ISSUE_BODY[lang], productName),
             status: "in_progress",
             priority: "high",
             assignee_type: "member",

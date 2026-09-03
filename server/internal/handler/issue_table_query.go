@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -25,6 +28,9 @@ const (
 	issueTableDefaultPageSize = 50
 	issueTableMaxPageSize     = 100
 	issueTableQueryTimeout    = 8 * time.Second
+	// This is a transport and memory guard, independent of entitlement limits.
+	// Larger visible sets stay in PostgreSQL instead of becoming UUID arrays.
+	issueTableWindowIDCacheLimit = 4_096
 )
 
 func withIssueTableQueryTimeout(r *http.Request) (*http.Request, context.CancelFunc) {
@@ -47,7 +53,42 @@ func (h *Handler) beginIssueTableSnapshot(ctx context.Context) (*Handler, pgx.Tx
 	snapshot := *h
 	snapshot.DB = tx
 	snapshot.Queries = db.New(tx)
+	snapshot.issueTableWindowCache = &issueTableWindowCache{}
 	return &snapshot, tx, nil
+}
+
+type issueTableWindowCache struct {
+	workspaceID    pgtype.UUID
+	limit          int64
+	policyRevision int64
+	ids            []pgtype.UUID
+	useIDs         bool
+	loaded         bool
+}
+
+func (h *Handler) issueTableVisibleIssueIDs(ctx context.Context, workspaceID pgtype.UUID, policy issueWindowPolicy) ([]pgtype.UUID, bool, error) {
+	cache := h.issueTableWindowCache
+	if cache != nil && cache.loaded && cache.workspaceID == workspaceID && cache.limit == policy.limit && cache.policyRevision == policy.policyRevision {
+		return cache.ids, cache.useIDs, nil
+	}
+	var ids []pgtype.UUID
+	useIDs := policy.limit <= issueTableWindowIDCacheLimit
+	if useIDs {
+		var err error
+		ids, useIDs, err = h.issueWindowVisibleIDsUpTo(ctx, workspaceID, policy, issueTableWindowIDCacheLimit)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	if cache != nil {
+		cache.workspaceID = workspaceID
+		cache.limit = policy.limit
+		cache.policyRevision = policy.policyRevision
+		cache.ids = ids
+		cache.useIDs = useIDs
+		cache.loaded = true
+	}
+	return ids, useIDs, nil
 }
 
 func writeIssueTableQueryFailure(w http.ResponseWriter, r *http.Request, message string) {
@@ -81,21 +122,23 @@ type issueTableDateFilterRequest struct {
 }
 
 type issueTableFiltersRequest struct {
-	Statuses          []string                     `json:"statuses,omitempty"`
-	Priorities        []string                     `json:"priorities,omitempty"`
-	Assignees         []issueTableActorRef         `json:"assignees,omitempty"`
-	IncludeNoAssignee bool                         `json:"include_no_assignee,omitempty"`
-	Creators          []issueTableActorRef         `json:"creators,omitempty"`
-	ProjectIDs        []string                     `json:"project_ids,omitempty"`
-	IncludeNoProject  bool                         `json:"include_no_project,omitempty"`
-	LabelIDs          []string                     `json:"label_ids,omitempty"`
-	// Members are raw JSON so operator objects ({op, value}) and plain
-	// strings both survive the round-trip into parsePropertiesFilterParam.
-	Properties        map[string][]json.RawMessage `json:"properties,omitempty"`
-	Date              *issueTableDateFilterRequest `json:"date,omitempty"`
-	WorkingOnly       bool                         `json:"working_only,omitempty"`
-	WorkingIssueIDs   []string                     `json:"working_issue_ids,omitempty"`
-	IncludeSubIssues  *bool                        `json:"include_sub_issues,omitempty"`
+	// 2026-09-03 coder(lq): Keep archive filtering in the shared table query
+	// contract so rows, groups, and facets apply the same lifecycle boundary.
+	ArchiveState          string                       `json:"archive_state,omitempty"`
+	Statuses              []string                     `json:"statuses,omitempty"`
+	Priorities            []string                     `json:"priorities,omitempty"`
+	Assignees             []issueTableActorRef         `json:"assignees,omitempty"`
+	IncludeNoAssignee     bool                         `json:"include_no_assignee,omitempty"`
+	Creators              []issueTableActorRef         `json:"creators,omitempty"`
+	ProjectIDs            []string                     `json:"project_ids,omitempty"`
+	IncludeNoProject      bool                         `json:"include_no_project,omitempty"`
+	LabelIDs              []string                     `json:"label_ids,omitempty"`
+	Properties            map[string][]string          `json:"properties,omitempty"`
+	Date                  *issueTableDateFilterRequest `json:"date,omitempty"`
+	WorkingOnly           bool                         `json:"working_only,omitempty"`
+	WorkingIssueIDs       []string                     `json:"working_issue_ids,omitempty"`
+	IncludeSubIssues      *bool                        `json:"include_sub_issues,omitempty"`
+	IncludeWorkspaceOwned *bool                        `json:"include_workspace_owned,omitempty"`
 }
 
 type issueTableSortRequest struct {
@@ -261,7 +304,7 @@ func canonicalIssueTableFingerprint(workspaceID string, spec issueTableQuerySpec
 	normalized.Filters.WorkingIssueIDs = sortedUniqueStrings(normalized.Filters.WorkingIssueIDs)
 	normalized.Filters.Creators = sortedUniqueActors(normalized.Filters.Creators)
 	for key, values := range normalized.Filters.Properties {
-		normalized.Filters.Properties[key] = sortedUniqueRawJSON(values)
+		normalized.Filters.Properties[key] = sortedUniqueStrings(values)
 	}
 	encoded, err := json.Marshal(struct {
 		WorkspaceID                string              `json:"workspace_id"`
@@ -301,32 +344,6 @@ func sortedUniqueStrings(values []string) []string {
 	sort.Strings(result)
 	if len(result) == 0 {
 		return nil
-	}
-	return result
-}
-
-// sortedUniqueRawJSON canonicalizes property filter members for the query
-// fingerprint: byte-exact dedup + ordering. Members are raw JSON (strings and
-// operator objects), and marshaling the map back into the fingerprint input
-// must reproduce the same bytes for the same query regardless of member order.
-func sortedUniqueRawJSON(values []json.RawMessage) []json.RawMessage {
-	if len(values) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(values))
-	unique := make([]string, 0, len(values))
-	for _, value := range values {
-		key := string(value)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		unique = append(unique, key)
-	}
-	sort.Strings(unique)
-	result := make([]json.RawMessage, len(unique))
-	for i, value := range unique {
-		result[i] = json.RawMessage(value)
 	}
 	return result
 }
@@ -433,12 +450,41 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "failed to canonicalize table query")
 		return issueTableSQL{}, false
 	}
+	windowPolicy, windowEnabled := h.issueWindowPolicy(r.Context(), workspaceUUID)
+	if windowEnabled && windowPolicy.action == entitlement.ActionEnforce {
+		// A cursor issued under a different entitlement revision or limit must
+		// not be accepted after the visible collection changes.
+		digest := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%d", fingerprint, windowPolicy.action, windowPolicy.limit, windowPolicy.policyRevision)))
+		fingerprint = "sha256:" + hex.EncodeToString(digest[:])
+	}
 
 	where := []string{"i.workspace_id = $1"}
 	args := []any{workspaceUUID}
+	archiveState, ok := parseIssueArchiveState(w, spec.Filters.ArchiveState)
+	if !ok {
+		return issueTableSQL{}, false
+	}
+	where = appendIssueArchivePredicate(where, archiveState, "i")
 	addArg := func(value any) string {
 		args = append(args, value)
 		return "$" + strconv.Itoa(len(args))
+	}
+	// 2026-08-27 coder(lq): The table compiler is shared by rows, groups, and
+	// facets, so apply the project boundary here once instead of relying on
+	// each surface to remember it. Projectless issues use the same creator,
+	// assignee, and workspace-owner visibility rule as the issue endpoints.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		userID, ok := requireUserID(w, r)
+		if !ok {
+			return issueTableSQL{}, false
+		}
+		userUUID, err := util.ParseUUID(userID)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "user not authenticated")
+			return issueTableSQL{}, false
+		}
+		includeWorkspaceOwned := spec.Filters.IncludeWorkspaceOwned == nil || *spec.Filters.IncludeWorkspaceOwned
+		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userUUID), includeWorkspaceOwned))
 	}
 
 	// Any non-empty status KEY, not just the 7 built-ins. A status filter names
@@ -661,6 +707,21 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		where = append(where, "i.parent_issue_id IS NULL")
 	}
 	where = appendIssueTableSearchFilter(where, addArg, spec.Search)
+	if windowEnabled && windowPolicy.action == entitlement.ActionEnforce && h.issueTableWindowCache != nil {
+		visibleIDs, useIDs, err := h.issueTableVisibleIssueIDs(r.Context(), workspaceUUID, windowPolicy)
+		if err != nil {
+			slog.Warn("resolve table issue window failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeIssueTableQueryFailure(w, r, "failed to resolve table issue window")
+			return issueTableSQL{}, false
+		}
+		if useIDs {
+			where = append(where, fmt.Sprintf("i.id = ANY(%s::uuid[])", addArg(visibleIDs)))
+		} else {
+			where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
+		}
+	} else if windowEnabled {
+		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
+	}
 
 	return issueTableSQL{
 		where:       strings.Join(where, " AND "),

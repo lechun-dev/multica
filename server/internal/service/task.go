@@ -50,6 +50,9 @@ type TaskService struct {
 	// SourceContextStorage is used only by the bounded 30-day cleanup pass for
 	// terminal quick-create captures. Nil disables it where storage is absent.
 	SourceContextStorage SourceContextObjectStore
+	// 2026-09-03 coder(lq): Reclaim unbound comment-composer uploads after their
+	// short draft retention window independently from source-context cleanup.
+	CommentAttachmentStorage SourceContextObjectStore
 	// FeatureFlags is the server-side toggle router. Nil is valid and returns
 	// each call site's default.
 	FeatureFlags *featureflag.Service
@@ -696,6 +699,11 @@ func ResolveAutopilotTriggerPrincipal(ctx context.Context, q *db.Queries, trigge
 // run never starts.
 var ErrAttributionFailClosed = errors.New("attribution: no precise accountable human and enqueue refused (fail-closed policy, policy read failed, or no agent owner)")
 
+// 2026-09-02 coder(lq): Keep archived issues readable and commentable, but fail
+// content mutations and new execution enqueues at shared service boundaries so
+// internal, plugin, and background paths cannot bypass the archive policy.
+var ErrArchivedIssue = errors.New("archived issue cannot be modified or start a new agent run")
+
 // ErrDuplicatePendingTask means a fresh enqueue lost the race to a concurrent
 // one: a queued/dispatched task for the same (issue, agent) already exists, so
 // the pending-task unique index rejected the insert (#5914). This is a benign
@@ -1215,6 +1223,9 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 }
 
 func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, fireAt pgtype.Timestamptz) (db.AgentTaskQueue, error) {
+	if issue.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, ErrArchivedIssue
+	}
 	if !issue.AssigneeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "issue has no assignee")
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
@@ -1378,6 +1389,9 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 }
 
 func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID) (db.AgentTaskQueue, error) {
+	if issue.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, ErrArchivedIssue
+	}
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("mention task enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -1458,6 +1472,9 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 // EnqueueDeferredAssigneeFallback creates an inert task that becomes claimable
 // only after PromoteDueDeferredTasksForRuntime flips it from deferred to queued.
 func (s *TaskService) EnqueueDeferredAssigneeFallback(ctx context.Context, issue db.Issue, agentID, squadID pgtype.UUID, escalationForTaskID pgtype.UUID, triggerCommentID pgtype.UUID, fireAt time.Time) (db.AgentTaskQueue, error) {
+	if issue.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, ErrArchivedIssue
+	}
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("deferred fallback enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -2598,11 +2615,11 @@ func (s *TaskService) OpenMikaOnboardingChat(ctx context.Context, session db.Cha
 // affected agent's status, and broadcasts task:cancelled events so frontends
 // clear their live cards.
 //
-// Callers are explicit issue-lifecycle cleanup paths only — DeleteIssue and
-// BatchDeleteIssues, where the owning issue row is going away so its tasks
-// must not be left orphaned. A plain status flip, `cancelled` included, no
-// longer routes here (MUL-4465): cancelling an issue is not an implicit "stop
-// all runs" switch. Do not re-add a status-driven caller.
+// Callers are explicit issue-lifecycle cleanup paths only — DeleteIssue,
+// BatchDeleteIssues, and ArchiveIssue, where work must not remain active after
+// the issue leaves the user's active set. A plain status flip, `cancelled`
+// included, no longer routes here (MUL-4465): cancelling an issue is not an
+// implicit "stop all runs" switch. Do not re-add a status-driven caller.
 //
 // Before #1587 this path was "cancel rows and return", which left each affected
 // agent stuck at status="working" indefinitely, requiring a manual
@@ -5509,6 +5526,12 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 	if err != nil {
 		return nil, fmt.Errorf("load issue: %w", err)
 	}
+	// 2026-09-02 coder(lq): Keep the archive fence at the service boundary as
+	// well as the HTTP handler so trusted/internal rerun callers cannot start
+	// new work for an archived issue.
+	if issue.ArchivedAt.Valid {
+		return nil, ErrArchivedIssue
+	}
 
 	// Determine the target agent for the rerun.
 	var (
@@ -5871,7 +5894,10 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				// status it inherits, so a custom review gate is excluded for
 				// the same reason In Review is. (MUL-6243)
 				effectiveStatus := issuestatus.Effective(ctx, s.Queries, issue.WorkspaceID, issue.Status)
-				if effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
+				// 2026-09-02 coder(lq): A task may fail after its issue was
+				// archived. Archived issues are immutable, so skip this
+				// asynchronous status reset even when no active task remains.
+				if !issue.ArchivedAt.Valid && effectiveStatus == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
 					processedIssues[issueKey] = true
 					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
 					if checkErr != nil {
@@ -6991,6 +7017,16 @@ func taskEvent(eventType, workspaceID string, task db.AgentTaskQueue, extra ...m
 		"agent_id": util.UUIDToString(task.AgentID),
 		"issue_id": util.UUIDToString(task.IssueID),
 		"status":   task.Status,
+	}
+	if eventType == protocol.EventTaskCompleted {
+		initiatorUserID := util.UUIDToString(task.InitiatorUserID)
+		if initiatorUserID == "" {
+			// Most direct Web/issue tasks use originator_user_id as their human
+			// requester. Channel tasks additionally stamp initiator_user_id with the
+			// immediate sender. Publish one normalized field for completion consumers.
+			initiatorUserID = util.UUIDToString(task.OriginatorUserID)
+		}
+		payload["initiator_user_id"] = initiatorUserID
 	}
 	e := events.Event{
 		Type:        eventType,

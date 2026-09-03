@@ -74,6 +74,7 @@ import {
 import { useConfigStore } from "@multica/core/config";
 import type { LocalDirectoryExecutionMode } from "@multica/core/types";
 import { LocalDirectoryModeOptions } from "../projects/components/local-directory-mode-dialog";
+import { ProjectPermissionPicker, type ProjectPermissionSelection } from "../projects/components/project-permission-picker";
 
 /**
  * Builds the resource_ref for a local directory attached during project
@@ -169,6 +170,10 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
   const [customRepoUrl, setCustomRepoUrl] = useState("");
+  // 2026-08-28 coder(lq): Keep creation-time grants separate from the native
+  // form fields until submit; the server persists them atomically with the
+  // project row.
+  const [projectPermissions, setProjectPermissions] = useState<ProjectPermissionSelection[]>([]);
   const workspaceRepos = workspace?.repos ?? [];
   const repoQuery = repoSearch.trim().toLowerCase();
   const filteredWorkspaceRepos = workspaceRepos.filter((repo) =>
@@ -362,6 +367,12 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         due_date: dueDate || undefined,
         // Server attaches these in the same transaction as the project.
         resources,
+        access_grants: projectPermissions.map((selection) => ({
+          subject_type: selection.subjectType,
+          ...(selection.subjectId ? { subject_id: selection.subjectId } : {}),
+          ...(selection.role ? { role: selection.role } : {}),
+          ...(selection.permission ? { permission: selection.permission } : {}),
+        })),
       });
       clearDraft();
       onClose();
@@ -947,6 +958,13 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
               )}
             </PopoverContent>
           </Popover>
+
+          <ProjectPermissionPicker
+            members={members}
+            workspaceId={wsId}
+            value={projectPermissions}
+            onChange={setProjectPermissions}
+          />
 
           {/* Overflow — always the last child so it stays at the end of the
               wrap flow. Only rendered while a date is still collapsible; when

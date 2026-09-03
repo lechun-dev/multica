@@ -5,10 +5,12 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@multica/ui/components/ui/sonner";
 import { cn } from "@multica/ui/lib/utils";
 import { WebProviders } from "@/components/web-providers";
+import { brandLocaleResources } from "@multica/core/i18n/branding";
 import { RESOURCES } from "@multica/views/locales";
 import { getRequestLocale } from "@/lib/request-locale";
 import { HTML_LANG } from "@/lib/html-lang";
 import { SITE_TITLE, TITLE_TEMPLATE } from "@/platform/document-title";
+import { PRODUCT_NAME } from "@/config/product-brand";
 import {
   resolveBrowserApiBaseUrl,
   resolveBrowserWsUrl,
@@ -94,7 +96,7 @@ export const metadata: Metadata = {
   // manifest's `display` instead (honoured since iOS 16.4).
   appleWebApp: {
     capable: true,
-    title: "Multica",
+    title: PRODUCT_NAME,
     // `default` keeps the web view below the status bar. Going edge-to-edge
     // (`black-translucent` + viewport-fit=cover) needs env(safe-area-inset-*)
     // padding, which no surface in the app has yet.
@@ -102,7 +104,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
-    siteName: "Multica",
+    siteName: PRODUCT_NAME,
     locale: "en_US",
   },
   twitter: {
@@ -125,7 +127,10 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const locale = await getRequestLocale();
-  const resources = { [locale]: RESOURCES[locale] };
+  const resources = brandLocaleResources(
+    { [locale]: RESOURCES[locale] },
+    PRODUCT_NAME,
+  );
   const apiBaseUrl = resolveBrowserApiBaseUrl(process.env);
   const wsUrl = resolveBrowserWsUrl(process.env);
 

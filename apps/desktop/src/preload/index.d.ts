@@ -8,6 +8,7 @@ import type {
   IssueWindowRequest,
 } from "../shared/issue-window";
 import type {
+  InstallUpdateResult,
   ManualUpdateCheckResult,
   UpdaterPreferences,
 } from "../shared/updater-types";
@@ -159,8 +160,9 @@ interface UpdaterAPI {
   onUpdateDownloaded: (
     callback: (info: { version: string; releaseNotes?: string }) => void,
   ) => () => void;
+  onUpdateError: (callback: (error: { message: string }) => void) => () => void;
   downloadUpdate: () => Promise<void>;
-  installUpdate: () => Promise<void>;
+  installUpdate: () => Promise<InstallUpdateResult>;
   getPreferences: () => Promise<UpdaterPreferences>;
   setAutomaticUpdates: (enabled: boolean) => Promise<UpdaterPreferences>;
   checkForUpdates: () => Promise<ManualUpdateCheckResult>;

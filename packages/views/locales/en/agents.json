@@ -904,7 +904,20 @@
     "tool_kind_command": "Commands",
     "tool_kind_write": "Edits",
     "tool_kind_read": "Reads",
-    "tool_kind_misc": "Other"
+    "tool_kind_misc": "Other",
+    "view_details": "Execution details",
+    "view_human": "Execution summary",
+    "human_agent_message": "The agent sent a message.",
+    "human_thinking": "The agent is thinking",
+    "human_running": "In progress: {{action}}",
+    "human_completed": "Completed: {{action}}",
+    "human_command": "run command {{subject}}",
+    "human_read": "read {{subject}}",
+    "human_search": "search for {{subject}}",
+    "human_edit": "edit {{subject}}",
+    "human_tool": "use tool {{subject}}",
+    "human_error": "Execution ran into a problem: {{text}}",
+    "human_group": "make {{count}} {{tool}} actions"
   },
   "task_failure": {
     "cancelled_by_system": "Cancelled by the system",

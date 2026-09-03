@@ -32,7 +32,8 @@ export const QUICK_ACTIONS_PENDING_TIMEOUT_MS = 12_000;
 export const chatKeys = {
   all: (wsId: string) => ["chat", wsId] as const,
   /** Full sessions list (active + archived); the dropdown splits locally. */
-  sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
+  sessions: (wsId: string, includeWorkspaceOwned = true) =>
+    [...chatKeys.all(wsId), "sessions", { includeWorkspaceOwned }] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
   messagesAll: () => ["chat", "messages"] as const,
   messages: (sessionId: string) => [...chatKeys.messagesAll(), sessionId] as const,
@@ -52,7 +53,8 @@ export const chatKeys = {
   /** Durable deferred-cancellation draft restores for a session (#5219). */
   draftRestores: (sessionId: string) => [...chatKeys.draftRestoresAll(), sessionId] as const,
   /** Aggregate of in-flight chat tasks for the current user — FAB reads this. */
-  pendingTasks: (wsId: string) => [...chatKeys.all(wsId), "pending-tasks"] as const,
+  pendingTasks: (wsId: string, includeWorkspaceOwned = true) =>
+    [...chatKeys.all(wsId), "pending-tasks", { includeWorkspaceOwned }] as const,
   /** Per-user pinned agents for the quick-agent bar. */
   pinnedAgents: (wsId: string) => [...chatKeys.all(wsId), "pinned-agents"] as const,
   /**
@@ -60,8 +62,8 @@ export const chatKeys = {
    * running indicator. Separate cache from the detailed `pendingTasks` list so
    * the FAB (closed-window) and ChatWindow (open) can subscribe independently.
    */
-  pendingTasksHasAny: (wsId: string) =>
-    [...chatKeys.all(wsId), "pending-tasks", "has-any"] as const,
+  pendingTasksHasAny: (wsId: string, includeWorkspaceOwned = true) =>
+    [...chatKeys.all(wsId), "pending-tasks", "has-any", { includeWorkspaceOwned }] as const,
   /** Per-task execution messages — shared with issue agent cards. */
   taskMessagesAll: () => ["task-messages"] as const,
   taskMessages: (taskId: string) => [...chatKeys.taskMessagesAll(), taskId] as const,
@@ -73,10 +75,10 @@ export function isTaskMessageTaskId(taskId: string | null | undefined): taskId i
   return typeof taskId === "string" && UUID_PATTERN.test(taskId);
 }
 
-export function chatSessionsOptions(wsId: string) {
+export function chatSessionsOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: chatKeys.sessions(wsId),
-    queryFn: () => api.listChatSessions({ status: "all" }),
+    queryKey: chatKeys.sessions(wsId, includeWorkspaceOwned),
+    queryFn: () => api.listChatSessions({ status: "all", includeWorkspaceOwned }),
     staleTime: Infinity,
   });
 }
@@ -311,10 +313,10 @@ export function isTaskMessageTimelineHeld(
  * Drives the FAB "running" indicator while the chat window is minimised —
  * no per-session query is active then, so we need this roll-up.
  */
-export function pendingChatTasksOptions(wsId: string) {
+export function pendingChatTasksOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: chatKeys.pendingTasks(wsId),
-    queryFn: () => api.listPendingChatTasks(),
+    queryKey: chatKeys.pendingTasks(wsId, includeWorkspaceOwned),
+    queryFn: () => api.listPendingChatTasks(includeWorkspaceOwned),
     staleTime: Infinity,
   });
 }
@@ -326,10 +328,10 @@ export function pendingChatTasksOptions(wsId: string) {
  * detailed list is reserved for the open ChatWindow (history + stop flows).
  * Both caches are kept in sync by the task-lifecycle WS handlers.
  */
-export function hasPendingChatTasksOptions(wsId: string) {
+export function hasPendingChatTasksOptions(wsId: string, includeWorkspaceOwned = true) {
   return queryOptions({
-    queryKey: chatKeys.pendingTasksHasAny(wsId),
-    queryFn: () => api.hasAnyPendingChatTasks(),
+    queryKey: chatKeys.pendingTasksHasAny(wsId, includeWorkspaceOwned),
+    queryFn: () => api.hasAnyPendingChatTasks(includeWorkspaceOwned),
     staleTime: Infinity,
   });
 }

@@ -36,6 +36,15 @@ export interface ListDingTalkInstallationsResponse {
   install_supported?: boolean;
 }
 
+/** The authenticated user's own DingTalk identity, if linked. */
+export interface DingTalkProfile {
+  bound: boolean;
+  name?: string;
+  email?: string;
+  avatar_url?: string;
+  departments?: string[];
+}
+
 /** One connected Multica bot observed in a DingTalk group. */
 export interface DingTalkGroupBot {
   installation_id: string;

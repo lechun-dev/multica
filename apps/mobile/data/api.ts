@@ -1248,7 +1248,7 @@ class ApiClient {
    */
   async uploadFile(
     asset: FileAsset,
-    opts?: { issueId?: string; commentId?: string },
+    opts?: { issueId?: string; commentId?: string; commentDraft?: boolean },
   ): Promise<Attachment> {
     const rid = createRequestId();
     const start = Date.now();
@@ -1274,6 +1274,7 @@ class ApiClient {
     );
     if (opts?.issueId) formData.append("issue_id", opts.issueId);
     if (opts?.commentId) formData.append("comment_id", opts.commentId);
+    if (opts?.commentDraft) formData.append("comment_draft", "true");
 
     console.log(`[api] → POST ${path}`, { rid, filename: asset.name });
 

@@ -25,10 +25,10 @@ FOR UPDATE;
 
 -- name: CreateProject :one
 INSERT INTO project (
-    workspace_id, title, description, icon, status,
+    workspace_id, created_by, title, description, icon, status,
     lead_type, lead_id, priority, start_date, due_date
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 ) RETURNING *;
 
 -- name: UpdateProject :one
@@ -52,7 +52,8 @@ DELETE FROM project WHERE id = $1 AND workspace_id = $2;
 
 -- name: CountIssuesByProject :one
 SELECT count(*) FROM issue
-WHERE project_id = $1;
+WHERE project_id = $1
+  AND archived_at IS NULL;
 
 -- name: GetProjectIssueStats :many
 SELECT project_id,
@@ -61,4 +62,5 @@ SELECT project_id,
 FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')::uuid
   AND project_id = ANY(sqlc.arg('project_ids')::uuid[])
+  AND archived_at IS NULL
 GROUP BY project_id;

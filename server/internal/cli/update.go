@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,36 @@ import (
 // changes one place.
 const ChecksumManifestName = "checksums.txt"
 
+// ReleaseRepository is the repository that publishes MissionOS CLI builds.
+// Keep this separate from the Go module path: the module remains compatible
+// with existing consumers while release discovery follows the private fork.
+const ReleaseRepository = "lechun-dev/multica"
+
 const DefaultUpdateDownloadTimeout = 120 * time.Second
+
+// 2026-08-25 coder(lq): Keep public release updates scoped to Multica Cloud;
+// self-hosted installations must use an operator-managed release channel.
+func IsOfficialCloudServerURL(serverURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), "api.multica.ai") &&
+		(u.Scheme == "http" || u.Scheme == "https")
+}
+
+// IsSupportedReleaseServerURL reports whether this build may use the release
+// channel configured for MissionOS. The upstream Multica Cloud host remains
+// accepted for older installations, while the MissionOS deployment uses its
+// own production host.
+func IsSupportedReleaseServerURL(serverURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == "api.multica.ai" || host == "mission.lechun.cc"
+}
 
 // GitHubRelease is the subset of the GitHub releases API response we need.
 type GitHubRelease struct {
@@ -226,7 +256,7 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 
 func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+ReleaseRepository+"/releases/tags/"+tag, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +282,7 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 // FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
 func FetchLatestRelease() (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/"+ReleaseRepository+"/releases/latest", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +359,7 @@ func GetBrewPrefix() string {
 // UpdateViaBrew runs `brew upgrade multica-ai/tap/multica`.
 // Returns the combined output and any error.
 func UpdateViaBrew() (string, error) {
-	cmd := exec.Command("brew", "upgrade", "multica-ai/tap/multica")
+	cmd := exec.Command("brew", "upgrade", "multica")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("brew upgrade failed: %w", err)
@@ -427,16 +457,24 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 		return "", fmt.Errorf("verify download: %w", err)
 	}
 
-	// Extract the binary from the archive.
-	binaryName := "multica"
+	// Extract the binary from the archive. Releases may contain either the new
+	// missionos name or the legacy multica name during the migration window.
+	binaryNames := []string{"missionos", "multica"}
 	if runtime.GOOS == "windows" {
-		binaryName = "multica.exe"
+		binaryNames = []string{"missionos.exe", "multica.exe"}
 	}
 	var binaryData []byte
-	if runtime.GOOS == "windows" {
-		binaryData, err = extractBinaryFromZip(bytes.NewReader(archiveData), binaryName)
-	} else {
-		binaryData, err = extractBinaryFromTarGz(bytes.NewReader(archiveData), binaryName)
+	var extractedName string
+	for _, binaryName := range binaryNames {
+		if runtime.GOOS == "windows" {
+			binaryData, err = extractBinaryFromZip(bytes.NewReader(archiveData), binaryName)
+		} else {
+			binaryData, err = extractBinaryFromTarGz(bytes.NewReader(archiveData), binaryName)
+		}
+		if err == nil {
+			extractedName = binaryName
+			break
+		}
 	}
 	if err != nil {
 		return "", fmt.Errorf("extract binary: %w", err)
@@ -475,7 +513,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 		return "", fmt.Errorf("replace binary: %w", err)
 	}
 
-	return fmt.Sprintf("Downloaded %s and replaced %s", assetName, exePath), nil
+	return fmt.Sprintf("Downloaded %s (%s) and replaced %s", assetName, extractedName, exePath), nil
 }
 
 // extractBinaryFromTarGz reads a .tar.gz stream and returns the contents of the

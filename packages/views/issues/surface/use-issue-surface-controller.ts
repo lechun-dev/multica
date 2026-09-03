@@ -31,6 +31,8 @@ import {
 } from "@multica/core/issues/surface/scope";
 import type { IssueDateFilter, SortField } from "@multica/core/issues/stores/view-store";
 import { propertyListOptions } from "@multica/core/properties";
+import { memberListOptions } from "@multica/core/workspace/queries";
+import { useAuthStore } from "@multica/core/auth";
 import { propertyIdFromViewKey } from "@multica/core/issues/stores/view-store";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import type { IssueFilters } from "../utils/filter";
@@ -67,6 +69,10 @@ interface UseIssueSurfaceControllerInput {
 export interface IssueSurfaceController {
   scopeKey: string;
   projectId?: string;
+  /** Whether workspace-owner inherited tasks are included in task reads. */
+  includeWorkspaceOwned: boolean;
+  /** Whether workspace membership has been resolved for the visibility gate. */
+  visibilityReady: boolean;
   createDefaults: IssueCreateDefaults;
   viewMode: IssueSurfaceMode;
   allowGantt: boolean;
@@ -205,6 +211,21 @@ export function useIssueSurfaceController({
   search = "",
 }: UseIssueSurfaceControllerInput): IssueSurfaceController {
   const wsId = useWorkspaceId();
+  const currentUser = useAuthStore((s) => s.user);
+  const showWorkspaceOwnedItems = useViewStore((s) => s.showWorkspaceOwnedItems);
+  const workspaceMembersQuery = useQuery(memberListOptions(wsId));
+  const workspaceMembers = workspaceMembersQuery.data ?? EMPTY_LIST;
+  const visibilityReady = workspaceMembersQuery.isSuccess;
+  const isWorkspaceOwner = useMemo(() => {
+    if (!visibilityReady || !currentUser) return false;
+    const me = workspaceMembers.find((member) => member.user_id === currentUser.id);
+    return me?.role === "owner";
+  }, [currentUser, visibilityReady, workspaceMembers]);
+  // 2026-09-01 coder(lq): Fail closed until membership resolves so an owner
+  // visibility toggle cannot briefly expose workspace-owned tasks.
+  const includeWorkspaceOwned = visibilityReady
+    ? !isWorkspaceOwner || showWorkspaceOwnedItems
+    : false;
   const queryPlan = useMemo<IssueSurfaceQueryPlan>(
     () => buildIssueSurfaceQueryPlan(scope),
     [scope],
@@ -227,6 +248,7 @@ export function useIssueSurfaceController({
   const includeNoProject = useViewStore((s) => s.includeNoProject);
   const labelFilters = useViewStore((s) => s.labelFilters);
   const propertyFilters = useViewStore((s) => s.propertyFilters);
+  const archiveState = useViewStore((s) => s.archiveState);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
   const showSubIssues = useViewStore((s) => s.showSubIssues);
   const ganttShowCompleted = useViewStore((s) => s.ganttShowCompleted);
@@ -418,7 +440,13 @@ export function useIssueSurfaceController({
         : scope.relation
       : undefined;
   const { data: workspaceWorkingAgents = EMPTY_LIST } = useQuery(
-    workspaceWorkingAgentsOptions(wsId, "issue", workingAgentMineRelation),
+    workspaceWorkingAgentsOptions(
+      wsId,
+      "issue",
+      workingAgentMineRelation,
+      undefined,
+      includeWorkspaceOwned,
+    ),
   );
   const workingIssueIDs = useMemo(() => {
     const issueIDs = new Set<string>();
@@ -475,6 +503,7 @@ export function useIssueSurfaceController({
     return {
       scope: queryScope,
       filters: {
+        ...(archiveState !== "active" ? { archive_state: archiveState } : {}),
         ...(statusFilters.length > 0 ? { statuses: statusFilters } : {}),
         ...(priorityFilters.length > 0 ? { priorities: priorityFilters } : {}),
         ...(assigneeFilters.length > 0 ? { assignees: assigneeFilters } : {}),
@@ -492,6 +521,7 @@ export function useIssueSurfaceController({
         ...(agentRunningFilter
           ? { working_issue_ids: [...workingIssueIDs] }
           : {}),
+        ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }),
         include_sub_issues: showSubIssues,
       },
       ...(debouncedActiveSearch ? { search: debouncedActiveSearch } : {}),
@@ -502,11 +532,13 @@ export function useIssueSurfaceController({
     };
   }, [
     agentRunningFilter,
+    archiveState,
     assigneeFilters,
     creatorFilters,
     dateParams,
     debouncedActiveSearch,
     effectivePropertyFilters,
+    includeWorkspaceOwned,
     includeNoAssignee,
     labelFilters,
     priorityFilters,
@@ -562,8 +594,9 @@ export function useIssueSurfaceController({
     // every custom-property facet made a Table mount issue up to 47 SQL
     // statements and repeatedly scan the issue table after invalidation.
     enabled:
-      usesServerStatusSurface ||
-      ((usesTable || usesServerGroupSurface) && activeTableFacet !== null),
+      visibilityReady &&
+      (usesServerStatusSurface ||
+        ((usesTable || usesServerGroupSurface) && activeTableFacet !== null)),
   });
   // The header chip's count, kept on its own query rather than folded into the
   // submenu facet request above. Two reasons: that request is deliberately
@@ -595,7 +628,7 @@ export function useIssueSurfaceController({
     // `agentRunningFilter` is unreachable there. Skip the aggregation rather
     // than pay for it on every panel mount. Adding the chip to that header
     // means dropping this clause.
-    enabled: !usesGantt && scope.type !== "actor",
+    enabled: visibilityReady && !usesGantt && scope.type !== "actor",
   });
   const facetWorkingAgents = useMemo<WorkingAgentSummary[] | undefined>(() => {
     const facet = workingAgentsFacetQuery.data?.facets.find(
@@ -625,7 +658,7 @@ export function useIssueSurfaceController({
     facets: tableFacetsQuery.data,
     facetsPending: tableFacetsQuery.isPending,
     facetsFetching: tableFacetsQuery.isFetching,
-    enabled: usesServerStatusSurface && !statusFilterUnresolved,
+    enabled: visibilityReady && usesServerStatusSurface && !statusFilterUnresolved,
   });
   const serverGroupSpec = useMemo<IssueTableGroupsRequest["group"]>(() => {
     if (effectiveViewMode === "swimlane") {
@@ -672,7 +705,7 @@ export function useIssueSurfaceController({
     observeEmptyBranches:
       effectiveViewMode === "swimlane" ||
       (effectiveViewMode === "board" && activeGroupingProperty !== null),
-    enabled: usesServerGroupSurface && !statusFilterUnresolved,
+    enabled: visibilityReady && usesServerGroupSurface && !statusFilterUnresolved,
   });
 
   // Selection is only meaningful within the current membership window: batch
@@ -686,6 +719,7 @@ export function useIssueSurfaceController({
   const membershipKey = useMemo(
     () =>
       JSON.stringify([
+        archiveState,
         statusFilters,
         priorityFilters,
         assigneeFilters,
@@ -697,16 +731,19 @@ export function useIssueSurfaceController({
         effectivePropertyFilters,
         agentRunningFilter,
         showSubIssues,
+        includeWorkspaceOwned,
         dateParams,
         debouncedActiveSearch,
       ]),
     [
+      archiveState,
       agentRunningFilter,
       assigneeFilters,
       creatorFilters,
       dateParams,
       debouncedActiveSearch,
       effectivePropertyFilters,
+      includeWorkspaceOwned,
       includeNoAssignee,
       labelFilters,
       priorityFilters,
@@ -727,9 +764,12 @@ export function useIssueSurfaceController({
     projectId,
     usesGantt,
     usesTable,
+    visibilityReady,
     serverStatusBranches,
     serverGroupBranches,
     ganttShowCompleted,
+    archiveState,
+    includeWorkspaceOwned,
     statusFilters,
     hiddenStatusCategories,
     statusFilterPending,
@@ -836,6 +876,8 @@ export function useIssueSurfaceController({
   return {
     scopeKey,
     projectId,
+    includeWorkspaceOwned,
+    visibilityReady,
     createDefaults: resolvedCreateDefaults,
     viewMode: effectiveViewMode,
     allowGantt: allowedModes.has("gantt") && !!projectId,

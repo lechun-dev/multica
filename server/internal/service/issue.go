@@ -95,6 +95,15 @@ type IssueCreateParams struct {
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
+	// RequireProject makes the project binding a service-layer invariant for
+	// this create path. The HTTP handler validates permissions before entering
+	// the service, but channel, onboarding, and future adapters must not be
+	// able to bypass the same constraint when the project-permission overlay is
+	// enabled.
+	// 2026-09-01 coder(lq): Keep the switch opt-in so PROJECT_PERMISSION_ENABLED=false
+	// preserves the upstream ability to create projectless issues during rollout.
+	RequireProject bool
+
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
 	// created and attachments are linked. Its return value is sent as
 	// the EventIssueCreated payload via the event bus. The HTTP handler
@@ -131,6 +140,13 @@ type IssueCreateOpts struct {
 	// still resolving, then promotes the returned task after attachment binding.
 	// Zero preserves the ordinary immediate enqueue path.
 	AssignedAgentRunFireAt time.Time
+
+	// BeforeCommit lets a transport adapter persist narrowly-related policy
+	// state in the same transaction as the issue. 2026-08-27 coder(lq): The
+	// self-hosted project-permission overlay uses this to grant assignees and
+	// mentioned members access without coupling the upstream issue service to
+	// projectauth.
+	BeforeCommit func(ctx context.Context, tx pgx.Tx, issue db.Issue) error
 }
 
 // ErrActiveDuplicate signals that the duplicate guard found an active
@@ -146,12 +162,28 @@ var ErrActiveDuplicate = errors.New("active duplicate issue exists")
 // their transport's 400 / Lark card error.
 var ErrParentIssueNotFound = errors.New("parent issue not found in this workspace")
 
+// ErrArchivedParentIssue prevents new children from being attached to an
+// archived task. Archived tasks are structurally frozen, while their existing
+// children remain available for history and comments.
+var ErrArchivedParentIssue = errors.New("cannot create a child issue under an archived parent")
+
+// ErrParentProjectMismatch signals that an explicitly supplied project does
+// not match the parent issue's project. A child issue cannot cross project
+// boundaries because task hierarchy is scoped to its owning project.
+// 2026-09-01 coder(lq): Enforce the project-binding invariant in the shared
+// service so HTTP, channel, and future adapters cannot diverge.
+var ErrParentProjectMismatch = errors.New("parent issue belongs to a different project")
+
 // ErrProjectNotFound signals that the supplied ProjectID does not exist
 // in the issue's workspace. Cross-workspace project IDs are rejected
 // here so every create entry (HTTP `POST /issues`, Lark `/issue`, future
 // MCP / API key callers) enforces the same workspace boundary without
 // having to remember it. Callers translate this into 400.
 var ErrProjectNotFound = errors.New("project not found in this workspace")
+
+// ErrProjectRequired signals that the permission-enabled create path would
+// otherwise persist a task without its mandatory project scope.
+var ErrProjectRequired = errors.New("project is required")
 
 // ErrIssueLabelNotFound signals that one of the supplied LabelIDs does not
 // exist in the issue's workspace or is not an issue-scoped label. The whole
@@ -281,6 +313,12 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		if err != nil || !parent.ID.Valid {
 			return IssueCreateResult{}, ErrParentIssueNotFound
 		}
+		if parent.ArchivedAt.Valid {
+			return IssueCreateResult{}, ErrArchivedParentIssue
+		}
+		if projectID.Valid && parent.ProjectID.Valid && parent.ProjectID != projectID {
+			return IssueCreateResult{}, ErrParentProjectMismatch
+		}
 		// Back-fill project from parent when the caller did not pin
 		// one explicitly. Matches the long-standing HTTP behavior: a
 		// sub-issue inherits its parent's project unless overridden.
@@ -295,6 +333,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}); err != nil {
 			return IssueCreateResult{}, ErrProjectNotFound
 		}
+	}
+	if opts.RequireProject && !projectID.Valid {
+		return IssueCreateResult{}, ErrProjectRequired
 	}
 
 	// Validate labels before we increment the issue counter so a stale or
@@ -464,6 +505,12 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		assignedTask, err = s.TaskService.createDeferredChannelIssueTaskWithQueries(ctx, qtx, issue, opts.AssignedAgentRunFireAt)
 		if err != nil {
 			return IssueCreateResult{}, fmt.Errorf("create deferred channel issue task: %w", err)
+		}
+	}
+
+	if opts.BeforeCommit != nil {
+		if err := opts.BeforeCommit(ctx, tx, issue); err != nil {
+			return IssueCreateResult{}, fmt.Errorf("before issue commit: %w", err)
 		}
 	}
 

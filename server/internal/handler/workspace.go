@@ -285,6 +285,19 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2026-09-01 coder(lq): Seed the canonical project-role catalog in the
+	// workspace transaction. Without this, a newly created workspace could
+	// pass single-resource checks (which have in-memory defaults) while its
+	// SQL-backed project list hid every project until a role was edited.
+	// Keep the call behind the rollout flag so older deployments can still
+	// create workspaces before the authorization migrations are applied.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if err := (&projectAuthRepository{db: tx}).ensureSystemRoleDefinitions(r.Context(), uuidToString(ws.ID)); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to seed project permission roles: "+err.Error())
+			return
+		}
+	}
+
 	// Seed the 7 built-in issue statuses inside the same transaction, so a
 	// workspace is never visible without its status catalog — an issue cannot
 	// be created before its status can be resolved. (MUL-6243)
@@ -370,6 +383,42 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	return out, nil
 }
 
+func mergeWorkspaceSettings(existing []byte, incoming any) ([]byte, error) {
+	rawIncoming, err := json.Marshal(incoming)
+	if err != nil {
+		return nil, err
+	}
+	var incomingObject map[string]any
+	if err := json.Unmarshal(rawIncoming, &incomingObject); err != nil {
+		return rawIncoming, nil
+	}
+	var existingObject map[string]any
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &existingObject)
+	}
+	if existingObject == nil {
+		existingObject = map[string]any{}
+	}
+	mergeSettingsObject(existingObject, incomingObject)
+	return json.Marshal(existingObject)
+}
+
+func mergeSettingsObject(dst, src map[string]any) {
+	for key, value := range src {
+		srcObject, ok := value.(map[string]any)
+		if !ok {
+			dst[key] = value
+			continue
+		}
+		dstObject, _ := dst[key].(map[string]any)
+		if dstObject == nil {
+			dstObject = map[string]any{}
+			dst[key] = dstObject
+		}
+		mergeSettingsObject(dstObject, srcObject)
+	}
+}
+
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	id := workspaceIDFromURL(r, "id")
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
@@ -401,7 +450,15 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.Context = pgtype.Text{String: *req.Context, Valid: true}
 	}
 	if req.Settings != nil {
-		s, _ := json.Marshal(req.Settings)
+		var existingSettings []byte
+		if existing, fetchErr := h.Queries.GetWorkspace(r.Context(), idUUID); fetchErr == nil {
+			existingSettings = existing.Settings
+		}
+		s, err := mergeWorkspaceSettings(existingSettings, req.Settings)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid settings")
+			return
+		}
 		params.Settings = s
 	}
 	if req.Repos != nil {

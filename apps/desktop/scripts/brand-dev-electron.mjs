@@ -5,6 +5,13 @@
 // launch time — `app.setName()` cannot override them at runtime, so
 // patching the plist in node_modules is the only working fix.
 //
+// The development Electron binary also ships with the generic
+// `com.github.Electron` bundle identifier. Other Electron-based apps (for
+// example, WeChat Developer Tools) can use that same identifier, which makes
+// macOS LaunchServices associate the `multica://` callback with the wrong app.
+// A development-only identifier keeps the custom protocol registration
+// isolated from those applications and from the packaged Multica app.
+//
 // Idempotent: runs on every dev launch and no-ops once the plist already
 // matches. The patch is isolated to this worktree's node_modules — we
 // unlink the file before rewriting so we never mutate a pnpm-store inode
@@ -24,6 +31,12 @@ if (process.platform !== "darwin") process.exit(0);
 const DESIRED_NAME = process.env.DESKTOP_APP_SUFFIX
   ? `Multica Canary ${process.env.DESKTOP_APP_SUFFIX}`
   : "Multica Canary";
+const DESIRED_BUNDLE_ID = process.env.DESKTOP_APP_SUFFIX
+  ? `ai.multica.desktop.dev.${process.env.DESKTOP_APP_SUFFIX
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")}`
+  : "ai.multica.desktop.dev";
 
 const require = createRequire(import.meta.url);
 // `require('electron')` returns the path to the executable
@@ -61,7 +74,8 @@ function plistSet(key, value) {
 
 if (
   plistGet("CFBundleName") === DESIRED_NAME &&
-  plistGet("CFBundleDisplayName") === DESIRED_NAME
+  plistGet("CFBundleDisplayName") === DESIRED_NAME &&
+  plistGet("CFBundleIdentifier") === DESIRED_BUNDLE_ID
 ) {
   process.exit(0);
 }
@@ -75,5 +89,9 @@ writeFileSync(plistPath, original);
 
 plistSet("CFBundleName", DESIRED_NAME);
 plistSet("CFBundleDisplayName", DESIRED_NAME);
+plistSet("CFBundleIdentifier", DESIRED_BUNDLE_ID);
 
-console.log(`[brand-dev-electron] ${plistPath} → CFBundleName="${DESIRED_NAME}"`);
+console.log(
+  `[brand-dev-electron] ${plistPath} → ` +
+    `CFBundleName="${DESIRED_NAME}", CFBundleIdentifier="${DESIRED_BUNDLE_ID}"`,
+);

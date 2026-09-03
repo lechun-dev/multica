@@ -26,10 +26,12 @@
 // tests cover version derivation both as a pure string transform and as the
 // real `git describe` invocation against a throwaway repo.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { applyReleaseRuntimeConfig } from "./release-runtime-config.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(here, "..");
@@ -65,6 +67,12 @@ const ARCH_FLAGS = new Map([
 ]);
 
 const SUPPORTED_CLI_ARCHS = new Set(["x64", "arm64"]);
+// 2026-09-03 coder(lq): Windows hosted runners can briefly lock files that
+// electron-builder has just created while Defender or the file indexer scans
+// them. Retry only errors that identify a transient filesystem lock so build
+// configuration and compilation failures still stop immediately.
+const WINDOWS_BUILDER_RETRY_DELAYS_MS = [0, 5_000, 15_000];
+const WINDOWS_TRANSIENT_LOCK_PATTERN = /\b(?:EBUSY|EPERM|EACCES)\b/i;
 const MAC_ALL_PLATFORM_TARGETS = [
   { platform: "mac", arch: "arm64" },
   { platform: "mac", arch: "x64" },
@@ -153,7 +161,22 @@ export const DESCRIBE_ARGS = [
 // Exported (with an optional cwd) so tests can exercise the real describe
 // invocation against a throwaway repo, not just normalizeGitVersion in
 // isolation — the gap that let the Windows quoting regression through CI.
-export function deriveVersion(cwd) {
+export function deriveVersion(cwd, releaseTag) {
+  // A release commit can intentionally carry more than one version tag while
+  // an older release is being repaired or re-published. `git describe` is
+  // ambiguous in that situation and may select the oldest tag (for example,
+  // producing 0.4.51 while building v0.4.53). CI exposes the exact checkout
+  // tag as RELEASE_TAG, so prefer that explicit source of truth whenever it
+  // is a valid semver release tag, then fall back to git describe for local
+  // builds and development checkouts.
+  const explicitReleaseTag =
+    releaseTag ?? (cwd === undefined ? process.env.RELEASE_TAG : undefined);
+  if (
+    explicitReleaseTag &&
+    /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(explicitReleaseTag)
+  ) {
+    return normalizeGitVersion(explicitReleaseTag);
+  }
   return normalizeGitVersion(git(DESCRIBE_ARGS, cwd));
 }
 
@@ -306,6 +329,31 @@ function formatTarget(target) {
   return `${PLATFORM_CONFIG[target.platform].label} ${target.arch}`;
 }
 
+/**
+ * Return the update metadata channel for a custom desktop distribution.
+ *
+ * electron-builder includes the platform in macOS metadata names but not in
+ * Windows names, and it only includes an architecture suffix for Linux. The
+ * explicit Lechun namespace plus the two additional architecture suffixes
+ * therefore keeps every Lechun feed separate from both the official feed and
+ * another Lechun architecture.
+ */
+export function updateChannelForTarget(
+  target,
+  variant = process.env.VITE_MULTICA_DESKTOP_VARIANT,
+) {
+  if (variant !== "lechun" && variant !== "lechun-preview") return null;
+  const channelPrefix =
+    variant === "lechun-preview" ? "latest-lechun-preview" : "latest-lechun";
+  if (target.platform === "mac" && target.arch === "x64") {
+    return `${channelPrefix}-x64`;
+  }
+  if (target.platform === "win" && target.arch === "arm64") {
+    return `${channelPrefix}-arm64`;
+  }
+  return channelPrefix;
+}
+
 export function builderArgsForTarget(
   target,
   parsed,
@@ -314,6 +362,7 @@ export function builderArgsForTarget(
     disableMacNotarize = false,
     hostPlatform = process.platform,
     useScopedOutputDir = false,
+    variant = process.env.VITE_MULTICA_DESKTOP_VARIANT,
   } = {},
 ) {
   const builderArgs = [];
@@ -342,29 +391,104 @@ export function builderArgsForTarget(
   }
   // electron-builder only adds an architecture suffix to Linux update
   // metadata. Windows x64/arm64 would both publish `latest.yml`, while macOS
-  // arm64/x64 would both publish `latest-mac.yml`. Keep the established x64
-  // Windows and arm64 macOS feeds unchanged for installed clients, and route
-  // the additional architectures to explicit channels. updater.ts pins the
-  // matching channel at runtime.
-  if (target.platform === "win" && target.arch === "arm64") {
-    builderArgs.push("-c.publish.channel=latest-arm64");
-  }
+  // arm64/x64 would both publish `latest-mac.yml`. Keep the established
+  // official feeds unchanged, and route the additional architectures to
+  // explicit channels. The Lechun build gets its own namespace so it cannot
+  // consume or overwrite official metadata.
   if (target.platform === "mac" && target.arch === "x64") {
     // Scope the Electron 39 platform floor to the new Intel package so this
     // change does not rewrite established Apple Silicon bundle metadata.
     builderArgs.push("-c.mac.minimumSystemVersion=12.0.0");
-    builderArgs.push("-c.publish.channel=latest-x64");
+  }
+
+  const customUpdateChannel = updateChannelForTarget(target, variant);
+  if (customUpdateChannel) {
+    builderArgs.push(`-c.publish.channel=${customUpdateChannel}`);
+  } else {
+    if (target.platform === "win" && target.arch === "arm64") {
+      builderArgs.push("-c.publish.channel=latest-arm64");
+    }
+    if (target.platform === "mac" && target.arch === "x64") {
+      builderArgs.push("-c.publish.channel=latest-x64");
+    }
   }
   return builderArgs;
 }
 
-function main() {
+export function builderRetryDelays(
+  hostPlatform = process.platform,
+  failureOutput = "",
+) {
+  if (
+    hostPlatform !== "win32" ||
+    !WINDOWS_TRANSIENT_LOCK_PATTERN.test(failureOutput)
+  ) {
+    return [0];
+  }
+  return [...WINDOWS_BUILDER_RETRY_DELAYS_MS];
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, milliseconds);
+  });
+}
+
+function appendOutputTail(existing, chunk, maxLength = 64 * 1024) {
+  const combined = existing + chunk;
+  return combined.length > maxLength ? combined.slice(-maxLength) : combined;
+}
+
+function runElectronBuilder(builderArgs) {
+  return new Promise((resolvePromise) => {
+    const child = spawn("electron-builder", builderArgs, {
+      stdio: ["inherit", "pipe", "pipe"],
+      cwd: desktopRoot,
+      env: envWithLocalBins(),
+      shell: true,
+    });
+    let outputTail = "";
+    let settled = false;
+
+    const forward = (stream, destination) => {
+      stream?.on("data", (chunk) => {
+        destination.write(chunk);
+        outputTail = appendOutputTail(outputTail, chunk.toString());
+      });
+    };
+    forward(child.stdout, process.stdout);
+    forward(child.stderr, process.stderr);
+
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise({ error, outputTail, status: null });
+    });
+    child.once("close", (status) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise({ error: null, outputTail, status });
+    });
+  });
+}
+
+async function main() {
   const passthrough = stripLeadingSeparator(process.argv.slice(2));
   const parsed = parsePackageArgs(passthrough);
   const buildMatrix = resolveBuildMatrix(parsed);
   console.log(
     `[package] build matrix → ${buildMatrix.map(formatTarget).join(", ")}`,
   );
+
+  // 2026-09-02 coder(lq): Resolve prerelease endpoints in the packaging
+  // entry point so every GitHub workflow and local tagged build shares the
+  // same staging guard before Vite embeds the values in the installer.
+  const releaseRuntimeConfig = applyReleaseRuntimeConfig();
+  if (releaseRuntimeConfig) {
+    console.log(
+      `[package] prerelease runtime → ${releaseRuntimeConfig.apiUrl}`,
+    );
+  }
 
   // Step 0: start every release from an empty output directory. Stale
   // artifacts from a prior run would otherwise be repacked into this run's
@@ -456,22 +580,58 @@ function main() {
     // Step 4: invoke electron-builder for the current target only.
     // `shell: true` for the same Windows `.cmd` shim reason as the
     // electron-vite invocation above.
-    const result = spawnSync("electron-builder", builderArgs, {
-      stdio: "inherit",
-      cwd: desktopRoot,
-      env: envWithLocalBins(),
-      shell: true,
-    });
+    const targetOutputDir = useScopedOutputDir
+      ? resolve(distDir, `${target.platform}-${target.arch}`)
+      : distDir;
+    let attempt = 0;
+    let retryDelays = [0];
 
-    if (result.error) {
-      console.error(
-        "[package] failed to spawn electron-builder:",
-        result.error.message,
+    while (attempt < retryDelays.length) {
+      const delay = retryDelays[attempt];
+      if (delay > 0) {
+        console.warn(
+          `[package] transient Windows file lock; retrying in ${delay / 1000}s ` +
+            `(attempt ${attempt + 1}/${retryDelays.length})`,
+        );
+        await sleep(delay);
+        // 2026-09-03 coder(lq): Delete only the generated output for this
+        // target. Source, bundled CLI, and dependency directories are never
+        // touched by retry cleanup.
+        try {
+          rmSync(targetOutputDir, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(
+            `[package] could not clean output before retry: ${error.message}`,
+          );
+        }
+      }
+
+      const result = await runElectronBuilder(builderArgs);
+      if (result.error) {
+        console.error(
+          "[package] failed to spawn electron-builder:",
+          result.error.message,
+        );
+        process.exit(1);
+      }
+      if (result.status === 0) break;
+
+      const failureRetryDelays = builderRetryDelays(
+        process.platform,
+        result.outputTail,
       );
-      process.exit(1);
-    }
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
+      if (attempt === 0) {
+        retryDelays = failureRetryDelays;
+      } else if (failureRetryDelays.length === 1) {
+        // A later attempt can expose a deterministic error after the lock is
+        // gone. Stop immediately instead of masking that error with more
+        // retries intended only for transient filesystem failures.
+        process.exit(result.status ?? 1);
+      }
+      attempt += 1;
+      if (attempt >= retryDelays.length) {
+        process.exit(result.status ?? 1);
+      }
     }
   }
 }
@@ -481,5 +641,8 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main();
+  main().catch((error) => {
+    console.error("[package] unexpected packaging failure:", error);
+    process.exit(1);
+  });
 }

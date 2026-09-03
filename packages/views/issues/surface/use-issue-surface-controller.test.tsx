@@ -61,6 +61,26 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
+// The controller reads the signed-in user to resolve workspace-owner scope.
+// Keep the fixture explicit so these tests exercise the visibility gate rather
+// than depending on the application boot provider to register auth state.
+const mockAuthUser = {
+  id: "user-1",
+  email: "test@test.com",
+  name: "Test User",
+};
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: Object.assign(
+    (selector?: (state: unknown) => unknown) => {
+      const state = { user: mockAuthUser, isAuthenticated: true };
+      return selector ? selector(state) : state;
+    },
+    { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
+  ),
+  registerAuthStore: vi.fn(),
+  createAuthStore: vi.fn(),
+}));
+
 vi.mock("@multica/core/issues/mutations", () => ({
   useUpdateIssue: () => ({ mutate: updateIssueMutate, isPending: false }),
   useBatchUpdateIssues: () => ({
@@ -183,6 +203,7 @@ describe("useIssueSurfaceController", () => {
       // read. Empty is the real shape for a workspace with no custom statuses:
       // a built-in key IS its own category. (MUL-6243)
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listMembers: async () => [],
       listIssues,
       ...tableMethods,
       listIssueTableRows,
@@ -243,6 +264,74 @@ describe("useIssueSurfaceController", () => {
         group: { kind: "status" },
       }),
     );
+  });
+
+  it("does not keep showing workspace-owned rows while owner visibility is being refreshed", async () => {
+    const ownerIssue = makeIssue({ id: "owner-only", status: "todo" });
+    const pendingRestrictedRows = vi.fn(() => never<unknown>());
+    const tableRows = vi.fn(async (request: any) => {
+      if (request.group_key !== "status:todo") {
+        return {
+          query_fingerprint: "test",
+          group_key: request.group_key,
+          parent_id: null,
+          total: 0,
+          rows: [],
+          branch_total: 0,
+          next_cursor: null,
+        };
+      }
+      if (request.query.filters.include_workspace_owned === false) {
+        return pendingRestrictedRows();
+      }
+      return {
+        query_fingerprint: "test",
+        group_key: request.group_key,
+        parent_id: null,
+        total: 1,
+        rows: [{ issue: ownerIssue, direct_child_count: 0 }],
+        branch_total: 1,
+        next_cursor: null,
+      };
+    });
+    const tableFacets = vi.fn(async () => ({
+      query_fingerprint: "test",
+      total: 1,
+      facets: [{ kind: "status" as const, values: [{ key: "todo", count: 1 }] }],
+    }));
+    setApiInstance({
+      listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
+      listIssueTableRows: tableRows,
+      listIssueTableFacets: tableFacets,
+      listMembers: async () => [
+        {
+          user_id: "user-1",
+          role: "owner",
+        },
+      ],
+      listProjects: vi.fn(() => never()),
+      getAgentTaskSnapshot: vi.fn(() => never()),
+      getWorkspaceWorkingAgents: vi.fn(() => Promise.resolve([])),
+      getChildIssueProgress: vi.fn(() => never()),
+    } as unknown as ApiClient);
+
+    const store = getIssueSurfaceViewStore("project:owner-visibility");
+    store.getState().setViewMode("list");
+    store.getState().setShowWorkspaceOwnedItems(true);
+    const { result } = renderHook(
+      () =>
+        useIssueSurfaceController({
+          scope: { type: "project", projectId: "p1" },
+          modes: ["list"],
+        }),
+      { wrapper: makeWrapper(qc, "project:owner-visibility") },
+    );
+
+    await waitFor(() => expect(result.current.issues).toHaveLength(1));
+    act(() => store.getState().setShowWorkspaceOwnedItems(false));
+
+    expect(result.current.includeWorkspaceOwned).toBe(false);
+    expect(result.current.issues).toEqual([]);
   });
 
   // MUL-5477. `tableQuerySpec` is the identity every downstream consumer keys
@@ -347,6 +436,7 @@ describe("useIssueSurfaceController", () => {
       listIssues: legacyListIssues,
       listIssueTableRows: tableRows,
       listIssueTableFacets: tableFacets,
+      listMembers: async () => [],
       listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       getAgentTaskSnapshot,
@@ -637,6 +727,7 @@ describe("useIssueSurfaceController", () => {
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
       listIssues,
       listIssueTableFacets,
+      listMembers: async () => [],
       listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
@@ -726,6 +817,7 @@ describe("useIssueSurfaceController", () => {
       listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
         listIssues,
         ...tableMethods,
+        listMembers: async () => [],
         listIssueTableFacets,
         listGroupedIssues: vi.fn(() => never()),
         listProjects: vi.fn(() => never()),
@@ -788,6 +880,7 @@ describe("useIssueSurfaceController", () => {
         listIssueStatuses: async () => ({ statuses: [], categories: [], total: 0 }),
         listIssues,
         ...tableMethods,
+        listMembers: async () => [],
         listIssueTableGroups,
         listGroupedIssues: vi.fn(() => never()),
         listProjects: vi.fn(() => Promise.resolve({ projects: [], total: 0 })),
@@ -833,6 +926,7 @@ describe("useIssueSurfaceController", () => {
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
+      listMembers: async () => [],
       listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
@@ -887,6 +981,7 @@ describe("useIssueSurfaceController", () => {
       listIssues,
       listIssueTableRows,
       listIssueTableFacets: vi.fn(() => never()),
+      listMembers: async () => [],
       listGroupedIssues: vi.fn(() => never()),
       listProjects: vi.fn(() => never()),
       listProperties: vi.fn(() => Promise.resolve({ properties: [] })),
@@ -951,6 +1046,7 @@ describe("useIssueSurfaceController", () => {
       ),
       getWorkspaceWorkingAgents,
       getChildIssueProgress: vi.fn(() => never()),
+      listMembers: async () => [],
     } as unknown as ApiClient);
 
     const { result } = renderHook(
@@ -970,7 +1066,12 @@ describe("useIssueSurfaceController", () => {
     );
     expect(result.current.tableQuerySpec.filters.assignees).toBeUndefined();
     expect(result.current.tableQuerySpec.filters.working_only).toBeUndefined();
-    expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith("issue", undefined, undefined);
+    expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith(
+      "issue",
+      undefined,
+      undefined,
+      expect.any(Boolean),
+    );
     expect(listIssues).not.toHaveBeenCalled();
   });
 
@@ -992,6 +1093,7 @@ describe("useIssueSurfaceController", () => {
       getAgentTaskSnapshot: vi.fn(() => Promise.resolve([])),
       getWorkspaceWorkingAgents,
       getChildIssueProgress: vi.fn(() => never()),
+      listMembers: async () => [],
     } as unknown as ApiClient);
 
     const { result } = renderHook(
@@ -1008,6 +1110,7 @@ describe("useIssueSurfaceController", () => {
         "issue",
         "assigned",
         undefined,
+        expect.any(Boolean),
       ),
     );
     expect(result.current.tableQuerySpec.filters.working_issue_ids).toEqual([]);
@@ -1044,7 +1147,12 @@ describe("useIssueSurfaceController", () => {
       );
       expect(result.current.tableQuerySpec.filters.assignees).toBeUndefined();
       expect(result.current.tableQuerySpec.filters.working_only).toBeUndefined();
-      expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith("issue", undefined, undefined);
+      expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith(
+        "issue",
+        undefined,
+        undefined,
+        expect.any(Boolean),
+      );
       expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
     },
   );
@@ -1114,6 +1222,7 @@ describe("useIssueSurfaceController", () => {
       { wrapper: makeWrapper(qc, "project:p1") },
     );
 
+    await waitFor(() => expect(result.current.visibilityReady).toBe(true));
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isEmpty).toBe(false);
     expect(listIssues).not.toHaveBeenCalled();
@@ -1516,7 +1625,12 @@ describe("useIssueSurfaceController", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     await waitFor(() => expect(result.current.workingAgents).toEqual([]));
-    expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith("issue", undefined, undefined);
+    expect(getWorkspaceWorkingAgents).toHaveBeenCalledWith(
+      "issue",
+      undefined,
+      undefined,
+      expect.any(Boolean),
+    );
     expect(getAgentTaskSnapshot).not.toHaveBeenCalled();
   });
 
@@ -1697,6 +1811,7 @@ describe("useIssueSurfaceController", () => {
         "issue",
         undefined,
         undefined,
+        expect.any(Boolean),
       ),
     );
 
