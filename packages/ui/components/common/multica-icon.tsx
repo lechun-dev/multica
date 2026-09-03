@@ -32,6 +32,8 @@ const borderedSizes = {
  * 2026-09-02 coder(lq): Replaced the legacy asterisk with the supplied blue
  * background and rounded cream M mark. Keeping the component/API stable lets
  * Web and Electron adopt the brand without touching their call sites.
+ * 2026-09-03 coder(lq): Scale the mark to 90% of the canvas so it has the
+ * same visual weight as neighboring desktop and mobile application icons.
  */
 export function MulticaIcon({
   className,
@@ -115,6 +117,7 @@ function BrandMark() {
       <rect x="19.5" y="19.5" width="561" height="561" rx="146.5" fill="none" stroke="#ffffff" strokeOpacity=".16" strokeWidth="3" />
       <path
         d="M156 416V200c0-13 10-24 23-24 8 0 15 4 20 10l101 172 101-172c5-6 12-10 20-10 13 0 23 11 23 24v216"
+        transform="translate(30 30) scale(0.9)"
         fill="none"
         stroke="url(#multica-icon-mark)"
         strokeWidth="54"

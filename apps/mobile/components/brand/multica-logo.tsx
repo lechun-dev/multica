@@ -1,7 +1,7 @@
 /**
  * Shared Multica brand mark used by the native client.
  */
-import Svg, { Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
+import Svg, { Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 
 interface MulticaLogoProps {
   size?: number;
@@ -25,14 +25,17 @@ export function MulticaLogo({ size = 48 }: MulticaLogoProps) {
       </Defs>
       <Rect x="2.4" y="2.4" width="75.2" height="75.2" rx="19" fill="url(#multica-mobile-background)" />
       <Rect x="2.6" y="2.6" width="74.8" height="74.8" rx="18.8" fill="none" stroke="#ffffff" strokeOpacity=".16" strokeWidth=".4" />
-      <Path
-        d="M20.8 55.5V26.7c0-1.7 1.3-3.2 3.1-3.2 1 0 2 .5 2.6 1.3L40 46.4l13.5-21.6c.7-.8 1.6-1.3 2.7-1.3 1.7 0 3.1 1.5 3.1 3.2v28.8"
-        fill="none"
-        stroke="url(#multica-mobile-mark)"
-        strokeWidth="7.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      {/* 2026-09-03 coder(lq): Keep the mobile mark at 90% scale to match Web/Electron safe-area spacing. */}
+      <G transform="translate(4 4) scale(0.9)">
+        <Path
+          d="M20.8 55.5V26.7c0-1.7 1.3-3.2 3.1-3.2 1 0 2 .5 2.6 1.3L40 46.4l13.5-21.6c.7-.8 1.6-1.3 2.7-1.3 1.7 0 3.1 1.5 3.1 3.2v28.8"
+          fill="none"
+          stroke="url(#multica-mobile-mark)"
+          strokeWidth="7.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </G>
     </Svg>
   );
 }
