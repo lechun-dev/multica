@@ -31,6 +31,11 @@ const (
 	// delegatedFailureRecoverySweepInterval keeps the low-probability durable
 	// recovery scan off the latency-sensitive runtime liveness path.
 	delegatedFailureRecoverySweepInterval = 5 * time.Minute
+	// taskRetryPolicySweepInterval evaluates workspace-configured retry rules
+	// independently from the 30-second runtime liveness sweep.
+	taskRetryPolicySweepInterval = time.Hour
+	// taskRetryPolicySweepBatchSize bounds one policy pass over terminal work.
+	taskRetryPolicySweepBatchSize = 500
 	// staleThresholdSeconds marks runtimes offline if no heartbeat for this
 	// long. The heartbeat timing derivation lives with the shared service
 	// constant so every task release path uses the same eligibility window.
@@ -173,6 +178,27 @@ func runDelegatedFailureRecoverySweeper(ctx context.Context, taskSvc *service.Ta
 	runPeriodicSweep(ctx, delegatedFailureRecoverySweepInterval, func() {
 		sweepPendingDelegatedFailureRecoveries(ctx, taskSvc)
 	})
+}
+
+func runTaskRetryPolicySweeper(ctx context.Context, taskSvc *service.TaskService) {
+	// 2026-09-03 coder(lq): Run once at startup so operators do not have to
+	// wait an hour after enabling a policy, then continue on the hourly cadence.
+	sweep := func() {
+		result, err := taskSvc.RetryFailedTasksByPolicy(ctx, taskRetryPolicySweepBatchSize)
+		if err != nil {
+			slog.Warn("task retry policy sweeper: scan failed", "error", err)
+			return
+		}
+		if result.Scanned > 0 {
+			slog.Info("task retry policy sweeper: scan complete",
+				"scanned", result.Scanned,
+				"retried", result.Retried,
+				"skipped", result.Skipped,
+			)
+		}
+	}
+	sweep()
+	runPeriodicSweep(ctx, taskRetryPolicySweepInterval, sweep)
 }
 
 func runRuntimeGCSweeper(ctx context.Context, txStarter runtimeGCTxStarter, queries *db.Queries, metrics *obsmetrics.BusinessMetrics, publisher runtimeGCEventPublisher) {
