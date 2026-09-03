@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import { useConfigStore } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects";
@@ -35,9 +34,6 @@ function projectMembersKey(workspaceId: string, projectId: string) {
 export function ProjectPermissionsTab() {
   const { t } = useT("settings");
   const workspaceId = useWorkspaceId();
-  // 2026-09-01 coder(lq): The unified report is available only when the
-  // backend advertises the project-permission overlay capability.
-  const unifiedReportApi = useConfigStore((state) => state.projectPermissionsEnabled);
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((state) => state.user);
   const [savingCell, setSavingCell] = useState<string | null>(null);
@@ -90,17 +86,6 @@ export function ProjectPermissionsTab() {
     [members],
   );
   const isWorkspaceOwner = workspaceMemberByUser.get(currentUser?.id ?? "")?.role === "owner";
-  // 2026-08-31 coder(lq): The unified report is additive; older self-hosted
-  // deployments continue to use the project/member matrix while migrations
-  // are rolled out.
-  const reportQuery = useQuery({
-    queryKey: ["project-permission-report", workspaceId, projectFilter],
-    queryFn: () => api.listProjectPermissionReport({
-      project_id: projectFilter === ALL_FILTER ? undefined : projectFilter,
-      limit: 200,
-    }),
-    enabled: !!workspaceId && (isWorkspaceOwner || projectFilter !== ALL_FILTER),
-  });
   const projectMembersByProject = useMemo(
     () => new Map(projects.map((project, index) => [project.id, projectMemberQueries[index]?.data?.members ?? []])),
     [projectMemberQueries, projects],
@@ -278,53 +263,9 @@ export function ProjectPermissionsTab() {
             </div>}
             </>
           )}
-          {unifiedReportApi && (isWorkspaceOwner || projectFilter !== ALL_FILTER) && (
-            <div className="mt-6 border-t border-surface-border pt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-body font-medium">{t(($) => $.permission_report.permission_column)}</h3>
-                {reportQuery.data && <span className="text-caption text-muted-foreground">{reportQuery.data.total}</span>}
-              </div>
-              {reportQuery.isLoading ? (
-                <p className="py-4 text-caption text-muted-foreground">{t(($) => $.permission_report.loading)}</p>
-              ) : reportQuery.isError ? (
-                <p className="py-4 text-caption text-destructive">{t(($) => $.permission_report.load_failed)}</p>
-              ) : !reportQuery.data || reportQuery.data.rows.length === 0 ? (
-                <p className="py-4 text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
-              ) : (
-                <div className="max-h-80 overflow-auto rounded-lg border border-surface-border">
-                  <table className="w-full min-w-[60rem] text-body">
-                    <thead>
-                      <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
-                        <th className="p-2">{t(($) => $.permission_report.project_column)}</th>
-                        <th className="p-2">任务</th>
-                        <th className="p-2">{t(($) => $.permission_report.person_column)}</th>
-                        <th className="p-2">{t(($) => $.permission_report.project_role_column)}</th>
-                        <th className="p-2">{t(($) => $.permission_report.permission_column)}</th>
-                        <th className="p-2">{t(($) => $.permission_report.source_column)}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reportQuery.data.rows.map((row, index) => {
-                        const subjectLabel = row.user_id
-                          ? userLabel(row.user_id)
-                          : `${row.subject_type}${row.subject_id ? `: ${row.subject_id}` : ""}`;
-                        return (
-                          <tr key={`${row.scope}-${row.project_id}-${row.issue_id ?? ""}-${row.subject_type}-${row.subject_id ?? ""}-${row.permission}-${index}`} className="border-b border-surface-border/60 last:border-0">
-                            <td className="p-2">{row.project_title || row.project_id}</td>
-                            <td className="max-w-56 truncate p-2">{row.issue_title || (row.scope === "issue" ? row.issue_id : "—")}</td>
-                            <td className="p-2">{subjectLabel}</td>
-                            <td className="p-2">{row.project_role ? roleLabel(row.project_role) : "—"}</td>
-                            <td className="p-2">{row.permission}</td>
-                            <td className="p-2">{row.inherited_from_project ? `${row.source} (继承)` : row.source}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
+          {/* 2026-09-03 coder(lq): Keep this page focused on the original
+              people-by-project matrix; detailed effective-permission rows are
+              available through the backend/API and are not rendered here. */}
           <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
             <span>{t(($) => $.permission_report.people_projects)}</span>
             <span>·</span>
