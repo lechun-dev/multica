@@ -196,7 +196,8 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
     ? tabFromUrl === "billing" && !billingEnabled
       ? "workspace"
       : (tabFromUrl === "project-permissions" ||
-          tabFromUrl === "project-permission-roles") &&
+          tabFromUrl === "project-permission-roles" ||
+          tabFromUrl === "project-authorization-organizations") &&
         !projectPermissionsEnabled
       ? "workspace"
       : LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl

@@ -437,7 +437,8 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 	// filter it with the same project visibility boundary as issues and task
 	// history. Projectless legacy rows remain visible for native compatibility.
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r))
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r), includeWorkspaceOwned)
 		if scopeErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 			return

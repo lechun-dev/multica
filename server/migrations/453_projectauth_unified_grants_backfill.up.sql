@@ -7,6 +7,9 @@ SELECT p.workspace_id, pm.project_id, 'user', pm.user_id::text,
 FROM project_members pm
 JOIN project p ON p.id = pm.project_id
 LEFT JOIN project_permission_roles role_def ON role_def.id = pm.custom_role_id
+    -- 2026-09-04 coder(lq): Keep custom-role backfill inside the project's
+    -- workspace boundary even if legacy data contains a stale role reference.
+    AND role_def.workspace_id = p.workspace_id
 ON CONFLICT DO NOTHING;
 
 INSERT INTO projectauth_access_grants

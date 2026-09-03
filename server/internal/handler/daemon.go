@@ -4928,6 +4928,70 @@ const familyActiveRunCap = 20
 // callers parse positionally.
 const HeaderActiveRunsTruncated = "X-Active-Runs-Truncated"
 
+// 2026-09-03 coder(lq): Family coordination reads span several issues, so
+// they cannot rely on loadIssueForUser's single-issue check. Keep the same
+// project visibility predicate in SQL before applying the response cap; a
+// post-query filter could hide visible siblings behind unauthorized rows.
+func (h *Handler) listActiveTasksByIssueFamilyWithProjectPermission(
+	ctx context.Context,
+	workspaceID, rootIssueID, userID pgtype.UUID,
+	rowLimit int32,
+	includeWorkspaceOwned bool,
+) ([]db.ListActiveTasksByIssueFamilyRow, error) {
+	query := fmt.Sprintf(`
+SELECT
+    atq.id AS task_id,
+    atq.agent_id,
+    atq.issue_id,
+    atq.status,
+    atq.created_at,
+    atq.started_at,
+    w.issue_prefix,
+    i.number AS issue_number,
+    i.title AS issue_title
+FROM agent_task_queue atq
+JOIN issue i ON i.id = atq.issue_id
+JOIN workspace w ON w.id = i.workspace_id
+WHERE i.workspace_id = $1
+  AND (i.id = $2 OR i.parent_issue_id = $2)
+  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND %s
+ORDER BY
+    CASE atq.status
+        WHEN 'running' THEN 0
+        WHEN 'dispatched' THEN 1
+        WHEN 'waiting_local_directory' THEN 2
+        ELSE 3
+    END,
+    atq.created_at DESC
+LIMIT $3`, projectVisibleTaskPredicateWithWorkspaceScope("atq", "$1", "$4", includeWorkspaceOwned))
+
+	rows, err := h.DB.Query(ctx, query, workspaceID, rootIssueID, rowLimit, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]db.ListActiveTasksByIssueFamilyRow, 0)
+	for rows.Next() {
+		var row db.ListActiveTasksByIssueFamilyRow
+		if err := rows.Scan(
+			&row.TaskID,
+			&row.AgentID,
+			&row.IssueID,
+			&row.Status,
+			&row.CreatedAt,
+			&row.StartedAt,
+			&row.IssuePrefix,
+			&row.IssueNumber,
+			&row.IssueTitle,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
 // ActiveRunSummary is one in-flight run as the coordination read reports it:
 // which issue, which agent, what state, since when, and the task id to follow
 // up with `multica issue run-messages`.
@@ -5012,11 +5076,20 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		// One row beyond the cap, so a full page can be told apart from a
 		// truncated one without a second count query.
-		rows, err := h.Queries.ListActiveTasksByIssueFamily(r.Context(), db.ListActiveTasksByIssueFamilyParams{
-			WorkspaceID: issue.WorkspaceID,
-			RootIssueID: root,
-			RowLimit:    familyActiveRunCap + 1,
-		})
+		var rows []db.ListActiveTasksByIssueFamilyRow
+		var err error
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			rows, err = h.listActiveTasksByIssueFamilyWithProjectPermission(
+				r.Context(), issue.WorkspaceID, root, parseUUID(requestUserID(r)),
+				familyActiveRunCap+1, includeWorkspaceOwnedFromRequest(r),
+			)
+		} else {
+			rows, err = h.Queries.ListActiveTasksByIssueFamily(r.Context(), db.ListActiveTasksByIssueFamilyParams{
+				WorkspaceID: issue.WorkspaceID,
+				RootIssueID: root,
+				RowLimit:    familyActiveRunCap + 1,
+			})
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list tasks")
 			return

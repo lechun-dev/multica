@@ -128,7 +128,7 @@ func TestEnabledAuthorizationRejectsLegacyOnlyRepository(t *testing.T) {
 	}
 }
 
-func TestTaskGrantRequiresProjectViewAndStaysTaskScoped(t *testing.T) {
+func TestTaskGrantCanAuthorizeOneTaskWithoutProjectView(t *testing.T) {
 	repo := &fakeGrantRepo{fakeRepo: fakeRepo{
 		workspace: string(WorkspaceMember), projectWorkspace: "ws-1",
 		projectErr:   errors.New("no project membership"),
@@ -136,8 +136,11 @@ func TestTaskGrantRequiresProjectViewAndStaysTaskScoped(t *testing.T) {
 	}, grants: []AccessGrant{{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: Edit}}}
 	service := New(repo, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
-	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", Edit); err == nil {
-		t.Fatalf("task grant bypassed project view: %v", err)
+	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", Edit); err != nil {
+		t.Fatalf("task grant should authorize the explicitly shared task: %v", err)
+	}
+	if err := service.CheckIssue(context.Background(), subject, "i-2", "p-1", Edit); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("task grant leaked to another task: %v", err)
 	}
 
 	repo.project = string(ProjectViewer)
@@ -148,6 +151,75 @@ func TestTaskGrantRequiresProjectViewAndStaysTaskScoped(t *testing.T) {
 	}
 	if err := service.CheckIssue(context.Background(), subject, "i-2", "p-1", Edit); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("task grant leaked to another task: %v", err)
+	}
+}
+
+func TestTaskGrantCannotAuthorizeProjectAdministration(t *testing.T) {
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{
+		workspace: string(WorkspaceMember), projectWorkspace: "ws-1", issueProject: "p-1",
+	}, grants: []AccessGrant{{
+		ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: MemberManage,
+	}}}
+	service := New(repo, true)
+	err := service.CheckIssue(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "i-1", "p-1", MemberManage)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("task grant should not authorize project administration: %v", err)
+	}
+}
+
+func TestTaskDirectGrantSupportsCommentAndArchiveOnlyOnThatTask(t *testing.T) {
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{
+		workspace: string(WorkspaceMember), projectWorkspace: "ws-1", issueProject: "p-1",
+	}, grants: []AccessGrant{
+		{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: View},
+		{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: IssueComment},
+		{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: IssueArchive},
+	}}
+	service := New(repo, true)
+	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
+	for _, permission := range []Permission{IssueComment, IssueArchive} {
+		if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", permission); err != nil {
+			t.Fatalf("task direct grant for %s = %v", permission, err)
+		}
+		if err := service.CheckIssue(context.Background(), subject, "i-2", "p-1", permission); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("task direct grant for %s leaked to sibling: %v", permission, err)
+		}
+	}
+}
+
+func TestGrantAccessAllowsTaskCommentAndArchiveButRejectsProjectAdministration(t *testing.T) {
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1", issueProject: "p-1"}}
+	service := New(repo, true)
+	actor := Subject{UserID: "owner-1", WorkspaceID: "ws-1"}
+	for _, permission := range []Permission{IssueComment, IssueArchive} {
+		err := service.GrantAccess(context.Background(), actor, AccessGrant{
+			ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-2", Permission: permission,
+		})
+		if err != nil {
+			t.Fatalf("GrantAccess(%s) = %v", permission, err)
+		}
+	}
+	for _, permission := range []Permission{IssueCreate, MemberManage, SettingsManage} {
+		if err := service.GrantAccess(context.Background(), actor, AccessGrant{
+			ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-2", Permission: permission,
+		}); !errors.Is(err, ErrInvalidIssuePermission) {
+			t.Fatalf("task %s grant = %v, want %v", permission, err, ErrInvalidIssuePermission)
+		}
+	}
+}
+
+func TestTaskDirectGrantCannotCreateAnotherTask(t *testing.T) {
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{
+		workspace: string(WorkspaceMember), projectWorkspace: "ws-1", issueProject: "p-1",
+	}, grants: []AccessGrant{
+		{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: View},
+		// Simulate a legacy/manual row that was written before task grants
+		// rejected project.issue.create. CheckIssue must still fail closed.
+		{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: IssueCreate},
+	}}
+	service := New(repo, true)
+	if err := service.CheckIssue(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "i-1", "p-1", IssueCreate); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("task direct issue.create grant = %v, want %v", err, ErrForbidden)
 	}
 }
 
@@ -253,6 +325,55 @@ func TestGrantAccessRejectsRoleToRoleGrant(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidRole) {
 		t.Fatalf("role-to-role grant error = %v, want %v", err, ErrInvalidRole)
+	}
+}
+
+func TestRevokeAccessValidatesGrantShapeBeforeDelete(t *testing.T) {
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}}
+	service := New(repo, true)
+	actor := Subject{UserID: "owner-1", WorkspaceID: "ws-1"}
+	cases := []struct {
+		name  string
+		grant AccessGrant
+		want  error
+	}{
+		{
+			name:  "unknown subject type",
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectType("team"), SubjectID: "team-1", Permission: View},
+			want:  ErrInvalidRole,
+		},
+		{
+			name:  "empty subject id",
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, Permission: View},
+			want:  ErrInvalidSubject,
+		},
+		{
+			name:  "unknown permission",
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Permission: Permission("project.unknown")},
+			want:  ErrInvalidIssuePermission,
+		},
+		{
+			name:  "role and permission together",
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: ProjectMember, Permission: View},
+			want:  ErrInvalidRole,
+		},
+		{
+			name:  "role subject with role grant",
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectRole, SubjectID: string(ProjectMember), Role: ProjectViewer},
+			want:  ErrInvalidRole,
+		},
+		{
+			name:  "unknown role subject",
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectRole, SubjectID: "not-a-role", Permission: View},
+			want:  ErrInvalidSubject,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := service.RevokeAccess(context.Background(), actor, tc.grant); !errors.Is(err, tc.want) {
+				t.Fatalf("RevokeAccess error = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 

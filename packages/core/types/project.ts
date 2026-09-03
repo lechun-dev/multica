@@ -102,6 +102,21 @@ export type ProjectPermissionReportPermission =
   | "project.member.manage"
   | "project.settings.manage";
 
+// 2026-09-03 coder(lq): Keep the canonical permission vocabulary in the
+// shared type package so project creation, project dialogs, and role settings
+// cannot silently drift when a new task action is introduced.
+export const PROJECT_PERMISSION_KEYS: ProjectPermissionReportPermission[] = [
+  "project.view",
+  "project.edit",
+  "project.issue.create",
+  "project.issue.comment",
+  "project.issue.manage",
+  "project.issue.archive",
+  "project.agent.use",
+  "project.member.manage",
+  "project.settings.manage",
+];
+
 export interface ProjectPermissionReportRow {
   scope: "project" | "issue";
   project_id: string;
@@ -173,9 +188,20 @@ export interface ProjectAuthorizationOrganization {
   status: string;
 }
 
+export interface ProjectAuthorizationOrganizationMember {
+  organization_id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  avatar_url?: string;
+  workspace_role: "owner" | "admin" | "member" | string;
+}
+
 export interface ProjectAuthorizationOrganizationsResponse {
   organizations: ProjectAuthorizationOrganization[];
+  members: ProjectAuthorizationOrganizationMember[];
   total: number;
+  member_total: number;
 }
 
 export type ProjectAuthorizationImportKind = "organizations" | "members";

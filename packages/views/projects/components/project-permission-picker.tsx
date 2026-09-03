@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Check, Search, ShieldCheck, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
+import { PROJECT_PERMISSION_KEYS } from "@multica/core/types";
 import type { MemberWithUser, ProjectPermissionRole } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -32,15 +33,18 @@ const BUILTIN_PROJECT_ROLES: Array<{ key: string; labelKey: "role_owner" | "role
   { key: "viewer", labelKey: "role_viewer" },
 ];
 
-const PROJECT_PERMISSIONS = [
-  { key: "project.view", label: "View project" },
-  { key: "project.edit", label: "Edit project" },
-  { key: "project.issue.create", label: "Create issues" },
-  { key: "project.issue.manage", label: "Manage issues" },
-  { key: "project.agent.use", label: "Use agents" },
-  { key: "project.member.manage", label: "Manage members" },
-  { key: "project.settings.manage", label: "Manage project settings" },
-] as const;
+const PROJECT_PERMISSION_LABELS: Record<string, string> = {
+  "project.view": "View project",
+  "project.edit": "Edit project",
+  "project.issue.create": "Create issues",
+  "project.issue.comment": "Comment on issues",
+  "project.issue.manage": "Manage issues",
+  "project.issue.archive": "Archive issues",
+  "project.agent.use": "Use agents",
+  "project.member.manage": "Manage members",
+  "project.settings.manage": "Manage project settings",
+};
+const PROJECT_PERMISSIONS = PROJECT_PERMISSION_KEYS.map((key) => ({ key, label: PROJECT_PERMISSION_LABELS[key] ?? key }));
 
 type ProjectPermissionPickerProps = {
   members: MemberWithUser[];
@@ -72,6 +76,16 @@ export function ProjectPermissionPicker({
     queryFn: () => api.listProjectPermissionRoles(),
     enabled: open && !!workspaceId,
   });
+  const organizationsQuery = useQuery({
+    queryKey: ["project-permission-organizations", workspaceId],
+    queryFn: () => api.listProjectAuthorizationOrganizations(workspaceId),
+    enabled: open && !!workspaceId,
+    staleTime: 60_000,
+  });
+  const organizationById = useMemo(
+    () => new Map((organizationsQuery.data?.organizations ?? []).map((organization) => [organization.id, organization])),
+    [organizationsQuery.data?.organizations],
+  );
   const roles = useMemo(() => {
     const persisted = rolesQuery.data?.roles ?? [];
     const persistedKeys = new Set(persisted.map((role) => role.key));
@@ -201,7 +215,7 @@ export function ProjectPermissionPicker({
               const name = selection.subjectType === "everyone"
                 ? t(($) => $.permissions.everyone)
                 : selection.subjectType === "organization"
-                  ? t(($) => $.permissions.organization_prefix, { name: selection.subjectId })
+                  ? t(($) => $.permissions.organization_prefix, { name: organizationById.get(selection.subjectId || "")?.name || selection.subjectId })
                   : selection.subjectType === "role"
                     ? t(($) => $.permissions.role_prefix, { name: selection.subjectId })
                     : member?.name || member?.email || selection.subjectId;

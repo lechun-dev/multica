@@ -188,6 +188,7 @@ export type {
   ProjectAccessGrant,
   ProjectAccessGrantsResponse,
   ProjectAuthorizationOrganization,
+  ProjectAuthorizationOrganizationMember,
   ProjectAuthorizationOrganizationsResponse,
   ProjectAuthorizationImportKind,
   ProjectAuthorizationOrganizationImportRow,
@@ -206,6 +207,7 @@ export type {
   UpdateProjectResourceRequest,
   ListProjectResourcesResponse,
 } from "./project";
+export { PROJECT_PERMISSION_KEYS } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,

@@ -186,7 +186,7 @@ export function ProjectPermissionRolesTab() {
         <DialogContent>
           <DialogHeader><DialogTitle>{creating ? t(($) => $.permission_roles.create_title) : t(($) => $.permission_roles.edit_title)}</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            {creating ? <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.key)}</label><Input value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value })} placeholder="reviewer" /></div> : null}
+            {creating ? <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.key)}</label><Input value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value })} placeholder={t(($) => $.permission_roles.key_placeholder)} /></div> : null}
             <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.name)}</label><Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></div>
             <div className="space-y-1"><label className="text-caption font-medium">{t(($) => $.permission_roles.description_field)}</label><Textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></div>
             <div className="space-y-2"><div className="text-caption font-medium">{t(($) => $.permission_roles.permissions)}</div>{PERMISSIONS.map((permission) => <label key={permission} className="flex items-center gap-2 text-body"><Checkbox checked={draft.permissions.includes(permission)} onCheckedChange={(checked) => togglePermission(permission, checked === true)} />{permissionLabel(permission)}</label>)}</div>

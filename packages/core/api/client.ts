@@ -3709,7 +3709,7 @@ export class ApiClient {
 
   async listProjectAuthorizationOrganizations(workspaceId: string): Promise<ProjectAuthorizationOrganizationsResponse> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations`);
-    return parseWithFallback(raw, ProjectAuthorizationOrganizationsResponseSchema, { organizations: [], total: 0 }, {
+    return parseWithFallback(raw, ProjectAuthorizationOrganizationsResponseSchema, { organizations: [], members: [], total: 0, member_total: 0 }, {
       endpoint: "GET /api/workspaces/:id/projectauth/organizations",
     });
   }

@@ -3414,9 +3414,20 @@ export const ProjectAuthorizationOrganizationSchema = z.object({
   status: z.string().default("active"),
 }).loose();
 
+export const ProjectAuthorizationOrganizationMemberSchema = z.object({
+  organization_id: z.string(),
+  user_id: z.string(),
+  name: z.string().default(""),
+  email: z.string().default(""),
+  avatar_url: z.string().optional(),
+  workspace_role: z.string().default("member"),
+}).loose();
+
 export const ProjectAuthorizationOrganizationsResponseSchema = z.object({
   organizations: z.array(ProjectAuthorizationOrganizationSchema).default([]),
+  members: z.array(ProjectAuthorizationOrganizationMemberSchema).default([]),
   total: z.number().default(0),
+  member_total: z.number().default(0),
 }).loose();
 
 export type ProjectAuthorizationOrganizationsResponse = z.infer<typeof ProjectAuthorizationOrganizationsResponseSchema>;

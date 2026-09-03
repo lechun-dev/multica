@@ -110,6 +110,13 @@ type OrganizationDirectoryRepository interface {
 	ListOrganizations(ctx context.Context, workspaceID string) ([]Organization, error)
 }
 
+// OrganizationMemberDirectoryRepository is optional so adapters which only
+// support the original organization picker remain source-compatible.
+// 2026-09-03 coder(lq): Keep employee directory reads additive and isolated.
+type OrganizationMemberDirectoryRepository interface {
+	ListOrganizationMembers(ctx context.Context, workspaceID string) ([]OrganizationMember, error)
+}
+
 type RoleDefinition struct {
 	ID          string       `json:"id"`
 	WorkspaceID string       `json:"workspace_id"`

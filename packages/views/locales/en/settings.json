@@ -333,7 +333,7 @@
       "billing": "Billing",
       "project_permissions": "Project Permissions",
       "project_permission_roles": "Permission Roles",
-      "project_authorization_organizations": "Directory Import"
+      "project_authorization_organizations": "Organization Directory"
     }
   },
   "plugins": {
@@ -1263,6 +1263,7 @@
     "workspace_role_column": "Workspace role",
     "project_role_column": "Project role",
     "permission_column": "Effective permission",
+    "effective_permissions": "Effective permissions",
     "source_column": "Granted by",
     "results_summary": "Showing {{from}}–{{to}} of {{total}}",
     "page": "Page {{page}} of {{pages}}",
@@ -1275,6 +1276,8 @@
     "save_failed": "Could not save the project role",
     "no_access": "No access",
     "inherited_owner": "Inherited from workspace owner",
+    "inherited_grant": "Inherited",
+    "inherited_sources": { "organization": "Department", "everyone": "Everyone", "role": "Project role", "workspace_role": "Workspace role", "direct": "Person" },
     "read_only_hint": "Only workspace owners or project owners can change roles",
     "roles": { "owner": "Owner", "admin": "Admin", "manager": "Project manager", "member": "Member", "viewer": "Viewer" },
     "permissions": { "project.view": "View project", "project.edit": "Edit project", "project.issue.create": "Create issues", "project.issue.comment": "Comment on issues", "project.issue.manage": "Manage issues", "project.issue.archive": "Archive issues", "project.agent.use": "Use agents", "project.member.manage": "Manage members", "project.settings.manage": "Manage project settings" },
@@ -1292,6 +1295,7 @@
     "create_title": "Create permission role",
     "edit_title": "Edit permission role",
     "key": "Key",
+    "key_placeholder": "e.g. reviewer",
     "name": "Name",
     "description_field": "Description",
     "permissions": "Permissions",
@@ -1304,8 +1308,19 @@
     "delete_failed": "Could not delete the role. It may still be in use."
   },
   "project_authorization_organizations": {
-    "title": "Directory Import",
-    "description": "Upload department and people directories for organization-based project authorization. People are matched to existing workspace members by user UUID or email.",
+    "title": "Organization Directory",
+    "description": "Browse departments and people, then maintain the directory used for project authorization through DingTalk sync or CSV upload.",
+    "directory_title": "Departments and people",
+    "directory_loading": "Loading organization directory…",
+    "directory_failed": "The organization directory could not be loaded. Try again later.",
+    "directory_empty": "No organization data yet. Sync or upload departments and people first.",
+    "all_people": "All people",
+    "search_people": "Search name or email",
+    "people_count": "{{count}} people",
+    "no_people": "There are no people in this department.",
+    "expand": "Expand department",
+    "collapse": "Collapse department",
+    "import_title": "Sync and upload",
     "kind": "Import type",
     "organizations": "Departments",
     "members": "People",

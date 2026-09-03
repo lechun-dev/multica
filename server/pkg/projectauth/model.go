@@ -42,6 +42,20 @@ type Organization struct {
 	Status      string `json:"status"`
 }
 
+// OrganizationMember is a provider-neutral directory membership used by the
+// organization browser. Authorization still evaluates the normalized
+// projectauth_organization_members relation and never copies department grants
+// into per-user grants.
+// 2026-09-03 coder(lq): Expose synchronized employees without leaking OA IDs.
+type OrganizationMember struct {
+	OrganizationID string        `json:"organization_id"`
+	UserID         string        `json:"user_id"`
+	Name           string        `json:"name"`
+	Email          string        `json:"email"`
+	AvatarURL      string        `json:"avatar_url,omitempty"`
+	WorkspaceRole  WorkspaceRole `json:"workspace_role"`
+}
+
 // 2026-08-31 coder(lq): Grant subjects are independent from external login
 // providers. Adapters resolve external identities to the native user ID first.
 type SubjectType string
@@ -88,8 +102,8 @@ const (
 	IssueCreate Permission = "project.issue.create"
 	// 2026-09-02 coder(lq): Keep task conversation writes separate from
 	// project metadata editing so members can comment without broad edit access.
-	IssueComment   Permission = "project.issue.comment"
-	IssueManage    Permission = "project.issue.manage"
+	IssueComment Permission = "project.issue.comment"
+	IssueManage  Permission = "project.issue.manage"
 	// 2026-09-02 coder(lq): Archive is isolated from issue management so
 	// deployments can grant retention control without granting task edits.
 	IssueArchive   Permission = "project.issue.archive"

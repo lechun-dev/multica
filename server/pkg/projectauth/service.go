@@ -67,6 +67,28 @@ func (s *Service) ListOrganizations(ctx context.Context, subject Subject) ([]Org
 	return organizations, nil
 }
 
+// ListOrganizationMembers returns employees from the local synchronized
+// directory. A missing optional adapter produces an empty list so organization
+// pickers from older deployments remain usable during rolling upgrades.
+// 2026-09-03 coder(lq): Add a read-only employee directory boundary.
+func (s *Service) ListOrganizationMembers(ctx context.Context, subject Subject) ([]OrganizationMember, error) {
+	if s == nil || !s.enabled {
+		return nil, nil
+	}
+	if _, err := s.requireWorkspaceMember(ctx, subject); err != nil {
+		return nil, err
+	}
+	directory, ok := s.repo.(OrganizationMemberDirectoryRepository)
+	if !ok {
+		return []OrganizationMember{}, nil
+	}
+	members, err := directory.ListOrganizationMembers(ctx, subject.WorkspaceID)
+	if err != nil {
+		return nil, authorizationStorageError(err)
+	}
+	return members, nil
+}
+
 // 2026-08-24 coder(lq): Return nil only when the subject may perform the
 // permission; disabled deployments preserve legacy behavior during rollout.
 func (s *Service) Check(ctx context.Context, subject Subject, projectID string, permission Permission) error {
@@ -270,7 +292,10 @@ func (s *Service) resolveIssueBinding(ctx context.Context, subject Subject, issu
 
 func taskGrantPermissionAllowed(permission Permission) bool {
 	switch permission {
-	case View, Edit, IssueCreate, IssueManage, AgentUse:
+	// 2026-09-03 coder(lq): Task grants may cover every task-scoped action,
+	// including comments and archive. Project administration remains scoped to
+	// the project and can never be delegated through one task.
+	case View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse:
 		return true
 	default:
 		return false
@@ -505,41 +530,19 @@ func (s *Service) GrantAccess(ctx context.Context, actor Subject, grant AccessGr
 	} else if err := s.CheckIssue(ctx, actor, grant.IssueID, grant.ProjectID, IssueManage); err != nil {
 		return err
 	}
-	if grant.SubjectType != SubjectUser && grant.SubjectType != SubjectRole && grant.SubjectType != SubjectOrganization && grant.SubjectType != SubjectEveryone {
-		return ErrInvalidRole
-	}
 	if grant.SubjectType == SubjectEveryone {
 		grant.SubjectID = ""
 	}
-	if grant.SubjectType != SubjectEveryone && strings.TrimSpace(grant.SubjectID) == "" {
-		return ErrInvalidSubject
+	if err := validateGrantShape(grant); err != nil {
+		return err
 	}
 	if err := s.validateGrantSubject(ctx, actor.WorkspaceID, grant.SubjectType, grant.SubjectID); err != nil {
 		return err
 	}
-	// 2026-09-01 coder(lq): The unified table stores exactly one grant kind.
-	// Reject both-empty and both-populated payloads here so callers receive a
-	// stable validation error instead of a database CHECK violation.
-	if (grant.Role == "") == (grant.Permission == "") {
-		return ErrInvalidRole
-	}
-	// 2026-09-01 coder(lq): A role subject selects members who already hold
-	// that project role; it may receive one concrete permission, but cannot
-	// grant another role and create an ambiguous role-to-role chain.
-	if grant.SubjectType == SubjectRole && grant.Role != "" {
-		return ErrInvalidRole
-	}
 	if grant.Role != "" {
-		if !validProjectRole(grant.Role) {
-			if rr, roleOK := s.repo.(RoleRepository); !roleOK {
-				return ErrInvalidRole
-			} else if definition, roleErr := rr.GetRoleDefinition(ctx, actor.WorkspaceID, string(grant.Role)); roleErr != nil || definition.Key == "" {
-				return ErrInvalidRole
-			}
+		if err := s.validateRoleReference(ctx, actor.WorkspaceID, grant.Role); err != nil {
+			return err
 		}
-	}
-	if grant.Permission != "" && !validReportPermission(grant.Permission) {
-		return ErrInvalidIssuePermission
 	}
 	if grant.IssueID != "" {
 		if grant.Permission != "" && !taskGrantPermissionAllowed(grant.Permission) {
@@ -580,15 +583,11 @@ func (s *Service) validateGrantSubject(ctx context.Context, workspaceID string, 
 	case SubjectEveryone:
 		return nil
 	case SubjectRole:
-		if !validProjectRole(ProjectRole(subjectID)) {
-			if rr, ok := s.repo.(RoleRepository); !ok {
-				return ErrInvalidSubject
-			} else if definition, err := rr.GetRoleDefinition(ctx, workspaceID, subjectID); err != nil || definition.Key == "" {
-				if err != nil && errors.Is(err, ErrMigrationRequired) {
-					return err
-				}
-				return ErrInvalidSubject
+		if err := s.validateRoleReference(ctx, workspaceID, ProjectRole(subjectID)); err != nil {
+			if errors.Is(err, ErrMigrationRequired) {
+				return err
 			}
+			return ErrInvalidSubject
 		}
 	case SubjectUser, SubjectOrganization:
 		directory, ok := s.repo.(SubjectRepository)
@@ -613,6 +612,53 @@ func (s *Service) validateGrantSubject(ctx context.Context, workspaceID string, 
 		}
 	default:
 		return ErrInvalidSubject
+	}
+	return nil
+}
+
+// 2026-09-04 coder(lq): Keep grant-shape validation shared by grant and
+// revoke paths. Revoke must reject malformed payloads before issuing a
+// delete, otherwise an invalid role/permission is silently reported as a
+// successful no-op and leaves callers with an unsafe API contract.
+func validateGrantShape(grant AccessGrant) error {
+	if grant.SubjectType != SubjectUser && grant.SubjectType != SubjectRole && grant.SubjectType != SubjectOrganization && grant.SubjectType != SubjectEveryone {
+		return ErrInvalidRole
+	}
+	if grant.SubjectType != SubjectEveryone && strings.TrimSpace(grant.SubjectID) == "" {
+		return ErrInvalidSubject
+	}
+	// The unified table stores exactly one grant kind.
+	if (grant.Role == "") == (grant.Permission == "") {
+		return ErrInvalidRole
+	}
+	// A role subject selects members who already hold that project role; it
+	// cannot receive another role and create an ambiguous role-to-role chain.
+	if grant.SubjectType == SubjectRole && grant.Role != "" {
+		return ErrInvalidRole
+	}
+	if grant.Permission != "" && !validReportPermission(grant.Permission) {
+		return ErrInvalidIssuePermission
+	}
+	if grant.IssueID != "" && grant.Permission != "" && !taskGrantPermissionAllowed(grant.Permission) {
+		return ErrInvalidIssuePermission
+	}
+	return nil
+}
+
+func (s *Service) validateRoleReference(ctx context.Context, workspaceID string, role ProjectRole) error {
+	if validProjectRole(role) {
+		return nil
+	}
+	rr, ok := s.repo.(RoleRepository)
+	if !ok {
+		return ErrInvalidRole
+	}
+	definition, err := rr.GetRoleDefinition(ctx, workspaceID, string(role))
+	if err != nil || definition.Key == "" {
+		if err != nil && errors.Is(err, ErrMigrationRequired) {
+			return err
+		}
+		return ErrInvalidRole
 	}
 	return nil
 }
@@ -673,6 +719,9 @@ func (s *Service) RevokeAccess(ctx context.Context, actor Subject, grant AccessG
 	if grant.ProjectID == "" {
 		return ErrNoProjectAccess
 	}
+	if grant.SubjectType == SubjectEveryone {
+		grant.SubjectID = ""
+	}
 	if grant.IssueID == "" {
 		if err := s.Require(ctx, actor, grant.ProjectID, MemberManage); err != nil {
 			return err
@@ -683,6 +732,22 @@ func (s *Service) RevokeAccess(ctx context.Context, actor Subject, grant AccessG
 		}
 		if err := s.CheckIssue(ctx, actor, grant.IssueID, grant.ProjectID, IssueManage); err != nil {
 			return err
+		}
+	}
+	if err := validateGrantShape(grant); err != nil {
+		return err
+	}
+	if grant.Role != "" {
+		if err := s.validateRoleReference(ctx, actor.WorkspaceID, grant.Role); err != nil {
+			return err
+		}
+	}
+	if grant.SubjectType == SubjectRole {
+		if err := s.validateRoleReference(ctx, actor.WorkspaceID, ProjectRole(grant.SubjectID)); err != nil {
+			if errors.Is(err, ErrMigrationRequired) {
+				return err
+			}
+			return ErrInvalidSubject
 		}
 	}
 	if err := repo.DeleteAccessGrant(ctx, actor.WorkspaceID, grant.ProjectID, grant.IssueID, grant.SubjectType, grant.SubjectID, grant.Role, grant.Permission); err != nil {

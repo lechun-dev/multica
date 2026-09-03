@@ -28,6 +28,7 @@ import {
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 import type { ProjectAccessGrant, ProjectAccessGrantSubjectType } from "@multica/core/types";
+import { PROJECT_PERMISSION_KEYS } from "@multica/core/types";
 import { ProjectPermissionOrganizationSelect } from "./project-permission-organization-select";
 
 type ProjectRole = string;
@@ -41,15 +42,18 @@ type ProjectPermissionsDialogProps = {
   hideTrigger?: boolean;
 };
 const BUILTIN_PROJECT_ROLES = ["owner", "manager", "member", "viewer"];
-const PROJECT_PERMISSIONS = [
-  { key: "project.view", label: "View project" },
-  { key: "project.edit", label: "Edit project" },
-  { key: "project.issue.create", label: "Create issues" },
-  { key: "project.issue.manage", label: "Manage issues" },
-  { key: "project.agent.use", label: "Use agents" },
-  { key: "project.member.manage", label: "Manage members" },
-  { key: "project.settings.manage", label: "Manage project settings" },
-] as const;
+const PROJECT_PERMISSION_LABELS: Record<string, string> = {
+  "project.view": "View project",
+  "project.edit": "Edit project",
+  "project.issue.create": "Create issues",
+  "project.issue.comment": "Comment on issues",
+  "project.issue.manage": "Manage issues",
+  "project.issue.archive": "Archive issues",
+  "project.agent.use": "Use agents",
+  "project.member.manage": "Manage members",
+  "project.settings.manage": "Manage project settings",
+};
+const PROJECT_PERMISSIONS = PROJECT_PERMISSION_KEYS.map((key) => ({ key, label: PROJECT_PERMISSION_LABELS[key] ?? key }));
 
 function projectMembersKey(workspaceId: string, projectId: string) {
   return ["project-members", workspaceId, projectId] as const;
@@ -94,7 +98,15 @@ export function ProjectPermissionsDialog({
   const accessGrantsQuery = useQuery({
     queryKey: ["project-access-grants", workspaceId, projectId],
     queryFn: () => api.listProjectAccessGrants(projectId),
-    enabled: !!projectId,
+    // 2026-09-03 coder(lq): Keep legacy deployments on the legacy endpoint;
+    // the unified grants route may not exist until the migration is enabled.
+    enabled: unifiedApi && !!projectId,
+  });
+  const directoryQuery = useQuery({
+    queryKey: ["project-permission-organizations", workspaceId],
+    queryFn: () => api.listProjectAuthorizationOrganizations(workspaceId),
+    enabled: open && unifiedApi && !!workspaceId,
+    staleTime: 60_000,
   });
   const canManage = projectMembersQuery.data?.can_manage ?? false;
   const { data: workspaceMembers = [], isLoading: membersLoading, isError: membersError } = useQuery({
@@ -138,17 +150,31 @@ export function ProjectPermissionsDialog({
     () => new Map(projectMembers.map((member) => [member.user_id, member.role])),
     [projectMembers],
   );
+  const unifiedUserGrantIds = useMemo(
+    () => new Set(
+      (accessGrantsQuery.data?.grants ?? [])
+        .filter((grant) => grant.subject_type === "user" && !!grant.subject_id)
+        .map((grant) => grant.subject_id as string),
+    ),
+    [accessGrantsQuery.data?.grants],
+  );
   const workspaceMemberByUser = useMemo(
     () => new Map(workspaceMembers.map((member) => [member.user_id, member])),
     [workspaceMembers],
+  );
+  const organizationById = useMemo(
+    () => new Map((directoryQuery.data?.organizations ?? []).map((organization) => [organization.id, organization])),
+    [directoryQuery.data?.organizations],
   );
   const currentMembers = useMemo(
     () => projectMembers.map((member) => ({ ...member, profile: workspaceMemberByUser.get(member.user_id) })),
     [projectMembers, workspaceMemberByUser],
   );
   const addableMembers = useMemo(
-    () => workspaceMembers.filter((member) => !roleByUser.has(member.user_id)),
-    [roleByUser, workspaceMembers],
+    () => unifiedApi
+      ? workspaceMembers.filter((member) => !unifiedUserGrantIds.has(member.user_id))
+      : workspaceMembers.filter((member) => !roleByUser.has(member.user_id)),
+    [roleByUser, unifiedApi, unifiedUserGrantIds, workspaceMembers],
   );
   const filteredMembers = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase();
@@ -248,11 +274,15 @@ export function ProjectPermissionsDialog({
         // 2026-08-31 coder(lq): Never mutate the legacy membership table when
         // the unified authorization API is available; this keeps organization,
         // role, and everyone grants in one source of truth.
-        await api.revokeProjectAccessGrant(projectId, {
+        const grants = (accessGrantsQuery.data?.grants ?? []).filter(
+          (grant) => grant.subject_type === "user" && grant.subject_id === userId,
+        );
+        await Promise.all(grants.map((grant) => api.revokeProjectAccessGrant(projectId, {
           subject_type: "user",
           subject_id: userId,
-          role: roleByUser.get(userId),
-        });
+          role: grant.role,
+          permission: grant.permission,
+        })));
         await refreshGrants();
       } else {
         await api.removeProjectMember(projectId, userId);
@@ -274,19 +304,18 @@ export function ProjectPermissionsDialog({
   const updateGrantRole = async (grant: ProjectAccessGrant, newRole: ProjectRole) => {
     if (!unifiedApi || grant.role === newRole) return;
     try {
-      // 2026-08-31 coder(lq): Grants are immutable facts; changing a role is
-      // represented as revoke + create so the audit trail and uniqueness key
-      // remain deterministic across providers.
+      // 2026-09-03 coder(lq): Create the replacement before revoking the old
+      // role so a transient request failure cannot accidentally remove access.
+      await api.createProjectAccessGrant(projectId, {
+        subject_type: grant.subject_type,
+        subject_id: grant.subject_id,
+        role: newRole,
+      });
       await api.revokeProjectAccessGrant(projectId, {
         subject_type: grant.subject_type,
         subject_id: grant.subject_id,
         role: grant.role,
         permission: grant.permission,
-      });
-      await api.createProjectAccessGrant(projectId, {
-        subject_type: grant.subject_type,
-        subject_id: grant.subject_id,
-        role: newRole,
       });
       await refreshGrants();
       toast.success(t(($) => $.permissions.update_success));
@@ -356,19 +385,19 @@ export function ProjectPermissionsDialog({
               ) : (
                 <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
                   {accessGrantsQuery.data.grants.map((grant) => {
-                    const subjectLabel = grant.subject_type === "everyone"
+                    const user = grant.subject_id ? workspaceMemberByUser.get(grant.subject_id) : undefined;
+                    const organization = grant.subject_id ? organizationById.get(grant.subject_id) : undefined;
+                    const roleSubject = grant.subject_id ? roleByKey.get(grant.subject_id) : undefined;
+                    const label = grant.subject_type === "everyone"
                       ? t(($) => $.permissions.everyone)
                       : grant.subject_type === "organization"
-                        ? t(($) => $.permissions.organization_prefix, { name: grant.subject_id || "" })
+                        ? t(($) => $.permissions.organization_prefix, { name: organization?.name || grant.subject_id || "" })
                         : grant.subject_type === "role"
-                          ? t(($) => $.permissions.role_prefix, { name: grant.subject_id || "" })
-                          : t(($) => $.permissions.user);
-                    const label = grant.subject_type === "user"
-                      ? `${subjectLabel}: ${grant.subject_id || ""}`
-                      : subjectLabel;
+                          ? t(($) => $.permissions.role_prefix, { name: roleSubject?.name || grant.subject_id || "" })
+                          : `${t(($) => $.permissions.user)}: ${user?.name || user?.email || grant.subject_id || ""}`;
                     return <div key={grant.id || `${grant.subject_type}-${grant.subject_id}-${grant.role}-${grant.permission}`} className="flex items-center gap-3 rounded-lg border px-2 py-2">
                       <div className="min-w-0 flex-1"><div className="truncate text-body font-medium">{label}</div><div className="truncate text-caption text-muted-foreground">{grant.role || grant.permission || grant.source}</div></div>
-                      {canManage && grant.subject_type === "user" && grant.role && <Select items={roleItems} value={grant.role} onValueChange={(value) => value && void updateGrantRole(grant, value)}><SelectTrigger className="w-28" aria-label={`${t(($) => $.permissions.change_role_aria)} ${label}`}><SelectValue /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>}
+                      {canManage && grant.subject_type !== "role" && grant.role && <Select items={roleItems} value={grant.role} onValueChange={(value) => value && void updateGrantRole(grant, value)}><SelectTrigger className="w-28" aria-label={`${t(($) => $.permissions.change_role_aria)} ${label}`}><SelectValue /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>}
                       {canManage && <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_aria)} ${label}`} onClick={() => void removeGrant(grant)}><UserMinus className="size-3.5" /></Button>}
                     </div>;
                   })}
@@ -408,21 +437,20 @@ export function ProjectPermissionsDialog({
               <p className="text-caption text-muted-foreground">{t(($) => $.permissions.add_members_description)}</p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
-              <div className="relative flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t(($) => $.permissions.search_placeholder)} aria-label={t(($) => $.permissions.search_placeholder)} className="pl-8" /></div>
               {unifiedApi && <Select items={[{ value: "user", label: t(($) => $.permissions.user) }, { value: "organization", label: t(($) => $.permissions.organization) }, { value: "role", label: t(($) => $.permissions.role) }, { value: "everyone", label: t(($) => $.permissions.everyone) }]} value={subjectType} onValueChange={(value) => setSubjectType((value as ProjectAccessGrantSubjectType) || "user")}><SelectTrigger className="w-full sm:w-36" aria-label={t(($) => $.permissions.dialog_title)}><SelectValue /></SelectTrigger><SelectContent>{[{ value: "user", label: t(($) => $.permissions.user) }, { value: "organization", label: t(($) => $.permissions.organization) }, { value: "role", label: t(($) => $.permissions.role) }, { value: "everyone", label: t(($) => $.permissions.everyone) }].map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>}
-              {unifiedApi && subjectType === "organization" && workspaceId ? <ProjectPermissionOrganizationSelect workspaceId={workspaceId} open={open} value={subjectId} onValueChange={setSubjectId} ariaLabel={t(($) => $.permissions.organization)} placeholder={t(($) => $.permissions.select_organization)} emptyLabel={t(($) => $.permissions.no_organizations)} /> : unifiedApi && subjectType === "role" ? <Select items={roleItems} value={subjectId} onValueChange={(value) => setSubjectId(value ?? "")}><SelectTrigger className="w-full sm:w-44" aria-label={t(($) => $.permissions.role_key)}><SelectValue placeholder={t(($) => $.permissions.role_key)} /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select> : null}
+              {subjectType === "user" ? <div className="relative flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t(($) => $.permissions.search_placeholder)} aria-label={t(($) => $.permissions.search_placeholder)} className="pl-8" /></div> : unifiedApi && subjectType === "organization" && workspaceId ? <div className="flex-1"><ProjectPermissionOrganizationSelect workspaceId={workspaceId} open={open} value={subjectId} onValueChange={setSubjectId} ariaLabel={t(($) => $.permissions.organization)} placeholder={t(($) => $.permissions.select_organization)} emptyLabel={t(($) => $.permissions.no_organizations)} /></div> : unifiedApi && subjectType === "role" ? <Select items={roleItems} value={subjectId} onValueChange={(value) => setSubjectId(value ?? "")}><SelectTrigger className="w-full flex-1 sm:w-44" aria-label={t(($) => $.permissions.role_key)}><SelectValue placeholder={t(($) => $.permissions.role_key)} /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select> : <div className="flex-1" />}
               {subjectType === "role" ? <Select items={PROJECT_PERMISSIONS.map((item) => ({ value: item.key, label: item.label }))} value={permission} onValueChange={(value) => setPermission(value ?? "project.view")}><SelectTrigger className="w-full sm:w-52" aria-label={t(($) => $.permissions.single_permission)}><SelectValue /></SelectTrigger><SelectContent>{PROJECT_PERMISSIONS.map((item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>)}</SelectContent></Select> : <Select items={roleItems} value={role} onValueChange={(value) => setRole(value ?? "member")}><SelectTrigger className="w-full sm:w-44" aria-label={t(($) => $.permissions.selected_role_aria)}><SelectValue /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>}
             </div>
             <p className="text-caption text-muted-foreground">{subjectType === "role" ? t(($) => $.permissions.single_permission) : roleByKey.get(role)?.description || t(($) => $.permissions.add_members_description)}</p>
-            <div className="flex items-center justify-between border-b pb-2 text-caption"><span className="text-muted-foreground">{t(($) => $.permissions.selected_prefix)} {selectedIds.size}</span><div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set(filteredMembers.map((member) => member.user_id)))} disabled={allFilteredSelected || filteredMembers.length === 0}>{t(($) => $.permissions.select_all)}</Button><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>{t(($) => $.permissions.clear_selection)}</Button></div></div>
+            {subjectType === "user" ? <><div className="flex items-center justify-between border-b pb-2 text-caption"><span className="text-muted-foreground">{t(($) => $.permissions.selected_prefix)} {selectedIds.size}</span><div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set(filteredMembers.map((member) => member.user_id)))} disabled={allFilteredSelected || filteredMembers.length === 0}>{t(($) => $.permissions.select_all)}</Button><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>{t(($) => $.permissions.clear_selection)}</Button></div></div>
             <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
               {membersLoading ? <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.loading)}</div> : membersError ? <div className="py-6 text-center text-body text-destructive">{t(($) => $.permissions.workspace_members_failed)}</div> : filteredMembers.length === 0 ? <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.no_results)}</div> : filteredMembers.map((member) => <div key={member.user_id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60" onClick={(event) => { if ((event.target as HTMLElement).closest('[data-slot="checkbox"]')) return; toggleMember(member.user_id); }}><Checkbox checked={selectedIds.has(member.user_id)} aria-label={member.name} onCheckedChange={(nextChecked) => setMemberSelected(member.user_id, nextChecked)} /><div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-caption font-medium">{(member.name || member.email || "?").slice(0, 1).toLocaleUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-body font-medium">{member.name || member.email}</div>{member.name && member.email && <div className="truncate text-caption text-muted-foreground">{member.email}</div>}</div></div>)}
-            </div>
+            </div></> : null}
           </section>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{t(($) => $.permissions.cancel)}</Button>
-      <Button onClick={() => void grantSelected()} disabled={!canGrant || granting}>
+            <Button onClick={() => void grantSelected()} disabled={!canGrant || granting}>
               {granting ? t(($) => $.permissions.granting) : t(($) => $.permissions.grant)}
             </Button>
           </DialogFooter>

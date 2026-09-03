@@ -1915,8 +1915,16 @@ export function IssueDisplayControls({
   const tableGrouping = useViewStore((s) => s.tableGrouping ?? "none");
   const tableHierarchy = useViewStore((s) => s.tableHierarchy ?? true);
   const showSubIssues = useViewStore((s) => s.showSubIssues);
+  const showWorkspaceOwnedItems = useViewStore((s) => s.showWorkspaceOwnedItems);
   const act = useViewStoreApi().getState();
   const headerWsId = useWorkspaceId();
+  const { data: workspaceMembers = [], isSuccess: workspaceMembersReady } = useQuery(
+    memberListOptions(headerWsId),
+  );
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const isWorkspaceOwner = workspaceMembersReady && !!currentUserId && workspaceMembers.some(
+    (member) => member.user_id === currentUserId && member.role === "owner",
+  );
   // Active custom-property catalog: drives the filter sections, dynamic
   // sort/grouping options, and the card-property toggles below.
   const { data: workspaceProperties = [] } = useQuery(propertyListOptions(headerWsId));
@@ -2324,6 +2332,18 @@ export function IssueDisplayControls({
                   onCheckedChange={() => act.toggleShowSubIssues()}
                 />
               </label>
+              {isWorkspaceOwner && (
+                <label className="flex cursor-pointer items-center justify-between gap-3">
+                  <span className="text-caption font-medium text-muted-foreground">
+                    {t(($) => $.display.show_workspace_owned_items)}
+                  </span>
+                  <Switch
+                    size="sm"
+                    checked={showWorkspaceOwnedItems}
+                    onCheckedChange={act.setShowWorkspaceOwnedItems}
+                  />
+                </label>
+              )}
               {viewMode !== "table" && (
                 <div>
                   <span className="text-caption font-medium text-muted-foreground">

@@ -310,8 +310,9 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 }
 
 func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	// 2026-09-03 coder(lq): Project-bound tasks use canonical project grants;
-	// projectless Agent tasks retain the upstream creator/assignee visibility.
+	// 2026-09-03 coder(lq): Project-bound tasks accept inherited project View or
+	// a direct View-capable task grant. Projectless Agent tasks retain the
+	// upstream creator/assignee visibility.
 	ownerProjectClause := "FALSE"
 	ownerProjectlessClause := "FALSE"
 	if includeWorkspaceOwned {
@@ -319,7 +320,7 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		ownerProjectlessClause = ownerProjectClause
 	}
 	return fmt.Sprintf(`(
-		(%s.project_id IS NOT NULL AND (%s OR %s))
+		(%s.project_id IS NOT NULL AND (%s OR %s OR %s))
 		OR (%s.project_id IS NULL AND (
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
 			OR (%s.creator_type = 'member' AND %s.creator_id = %s::uuid)
@@ -332,11 +333,111 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 			))
 		))
 	)`, issueAlias, ownerProjectClause, projectAccessPredicate(issueAlias+".project_id", workspaceRef, userRef),
+		issueDirectAccessPredicate(issueAlias+".id", workspaceRef, userRef),
 		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef)
+}
+
+// 2026-09-03 coder(lq): Resolve one authenticated user against a canonical
+// user, organization, or everyone grant. Both project and task predicates use
+// this fragment so their principal semantics cannot drift.
+func accessGrantPrincipalPredicate(alias string) string {
+	return fmt.Sprintf(`(
+		(%s.subject_type = 'user' AND %s.subject_id = a.user_id::text)
+		OR (%s.subject_type = 'everyone' AND (%s.subject_id = '' OR %s.subject_id = a.workspace_id::text))
+		OR (%s.subject_type = 'organization' AND %s.subject_id IN (
+			WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+				SELECT org.id, org.parent_id
+				FROM projectauth_organization_members om
+				JOIN projectauth_organizations org ON org.id = om.organization_id
+				WHERE om.workspace_id = a.workspace_id
+				  AND om.user_id = a.user_id
+				  AND org.workspace_id = a.workspace_id
+				  AND org.status = 'active'
+				UNION
+				SELECT parent.id, parent.parent_id
+				FROM user_orgs child
+				JOIN projectauth_organizations parent ON parent.id = child.parent_id
+				WHERE parent.workspace_id = a.workspace_id
+				  AND parent.status = 'active'
+			)
+			SELECT organization_id::text FROM user_orgs
+		))
+	)`, alias, alias, alias, alias, alias, alias, alias)
+}
+
+// 2026-09-04 coder(lq): SQL list paths can run before the first role-catalog
+// read for a newly-created workspace. Keep the system-role defaults aligned
+// with projectauth.Service.roleAllows until migration 439's lazy seeding has
+// materialized those rows. An explicitly-created (even empty) role row wins;
+// fallback is only for a role definition that does not exist yet.
+func systemRoleViewPermissionPredicate(roleExpr, workspaceExpr string) string {
+	return fmt.Sprintf(`(
+		EXISTS (
+			SELECT 1
+			FROM project_permission_roles rr
+			JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
+			WHERE rr.workspace_id = %s
+			  AND rr.role_key = %s
+			  AND rp.permission = 'project.view'
+		)
+		OR (
+			%s IN ('owner', 'manager', 'member', 'viewer')
+			AND NOT EXISTS (
+				SELECT 1 FROM project_permission_roles rr
+				WHERE rr.workspace_id = %s AND rr.role_key = %s
+			)
+		)
+	)`, workspaceExpr, roleExpr, roleExpr, workspaceExpr, roleExpr)
+}
+
+// issueDirectAccessPredicate intentionally checks only grants attached to the
+// current task. It may reveal that task in a list, but never its project or a
+// sibling task. Role subjects match project roles and roles assigned directly
+// on the same task, mirroring projectauth.Service.checkGrants.
+// 2026-09-03 coder(lq): Keep direct task list visibility aligned with URL ACLs.
+func issueDirectAccessPredicate(issueExpr, workspaceRef, userRef string) string {
+	grantSubject := accessGrantPrincipalPredicate("g")
+	roleHolder := accessGrantPrincipalPredicate("rg")
+	return fmt.Sprintf(`EXISTS (
+		WITH auth_subject AS (
+			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
+		)
+		SELECT 1
+		FROM issue direct_issue
+		CROSS JOIN auth_subject a
+		WHERE direct_issue.id = %s
+		  AND direct_issue.workspace_id = a.workspace_id
+		  AND direct_issue.project_id IS NOT NULL
+		  AND EXISTS (
+			SELECT 1
+			FROM projectauth_access_grants g
+			WHERE g.workspace_id = direct_issue.workspace_id
+			  AND g.project_id = direct_issue.project_id
+			  AND g.issue_id = direct_issue.id
+			  AND (
+				%s
+				OR (g.subject_type = 'role' AND EXISTS (
+					SELECT 1
+					FROM projectauth_access_grants rg
+					WHERE rg.workspace_id = direct_issue.workspace_id
+					  AND rg.project_id = direct_issue.project_id
+					  AND (rg.issue_id IS NULL OR rg.issue_id = direct_issue.id)
+					  AND rg.role_key IS NOT NULL
+					  AND %s
+					  AND (rg.role_key = g.subject_id OR (g.subject_id = '' AND rg.role_key = g.role_key))
+				))
+			  )
+			  AND (
+				g.permission = 'project.view'
+				OR (g.role_key IS NOT NULL AND %s)
+			  )
+		)
+	)`, workspaceRef, userRef, issueExpr, grantSubject, roleHolder,
+		systemRoleViewPermissionPredicate("g.role_key", "direct_issue.workspace_id"))
 }
 
 // 2026-08-31 coder(lq): Keep project-list visibility in one SQL adapter so
@@ -350,34 +451,9 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 	// table remains the source for workspace-owner bypass, but a legacy project
 	// membership row must never make a project visible by itself.
 	// 2026-09-01 coder(lq): Keep the principal expression identical for the
-	// grant being evaluated and the grant that assigns a project role. This
-	// avoids user/org/everyone drift and keeps every boolean operator grouped.
-	principal := func(alias string) string {
-		return fmt.Sprintf(`(
-			(%s.subject_type = 'user' AND %s.subject_id = a.user_id::text)
-			OR (%s.subject_type = 'everyone' AND (%s.subject_id = '' OR %s.subject_id = a.workspace_id::text))
-			OR (%s.subject_type = 'organization' AND %s.subject_id IN (
-				WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
-					SELECT org.id, org.parent_id
-					FROM projectauth_organization_members om
-					JOIN projectauth_organizations org ON org.id = om.organization_id
-					WHERE om.workspace_id = a.workspace_id
-					  AND om.user_id = a.user_id
-					  AND org.workspace_id = a.workspace_id
-					  AND org.status = 'active'
-					UNION
-					SELECT parent.id, parent.parent_id
-					FROM user_orgs child
-					JOIN projectauth_organizations parent ON parent.id = child.parent_id
-					WHERE parent.workspace_id = a.workspace_id
-					  AND parent.status = 'active'
-				)
-				SELECT organization_id::text FROM user_orgs
-			))
-		)`, alias, alias, alias, alias, alias, alias, alias)
-	}
-	grantSubject := principal("g")
-	roleHolder := principal("rg")
+	// grant being evaluated and the grant that assigns a project role.
+	grantSubject := accessGrantPrincipalPredicate("g")
+	roleHolder := accessGrantPrincipalPredicate("rg")
 	return fmt.Sprintf(`EXISTS (
 		WITH auth_subject AS (
 			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
@@ -408,17 +484,11 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 			  )
 			  AND (
 				g.permission = 'project.view'
-				OR (g.role_key IS NOT NULL AND EXISTS (
-					SELECT 1
-					FROM project_permission_roles rr
-					JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
-					WHERE rr.workspace_id = p.workspace_id
-					  AND rr.role_key = g.role_key
-					  AND rp.permission = 'project.view'
-				))
+				OR (g.role_key IS NOT NULL AND %s)
 			  )
 		)
-	)`, workspaceRef, userRef, projectExpr, grantSubject, roleHolder)
+	)`, workspaceRef, userRef, projectExpr, grantSubject, roleHolder,
+		systemRoleViewPermissionPredicate("g.role_key", "p.workspace_id"))
 }
 
 // workspaceOwnerBypassPredicate is embedded into all SQL visibility scopes so
@@ -477,11 +547,12 @@ func dashboardProjectVisibilityPredicate(projectExpr, workspaceRef, userRef stri
 	// 2026-09-01 coder(lq): Dashboard aggregates are another indirect
 	// project-list surface. Keep workspace-owner bypass and canonical project
 	// grants in the same predicate so an aggregate cannot be probed by UUID or
-	// exposed through the old project_members table.
-	ownerClause := fmt.Sprintf(`EXISTS (
+	// exposed through the old project_members table. Respect the same deployment
+	// switch used by project/task lists.
+	ownerClause := fmt.Sprintf(`(%s AND EXISTS (
 		SELECT 1 FROM member m
 		WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'
-	)`, workspaceRef, userRef)
+	))`, workspaceOwnerBypassPredicate(workspaceRef), workspaceRef, userRef)
 	return fmt.Sprintf(`(%s IS NOT NULL AND (%s OR %s))`,
 		projectExpr, ownerClause, projectAccessPredicate(projectExpr, workspaceRef, userRef))
 }
@@ -1176,12 +1247,20 @@ func (h *Handler) filterPendingChatTasksByProjectPermission(ctx context.Context,
 // 2026-08-27 coder(lq): Project pins use the same visibility scope as project
 // lists. Returning a set lets callers filter mixed pin types without probing
 // each project individually.
-func (h *Handler) visibleProjectIDSet(ctx context.Context, workspaceID, userID string) (map[pgtype.UUID]struct{}, error) {
+// 2026-09-03 coder(lq): Keep the owner-visibility switch consistent for
+// secondary project consumers (pins, saved views, autopilot). The variadic
+// argument preserves source compatibility for older callers that use the
+// default inclusive scope.
+func (h *Handler) visibleProjectIDSet(ctx context.Context, workspaceID, userID string, scope ...bool) (map[pgtype.UUID]struct{}, error) {
 	visible := make(map[pgtype.UUID]struct{})
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return visible, nil
 	}
-	ids, err := h.ProjectAuth.Scope(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID})
+	includeWorkspaceOwned := true
+	if len(scope) > 0 {
+		includeWorkspaceOwned = scope[0]
+	}
+	ids, err := h.ProjectAuth.ScopeWithWorkspaceOwned(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}, includeWorkspaceOwned)
 	if err != nil {
 		return nil, err
 	}

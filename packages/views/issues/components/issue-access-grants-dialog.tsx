@@ -48,10 +48,25 @@ export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrant
     queryFn: () => api.listProjectPermissionRoles(),
     enabled: open && !!workspaceId,
   });
+  const directoryQuery = useQuery({
+    queryKey: ["project-permission-organizations", workspaceId],
+    queryFn: () => api.listProjectAuthorizationOrganizations(workspaceId),
+    enabled: open && !!workspaceId,
+    staleTime: 60_000,
+  });
   const { data: members = [] } = useQuery({
     ...memberListOptions(workspaceId),
     enabled: open && !!workspaceId,
   });
+  const memberByUser = useMemo(() => new Map(members.map((member) => [member.user_id, member])), [members]);
+  const organizationById = useMemo(
+    () => new Map((directoryQuery.data?.organizations ?? []).map((organization) => [organization.id, organization])),
+    [directoryQuery.data?.organizations],
+  );
+  const roleByKey = useMemo(
+    () => new Map((rolesQuery.data?.roles ?? []).map((item) => [item.key, item])),
+    [rolesQuery.data?.roles],
+  );
   const grants = grantsQuery.data?.grants ?? [];
   const directGrants = useMemo(() => grants.filter((grant) => grant.issue_id === issueId), [grants, issueId]);
   const inheritedGrants = useMemo(() => grants.filter((grant) => grant.issue_id !== issueId), [grants, issueId]);
@@ -67,8 +82,9 @@ export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrant
   const taskPermissions = useMemo(() => [
     { value: "project.view", label: t(($) => $.permissions.view_task) },
     { value: "project.edit", label: t(($) => $.permissions.edit_task) },
-    { value: "project.issue.create", label: t(($) => $.permissions.create_related_tasks) },
+    { value: "project.issue.comment", label: t(($) => $.permissions.comment_task) },
     { value: "project.issue.manage", label: t(($) => $.permissions.manage_task) },
+    { value: "project.issue.archive", label: t(($) => $.permissions.archive_task) },
     { value: "project.agent.use", label: t(($) => $.permissions.use_agent) },
   ], [t]);
   const subjectTypes = useMemo<Array<{ value: ProjectAccessGrantSubjectType; label: string }>>(() => [
@@ -131,9 +147,21 @@ export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrant
 
   const renderGrant = (grant: (typeof grants)[number], inherited: boolean) => {
     const subjectLabel = subjectTypes.find((item) => item.value === grant.subject_type)?.label || grant.subject_type;
-    const label = grant.subject_type === "everyone"
+    const subjectName = grant.subject_type === "everyone"
       ? t(($) => $.permissions.current_workspace_everyone)
-      : `${subjectLabel}: ${grant.subject_id || ""}`;
+      : grant.subject_type === "user"
+        ? memberByUser.get(grant.subject_id || "")?.name || memberByUser.get(grant.subject_id || "")?.email || grant.subject_id || ""
+        : grant.subject_type === "organization"
+          ? organizationById.get(grant.subject_id || "")?.name || grant.subject_id || ""
+          : roleByKey.get(grant.subject_id || "")?.name || grant.subject_id || "";
+    const label = grant.subject_type === "everyone"
+      ? subjectName
+      : `${subjectLabel}: ${subjectName}`;
+    const permissionLabel = grant.permission
+      ? taskPermissions.find((item) => item.value === grant.permission)?.label || grant.permission
+      : grant.role
+        ? roleByKey.get(grant.role)?.name || taskRoles.find((item) => item.value === grant.role)?.label || grant.role
+        : grant.source;
     const sourceLabel = inherited
       ? t(($) => $.permissions.inherited_from_project)
       : t(($) => $.permissions.direct_task_grant);
@@ -141,7 +169,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrant
       <div key={`${grant.id}-${grant.issue_id || "project"}-${grant.subject_type}-${grant.subject_id}-${grant.role}-${grant.permission}`} className="flex items-center gap-3 rounded-lg border px-2 py-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-body font-medium">{label}</div>
-          <div className="truncate text-caption text-muted-foreground">{grant.role || grant.permission || grant.source} · {sourceLabel}</div>
+          <div className="truncate text-caption text-muted-foreground">{permissionLabel} · {sourceLabel}</div>
         </div>
         {!inherited && <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_task_access_aria)} ${label}`} onClick={() => void revoke(grant)}><UserMinus className="size-3.5" /></Button>}
       </div>

@@ -25,9 +25,12 @@ import (
 func issueUpdatedPayload() map[string]any {
 	return map[string]any{
 		"issue": map[string]any{
-			"id":          "issue-1",
-			"title":       "New title",
-			"description": strings.Repeat("new body ", 1024),
+			"id":           "issue-1",
+			"workspace_id": "ws-1",
+			"project_id":   "project-1",
+			"revision":     float64(7),
+			"title":        "New title",
+			"description":  strings.Repeat("new body ", 1024),
 		},
 		"description_changed": true,
 		"title_changed":       true,
@@ -37,7 +40,7 @@ func issueUpdatedPayload() map[string]any {
 	}
 }
 
-func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
+func TestIssueUpdatedBroadcast_RedactsBusinessFields(t *testing.T) {
 	bus := events.New()
 	fb := &fakeBroadcaster{}
 
@@ -94,15 +97,19 @@ func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
 		t.Error("payload still carries prev_title")
 	}
 
-	// Everything clients actually consume must survive untouched. The issue
-	// object keeps its description: clients apply it to their cache, and
-	// stripping it would just trade fanout bytes for N refetches.
+	// Only routing/version fields cross the workspace boundary. Clients use
+	// these to invalidate and then refetch through the permission-aware API.
 	issue, ok := frame.Payload["issue"].(map[string]any)
 	if !ok {
 		t.Fatal("payload lost the issue object")
 	}
-	if issue["description"] == "" || issue["description"] == nil {
-		t.Error("issue.description was stripped; clients need it for cache updates")
+	for _, key := range []string{"title", "description"} {
+		if _, present := issue[key]; present {
+			t.Errorf("issue.%s reached workspace broadcast", key)
+		}
+	}
+	if issue["id"] != "issue-1" || issue["project_id"] != "project-1" {
+		t.Errorf("routing fields were not preserved: %#v", issue)
 	}
 	if frame.Payload["description_changed"] != true {
 		t.Error("description_changed flag was lost")
@@ -110,9 +117,8 @@ func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
 	if frame.Payload["title_changed"] != true {
 		t.Error("title_changed flag was lost")
 	}
-	// Cheap scalar prev_* fields are deliberately kept.
-	if frame.Payload["prev_status"] != "todo" {
-		t.Error("prev_status should be preserved; only the large fields are internal-only")
+	if _, present := frame.Payload["prev_status"]; present {
+		t.Error("private previous-value field reached workspace broadcast")
 	}
 
 	// Half 2: the in-process listener still received the full payload.
@@ -145,8 +151,81 @@ func TestProjectOutbound_DoesNotMutateProducerPayload(t *testing.T) {
 	if _, present := pm["prev_description"]; present {
 		t.Error("projected payload still has prev_description")
 	}
-	if len(pm) != len(original)-2 {
-		t.Errorf("projected key count = %d, want %d (exactly two keys removed)", len(pm), len(original)-2)
+	if _, present := pm["issue"]; !present {
+		t.Error("projected payload lost routing issue object")
+	}
+}
+
+func TestProjectOutbound_TaskMessageRedactsContent(t *testing.T) {
+	original := map[string]any{
+		"task_id": "task-1", "issue_id": "issue-1", "seq": 3,
+		"type": "tool_result", "content": "private transcript",
+		"input": map[string]any{"secret": "value"}, "output": "private output",
+	}
+	projected, ok := projectOutbound(protocol.EventTaskMessage, original).(map[string]any)
+	if !ok {
+		t.Fatal("task:message projection did not return a map")
+	}
+	if projected["task_id"] != "task-1" || projected["issue_id"] != "issue-1" || projected["type"] != "tool_result" {
+		t.Fatalf("routing/type metadata was lost: %#v", projected)
+	}
+	for _, key := range []string{"content", "input", "output"} {
+		if _, present := projected[key]; present {
+			t.Errorf("private task message field %q reached workspace broadcast", key)
+		}
+	}
+	if original["content"] != "private transcript" {
+		t.Error("task message projection mutated the producer payload")
+	}
+}
+
+func TestProjectOutbound_ChatDoneRedactsContent(t *testing.T) {
+	original := map[string]any{
+		"chat_session_id": "chat-1", "task_id": "task-1", "message_id": "msg-1",
+		"content": "private answer", "message_kind": "message",
+	}
+	projected, ok := projectOutbound(protocol.EventChatDone, original).(map[string]any)
+	if !ok {
+		t.Fatal("chat:done projection did not return a map")
+	}
+	if projected["chat_session_id"] != "chat-1" || projected["message_id"] != "msg-1" {
+		t.Fatalf("chat routing metadata was lost: %#v", projected)
+	}
+	if _, present := projected["content"]; present {
+		t.Fatal("chat content reached workspace broadcast")
+	}
+}
+
+func TestProjectOutbound_IssueUpdatedProjectsTypedPayload(t *testing.T) {
+	type typedIssue struct {
+		ID          string `json:"id"`
+		ProjectID   string `json:"project_id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	type typedPayload struct {
+		Issue              typedIssue `json:"issue"`
+		DescriptionChanged bool       `json:"description_changed"`
+	}
+
+	projected, ok := projectOutbound(protocol.EventIssueUpdated, typedPayload{
+		Issue: typedIssue{
+			ID: "issue-1", ProjectID: "project-1", Title: "private", Description: "private",
+		},
+		DescriptionChanged: true,
+	}).(map[string]any)
+	if !ok {
+		t.Fatal("typed issue payload was not projected to a map")
+	}
+	issue, ok := projected["issue"].(map[string]any)
+	if !ok {
+		t.Fatalf("typed issue projection missing issue map: %#v", projected)
+	}
+	if issue["id"] != "issue-1" || issue["project_id"] != "project-1" {
+		t.Fatalf("typed routing fields were lost: %#v", issue)
+	}
+	if _, present := issue["title"]; present {
+		t.Fatal("typed title reached workspace broadcast")
 	}
 }
 
@@ -266,7 +345,7 @@ func TestAutopilotBroadcast_StripsPrivatePayload(t *testing.T) {
 // table must be forwarded byte-for-byte, and a non-map payload must survive.
 func TestProjectOutbound_PassesThroughUnlistedEvents(t *testing.T) {
 	payload := map[string]any{"prev_description": "kept"}
-	if got := projectOutbound(protocol.EventIssueCreated, payload); got == nil {
+	if got := projectOutbound(protocol.EventTaskProgress, payload); got == nil {
 		t.Fatal("unlisted event type returned nil payload")
 	} else if m, ok := got.(map[string]any); !ok || m["prev_description"] != "kept" {
 		t.Error("unlisted event type must pass through untouched")
@@ -275,7 +354,92 @@ func TestProjectOutbound_PassesThroughUnlistedEvents(t *testing.T) {
 	// Typed (non-map) payloads are common elsewhere in the bus.
 	type typedPayload struct{ ID string }
 	tp := typedPayload{ID: "x"}
-	if got := projectOutbound(protocol.EventIssueUpdated, tp); got != any(tp) {
-		t.Errorf("non-map payload was altered: got %#v, want %#v", got, tp)
+	if got := projectOutbound(protocol.EventTaskProgress, tp); got != any(tp) {
+		t.Errorf("unlisted event type was altered: got %#v, want %#v", got, tp)
+	}
+}
+
+func TestProjectOutbound_DeletionEventsKeepOnlyRoutingMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   string
+		payload map[string]any
+		want    map[string]any
+		redact  []string
+	}{
+		{
+			name:    "issue deleted",
+			event:   protocol.EventIssueDeleted,
+			payload: map[string]any{"issue_id": "issue-1", "title": "private title", "description": "private body"},
+			want:    map[string]any{"issue_id": "issue-1"},
+			redact:  []string{"title", "description"},
+		},
+		{
+			name:    "comment deleted",
+			event:   protocol.EventCommentDeleted,
+			payload: map[string]any{"comment_id": "comment-1", "issue_id": "issue-1", "issue_revision": int64(9), "content": "private comment"},
+			want:    map[string]any{"comment_id": "comment-1", "issue_id": "issue-1", "issue_revision": int64(9)},
+			redact:  []string{"content"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projected, ok := projectOutbound(tt.event, tt.payload).(map[string]any)
+			if !ok {
+				t.Fatalf("projection type = %T, want map[string]any", projectOutbound(tt.event, tt.payload))
+			}
+			for key, want := range tt.want {
+				if got := projected[key]; got != want {
+					t.Errorf("projected[%q] = %#v, want %#v", key, got, want)
+				}
+			}
+			for _, key := range tt.redact {
+				if _, present := projected[key]; present {
+					t.Errorf("private field %q reached deletion event projection", key)
+				}
+			}
+			if len(projected) != len(tt.want) {
+				t.Errorf("projected keys = %#v, want exactly %#v", projected, tt.want)
+			}
+		})
+	}
+}
+
+func TestProjectOutbound_ProjectResourceRedactsResourceDetails(t *testing.T) {
+	original := map[string]any{
+		"project_id": "project-1",
+		"resource": map[string]any{
+			"id": "resource-1", "project_id": "project-1",
+			"resource_ref": map[string]any{"url": "https://github.com/private/repo", "daemon_id": "daemon-1"},
+			"label":        "private checkout",
+		},
+	}
+	projected, ok := projectOutbound(protocol.EventProjectResourceCreated, original).(map[string]any)
+	if !ok {
+		t.Fatalf("project resource projection type = %T, want map[string]any", projectOutbound(protocol.EventProjectResourceCreated, original))
+	}
+	if projected["project_id"] != "project-1" || projected["resource_id"] != "resource-1" {
+		t.Fatalf("resource routing metadata was lost: %#v", projected)
+	}
+	for _, key := range []string{"resource", "resource_ref", "label", "daemon_id"} {
+		if _, present := projected[key]; present {
+			t.Errorf("private project resource field %q reached workspace broadcast", key)
+		}
+	}
+	if original["resource"] == nil {
+		t.Fatal("project resource projection mutated the producer payload")
+	}
+}
+
+func TestProjectOutbound_ProjectResourceDeletedKeepsIDs(t *testing.T) {
+	projected, ok := projectOutbound(protocol.EventProjectResourceDeleted, map[string]any{
+		"project_id": "project-1", "resource_id": "resource-1", "resource_ref": "/private/path",
+	}).(map[string]any)
+	if !ok {
+		t.Fatalf("project resource deletion projection type = %T, want map[string]any", projectOutbound(protocol.EventProjectResourceDeleted, nil))
+	}
+	if len(projected) != 2 || projected["project_id"] != "project-1" || projected["resource_id"] != "resource-1" {
+		t.Fatalf("unexpected project resource deletion projection: %#v", projected)
 	}
 }

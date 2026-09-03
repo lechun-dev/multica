@@ -183,6 +183,15 @@ describe("SettingsPage project permissions switch", () => {
     expect(screen.getByText("WorkspaceTab")).toBeInTheDocument();
   });
 
+  it("also falls back from the organization directory tab when disabled", () => {
+    navigationState.search = "tab=project-authorization-organizations";
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.queryByRole("tab", { name: "Organization Directory" })).not.toBeInTheDocument();
+    expect(screen.getByText("WorkspaceTab")).toBeInTheDocument();
+  });
+
   it("shows and mounts project permission tabs only when explicitly enabled", () => {
     navigationState.search = "tab=project-permission-roles";
     configStore.getState().setAuthConfig({

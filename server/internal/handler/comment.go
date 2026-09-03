@@ -3327,7 +3327,10 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	var triggerIssue *db.Issue
 	var cancelled []db.AgentTaskQueue
 	if oldContent != req.Content {
-		issue, err := h.Queries.GetIssue(r.Context(), existing.IssueID)
+		// 2026-09-04 coder(lq): Reuse the outer issue so comment mention
+		// reconciliation below sees the loaded project's scope. A shadowed
+		// issue left ProjectID invalid and silently skipped automatic grants.
+		issue, err = h.Queries.GetIssue(r.Context(), existing.IssueID)
 		if err != nil {
 			slog.Warn("load issue for edit post-processing failed", "issue_id", uuidToString(existing.IssueID), "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to load issue")

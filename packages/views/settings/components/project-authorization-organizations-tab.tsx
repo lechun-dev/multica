@@ -17,6 +17,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { toast } from "sonner";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
+import { ProjectAuthorizationDirectory } from "./project-authorization-directory";
 import { useT } from "../../i18n";
 
 const IMPORT_KINDS: ProjectAuthorizationImportKind[] = ["organizations", "members"];
@@ -130,7 +131,9 @@ export function ProjectAuthorizationOrganizationsTab() {
       title={t(($) => $.project_authorization_organizations.title)}
       description={t(($) => $.project_authorization_organizations.description)}
     >
-      <SettingsSection>
+      <ProjectAuthorizationDirectory workspaceId={workspaceId} />
+
+      <SettingsSection title={t(($) => $.project_authorization_organizations.import_title)}>
         <SettingsCard>
           <div className="space-y-4 px-4 py-4">
             <div className="flex flex-wrap items-end gap-3">

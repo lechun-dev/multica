@@ -67,6 +67,40 @@ function commentToTimelineEntry(c: Comment): TimelineEntry {
   };
 }
 
+// 2026-09-03 coder(lq): Workspace broadcasts may contain only comment IDs and
+// revision hints. Never treat that security projection as a renderable Comment;
+// refetch the permission-filtered timeline instead.
+function hasCompleteCommentSnapshot(
+  comment: Partial<Comment> | null | undefined,
+): comment is Comment {
+  return Boolean(
+    comment?.id &&
+      comment.issue_id &&
+      comment.author_type &&
+      comment.author_id &&
+      Object.prototype.hasOwnProperty.call(comment, "content") &&
+      typeof comment.content === "string" &&
+      Object.prototype.hasOwnProperty.call(comment, "parent_id") &&
+      comment.type &&
+      comment.created_at &&
+      comment.updated_at,
+  );
+}
+
+function hasCompleteActivitySnapshot(
+  entry: Partial<TimelineEntry> | null | undefined,
+): entry is TimelineEntry {
+  return Boolean(
+    entry?.type === "activity" &&
+      entry.id &&
+      entry.actor_type &&
+      entry.actor_id &&
+      entry.created_at &&
+      (Object.prototype.hasOwnProperty.call(entry, "action") ||
+        Object.prototype.hasOwnProperty.call(entry, "details")),
+  );
+}
+
 function acceptsCommentRevision(
   current: TimelineEntry,
   incoming: Comment,
@@ -142,7 +176,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentCreatedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!hasCompleteCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
           const entry = commentToTimelineEntry(comment);
           if (!old) return [entry];
@@ -159,7 +197,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentUpdatedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!hasCompleteCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         applyCommentSnapshot(qc, issueId, comment);
       },
       [qc, issueId],
@@ -177,7 +219,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentResolvedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!hasCompleteCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         applyCommentSnapshot(qc, issueId, comment);
       },
       [qc, issueId],
@@ -189,7 +235,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentUnresolvedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!hasCompleteCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         applyCommentSnapshot(qc, issueId, comment);
       },
       [qc, issueId],
@@ -235,7 +285,10 @@ export function useIssueTimeline(issueId: string, userId?: string) {
         const p = payload as ActivityCreatedPayload;
         if (p.issue_id !== issueId) return;
         const entry = p.entry;
-        if (!entry || !entry.id) return;
+        if (!hasCompleteActivitySnapshot(entry)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
           if (!old) return [entry];
           if (old.some((e) => e.id === entry.id)) return old;
@@ -252,6 +305,10 @@ export function useIssueTimeline(issueId: string, userId?: string) {
       (payload: unknown) => {
         const { reaction, issue_id, comment_revision } = payload as ReactionAddedPayload;
         if (issue_id !== issueId) return;
+        if (!reaction?.id || !reaction.comment_id || !reaction.actor_type || !reaction.actor_id || !reaction.emoji) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         let missingRevision = false;
         qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) =>
           old?.map((e) => {

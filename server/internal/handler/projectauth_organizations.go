@@ -40,8 +40,15 @@ func (h *Handler) ListProjectAuthorizationOrganizations(w http.ResponseWriter, r
 		writeProjectAccessGrantError(w, err)
 		return
 	}
+	members, err := h.ProjectAuth.ListOrganizationMembers(r.Context(), subject)
+	if err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"organizations": organizations,
+		"members":       members,
 		"total":         len(organizations),
+		"member_total":  len(members),
 	})
 }

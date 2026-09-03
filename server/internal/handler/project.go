@@ -279,6 +279,21 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	// 2026-09-03 coder(lq): Return the caller's explicit project role on the
+	// detail endpoint as well as the list endpoint. Workspace-owner bypass is
+	// intentionally not converted into a project Owner role here.
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if userID := requestUserID(r); userID != "" {
+			if roles, roleErr := h.ProjectAuth.CurrentProjectRoles(r.Context(), workspaceID, userID); roleErr == nil {
+				if role, found := roles[uuidToString(project.ID)]; found {
+					value := string(role)
+					resp.CurrentUserRole = &value
+				}
+			} else {
+				slog.Warn("failed to load current project role", "workspace_id", workspaceID, "project_id", id, "user_id", userID, "error", roleErr)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -964,8 +979,17 @@ func buildProjectSearchQueryForUser(phrase string, terms []string, includeClosed
 		// the same canonical grant predicate as ListProjects. Filtering with
 		// project_members here would let a migrated-away legacy row leak an
 		// otherwise inaccessible project before LIMIT/OFFSET is applied.
+		// 2026-09-04 coder(lq): Workspace-owner visibility is a deployment
+		// controlled bypass. Keep search aligned with the regular project list;
+		// an unconditional owner clause would leak owner-only projects whenever
+		// PROJECT_OWNER_BYPASS_ENABLED=false.
+		ownerPredicate := fmt.Sprintf(
+			"(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = p.workspace_id AND m.user_id = %s::uuid AND m.role = 'owner'))",
+			workspaceOwnerBypassPredicate("p.workspace_id"),
+			userParam,
+		)
 		whereClause += fmt.Sprintf(" AND (%s OR %s)",
-			fmt.Sprintf("EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = p.workspace_id AND m.user_id = %s::uuid AND m.role = 'owner')", userParam),
+			ownerPredicate,
 			projectAccessPredicate("p.id", wsParam, userParam),
 		)
 	}
