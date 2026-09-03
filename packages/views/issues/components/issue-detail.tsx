@@ -103,7 +103,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useModalStore } from "@multica/core/modals";
 import { issueListOptions, issueDetailOptions, childIssuesOptions, childIssueProgressOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
-import { projectDetailOptions } from "@multica/core/projects/queries";
+import { projectDetailAllowMissingOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
 import { propertyListOptions } from "@multica/core/properties";
@@ -1812,7 +1812,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // truth — same URL renders the same breadcrumb regardless of entry path.
   const issueProjectId = issue?.project_id;
   const { data: breadcrumbProject = null } = useQuery({
-    ...projectDetailOptions(wsId, issueProjectId ?? ""),
+    ...projectDetailAllowMissingOptions(wsId, issueProjectId ?? ""),
     enabled: !!issueProjectId,
   });
   const {

@@ -99,9 +99,12 @@ func TestProjectlessIssuePermission(t *testing.T) {
 		{name: "workspace owner can edit", userID: otherID, workspaceRole: projectauth.WorkspaceOwner, permission: projectauth.Edit, want: true},
 		{name: "creator can view", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: true},
 		{name: "creator can edit", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: true},
+		{name: "creator can archive", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.IssueArchive, want: true},
 		{name: "member assignee can view", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: true},
 		{name: "member assignee can edit", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: true},
+		{name: "member assignee can archive", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.IssueArchive, want: true},
 		{name: "unrelated member cannot view", userID: otherID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: false},
+		{name: "unrelated member cannot archive", userID: otherID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.IssueArchive, want: false},
 	}
 
 	for _, tc := range cases {

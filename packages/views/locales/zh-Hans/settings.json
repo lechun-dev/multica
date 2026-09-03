@@ -1269,7 +1269,7 @@
     "inherited_owner": "继承空间所有者权限",
     "read_only_hint": "只有空间所有者或项目所有者可以修改角色",
     "roles": { "owner": "所有者", "admin": "管理员", "manager": "项目管理员", "member": "成员", "viewer": "查看者" },
-    "permissions": { "project.view": "查看项目", "project.edit": "编辑项目", "project.issue.create": "创建任务", "project.issue.comment": "评论任务", "project.issue.manage": "管理任务", "project.agent.use": "使用智能体", "project.member.manage": "管理成员", "project.settings.manage": "管理项目设置" },
+    "permissions": { "project.view": "查看项目", "project.edit": "编辑项目", "project.issue.create": "创建任务", "project.issue.comment": "评论任务", "project.issue.manage": "管理任务", "project.issue.archive": "归档任务", "project.agent.use": "使用智能体", "project.member.manage": "管理成员", "project.settings.manage": "管理项目设置" },
     "sources": { "workspace_role": "空间角色", "project_role": "项目角色" }
   },
   "permission_roles": {

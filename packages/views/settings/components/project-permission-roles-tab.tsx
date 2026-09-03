@@ -19,7 +19,7 @@ import { useT } from "../../i18n";
 
 const PERMISSIONS: ProjectPermissionReportPermission[] = [
   "project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage",
-  "project.agent.use", "project.member.manage", "project.settings.manage",
+  "project.issue.archive", "project.agent.use", "project.member.manage", "project.settings.manage",
 ];
 
 // 2026-08-28 coder(lq): Keep the built-in catalog visible while an older
@@ -39,12 +39,12 @@ const SYSTEM_ROLE_DEFAULTS: Array<{
   {
     key: "manager",
     name: "Manager",
-    permissions: ["project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.agent.use"],
+    permissions: ["project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.issue.archive", "project.agent.use"],
   },
   {
     key: "member",
     name: "Member",
-    permissions: ["project.view", "project.issue.create", "project.issue.comment", "project.agent.use"],
+    permissions: ["project.view", "project.issue.create", "project.issue.comment", "project.issue.archive", "project.agent.use"],
   },
   {
     key: "viewer",

@@ -86,7 +86,9 @@ func TestPolicyInheritanceAndRoles(t *testing.T) {
 		{"viewer cannot edit", WorkspaceMember, ProjectViewer, Edit, false},
 		{"member creates issue", WorkspaceMember, ProjectMember, IssueCreate, true},
 		{"member comments on issue", WorkspaceMember, ProjectMember, IssueComment, true},
+		{"member archives issue", WorkspaceMember, ProjectMember, IssueArchive, true},
 		{"viewer cannot comment on issue", WorkspaceMember, ProjectViewer, IssueComment, false},
+		{"viewer cannot archive issue", WorkspaceMember, ProjectViewer, IssueArchive, false},
 		{"member cannot manage members", WorkspaceMember, ProjectMember, MemberManage, false},
 		{"manager manages issue", WorkspaceMember, ProjectManager, IssueManage, true},
 	}

@@ -1269,7 +1269,7 @@
     "inherited_owner": "ワークスペースオーナーから継承",
     "read_only_hint": "ロールを変更できるのはワークスペースオーナーまたはプロジェクトオーナーのみです",
     "roles": { "owner": "オーナー", "admin": "管理者", "manager": "プロジェクト管理者", "member": "メンバー", "viewer": "閲覧者" },
-    "permissions": { "project.view": "プロジェクトを表示", "project.edit": "プロジェクトを編集", "project.issue.create": "タスクを作成", "project.issue.comment": "タスクにコメント", "project.issue.manage": "タスクを管理", "project.agent.use": "エージェントを使用", "project.member.manage": "メンバーを管理", "project.settings.manage": "プロジェクト設定を管理" },
+    "permissions": { "project.view": "プロジェクトを表示", "project.edit": "プロジェクトを編集", "project.issue.create": "タスクを作成", "project.issue.comment": "タスクにコメント", "project.issue.manage": "タスクを管理", "project.issue.archive": "タスクをアーカイブ", "project.agent.use": "エージェントを使用", "project.member.manage": "メンバーを管理", "project.settings.manage": "プロジェクト設定を管理" },
     "sources": { "workspace_role": "ワークスペースロール", "project_role": "プロジェクトロール" }
   },
   "permission_roles": {

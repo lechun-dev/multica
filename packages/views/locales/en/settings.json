@@ -1276,7 +1276,7 @@
     "inherited_owner": "Inherited from workspace owner",
     "read_only_hint": "Only workspace owners or project owners can change roles",
     "roles": { "owner": "Owner", "admin": "Admin", "manager": "Project manager", "member": "Member", "viewer": "Viewer" },
-    "permissions": { "project.view": "View project", "project.edit": "Edit project", "project.issue.create": "Create issues", "project.issue.comment": "Comment on issues", "project.issue.manage": "Manage issues", "project.agent.use": "Use agents", "project.member.manage": "Manage members", "project.settings.manage": "Manage project settings" },
+    "permissions": { "project.view": "View project", "project.edit": "Edit project", "project.issue.create": "Create issues", "project.issue.comment": "Comment on issues", "project.issue.manage": "Manage issues", "project.issue.archive": "Archive issues", "project.agent.use": "Use agents", "project.member.manage": "Manage members", "project.settings.manage": "Manage project settings" },
     "sources": { "workspace_role": "Workspace role", "project_role": "Project role" }
   },
   "permission_roles": {
