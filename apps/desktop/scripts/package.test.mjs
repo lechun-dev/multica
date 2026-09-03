@@ -5,6 +5,7 @@ import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
+  builderRetryDelays,
   deriveVersion,
   DESCRIBE_ARGS,
   envWithLocalBins,
@@ -563,6 +564,38 @@ describe("envWithLocalBins", () => {
   });
 });
 
+describe("electron-builder retry policy", () => {
+  it("retries transient Windows filesystem locks with bounded backoff", () => {
+    expect(
+      builderRetryDelays(
+        "win32",
+        "Error: EBUSY: resource busy or locked, copyfile 'LICENSE'",
+      ),
+    ).toEqual([0, 5_000, 15_000]);
+    expect(
+      builderRetryDelays("win32", "Error: EPERM: operation not permitted"),
+    ).toEqual([0, 5_000, 15_000]);
+  });
+
+  it("does not retry deterministic failures or failures on other hosts", () => {
+    expect(
+      builderRetryDelays("win32", "Invalid configuration object"),
+    ).toEqual([0]);
+    expect(builderRetryDelays("darwin", "Error: EBUSY: resource busy")).toEqual([
+      0,
+    ]);
+    expect(
+      builderRetryDelays("linux", "Error: EACCES: permission denied"),
+    ).toEqual([0]);
+  });
+
+  it("keeps the policy bounded to the lock failure that triggered it", () => {
+    expect(builderRetryDelays("win32", "configuration validation failed")).toEqual([
+      0,
+    ]);
+  });
+});
+
 describe("electron-builder.yml packaging config", () => {
   // Regression guard for github.com/multica-ai/multica/issues/5595. The
   // multi-arch release build writes each target's output to
@@ -623,5 +656,22 @@ describe("electron-builder.yml packaging config", () => {
     expect(config).toContain("rpm:\n  packageName: multica-lechun");
     expect(config).toContain("channel: latest-lechun");
     expect(config).toContain("multica-lechun");
+  });
+
+  it("inherits license resources only once in the Lechun preview config", () => {
+    const previewConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun-preview.yml"),
+      resolve(process.cwd(), "apps/desktop/electron-builder.lechun-preview.yml"),
+    ].find((candidate) => existsSync(candidate));
+    expect(previewConfigPath, "Lechun preview config not found").toBeTruthy();
+    if (!previewConfigPath || !configPath) return;
+
+    const baseConfig = readFileSync(configPath, "utf-8");
+    const previewConfig = readFileSync(previewConfigPath, "utf-8");
+    expect(baseConfig.match(/from: \.\.\/\.\.\/LICENSE/g)).toHaveLength(1);
+    expect(baseConfig.match(/from: \.\.\/\.\.\/NOTICE/g)).toHaveLength(1);
+    expect(previewConfig).not.toContain("../../LICENSE");
+    expect(previewConfig).not.toContain("../../NOTICE");
+    expect(previewConfig).toContain("from: build-beta/icon.png");
   });
 });

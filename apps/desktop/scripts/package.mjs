@@ -26,7 +26,7 @@
 // tests cover version derivation both as a pure string transform and as the
 // real `git describe` invocation against a throwaway repo.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -67,6 +67,12 @@ const ARCH_FLAGS = new Map([
 ]);
 
 const SUPPORTED_CLI_ARCHS = new Set(["x64", "arm64"]);
+// 2026-09-03 coder(lq): Windows hosted runners can briefly lock files that
+// electron-builder has just created while Defender or the file indexer scans
+// them. Retry only errors that identify a transient filesystem lock so build
+// configuration and compilation failures still stop immediately.
+const WINDOWS_BUILDER_RETRY_DELAYS_MS = [0, 5_000, 15_000];
+const WINDOWS_TRANSIENT_LOCK_PATTERN = /\b(?:EBUSY|EPERM|EACCES)\b/i;
 const MAC_ALL_PLATFORM_TARGETS = [
   { platform: "mac", arch: "arm64" },
   { platform: "mac", arch: "x64" },
@@ -409,7 +415,64 @@ export function builderArgsForTarget(
   return builderArgs;
 }
 
-function main() {
+export function builderRetryDelays(
+  hostPlatform = process.platform,
+  failureOutput = "",
+) {
+  if (
+    hostPlatform !== "win32" ||
+    !WINDOWS_TRANSIENT_LOCK_PATTERN.test(failureOutput)
+  ) {
+    return [0];
+  }
+  return [...WINDOWS_BUILDER_RETRY_DELAYS_MS];
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, milliseconds);
+  });
+}
+
+function appendOutputTail(existing, chunk, maxLength = 64 * 1024) {
+  const combined = existing + chunk;
+  return combined.length > maxLength ? combined.slice(-maxLength) : combined;
+}
+
+function runElectronBuilder(builderArgs) {
+  return new Promise((resolvePromise) => {
+    const child = spawn("electron-builder", builderArgs, {
+      stdio: ["inherit", "pipe", "pipe"],
+      cwd: desktopRoot,
+      env: envWithLocalBins(),
+      shell: true,
+    });
+    let outputTail = "";
+    let settled = false;
+
+    const forward = (stream, destination) => {
+      stream?.on("data", (chunk) => {
+        destination.write(chunk);
+        outputTail = appendOutputTail(outputTail, chunk.toString());
+      });
+    };
+    forward(child.stdout, process.stdout);
+    forward(child.stderr, process.stderr);
+
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise({ error, outputTail, status: null });
+    });
+    child.once("close", (status) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise({ error: null, outputTail, status });
+    });
+  });
+}
+
+async function main() {
   const passthrough = stripLeadingSeparator(process.argv.slice(2));
   const parsed = parsePackageArgs(passthrough);
   const buildMatrix = resolveBuildMatrix(parsed);
@@ -517,22 +580,58 @@ function main() {
     // Step 4: invoke electron-builder for the current target only.
     // `shell: true` for the same Windows `.cmd` shim reason as the
     // electron-vite invocation above.
-    const result = spawnSync("electron-builder", builderArgs, {
-      stdio: "inherit",
-      cwd: desktopRoot,
-      env: envWithLocalBins(),
-      shell: true,
-    });
+    const targetOutputDir = useScopedOutputDir
+      ? resolve(distDir, `${target.platform}-${target.arch}`)
+      : distDir;
+    let attempt = 0;
+    let retryDelays = [0];
 
-    if (result.error) {
-      console.error(
-        "[package] failed to spawn electron-builder:",
-        result.error.message,
+    while (attempt < retryDelays.length) {
+      const delay = retryDelays[attempt];
+      if (delay > 0) {
+        console.warn(
+          `[package] transient Windows file lock; retrying in ${delay / 1000}s ` +
+            `(attempt ${attempt + 1}/${retryDelays.length})`,
+        );
+        await sleep(delay);
+        // 2026-09-03 coder(lq): Delete only the generated output for this
+        // target. Source, bundled CLI, and dependency directories are never
+        // touched by retry cleanup.
+        try {
+          rmSync(targetOutputDir, { recursive: true, force: true });
+        } catch (error) {
+          console.warn(
+            `[package] could not clean output before retry: ${error.message}`,
+          );
+        }
+      }
+
+      const result = await runElectronBuilder(builderArgs);
+      if (result.error) {
+        console.error(
+          "[package] failed to spawn electron-builder:",
+          result.error.message,
+        );
+        process.exit(1);
+      }
+      if (result.status === 0) break;
+
+      const failureRetryDelays = builderRetryDelays(
+        process.platform,
+        result.outputTail,
       );
-      process.exit(1);
-    }
-    if (result.status !== 0) {
-      process.exit(result.status ?? 1);
+      if (attempt === 0) {
+        retryDelays = failureRetryDelays;
+      } else if (failureRetryDelays.length === 1) {
+        // A later attempt can expose a deterministic error after the lock is
+        // gone. Stop immediately instead of masking that error with more
+        // retries intended only for transient filesystem failures.
+        process.exit(result.status ?? 1);
+      }
+      attempt += 1;
+      if (attempt >= retryDelays.length) {
+        process.exit(result.status ?? 1);
+      }
     }
   }
 }
@@ -542,5 +641,8 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  main();
+  main().catch((error) => {
+    console.error("[package] unexpected packaging failure:", error);
+    process.exit(1);
+  });
 }

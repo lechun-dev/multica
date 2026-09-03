@@ -23,10 +23,6 @@ protocols:
 extraResources:
   - from: build-beta/icon.png
     to: resources/icon.png
-  - from: ../../LICENSE
-    to: LICENSE
-  - from: ../../NOTICE
-    to: NOTICE
 
 mac:
   artifactName: multica-lechun-preview-${version}-mac-${arch}.${ext}
