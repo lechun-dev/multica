@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,5 +177,13 @@ func TestWindowsChromiumFallbackExecutablePropagatesOverride(t *testing.T) {
 	got, ok := windowsChromiumFallbackExecutable()
 	if !ok || got != override {
 		t.Fatalf("fallback executable = %q, %v; want %q, true", got, ok, override)
+	}
+}
+
+func TestWithBrowserMcpTestHostUsesMissingStat(t *testing.T) {
+	withBrowserMcpTestHost(t, "windows", nil, nil)
+	_, err := browserMcpStat("missing")
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("browserMcpStat missing error = %v, want os.ErrNotExist", err)
 	}
 }

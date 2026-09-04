@@ -5,7 +5,6 @@ import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, it, expect } from "vitest";
 import {
   builderArgsForTarget,
-  builderRetryDelays,
   deriveVersion,
   DESCRIBE_ARGS,
   envWithLocalBins,
@@ -160,9 +159,12 @@ describe("normalizeGitVersion", () => {
 
 describe("DESCRIBE_ARGS", () => {
   it("passes the match pattern as one bare argv token, never a shell-quoted string", () => {
-    // Windows cmd.exe does not strip POSIX single quotes. Keeping the pattern
-    // as a bare argv element prevents tagged builds from falling back to a
-    // synthetic 0.0.0-g<hash> version.
+    // The Windows regression this locks down: the pattern used to be embedded
+    // in a shell command string as `--match 'v[0-9]*'`. cmd.exe does not strip
+    // POSIX single quotes, so git received them literally and matched no tag,
+    // collapsing the Desktop version to the 0.0.0-g<hash> fallback. As a
+    // standalone argv element with no surrounding quotes the pattern is
+    // shell-independent.
     expect(DESCRIBE_ARGS).toContain("v[0-9]*");
     for (const arg of DESCRIBE_ARGS) {
       expect(arg).not.toContain("'");
@@ -561,38 +563,6 @@ describe("envWithLocalBins", () => {
   });
 });
 
-describe("electron-builder retry policy", () => {
-  it("retries transient Windows filesystem locks with bounded backoff", () => {
-    expect(
-      builderRetryDelays(
-        "win32",
-        "Error: EBUSY: resource busy or locked, copyfile 'LICENSE'",
-      ),
-    ).toEqual([0, 5_000, 15_000]);
-    expect(
-      builderRetryDelays("win32", "Error: EPERM: operation not permitted"),
-    ).toEqual([0, 5_000, 15_000]);
-  });
-
-  it("does not retry deterministic failures or failures on other hosts", () => {
-    expect(
-      builderRetryDelays("win32", "Invalid configuration object"),
-    ).toEqual([0]);
-    expect(builderRetryDelays("darwin", "Error: EBUSY: resource busy")).toEqual([
-      0,
-    ]);
-    expect(
-      builderRetryDelays("linux", "Error: EACCES: permission denied"),
-    ).toEqual([0]);
-  });
-
-  it("keeps the policy bounded to the lock failure that triggered it", () => {
-    expect(builderRetryDelays("win32", "configuration validation failed")).toEqual([
-      0,
-    ]);
-  });
-});
-
 describe("electron-builder.yml packaging config", () => {
   // Regression guard for github.com/multica-ai/multica/issues/5595. The
   // multi-arch release build writes each target's output to
@@ -631,7 +601,7 @@ describe("electron-builder.yml packaging config", () => {
     return entries;
   }
 
-  it("excludes prior architecture output from packaged files", () => {
+  it("excludes the dist output directory from the packaged files", () => {
     expect(configPath, "electron-builder.yml not found").toBeTruthy();
     const entries = readFilesBlock(readFileSync(configPath, "utf-8"));
     expect(entries.length).toBeGreaterThan(0);
@@ -653,22 +623,5 @@ describe("electron-builder.yml packaging config", () => {
     expect(config).toContain("rpm:\n  packageName: multica-lechun");
     expect(config).toContain("channel: latest-lechun");
     expect(config).toContain("multica-lechun");
-  });
-
-  it("inherits license resources only once in the Lechun preview config", () => {
-    const previewConfigPath = [
-      resolve(process.cwd(), "electron-builder.lechun-preview.yml"),
-      resolve(process.cwd(), "apps/desktop/electron-builder.lechun-preview.yml"),
-    ].find((candidate) => existsSync(candidate));
-    expect(previewConfigPath, "Lechun preview config not found").toBeTruthy();
-    if (!previewConfigPath || !configPath) return;
-
-    const baseConfig = readFileSync(configPath, "utf-8");
-    const previewConfig = readFileSync(previewConfigPath, "utf-8");
-    expect(baseConfig.match(/from: \.\.\/\.\.\/LICENSE/g)).toHaveLength(1);
-    expect(baseConfig.match(/from: \.\.\/\.\.\/NOTICE/g)).toHaveLength(1);
-    expect(previewConfig).not.toContain("../../LICENSE");
-    expect(previewConfig).not.toContain("../../NOTICE");
-    expect(previewConfig).toContain("from: build-beta/icon.png");
   });
 });

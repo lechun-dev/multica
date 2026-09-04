@@ -72,7 +72,7 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 	visibleProjects := map[pgtype.UUID]struct{}(nil)
 	visibleIssues := map[pgtype.UUID]struct{}(nil)
 	if projectAuthEnabled {
-		visibleProjects, err = h.visibleProjectIDSet(r.Context(), workspaceID, userID, includeWorkspaceOwned)
+		visibleProjects, err = h.visibleProjectIDSet(r.Context(), workspaceID, userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list pins")
 			return

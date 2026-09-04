@@ -716,7 +716,7 @@ export function InlineTitle({
       ) : (
         <span className="w-4 shrink-0" />
       )}
-      <span className="min-w-16 shrink-0 text-caption text-muted-foreground">
+      <span className="w-16 shrink-0 text-caption text-muted-foreground">
         {row.issue.identifier}
       </span>
       <IssueAgentActivityIndicator issueId={row.issue.id} />

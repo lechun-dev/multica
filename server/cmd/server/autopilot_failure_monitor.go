@@ -279,34 +279,44 @@ func emitAutopilotPausedNotifications(
 	}
 }
 
+// pausedRecipient identifies a single inbox_item recipient.
+type pausedRecipient struct {
+	Type string // "member" or "agent"
+	ID   pgtype.UUID
+}
+
 func resolveAutopilotPausedRecipients(
 	ctx context.Context,
 	queries *db.Queries,
 	autopilot db.Autopilot,
-) []service.AutopilotNotificationRecipient {
-	recipient, ok, err := service.ResolveAutopilotNotificationRecipient(ctx, queries, autopilot)
-	if err != nil {
-		slog.Debug("autopilot failure monitor: failed to resolve recipient",
-			"autopilot_id", util.UUIDToString(autopilot.ID),
-			"error", err,
-		)
-		return nil
-	}
-	if ok {
-		return []service.AutopilotNotificationRecipient{recipient}
+) []pausedRecipient {
+	if autopilot.CreatedByType == "member" {
+		return []pausedRecipient{{Type: "member", ID: autopilot.CreatedByID}}
 	}
 
-	recipients, err := service.ListWorkspaceManagerNotificationRecipients(
-		ctx, queries, autopilot.WorkspaceID,
-	)
+	// Creator is an agent — find the agent's human owner so the alert lands
+	// somewhere actionable. If we can't resolve a member, skip notification
+	// rather than spam an agent that can't act on it.
+	agent, err := queries.GetAgent(ctx, autopilot.CreatedByID)
 	if err != nil {
-		slog.Debug("autopilot failure monitor: failed to resolve workspace manager fallback recipients",
-			"autopilot_id", util.UUIDToString(autopilot.ID),
+		slog.Debug("autopilot failure monitor: failed to load creator agent",
+			"agent_id", util.UUIDToString(autopilot.CreatedByID),
 			"error", err,
 		)
 		return nil
 	}
-	return recipients
+	if !agent.OwnerID.Valid {
+		return nil
+	}
+
+	member, err := queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID:      agent.OwnerID,
+		WorkspaceID: autopilot.WorkspaceID,
+	})
+	if err != nil {
+		return nil
+	}
+	return []pausedRecipient{{Type: "member", ID: member.UserID}}
 }
 
 // autopilotEventPayload builds the minimal payload shape consumed by

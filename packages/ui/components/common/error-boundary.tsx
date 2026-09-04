@@ -1,7 +1,6 @@
 "use client";
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
 
 export interface ErrorBoundaryProps {
@@ -79,7 +78,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 }
 
 function DefaultFallback({ error, reset }: { error: Error; reset: () => void }) {
-  const { t } = useTranslation("ui");
   return (
     <div
       role="alert"
@@ -87,14 +85,14 @@ function DefaultFallback({ error, reset }: { error: Error; reset: () => void }) 
     >
       <div className="space-y-1">
         <p className="font-medium text-foreground">
-          {t(($) => $.error_boundary.title)}
+          Something went wrong displaying this section.
         </p>
         <p className="text-muted-foreground">
-          {error.message || t(($) => $.error_boundary.description)}
+          {error.message || "An unexpected error occurred."}
         </p>
       </div>
       <Button size="sm" variant="outline" onClick={reset}>
-        {t(($) => $.error_boundary.try_again)}
+        Try again
       </Button>
     </div>
   );

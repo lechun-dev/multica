@@ -41,19 +41,6 @@ describe("resolveDesktopIdentity", () => {
       oauthClient: "desktop",
     });
   });
-
-  it("isolates the Lechun preview identity", () => {
-    expect(
-      resolveDesktopIdentity({ isDev: false, variant: "lechun-preview" }),
-    ).toEqual({
-      variant: "lechun-preview",
-      productName: "MissionOS Preview",
-      userDataDirectoryName: "Multica Lechun Preview",
-      appId: "ai.multica.desktop.lechun.preview",
-      protocol: "multica-lechun-preview",
-      oauthClient: "desktop-lechun-preview",
-    });
-  });
 });
 
 describe("resolveDesktopUpdateChannel", () => {
@@ -92,15 +79,5 @@ describe("resolveDesktopUpdateChannel", () => {
         arch: "arm64",
       }),
     ).toBe("latest-lechun-arm64");
-  });
-
-  it("uses a separate preview update feed", () => {
-    expect(
-      resolveDesktopUpdateChannel({
-        variant: "lechun-preview",
-        platform: "darwin",
-        arch: "arm64",
-      }),
-    ).toBe("latest-lechun-preview");
   });
 });

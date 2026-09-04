@@ -17,7 +17,6 @@ const mocks = vi.hoisted(() => ({
   createPin: vi.fn(),
   deletePin: vi.fn(),
   listProjectMembers: vi.fn(),
-  projectListOptionsCalls: [] as Array<[string, boolean]>,
   openModal: vi.fn(),
   projectViewState: {
     viewMode: "compact",
@@ -71,10 +70,7 @@ vi.mock("@multica/core/api", () => ({
 }));
 
 vi.mock("@multica/core/projects", () => ({
-  projectListOptions: (wsId: string, includeWorkspaceOwned = true) => {
-    mocks.projectListOptionsCalls.push([wsId, includeWorkspaceOwned]);
-    return { queryKey: ["projects"] };
-  },
+  projectListOptions: () => ({ queryKey: ["projects"] }),
   useUpdateProject: () => ({ mutate: mocks.updateProject }),
   useDeleteProject: () => ({ mutate: mocks.deleteProject }),
   useProjectViewStore: (selector: (state: unknown) => unknown) =>
@@ -270,7 +266,6 @@ beforeEach(() => {
   mocks.createPin.mockClear();
   mocks.deletePin.mockClear();
   mocks.listProjectMembers.mockClear();
-  mocks.projectListOptionsCalls = [];
   mocks.openModal.mockClear();
   mocks.projectViewState.viewMode = "compact";
   mocks.projectViewState.sortField = "name";
@@ -294,41 +289,6 @@ describe("ProjectsPage compact row navigation", () => {
     renderProjects();
 
     expect(within(projectRow()).getByText("Viewer")).toBeInTheDocument();
-  });
-
-  it("lets a workspace owner hide workspace-owned projects", async () => {
-    const user = userEvent.setup();
-    mocks.members = [
-      { user_id: "user-1", name: "User One", role: "owner" },
-    ];
-    mocks.projectViewState.showWorkspaceOwnedItems = true;
-    renderProjects();
-
-    const toggle = screen.getByRole("switch", {
-      name: "Show workspace-owned projects",
-    });
-    expect(toggle).toBeChecked();
-    expect(mocks.projectListOptionsCalls.at(-1)).toEqual([
-      "workspace-1",
-      true,
-    ]);
-
-    await user.click(toggle);
-
-    expect(mocks.projectViewState.setShowWorkspaceOwnedItems).toHaveBeenCalled();
-    expect(mocks.projectViewState.setShowWorkspaceOwnedItems.mock.calls[0]?.[0]).toBe(false);
-  });
-
-  it("does not show the workspace-owned toggle to non-owners", () => {
-    renderProjects();
-
-    expect(
-      screen.queryByRole("switch", { name: "Show workspace-owned projects" }),
-    ).not.toBeInTheDocument();
-    expect(mocks.projectListOptionsCalls.at(-1)).toEqual([
-      "workspace-1",
-      true,
-    ]);
   });
 
   it("renders the project name as text, not a title link", () => {

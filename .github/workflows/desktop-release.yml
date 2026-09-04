@@ -87,11 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package_script=package:lechun
-          if [[ "$RELEASE_TAG" == *-* ]]; then
-            package_script=package:lechun-preview
-          fi
-          pnpm --filter @multica/desktop "$package_script" -- \
+          pnpm --filter @multica/desktop package:lechun -- \
             --${{ matrix.platform == 'windows' && 'win' || matrix.platform }} \
             --${{ matrix.arch }} \
             --publish never
@@ -141,9 +137,6 @@ jobs:
                 case "$base" in
                   multica-lechun-*.dmg|multica-lechun-*.zip|multica-lechun-*.exe|\
                   multica-lechun-*.AppImage|multica-lechun-*.deb|multica-lechun-*.rpm|\
-                  multica-lechun-preview-*.dmg|multica-lechun-preview-*.zip|\
-                  multica-lechun-preview-*.exe|multica-lechun-preview-*.AppImage|\
-                  multica-lechun-preview-*.deb|multica-lechun-preview-*.rpm|\
                   latest*.yml|builder-debug.yml|*.blockmap|LICENSE.electron.txt|LICENSES.chromium.html)
                     printf '%s\0' "$file"
                     ;;

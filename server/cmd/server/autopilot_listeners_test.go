@@ -11,27 +11,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// seedAutopilotScheduleTrigger gives an autopilot a schedule trigger recording its
-// creator. Since MUL-6951 an automatic dispatch resolves the human it acts as from
-// this row — and admits the assignee agent as that human — so a dispatch with no
-// trigger has no principal and fails closed.
-func seedAutopilotScheduleTrigger(t *testing.T, queries *db.Queries, ap db.Autopilot) pgtype.UUID {
-	t.Helper()
-	trig, err := queries.CreateAutopilotTrigger(context.Background(), db.CreateAutopilotTriggerParams{
-		AutopilotID:    ap.ID,
-		Kind:           "schedule",
-		Enabled:        true,
-		CronExpression: pgtype.Text{String: "*/5 * * * *", Valid: true},
-		Timezone:       pgtype.Text{String: "UTC", Valid: true},
-		CreatedByType:  pgtype.Text{String: "member", Valid: ap.CreatedByType == "member"},
-		CreatedByID:    ap.CreatedByID,
-	})
-	if err != nil {
-		t.Fatalf("seed schedule trigger: %v", err)
-	}
-	return trig.ID
-}
-
 func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 	ctx := context.Background()
 	queries := db.New(testPool)
@@ -100,7 +79,7 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 				}
 			})
 
-			run, err := autopilotSvc.DispatchAutopilot(ctx, ap, seedAutopilotScheduleTrigger(t, queries, ap), "manual", nil)
+			run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 			if err != nil {
 				t.Fatalf("DispatchAutopilot: %v", err)
 			}
@@ -193,7 +172,7 @@ func dispatchCreateIssueAutopilot(t *testing.T, title string) linkedIssueAutopil
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
-	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, seedAutopilotScheduleTrigger(t, queries, ap), "schedule", nil)
+	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -390,7 +369,7 @@ func TestAutopilotDispatchSkipsWhenRuntimeOffline(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
-	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, seedAutopilotScheduleTrigger(t, queries, ap), "schedule", nil)
+	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -479,7 +458,7 @@ func TestAutopilotCreateIssueDispatchCreatesIssueWhenRuntimeOffline(t *testing.T
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
-	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, seedAutopilotScheduleTrigger(t, queries, ap), "schedule", nil)
+	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -591,7 +570,7 @@ func TestManualTriggerDoesNotErrorOnPostAdmissionSkip(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
-	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, seedAutopilotScheduleTrigger(t, queries, ap), "manual", nil)
+	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 	if err != nil {
 		t.Fatalf("manual DispatchAutopilot returned error (would 500 the handler): %v", err)
 	}

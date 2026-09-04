@@ -2,8 +2,7 @@ export type DingTalkOAuthClient =
   | "web"
   | "desktop"
   | "desktop-dev"
-  | "desktop-lechun"
-  | "desktop-lechun-preview";
+  | "desktop-lechun";
 
 export function buildDingTalkLoginURL(
   apiBaseURL: string,
@@ -42,7 +41,6 @@ function dingtalkStateClient(
   const withoutNext = state.split(".next.", 1)[0] ?? state;
   if (withoutNext.endsWith(".desktop-dev")) return "desktop-dev";
   if (withoutNext.endsWith(".desktop-lechun")) return "desktop-lechun";
-  if (withoutNext.endsWith(".desktop-lechun-preview")) return "desktop-lechun-preview";
   if (withoutNext.endsWith(".desktop")) return "desktop";
   return "web";
 }
@@ -50,11 +48,10 @@ function dingtalkStateClient(
 /** Return the deep-link protocol for a verified desktop DingTalk state. */
 export function dingtalkCallbackProtocol(
   state: string,
-): "multica" | "multica-dev" | "multica-lechun" | "multica-lechun-preview" {
+): "multica" | "multica-dev" | "multica-lechun" {
   const client = dingtalkStateClient(state);
   if (client === "desktop-dev") return "multica-dev";
   if (client === "desktop-lechun") return "multica-lechun";
-  if (client === "desktop-lechun-preview") return "multica-lechun-preview";
   return "multica";
 }
 

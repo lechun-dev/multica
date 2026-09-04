@@ -285,19 +285,6 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2026-09-01 coder(lq): Seed the canonical project-role catalog in the
-	// workspace transaction. Without this, a newly created workspace could
-	// pass single-resource checks (which have in-memory defaults) while its
-	// SQL-backed project list hid every project until a role was edited.
-	// Keep the call behind the rollout flag so older deployments can still
-	// create workspaces before the authorization migrations are applied.
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := (&projectAuthRepository{db: tx}).ensureSystemRoleDefinitions(r.Context(), uuidToString(ws.ID)); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to seed project permission roles: "+err.Error())
-			return
-		}
-	}
-
 	// Seed the 7 built-in issue statuses inside the same transaction, so a
 	// workspace is never visible without its status catalog — an issue cannot
 	// be created before its status can be resolved. (MUL-6243)
@@ -1178,15 +1165,6 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		failWorkspaceDelete(w, r, workspaceID, "lock workspace", err)
 		return
 	}
-	// Take a best-effort snapshot for post-commit daemon invalidation. Runtime
-	// registration does not participate in the workspace delete lock protocol,
-	// so PR1 retains the heartbeat lookup as the correctness fallback for a
-	// registration that races this snapshot.
-	runtimeIDs, err := qtx.ListAgentRuntimeIDsByWorkspace(r.Context(), requester.WorkspaceID)
-	if err != nil {
-		failWorkspaceDelete(w, r, workspaceID, "list runtimes", err)
-		return
-	}
 
 	if _, err := qtx.LockChatSessionsByWorkspace(r.Context(), requester.WorkspaceID); err != nil {
 		failWorkspaceDelete(w, r, workspaceID, "lock chat sessions", err)
@@ -1379,9 +1357,6 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("commit workspace delete failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete workspace")
 		return
-	}
-	for _, runtimeID := range runtimeIDs {
-		h.NotifyRuntimeGone(uuidToString(runtimeID))
 	}
 	h.deleteS3Objects(r.Context(), append(sourceContextAttachmentURLs, sourceContextIntentURLs...))
 

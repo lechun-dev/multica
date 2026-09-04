@@ -118,17 +118,6 @@ type CreateProjectRequest struct {
 	StartDate   *string                               `json:"start_date"`
 	DueDate     *string                               `json:"due_date"`
 	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
-	// 2026-09-01 coder(lq): Persist creation-time grants in the same
-	// transaction as the project so a failed authorization cannot leave a
-	// project with only a partial or legacy membership state.
-	AccessGrants []CreateProjectAccessGrantRequest `json:"access_grants,omitempty"`
-}
-
-type CreateProjectAccessGrantRequest struct {
-	SubjectType projectauth.SubjectType `json:"subject_type"`
-	SubjectID   string                  `json:"subject_id"`
-	Role        projectauth.ProjectRole `json:"role"`
-	Permission  projectauth.Permission  `json:"permission"`
 }
 
 // CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
@@ -279,21 +268,6 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
-	// 2026-09-03 coder(lq): Return the caller's explicit project role on the
-	// detail endpoint as well as the list endpoint. Workspace-owner bypass is
-	// intentionally not converted into a project Owner role here.
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if userID := requestUserID(r); userID != "" {
-			if roles, roleErr := h.ProjectAuth.CurrentProjectRoles(r.Context(), workspaceID, userID); roleErr == nil {
-				if role, found := roles[uuidToString(project.ID)]; found {
-					value := string(role)
-					resp.CurrentUserRole = &value
-				}
-			} else {
-				slog.Warn("failed to load current project role", "workspace_id", workspaceID, "project_id", id, "user_id", userID, "error", roleErr)
-			}
-		}
-	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -342,36 +316,6 @@ func (h *Handler) ensureProjectOwnerInTx(ctx context.Context, tx pgx.Tx, project
 	return projectauth.New(newProjectAuthRepository(tx), true).EnsureOwner(ctx, projectID, userID)
 }
 
-// 2026-09-01 coder(lq): Creation-time grants share the project transaction.
-// This keeps the project row, its owner, and every requested user/organization/
-// everyone grant atomic; a bad subject or role rolls back the whole create.
-func (h *Handler) initializeProjectAccessInTx(ctx context.Context, tx pgx.Tx, workspaceID, projectID, userID string, requests []CreateProjectAccessGrantRequest) error {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(requests) == 0 {
-		return nil
-	}
-	repo := newProjectAuthRepository(tx)
-	workspaceRole, err := repo.WorkspaceRole(ctx, workspaceID, userID)
-	if err != nil {
-		return err
-	}
-	actor := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: workspaceRole}
-	service := projectauth.New(repo, true)
-	for _, request := range requests {
-		grant := projectauth.AccessGrant{
-			WorkspaceID: workspaceID,
-			ProjectID:   projectID,
-			SubjectType: request.SubjectType,
-			SubjectID:   strings.TrimSpace(request.SubjectID),
-			Role:        request.Role,
-			Permission:  request.Permission,
-		}
-		if err := service.GrantAccess(ctx, actor, grant); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -385,10 +329,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	userID, ok := requireUserID(w, r)
 	if !ok {
-		return
-	}
-	if len(req.AccessGrants) > 0 && (h.ProjectAuth == nil || !h.ProjectAuth.Enabled()) {
-		writeErrorCode(w, http.StatusBadRequest, "project_permission_disabled", "creation-time project permissions are disabled")
 		return
 	}
 	status := req.Status
@@ -519,13 +459,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	// Keep project creation and owner initialization atomic when the overlay is
 	// enabled, even when no resources are attached.
 	if len(req.Resources) == 0 {
-		// 2026-09-01 coder(lq): Permission-enabled project creation must have a
-		// transaction boundary; fail closed instead of panicking on miswired
-		// handlers or partially persisting the project.
-		if h.TxStarter == nil {
-			writeError(w, http.StatusInternalServerError, "project creation requires transaction support")
-			return
-		}
 		tx, err := h.TxStarter.Begin(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -542,15 +475,17 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
 			return
 		}
-		if err := h.initializeProjectAccessInTx(r.Context(), tx, workspaceID, uuidToString(project.ID), userID, req.AccessGrants); err != nil {
-			slog.Error("initialize project access grants failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-			writeProjectAccessGrantError(w, err)
-			return
-		}
 		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
 			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
 			return
+		}
+		if project.Description.Valid {
+			if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
+				slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+				writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
+				return
+			}
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to commit project create")
@@ -563,12 +498,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Transactional path: project + all resources are atomic.
-	// 2026-09-01 coder(lq): Keep the bundled resource path fail-closed too when
-	// permission initialization requires a transaction.
-	if h.TxStarter == nil {
-		writeError(w, http.StatusInternalServerError, "project creation requires transaction support")
-		return
-	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -617,15 +546,17 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
 		return
 	}
-	if err := h.initializeProjectAccessInTx(r.Context(), tx, workspaceID, uuidToString(project.ID), userID, req.AccessGrants); err != nil {
-		slog.Error("initialize project access grants failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-		writeProjectAccessGrantError(w, err)
-		return
-	}
 	if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
 		slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
 		return
+	}
+	if project.Description.Valid {
+		if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
+			slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
+			return
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project create")
@@ -794,6 +725,9 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		project, err = h.Queries.WithTx(tx).UpdateProject(r.Context(), params)
 		if err == nil {
 			err = promoteMemberLeadWithExecutor(r.Context(), tx, id, project.LeadType, project.LeadID)
+		}
+		if err == nil && project.Description.Valid {
+			err = promoteMentionedMembersWithExecutor(r.Context(), tx, id, project.Description.String)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
@@ -975,23 +909,12 @@ func buildProjectSearchQueryForUser(phrase string, terms []string, includeClosed
 		whereClause += " AND p.status NOT IN ('completed', 'cancelled')"
 	}
 	if userParam != "" {
-		// 2026-09-01 coder(lq): Search is a project-list surface and must use
-		// the same canonical grant predicate as ListProjects. Filtering with
-		// project_members here would let a migrated-away legacy row leak an
-		// otherwise inaccessible project before LIMIT/OFFSET is applied.
-		// 2026-09-04 coder(lq): Workspace-owner visibility is a deployment
-		// controlled bypass. Keep search aligned with the regular project list;
-		// an unconditional owner clause would leak owner-only projects whenever
-		// PROJECT_OWNER_BYPASS_ENABLED=false.
-		ownerPredicate := fmt.Sprintf(
-			"(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = p.workspace_id AND m.user_id = %s::uuid AND m.role = 'owner'))",
-			workspaceOwnerBypassPredicate("p.workspace_id"),
-			userParam,
-		)
-		whereClause += fmt.Sprintf(" AND (%s OR %s)",
-			ownerPredicate,
-			projectAccessPredicate("p.id", wsParam, userParam),
-		)
+		whereClause += fmt.Sprintf(` AND (
+			EXISTS (SELECT 1 FROM member m
+				WHERE m.workspace_id = p.workspace_id AND m.user_id = %s::uuid AND m.role = 'owner')
+			OR EXISTS (SELECT 1 FROM project_members pm
+				WHERE pm.project_id = p.id AND pm.user_id = %s::uuid)
+		)`, userParam, userParam)
 	}
 
 	// --- ORDER BY ranking ---

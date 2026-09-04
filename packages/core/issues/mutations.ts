@@ -139,14 +139,15 @@ export function useUpdateIssue() {
       return api.moveIssue(id, { ...target, ...moveIntent });
     },
     onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
-      // suppress_run is a write-time control field, not an Issue column.
-      // description_base is merge metadata, while description itself
+      // suppress_run / handoff_note are write-time control fields, not Issue
+      // columns. description_base is merge metadata, while description itself
       // is resolved against that base on the server and therefore is not safe
       // to predict optimistically. Keep the authoritative raw description in
       // cache so hidden channel-media markers remain available as the base for
       // a rapid follow-up edit. mutationFn still sends the full payload.
       const {
         suppress_run: _suppressRun,
+        handoff_note: _handoffNote,
         description: _description,
         description_base: _descriptionBase,
         title_base: _titleBase,
@@ -257,6 +258,7 @@ export function useUpdateIssue() {
       // is the plain surgical patch it always was.
       const {
         suppress_run: _suppressRun,
+        handoff_note: _handoffNote,
         description_base: _descriptionBase,
         move_intent: _moveIntent,
         id: _id,
@@ -486,6 +488,7 @@ export function useBatchUpdateIssues() {
       // until a refetch returns the committed result.
       const {
         suppress_run: _suppressRun,
+        handoff_note: _handoffNote,
         description: _description,
         description_base: _descriptionBase,
         ...patch

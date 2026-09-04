@@ -13,7 +13,4 @@ var (
 	ErrLastOwner              = errors.New("project must retain at least one owner")
 	ErrInvalidReportFilter    = errors.New("invalid permission report filter")
 	ErrRoleInUse              = errors.New("project permission role is in use")
-	ErrInvalidSubject         = errors.New("invalid project permission subject")
-	ErrMigrationRequired      = errors.New("project permission migration is required")
-	ErrStorageUnavailable     = errors.New("project permission storage unavailable")
 )

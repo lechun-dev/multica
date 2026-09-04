@@ -692,9 +692,6 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		}
 		projectID = parsed
 	}
-	if !h.requireNewIssueProjectPermission(w, r, util.UUIDToString(workspaceID), projectID, projectauth.IssueCreate) {
-		return errSourceContextResponseWritten
-	}
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, input.AttachmentIDs, "attachment_ids")
 	if !ok {
 		return errSourceContextResponseWritten
@@ -736,12 +733,8 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Stage: stage,
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
-		ActorID: util.UUIDToString(userID),
-		// 2026-09-01 coder(lq): Source-context creates share the normal issue
-		// creation invariant; the service guard prevents future callers from
-		// bypassing project authorization through this specialized endpoint.
-		RequireProject: h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
-		BeforeCommit:   h.issueAccessBeforeCommit(),
+		ActorID:      util.UUIDToString(userID),
+		BeforeCommit: h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
 			response := issueToResponse(issue, prefix)
 			labelResponses := labelsToResponse(labels)
@@ -855,9 +848,6 @@ func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Req
 		}
 		projectID = parsed
 	}
-	if !h.requireNewIssueProjectPermission(w, r, util.UUIDToString(workspaceID), projectID, projectauth.IssueCreate) {
-		return nil, errSourceContextResponseWritten
-	}
 	return &preparedAgentCommentSubIssue{
 		agentID: agentID, squadID: squadID, runtimeID: agent.RuntimeID,
 		prompt: prompt, priority: priority, dueDate: dueDate,
@@ -911,15 +901,12 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 	case errors.Is(err, service.ErrActiveDuplicate):
 		status, code = http.StatusConflict, "active_duplicate_issue"
 		message = err.Error()
-	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrParentProjectMismatch), errors.Is(err, service.ErrProjectNotFound):
+	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrProjectNotFound):
 		status = http.StatusBadRequest
 		message = err.Error()
 	case errors.Is(err, service.ErrArchivedParentIssue):
 		status = http.StatusConflict
 		message = err.Error()
-	case errors.Is(err, service.ErrProjectRequired):
-		status = http.StatusBadRequest
-		message = "project_id is required when project permissions are enabled"
 	case errors.Is(err, errSourceContextBadRequest):
 		status, code = http.StatusBadRequest, "invalid_request"
 		message = err.Error()

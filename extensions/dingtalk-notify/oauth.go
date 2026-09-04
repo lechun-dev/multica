@@ -28,31 +28,6 @@ type DingTalkDepartment struct {
 	Name string `json:"name"`
 }
 
-// 2026-09-03 coder(lq): Keep the complete directory snapshot provider-neutral;
-// the host resolves external identities to Multica users transactionally.
-// DingTalkDirectorySnapshot is the complete enterprise directory used by
-// workspace authorization synchronization. It intentionally contains only
-// stable directory identifiers and display metadata; Multica user IDs are
-// resolved by the host application.
-type DingTalkDirectorySnapshot struct {
-	Departments []DingTalkDirectoryDepartment
-	Members     []DingTalkDirectoryMember
-}
-
-type DingTalkDirectoryDepartment struct {
-	ID       string
-	Name     string
-	ParentID string
-}
-
-type DingTalkDirectoryMember struct {
-	DingUserID    string
-	UnionID       string
-	Name          string
-	Email         string
-	DepartmentIDs []string
-}
-
 type OAuthProvider interface {
 	AuthorizationURL(ctx context.Context, state, redirectURI string) (string, error)
 	ExchangeCode(ctx context.Context, code, redirectURI string) (OAuthUser, error)

@@ -145,30 +145,6 @@ func TestBuildProjectSearchQuery_IncludeClosed(t *testing.T) {
 	}
 }
 
-func TestBuildProjectSearchQueryForUser_RespectsOwnerBypassSwitch(t *testing.T) {
-	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
-	query, args := buildProjectSearchQueryForUser("test", []string{"test"}, false, "00000000-0000-0000-0000-000000000001")
-
-	if len(args) < 4 {
-		t.Fatalf("expected workspace, user, limit and offset args, got %d", len(args))
-	}
-	if !strings.Contains(query, "FALSE AND EXISTS (SELECT 1 FROM member") {
-		t.Error("project search should disable workspace-owner bypass when the switch is false")
-	}
-	if !strings.Contains(query, "projectauth_access_grants") {
-		t.Error("project search should retain canonical grant visibility")
-	}
-}
-
-func TestBuildProjectSearchQueryForUser_EnablesOwnerBypassByDefault(t *testing.T) {
-	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "true")
-	query, _ := buildProjectSearchQueryForUser("test", []string{"test"}, false, "00000000-0000-0000-0000-000000000001")
-
-	if !strings.Contains(query, "TRUE AND EXISTS (SELECT 1 FROM member") {
-		t.Error("project search should allow workspace-owner bypass when the switch is true")
-	}
-}
-
 // --- extractSnippet regression tests ---
 
 func TestExtractSnippet_PhraseMatch(t *testing.T) {

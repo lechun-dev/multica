@@ -437,8 +437,7 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 	// filter it with the same project visibility boundary as issues and task
 	// history. Projectless legacy rows remain visible for native compatibility.
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r), includeWorkspaceOwned)
+		visibleProjects, scopeErr := h.visibleProjectIDSet(r.Context(), workspaceID, requestUserID(r))
 		if scopeErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 			return
@@ -1140,21 +1139,18 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A substantive change (target / enabled-state / execution mode) republishes the
-	// rule: append a new version with THIS member as publisher, recording who last
-	// changed what the rule does. Cosmetic edits (title / description / template)
-	// write no version (MUL-4302 §3.4). Since MUL-6951 the rule publisher is an
-	// AUDIT value only — it is the coarse fallback a run degrades to when its
-	// trigger records no creator, and such a run carries no authorization.
+	// rule: append a new version with THIS member as publisher, so a later run
+	// attributes to whoever last changed what the rule does — not the original
+	// creator. Cosmetic edits (title / description / template) write no version and
+	// leave accountability with the previous publisher (MUL-4302 §3.4).
 	if autopilotRuleSubstantiveChange(prev, autopilot) {
 		if err := h.recordAutopilotRuleVersion(r.Context(), qtx, autopilot, "member", parseUUID(userID)); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update autopilot")
 			return
 		}
-		// An autopilot-level substantive edit governs every trigger, so CONFIG
-		// responsibility for each one transfers to this editor. A trigger-scoped edit
-		// re-stamps only its own row (see UpdateAutopilotTrigger). Since MUL-6951 this
-		// moves published_by alone: the runs each trigger fires keep acting as, and
-		// stay accountable to, that trigger's immutable created_by.
+		// An autopilot-level substantive edit governs every trigger, so responsibility
+		// for each firing trigger transfers to this editor (source=trigger_owner). A
+		// trigger-scoped edit re-stamps only its own row (see UpdateAutopilotTrigger).
 		if err := qtx.SetAutopilotTriggerPublishersByAutopilot(r.Context(), db.SetAutopilotTriggerPublishersByAutopilotParams{
 			AutopilotID:     autopilot.ID,
 			PublishedByType: pgtype.Text{String: "member", Valid: true},
@@ -1588,17 +1584,11 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		NextRunAt:      nextRunAt,
 		Label:          ptrToText(req.Label),
 		WebhookToken:   webhookToken,
-		// published_by records who is currently responsible for this trigger's
-		// CONFIG: seeded to the creator, re-stamped to whoever later substantively
-		// edits it (MUL-4302). Since MUL-6951 it no longer decides anything about a
-		// run — neither authorization nor the task's accountable human — so an edit
-		// moves this column alone.
+		// Seed the responsible publisher = creator; a later substantive edit re-stamps
+		// it to the editor so runs attribute to whoever last shaped this trigger
+		// (source=trigger_owner, MUL-4302).
 		PublishedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
 		PublishedByID:   publisherID,
-		// created_by is the AUTHORIZATION principal and is immutable: the run acts
-		// as this member forever, so no edit may move it (MUL-6951).
-		CreatedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
-		CreatedByID:   publisherID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create trigger")
@@ -1661,15 +1651,10 @@ func (h *Handler) createWebhookTriggerWithMintedToken(
 			WebhookToken: pgtype.Text{String: token, Valid: true},
 			Provider:     pgtype.Text{String: provider, Valid: provider != ""},
 			EventFilters: eventFilters,
-			// published_by records CONFIG responsibility only: seeded to the creator,
-			// re-stamped to a later substantive editor (MUL-4302). It has no bearing
-			// on the runs this trigger fires (MUL-6951).
+			// Seed the responsible publisher = creator; re-stamped to the editor on a
+			// later substantive edit (source=trigger_owner, MUL-4302).
 			PublishedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
 			PublishedByID:   publisherID,
-			// Immutable authorization principal — see the schedule path above
-			// (MUL-6951).
-			CreatedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
-			CreatedByID:   publisherID,
 		})
 		if err != nil {
 			tx.Rollback(ctx)
@@ -2269,9 +2254,7 @@ func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 	// A manual "run now" is a direct human action, so the run is attributed
 	// direct_human to the triggering member (MUL-4302 §4). Resolve the actor the
 	// same way assign/promote does; only a member actor is a human — an agent
-	// triggering via A2A yields an invalid actor, which then follows the automation
-	// path: the firing trigger's creator, or nobody when this entry point supplies
-	// no trigger, in which case the run carries no authorization (MUL-6951).
+	// triggering via A2A yields an invalid actor and falls back to rule_owner.
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return

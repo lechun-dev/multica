@@ -231,9 +231,8 @@ func metricLabels(metric string) []string {
 // on RuntimeLookupSourceOther, which should sit at ~0 — a non-zero rate there
 // means a new call site was added without classifying it.
 const (
-	// RuntimeLookupSourceHeartbeatWS is retained as the rollout guard for the
-	// daemon WebSocket heartbeat. The connection-lease path must keep this
-	// series at zero; any increment is a regression to per-heartbeat reads.
+	// RuntimeLookupSourceHeartbeatWS is the daemon WebSocket heartbeat, one
+	// read per runtime per HeartbeatInterval.
 	RuntimeLookupSourceHeartbeatWS = "heartbeat_ws"
 	// RuntimeLookupSourceHeartbeatHTTP is the POST /api/daemon/heartbeat
 	// fallback used when the WebSocket ack does not arrive.

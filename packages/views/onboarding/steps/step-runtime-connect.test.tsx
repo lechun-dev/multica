@@ -69,6 +69,13 @@ describe("StepRuntimeConnect", () => {
     vi.useRealTimers();
   });
 
+  it("mounts and shows the scanning UI without touching framework-level globals", () => {
+    renderStep();
+    expect(
+      screen.getByText(/connecting this computer/i),
+    ).toBeInTheDocument();
+  });
+
   it("does not render a permanently-disabled Mika action while scanning", () => {
     renderStep();
     expect(

@@ -7,11 +7,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/service"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestBatchedHeartbeatScheduler_CoalescesAndFlushes confirms the batching win:
+// TestBatchedHeartbeatScheduler_CoalescesAndFlushes confirms the core P1 win:
 // many Schedule calls for the same id within a tick window collapse to a
 // single bulk UPDATE, and the DB observes the bump after FlushNow.
 func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
@@ -26,7 +24,7 @@ func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
 	setRuntimeLastSeenAt(t, runtimeID, stale)
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, nil)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
 
 	// Hammer Schedule with the same id from many goroutines.
 	const callers = 50
@@ -35,7 +33,7 @@ func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
 	for i := 0; i < callers; i++ {
 		go func() {
 			defer wg.Done()
-			if err := sched.Schedule(context.Background(), rt.ID); err != nil {
+			if err := sched.Schedule(context.Background(), rt); err != nil {
 				t.Errorf("Schedule: %v", err)
 			}
 		}()
@@ -67,47 +65,32 @@ func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
 	}
 }
 
-// TestBatchedHeartbeatScheduler_ExplicitDeregisterReceiptStaysOffline confirms
-// that a heartbeat queued before a user-visible deregistration cannot undo the
-// offline state or leave an online row with stale offline_reason metadata.
-func TestBatchedHeartbeatScheduler_ExplicitDeregisterReceiptStaysOffline(t *testing.T) {
+// TestBatchedHeartbeatScheduler_OfflineFallsBackSync confirms that the sync
+// path is preserved: an offline-status row goes through MarkAgentRuntimeOnline
+// immediately, not through the queue.
+func TestBatchedHeartbeatScheduler_OfflineFallsBackSync(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	setRuntimeStatus(t, runtimeID, "offline")
 	setRuntimeLastSeenAt(t, runtimeID, time.Now())
 	rt := loadRuntime(t, runtimeID)
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, nil)
-	if err := sched.Schedule(context.Background(), rt.ID); err != nil {
+	if rt.Status != "offline" {
+		t.Fatalf("setup: status=%q want offline", rt.Status)
+	}
+
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
+	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
-	reason := []byte(`{"code":"provider_removed"}`)
-	if err := testHandler.Queries.SetAgentRuntimeOfflineWithReason(context.Background(), db.SetAgentRuntimeOfflineWithReasonParams{
-		ID:            rt.ID,
-		OfflineReason: reason,
-	}); err != nil {
-		t.Fatalf("SetAgentRuntimeOfflineWithReason: %v", err)
-	}
 
-	if got := sched.PendingCount(); got != 1 {
-		t.Fatalf("pre-deregister heartbeat should remain queued, pending=%d", got)
-	}
-	sched.FlushNow(context.Background())
-
-	var status string
-	var reasonPreserved bool
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT status, metadata->'offline_reason' = $2::jsonb
-		FROM agent_runtime
-		WHERE id = $1
-	`, runtimeID, reason).Scan(&status, &reasonPreserved); err != nil {
-		t.Fatalf("read runtime after flush: %v", err)
-	}
-	if status != "offline" || !reasonPreserved {
-		t.Fatalf("explicit deregistration changed after receipt: status=%q reason_preserved=%t", status, reasonPreserved)
-	}
 	if got := sched.PendingCount(); got != 0 {
-		t.Fatalf("preserved offline runtime remained pending: %d", got)
+		t.Fatalf("offline row should not have been queued, pending=%d", got)
+	}
+	status, _, _ := readRuntimeRow(t, runtimeID)
+	if status != "online" {
+		t.Fatalf("expected status=online after sync flip, got %q", status)
 	}
 }
 
@@ -125,13 +108,13 @@ func TestBatchedHeartbeatScheduler_StopDrains(t *testing.T) {
 
 	// Long tick so the natural ticker can't fire during the test — only
 	// the Stop drain can flush.
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour, nil)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go sched.Run(ctx)
 
-	if err := sched.Schedule(context.Background(), rt.ID); err != nil {
+	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
 	if got := sched.PendingCount(); got != 1 {
@@ -164,7 +147,7 @@ func TestBatchedHeartbeatScheduler_StopFlushesLateSchedule(t *testing.T) {
 	setRuntimeLastSeenAt(t, runtimeID, stale)
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour, nil)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, time.Hour)
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	go sched.Run(runCtx)
@@ -179,7 +162,7 @@ func TestBatchedHeartbeatScheduler_StopFlushesLateSchedule(t *testing.T) {
 
 	// Now Schedule a late heartbeat. Run is gone; only Stop's defensive
 	// flush can persist this.
-	if err := sched.Schedule(context.Background(), rt.ID); err != nil {
+	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
 	if got := sched.PendingCount(); got != 1 {
@@ -203,7 +186,7 @@ func TestBatchedHeartbeatScheduler_FlushIgnoresEmpty(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, nil)
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
 	// Just calling FlushNow with nothing queued should not panic or error.
 	sched.FlushNow(context.Background())
 	if got := sched.PendingCount(); got != 0 {
@@ -211,67 +194,43 @@ func TestBatchedHeartbeatScheduler_FlushIgnoresEmpty(t *testing.T) {
 	}
 }
 
-// TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals confirms that if the
-// sweeper flips a row offline between Schedule and FlushNow, receipt
-// reconciliation restores it without a new heartbeat lookup.
+// TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals confirms the
+// next-beat-recovery contract: if the sweeper flips a row to offline between
+// Schedule and FlushNow, the bulk UPDATE leaves it offline (no rows
+// affected), and the runtime's *next* beat takes the sync path through
+// recordHeartbeat → MarkAgentRuntimeOnline to recover.
 func TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
-	setRuntimeLastSeenAt(t, runtimeID, time.Now().Add(-2*heartbeatReceiptRecoveryThreshold))
 	rt := loadRuntime(t, runtimeID)
 
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, nil)
-	if err := sched.Schedule(context.Background(), rt.ID); err != nil {
+	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0)
+	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
 
-	// The real sweeper query races us to offline before the flush. Its stale
-	// predicate is the fact receipt reconciliation is allowed to rely on.
-	rows, err := testHandler.Queries.MarkRuntimesOfflineByIDs(context.Background(), db.MarkRuntimesOfflineByIDsParams{
-		Ids:          []pgtype.UUID{rt.ID},
-		StaleSeconds: service.RuntimeClaimFreshnessSeconds,
-	})
-	if err != nil {
-		t.Fatalf("MarkRuntimesOfflineByIDs: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("sweeper rows = %d, want 1", len(rows))
-	}
+	// Sweeper races us to offline before the flush.
+	setRuntimeStatus(t, runtimeID, "offline")
 
 	sched.FlushNow(context.Background())
 
-	// The bulk UPDATE omits the offline row, and receipt reconciliation flips
-	// it back online without waiting for another heartbeat.
+	// Bulk UPDATE's status='online' predicate means the row stays offline.
 	status, _, _ := readRuntimeRow(t, runtimeID)
-	if status != "online" {
-		t.Fatalf("expected receipt reconciliation to recover online, got %q", status)
-	}
-}
-
-func TestBatchedHeartbeatScheduler_DeletedReceiptInvalidatesRuntime(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
-	rt := loadRuntime(t, runtimeID)
-	notifier := &recordingRuntimeGoneNotifier{}
-	sched := NewBatchedHeartbeatScheduler(testHandler.Queries, 0, notifier)
-	if err := sched.Schedule(context.Background(), rt.ID); err != nil {
-		t.Fatalf("Schedule: %v", err)
-	}
-	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID); err != nil {
-		t.Fatalf("delete runtime before flush: %v", err)
+	if status != "offline" {
+		t.Fatalf("expected status=offline after raced flush, got %q", status)
 	}
 
-	sched.FlushNow(context.Background())
-
-	if len(notifier.runtimeIDs) != 1 || notifier.runtimeIDs[0] != runtimeID {
-		t.Fatalf("runtime-gone notifications = %v, want [%s]", notifier.runtimeIDs, runtimeID)
+	// Reload and re-Schedule: rt.Status is now offline, so the scheduler
+	// takes the sync MarkAgentRuntimeOnline path and the row recovers.
+	rt2 := loadRuntime(t, runtimeID)
+	if err := sched.Schedule(context.Background(), rt2); err != nil {
+		t.Fatalf("recovery Schedule: %v", err)
 	}
-	if got := sched.PendingCount(); got != 0 {
-		t.Fatalf("deleted runtime remained pending after reconciliation: %d", got)
+	status2, _, _ := readRuntimeRow(t, runtimeID)
+	if status2 != "online" {
+		t.Fatalf("expected sync recovery to flip back to online, got %q", status2)
 	}
 }
 
@@ -290,7 +249,7 @@ func TestPassthroughHeartbeatScheduler_TouchAndRaceRecovery(t *testing.T) {
 
 	sched := NewPassthroughHeartbeatScheduler(testHandler.Queries)
 
-	if err := sched.Schedule(context.Background(), rt.ID); err != nil {
+	if err := sched.Schedule(context.Background(), rt); err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
 	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
@@ -301,7 +260,7 @@ func TestPassthroughHeartbeatScheduler_TouchAndRaceRecovery(t *testing.T) {
 	// Race: snapshot still says online but DB is now offline.
 	rt2 := loadRuntime(t, runtimeID)
 	setRuntimeStatus(t, runtimeID, "offline")
-	if err := sched.Schedule(context.Background(), rt2.ID); err != nil {
+	if err := sched.Schedule(context.Background(), rt2); err != nil {
 		t.Fatalf("Schedule under race: %v", err)
 	}
 	status, _, _ := readRuntimeRow(t, runtimeID)

@@ -362,19 +362,14 @@ func TestRuntimeGCBatch_PublishesSystemActorAndDeduplicatesWorkspaceRefresh(t *t
 	}
 	ctx := context.Background()
 	workspaceID := createRuntimeGCFixtureWorkspace(t, ctx, "events")
-	runtimeA := createRuntimeGCFixtureRuntimeForWorkspace(t, ctx, workspaceID, "events-a")
-	runtimeB := createRuntimeGCFixtureRuntimeForWorkspace(t, ctx, workspaceID, "events-b")
+	_ = createRuntimeGCFixtureRuntimeForWorkspace(t, ctx, workspaceID, "events-a")
+	_ = createRuntimeGCFixtureRuntimeForWorkspace(t, ctx, workspaceID, "events-b")
 	publisher := &recordingRuntimeGCPublisher{}
 
 	gcRuntimesWithBudget(ctx, testPool, db.New(testPool), nil, publisher, 5*time.Second)
 
 	var teardownCalls, refreshCalls int
-	gone := make(map[string]int)
 	for _, call := range publisher.calls {
-		if call.kind == "runtime_gone" {
-			gone[call.runtimeID]++
-			continue
-		}
 		if call.workspaceID != workspaceID {
 			continue
 		}
@@ -395,9 +390,6 @@ func TestRuntimeGCBatch_PublishesSystemActorAndDeduplicatesWorkspaceRefresh(t *t
 	}
 	if teardownCalls != 2 || refreshCalls != 1 {
 		t.Fatalf("workspace GC events: teardown=%d refresh=%d, want 2 and 1", teardownCalls, refreshCalls)
-	}
-	if gone[runtimeA] != 1 || gone[runtimeB] != 1 {
-		t.Fatalf("runtime-gone notifications = %v, want one each for %s and %s", gone, runtimeA, runtimeB)
 	}
 }
 
@@ -538,7 +530,6 @@ type runtimeGCPublishCall struct {
 	action                string
 	publishRuntimeRefresh bool
 	cancelledTasks        int
-	runtimeID             string
 }
 
 type recordingRuntimeGCPublisher struct {
@@ -564,13 +555,6 @@ func (p *recordingRuntimeGCPublisher) PublishRuntimeRefresh(workspaceID, actorTy
 		actorType:   actorType,
 		actorID:     actorID,
 		action:      action,
-	})
-}
-
-func (p *recordingRuntimeGCPublisher) NotifyRuntimeGone(runtimeID string) {
-	p.calls = append(p.calls, runtimeGCPublishCall{
-		kind:      "runtime_gone",
-		runtimeID: runtimeID,
 	})
 }
 

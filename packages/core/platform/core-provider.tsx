@@ -94,7 +94,6 @@ export function CoreProvider({
   locale,
   resources,
   localeAdapter,
-  syncUserLocale = true,
 }: CoreProviderProps) {
   // Initialize singletons on first render only. Dependencies are read-once:
   // apiBaseUrl, storage, and callbacks are set at app boot and never change at runtime.
@@ -141,7 +140,7 @@ export function CoreProvider({
   // the host app provides one (web layout + desktop App both do).
   const withAdapter = localeAdapter ? (
     <LocaleAdapterProvider adapter={localeAdapter}>
-      {syncUserLocale && <UserLocaleSync />}
+      <UserLocaleSync />
       {tree}
     </LocaleAdapterProvider>
   ) : (

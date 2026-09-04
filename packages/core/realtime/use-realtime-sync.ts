@@ -144,42 +144,6 @@ export function invalidateChatMessageQueries(
   qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
 }
 
-// 2026-09-03 coder(lq): Workspace issue events are intentionally reduced to
-// routing fields before they reach the browser. Re-fetch every affected
-// permission-filtered surface instead of applying an incomplete snapshot.
-function invalidatePermissionFilteredIssueQueries(
-  qc: QueryClient,
-  wsId: string,
-  issueId?: string,
-) {
-  if (issueId) {
-    qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, issueId) });
-    qc.invalidateQueries({ queryKey: issueKeys.identifier(wsId, issueId) });
-  }
-  qc.invalidateQueries({ queryKey: issueKeys.list(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.flatAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.tableAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.myAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
-  qc.invalidateQueries({ queryKey: issueKeys.childrenAll(wsId) });
-  qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
-}
-
-// 2026-09-03 coder(lq): A safe WS projection still has `issue.id`, but it is
-// not a renderable Issue. Require the business fields that distinguish a full
-// snapshot before handing an event to the optimistic cache updater.
-function hasCompleteIssueSnapshot(
-  issue: Partial<import("../types").Issue> | null | undefined,
-): issue is import("../types").Issue {
-  return Boolean(
-    issue?.id &&
-      typeof issue.title === "string" &&
-      Object.prototype.hasOwnProperty.call(issue, "description"),
-  );
-}
-
 // refetchPendingChatAggregate marks the current user's cross-session pending
 // aggregate stale so it is refetched from the permission-filtering endpoint
 // (/api/chat/pending-tasks[/has-any]).
@@ -227,7 +191,7 @@ export function applyChatMessageToCache(
   payload: ChatMessageEventPayload,
 ) {
   const sessionId = payload.chat_session_id;
-  if (payload.role === "user" && payload.message_id && payload.content !== undefined) {
+  if (payload.role === "user" && payload.message_id) {
     upsertChatMessageToCaches(qc, sessionId, {
       id: payload.message_id,
       chat_session_id: sessionId,
@@ -829,13 +793,6 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
       },
-      // Project-resource events carry only IDs on workspace fanout. The
-      // resource endpoint applies the caller's project grant, so invalidate
-      // project queries and let mounted consumers refetch an authorized view.
-      project_resource: () => {
-        const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
-      },
       squad: () => {
         const wsId = getCurrentWsId();
         if (wsId) {
@@ -1036,11 +993,9 @@ export function useRealtimeSync(
     const unsubIssueUpdated = ws.on("issue:updated", (p) => {
       const payload = p as IssueUpdatedPayload;
       const { issue } = payload;
+      if (!issue?.id) return;
       const wsId = getCurrentWsId();
-      const issueId = issue?.id ?? (payload as IssueUpdatedPayload & { issue_id?: string }).issue_id;
-      if (!wsId || !issueId) return;
-
-      if (hasCompleteIssueSnapshot(issue)) {
+      if (wsId) {
         onIssueUpdated(qc, wsId, issue, {
           assigneeChanged: payload.assignee_changed,
           statusChanged: payload.status_changed,
@@ -1049,23 +1004,14 @@ export function useRealtimeSync(
         if (issue.status) {
           onInboxIssueStatusChanged(qc, wsId, issue.id, issue.status);
         }
-      } else {
-        // Newer servers send only routing metadata on workspace fanout. The
-        // detail and list endpoints apply the caller's project/task grants.
-        invalidatePermissionFilteredIssueQueries(qc, wsId, issueId);
       }
     });
 
     const unsubIssueCreated = ws.on("issue:created", (p) => {
       const { issue } = p as IssueCreatedPayload;
+      if (!issue) return;
       const wsId = getCurrentWsId();
-      if (!wsId) return;
-      if (hasCompleteIssueSnapshot(issue)) {
-        onIssueCreated(qc, wsId, issue);
-      } else {
-        const issueId = (p as IssueCreatedPayload & { issue_id?: string }).issue_id;
-        invalidatePermissionFilteredIssueQueries(qc, wsId, issueId);
-      }
+      if (wsId) onIssueCreated(qc, wsId, issue);
     });
 
     const unsubIssueDeleted = ws.on("issue:deleted", (p) => {
@@ -1082,16 +1028,7 @@ export function useRealtimeSync(
       const { issue_id, labels, issue_revision } = p as IssueLabelsChangedPayload;
       if (!issue_id) return;
       const wsId = getCurrentWsId();
-      if (!wsId) return;
-      if (Array.isArray(labels)) {
-        onIssueLabelsChanged(qc, wsId, issue_id, labels, issue_revision);
-      } else {
-        // Workspace fanout carries only IDs/revisions. Refetch through the
-        // permission-aware endpoint instead of replacing labels with []
-        // because a projection omitted the sensitive label values.
-        invalidatePermissionFilteredIssueQueries(qc, wsId, issue_id);
-        qc.invalidateQueries({ queryKey: labelKeys.byIssue(wsId, issue_id) });
-      }
+      if (wsId) onIssueLabelsChanged(qc, wsId, issue_id, labels ?? [], issue_revision);
     });
 
     const unsubIssueAttachmentsChanged = ws.on("issue_attachments:changed", (p) => {
@@ -1106,27 +1043,18 @@ export function useRealtimeSync(
       const { issue_id, metadata, issue_revision } = p as IssueMetadataChangedPayload;
       if (!issue_id) return;
       const wsId = getCurrentWsId();
-      if (!wsId) return;
-      if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-        onIssueMetadataChanged(qc, wsId, issue_id, metadata, issue_revision);
-      } else {
-        invalidatePermissionFilteredIssueQueries(qc, wsId, issue_id);
-      }
+      if (wsId) onIssueMetadataChanged(qc, wsId, issue_id, metadata ?? {}, issue_revision);
     });
 
     const unsubIssuePropertiesChanged = ws.on("issue_properties:changed", (p) => {
       const { issue_id, properties, issue_revision } = p as IssuePropertiesChangedPayload;
       if (!issue_id) return;
       const wsId = getCurrentWsId();
-      if (!wsId) return;
-      if (properties && typeof properties === "object" && !Array.isArray(properties)) {
+      if (wsId) {
         onIssuePropertiesChanged(qc, wsId, issue_id, properties ?? {}, issue_revision);
         // The catalog embeds per-definition usage counts; every value
         // set/unset shifts them. The list is tiny, so a refetch beats
         // trying to patch counts client-side.
-        qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
-      } else {
-        invalidatePermissionFilteredIssueQueries(qc, wsId, issue_id);
         qc.invalidateQueries({ queryKey: propertyKeys.all(wsId) });
       }
     });
@@ -1442,22 +1370,6 @@ export function useRealtimeSync(
 
     const unsubTaskMessage = ws.on("task:message", (p) => {
       const payload = p as TaskMessagePayload;
-      // Workspace fanout carries only identifiers; message content is fetched
-      // from the permission-checked transcript endpoint when the timeline is
-      // open. This prevents another user's tool input/output crossing the WS.
-      if (payload.content === undefined && payload.input === undefined && payload.output === undefined) {
-        if (payload.chat_session_id) invalidateChatMessageQueries(qc, payload.chat_session_id);
-        const wsId = getCurrentWsId();
-        if (wsId) {
-          qc.invalidateQueries({ queryKey: issueKeys.tasksAll() });
-          qc.invalidateQueries({ queryKey: agentTasksKeys.all(wsId) });
-          qc.invalidateQueries({ queryKey: issueKeys.usageAll() });
-          if (payload.issue_id) {
-            qc.invalidateQueries({ queryKey: issueKeys.detail(wsId, payload.issue_id) });
-          }
-        }
-        return;
-      }
       // Cheap Map lookup, and it runs before anything allocates — this is the
       // hot path for every run in the workspace, not just the visible ones.
       if (!isTaskMessageTimelineHeld(qc, payload.task_id)) return;

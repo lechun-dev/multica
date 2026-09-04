@@ -34,13 +34,6 @@ export function useIssueReactions(issueId: string, userId?: string) {
       (payload: unknown) => {
         const { reaction, issue_id } = payload as IssueReactionAddedPayload;
         if (issue_id !== issueId) return;
-        // Workspace fanout intentionally omits the reaction object. Reload the
-        // permission-filtered collection instead of appending an incomplete
-        // row (or dereferencing undefined on a projected event).
-        if (!reaction?.id) {
-          qc.invalidateQueries({ queryKey: issueKeys.reactions(issueId) });
-          return;
-        }
         qc.setQueryData<IssueReaction[]>(
           issueKeys.reactions(issueId),
           (old) => {

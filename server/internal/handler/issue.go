@@ -3366,11 +3366,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		LabelIDs:       labelIDs,
 		AllowDuplicate: req.AllowDuplicate,
 	}, service.IssueCreateOpts{
-		ActorID: actualCreatorID,
-		// 2026-09-01 coder(lq): Keep the project binding invariant at the
-		// service boundary as well as the HTTP permission guard so alternate
-		// callers cannot create projectless tasks while the overlay is enabled.
-		RequireProject:   h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
+		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BeforeCommit:     h.issueAccessBeforeCommit(),
@@ -3412,16 +3408,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "cannot create a child issue under an archived parent; restore the parent first")
 		return
 	}
-	if errors.Is(err, service.ErrParentProjectMismatch) {
-		writeError(w, http.StatusBadRequest, "parent issue belongs to a different project")
-		return
-	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
-		return
-	}
-	if errors.Is(err, service.ErrProjectRequired) {
-		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
 		return
 	}
 	if errors.Is(err, service.ErrIssueLabelNotFound) {
@@ -3490,9 +3478,10 @@ type UpdateIssueRequest struct {
 	// the issue can be run later via manual run/rerun. Optional; omitted or
 	// false keeps today's behavior. Mirrors comment suppress_agent_ids.
 	SuppressRun bool `json:"suppress_run,omitempty"`
-	// HandoffNote is retained at the API boundary for installed clients that
-	// predate the handoff UI removal. It is consumed only when this write starts
-	// a run and is never stored on the issue itself.
+	// HandoffNote is an optional free-text instruction injected into the run's
+	// opening context when this write starts an agent/squad run ("交接说明" —
+	// MUL-3375). Only consumed when a run actually starts: SuppressRun=true or
+	// a parked/non-triggering write drops it. Never fabricates a comment.
 	HandoffNote string `json:"handoff_note,omitempty"`
 }
 
@@ -3666,7 +3655,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := syncIssueAccessWithExecutor(ctx, tx, &current, issue); err != nil {
+		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
 			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
 		}
 	}

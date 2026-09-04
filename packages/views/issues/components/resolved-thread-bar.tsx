@@ -26,21 +26,18 @@ function useAuthorsLabel(entries: TimelineEntry[]): string {
   const { getActorName } = useActorName();
 
   const seen = new Set<string>();
-  const authors: Array<{ type: string; id: string; name?: string }> = [];
+  const authors: Array<{ type: string; id: string }> = [];
   for (const e of entries) {
     const key = `${e.actor_type}:${e.actor_id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    authors.push({ type: e.actor_type, id: e.actor_id, name: e.actor_name });
+    authors.push({ type: e.actor_type, id: e.actor_id });
   }
 
   if (authors.length <= MAX_NAMED_AUTHORS) {
-    return authors.map((a) => a.name || getActorName(a.type, a.id)).join(", ");
+    return authors.map((a) => getActorName(a.type, a.id)).join(", ");
   }
-  const named = authors
-    .slice(0, MAX_NAMED_AUTHORS)
-    .map((a) => a.name || getActorName(a.type, a.id))
-    .join(", ");
+  const named = authors.slice(0, MAX_NAMED_AUTHORS).map((a) => getActorName(a.type, a.id)).join(", ");
   return t(($) => $.comment.resolve.bar_authors_more, {
     names: named,
     count: authors.length - MAX_NAMED_AUTHORS,

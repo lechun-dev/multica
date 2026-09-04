@@ -64,4 +64,11 @@ describe("WebhookUrlField", () => {
     fireEvent.click(screen.getByRole("button", { name: "Webhook URL hidden — click to show" }));
     expect(container.textContent).toContain(rotated);
   });
+
+  it("renders trailing actions alongside the field", () => {
+    renderWithI18n(
+      <WebhookUrlField url={URL} actions={<button type="button">Rotate</button>} />,
+    );
+    expect(screen.getByRole("button", { name: "Rotate" })).toBeInTheDocument();
+  });
 });

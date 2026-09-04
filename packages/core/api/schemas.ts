@@ -899,8 +899,6 @@ const TimelineEntrySchema = z.object({
   actor_type: z.string(),
   actor_id: z.string(),
   created_at: z.string(),
-  actor_name: z.string().optional(),
-  actor_avatar_url: z.string().optional(),
   action: z.string().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
   content: z.string().optional(),
@@ -1077,6 +1075,7 @@ const IssueTriggerPreviewItemSchema = z.object({
   issue_id: z.string(),
   agent_id: z.string().default(""),
   source: z.string().default(""),
+  handoff_supported: z.boolean().default(false),
 }).loose();
 
 export const IssueTriggerPreviewSchema = z.object({
@@ -1774,6 +1773,7 @@ export const AgentTaskSchema = z.object({
   coalesced_comment_ids: OptionalStringArraySchema,
   delivered_comment_ids: OptionalStringArraySchema,
   trigger_summary: z.string().optional(),
+  handoff_note: z.string().optional(),
   kind: z.string().optional(),
   work_dir: z.string().optional().catch(undefined),
   relative_work_dir: z.string().optional().catch(undefined),
@@ -2958,24 +2958,11 @@ const RuntimeModelSchema = z.object({
   supports_explicit_standard_service_tier: z.boolean().optional(),
 }).loose();
 
-// A row the runtime named but will not run (MUL-6961). Parsed from its own
-// top-level list, never from `models`, so nothing here can become a selectable
-// value. `id` is required for the same reason it is on RuntimeModelSchema — a
-// row without one cannot even be keyed in a list.
-const RuntimeUnavailableModelSchema = z.object({
-  id: z.string(),
-  label: z.string().default(""),
-  reason: z.string().optional(),
-}).loose();
-
 export const RuntimeModelListRequestSchema = z.object({
   id: z.string().default(""),
   runtime_id: z.string().default(""),
   status: z.string(),
   models: z.array(RuntimeModelSchema).optional(),
-  // Absent on any daemon or server older than the field, which simply means
-  // the picker shows no unavailable section.
-  unavailable_models: z.array(RuntimeUnavailableModelSchema).optional(),
   supported: z.boolean().default(true),
   error: z.string().optional(),
   created_at: z.string().default(""),
@@ -3379,86 +3366,6 @@ export const ProjectPermissionRolesResponseSchema = z.object({
 }).loose();
 
 export type ProjectPermissionRolesResponse = z.infer<typeof ProjectPermissionRolesResponseSchema>;
-
-export const ProjectAccessGrantSchema = z.object({
-  id: z.string().default(""),
-  workspace_id: z.string().default(""),
-  project_id: z.string().default(""),
-  issue_id: z.string().optional(),
-  subject_type: z.enum(["user", "role", "organization", "everyone"]),
-  subject_id: z.string().optional(),
-  role: z.string().optional(),
-  permission: z.string().optional(),
-  source: z.string().default("manual"),
-  granted_by: z.string().optional(),
-}).loose();
-
-export const ProjectAccessGrantsResponseSchema = z.object({
-  grants: z.array(ProjectAccessGrantSchema).default([]),
-  total: z.number().default(0),
-  project_id: z.string().optional(),
-}).loose();
-
-export type ProjectAccessGrantsResponse = z.infer<typeof ProjectAccessGrantsResponseSchema>;
-export const EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE: ProjectAccessGrantsResponse = { grants: [], total: 0 };
-
-export const ProjectAuthorizationOrganizationSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  provider: z.string().default(""),
-  external_id: z.string().default(""),
-  name: z.string().default(""),
-  parent_id: z.string().optional(),
-  status: z.string().default("active"),
-}).loose();
-
-export const ProjectAuthorizationOrganizationMemberSchema = z.object({
-  organization_id: z.string(),
-  user_id: z.string(),
-  name: z.string().default(""),
-  email: z.string().default(""),
-  avatar_url: z.string().optional(),
-  workspace_role: z.string().default("member"),
-}).loose();
-
-export const ProjectAuthorizationOrganizationsResponseSchema = z.object({
-  organizations: z.array(ProjectAuthorizationOrganizationSchema).default([]),
-  members: z.array(ProjectAuthorizationOrganizationMemberSchema).default([]),
-  total: z.number().default(0),
-  member_total: z.number().default(0),
-}).loose();
-
-export type ProjectAuthorizationOrganizationsResponse = z.infer<typeof ProjectAuthorizationOrganizationsResponseSchema>;
-
-export const ProjectAuthorizationImportPreviewSchema = z.object({
-  kind: z.enum(["organizations", "members"]),
-  organizations: z.array(z.object({ external_id: z.string(), name: z.string(), parent_external_id: z.string().optional(), status: z.string() }).loose()).optional(),
-  members: z.array(z.object({ external_id: z.string(), name: z.string(), email: z.string().optional(), phone: z.string().optional(), organization_external_id: z.string(), status: z.string() }).loose()).optional(),
-  errors: z.array(z.string()).default([]),
-  warnings: z.array(z.string()).default([]),
-  rows: z.number().default(0),
-}).loose();
-export type ProjectAuthorizationImportPreview = z.infer<typeof ProjectAuthorizationImportPreviewSchema>;
-export const ProjectAuthorizationImportResultSchema = z.object({
-  organizations_created: z.number().default(0), organizations_updated: z.number().default(0),
-  members_created: z.number().default(0), members_updated: z.number().default(0),
-  disabled: z.number().default(0), unmatched: z.array(z.string()).default([]),
-  users_created: z.number().default(0), workspace_members_created: z.number().default(0),
-}).loose();
-export type ProjectAuthorizationImportResult = z.infer<typeof ProjectAuthorizationImportResultSchema>;
-
-export const ProjectAuthorizationDingTalkSyncResultSchema = z.object({
-  organizations_created: z.number().default(0),
-  organizations_updated: z.number().default(0),
-  organizations_disabled: z.number().default(0),
-  members_created: z.number().default(0),
-  members_removed: z.number().default(0),
-  users_created: z.number().default(0),
-  users_matched: z.number().default(0),
-  workspace_members_created: z.number().default(0),
-  unmatched: z.array(z.string()).default([]),
-}).loose();
-export type ProjectAuthorizationDingTalkSyncResult = z.infer<typeof ProjectAuthorizationDingTalkSyncResultSchema>;
 
 export const JoinShareLinkResponseSchema = z.object({
   member: MemberWithUserSchema,

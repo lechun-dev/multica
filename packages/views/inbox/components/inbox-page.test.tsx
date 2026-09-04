@@ -69,13 +69,9 @@ const archiveMutate = vi.fn();
 const unarchiveMutate = vi.fn();
 const retrySourceContextMutateAsync = vi.fn();
 const showIssueLimitUpgradePrompt = vi.hoisted(() => vi.fn());
-const showAutopilotQuotaRecoveryPrompt = vi.hoisted(() => vi.fn());
 
 vi.mock("../../modals/use-issue-limit-upgrade-prompt", () => ({
-  useIssueLimitUpgradePrompt: (reason?: string) =>
-    reason === "autopilot_quota"
-      ? showAutopilotQuotaRecoveryPrompt
-      : showIssueLimitUpgradePrompt,
+  useIssueLimitUpgradePrompt: () => showIssueLimitUpgradePrompt,
 }));
 
 vi.mock("@multica/core/inbox/mutations", () => {
@@ -194,21 +190,6 @@ vi.mock("./inbox-context-menu", () => ({
   },
 }));
 vi.mock("./inbox-detail-label", () => ({ useTypeLabels: () => ({}) }));
-vi.mock("./autopilot-quota-notice", () => ({
-  AutopilotQuotaNotice: ({
-    onOpenRecovery,
-  }: {
-    onOpenRecovery: () => void;
-  }) => (
-    <button
-      type="button"
-      data-testid="autopilot-quota-recovery"
-      onClick={onOpenRecovery}
-    >
-      Recover
-    </button>
-  ),
-}));
 vi.mock("../../i18n", () => ({ useT: () => ({ t: () => "Inbox" }) }));
 
 function item(overrides: Partial<InboxItem> = {}): InboxItem {
@@ -246,7 +227,6 @@ function reset() {
   retrySourceContextMutateAsync.mockReset();
   retrySourceContextMutateAsync.mockResolvedValue({});
   showIssueLimitUpgradePrompt.mockClear();
-  showAutopilotQuotaRecoveryPrompt.mockClear();
   modalState.modal = null;
   vi.mocked(toast.success).mockClear();
   vi.mocked(toast.error).mockClear();
@@ -503,24 +483,6 @@ describe("InboxPage", () => {
     expect(toast.success).toHaveBeenCalledTimes(1);
   });
 
-  it("opens quota-specific recovery from an autopilot quota notice", () => {
-    reset();
-    listData.active = [
-      item({
-        id: "autopilot-quota",
-        issue_id: null,
-        type: "autopilot_quota_exceeded",
-      }),
-    ];
-
-    render(<InboxPage />);
-    fireEvent.click(screen.getByTestId("row"));
-    fireEvent.click(screen.getByTestId("autopilot-quota-recovery"));
-
-    expect(showAutopilotQuotaRecoveryPrompt).toHaveBeenCalledTimes(1);
-    expect(showIssueLimitUpgradePrompt).not.toHaveBeenCalled();
-  });
-
   it("shows issue-limit recovery when a source-context retry is rejected", async () => {
     reset();
     retrySourceContextMutateAsync.mockRejectedValue(
@@ -550,7 +512,6 @@ describe("InboxPage", () => {
 
     await act(async () => undefined);
     expect(showIssueLimitUpgradePrompt).toHaveBeenCalledTimes(1);
-    expect(showAutopilotQuotaRecoveryPrompt).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 

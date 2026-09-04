@@ -445,7 +445,6 @@ export function ThreadMinimap({
   const activePreview = preview ? previews[preview.index] : undefined;
   const activeTitle = activeThread && activePreview
     ? activePreview.title ||
-      activeThread.entry.actor_name ||
       getActorName(activeThread.entry.actor_type, activeThread.entry.actor_id)
     : undefined;
 
@@ -467,7 +466,6 @@ export function ThreadMinimap({
         {threads.map((thread, i) => {
           const title =
             previews[i]!.title ||
-            thread.entry.actor_name ||
             getActorName(thread.entry.actor_type, thread.entry.actor_id);
           return (
             <MinimapTick

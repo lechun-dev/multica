@@ -76,11 +76,11 @@ describe("chat empty-state conversation starters", () => {
     const onPickPrompt = renderEmptyState(agent());
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Suggest a first issue" }),
+      screen.getByRole("button", { name: "Suggest a first task" }),
     );
 
     expect(onPickPrompt).toHaveBeenCalledWith(
-      "Suggest three useful issues I could assign to you.",
+      "Suggest three useful tasks I could delegate to you.",
     );
   });
 });
