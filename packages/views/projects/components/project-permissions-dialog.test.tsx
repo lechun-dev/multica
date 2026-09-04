@@ -345,4 +345,19 @@ describe("ProjectPermissionsDialog", () => {
       subject_type: "everyone", subject_id: undefined, role: "member",
     }));
   });
+
+  it("does not offer role as a project authorization subject", async () => {
+    configStore.getState().setAuthConfig({ allowSignup: true, projectPermissionsEnabled: true });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(await screen.findByRole("button", { name: "Access" }));
+    const addMembers = screen.getByRole("region", { name: "Add members" });
+    await user.click(within(addMembers).getAllByRole("combobox")[0]!);
+
+    expect(await screen.findByRole("option", { name: "User" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Organization" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Everyone" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Role" })).not.toBeInTheDocument();
+  });
 });

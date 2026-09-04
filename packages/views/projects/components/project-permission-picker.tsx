@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { Check, Search, ShieldCheck, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import { PROJECT_PERMISSION_KEYS } from "@multica/core/types";
 import type { MemberWithUser, ProjectPermissionRole } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -33,19 +32,6 @@ const BUILTIN_PROJECT_ROLES: Array<{ key: string; labelKey: "role_owner" | "role
   { key: "viewer", labelKey: "role_viewer" },
 ];
 
-const PROJECT_PERMISSION_LABELS: Record<string, string> = {
-  "project.view": "View project",
-  "project.edit": "Edit project",
-  "project.issue.create": "Create issues",
-  "project.issue.comment": "Comment on issues",
-  "project.issue.manage": "Manage issues",
-  "project.issue.archive": "Archive issues",
-  "project.agent.use": "Use agents",
-  "project.member.manage": "Manage members",
-  "project.settings.manage": "Manage project settings",
-};
-const PROJECT_PERMISSIONS = PROJECT_PERMISSION_KEYS.map((key) => ({ key, label: PROJECT_PERMISSION_LABELS[key] ?? key }));
-
 type ProjectPermissionPickerProps = {
   members: MemberWithUser[];
   workspaceId: string;
@@ -67,8 +53,10 @@ export function ProjectPermissionPicker({
   const [search, setSearch] = useState("");
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [selectedRole, setSelectedRole] = useState("member");
-  const [selectedPermission, setSelectedPermission] = useState<string>("project.view");
-  const [subjectType, setSubjectType] = useState<"user" | "role" | "organization" | "everyone">("user");
+  // 2026-09-04 coder(lq): New-project authorization is scoped to users,
+  // departments, and everyone. The selection type still accepts "role" in
+  // the public shape so older callers and persisted data remain compatible.
+  const [subjectType, setSubjectType] = useState<"user" | "organization" | "everyone">("user");
   const [subjectId, setSubjectId] = useState("");
 
   const rolesQuery = useQuery({
@@ -145,14 +133,12 @@ export function ProjectPermissionPicker({
   };
 
   const addPending = () => {
-    const assignment = subjectType === "role"
-      ? { permission: selectedPermission }
-      : { role: selectedRole };
+    const assignment = { role: selectedRole };
     if (subjectType === "everyone") {
       if (!value.some((item) => item.subjectType === "everyone")) {
         onChange([...value, { subjectType, ...assignment }]);
       }
-    } else if (subjectType === "organization" || subjectType === "role") {
+    } else if (subjectType === "organization") {
       const normalizedSubjectId = subjectId.trim();
       if (!normalizedSubjectId) return;
       if (!value.some((item) => item.subjectType === subjectType && item.subjectId === normalizedSubjectId && item.role === assignment.role && item.permission === assignment.permission)) {
@@ -175,7 +161,6 @@ export function ProjectPermissionPicker({
     setSearch("");
     setPendingIds(new Set());
     setSelectedRole("member");
-    setSelectedPermission("project.view");
     setSubjectType("user");
     setSubjectId("");
   };
@@ -257,60 +242,19 @@ export function ProjectPermissionPicker({
                 <Button type="button" variant="outline" size="sm" className="min-w-24 justify-between text-caption">
                   {subjectType === "user"
                     ? t(($) => $.permissions.user)
-                    : subjectType === "role"
-                      ? t(($) => $.permissions.role)
-                      : subjectType === "organization"
-                        ? t(($) => $.permissions.organization)
-                        : t(($) => $.permissions.everyone)}
+                    : subjectType === "organization"
+                      ? t(($) => $.permissions.organization)
+                      : t(($) => $.permissions.everyone)}
                 </Button>
               }
             />
             <DropdownMenuContent align="start">
               <DropdownMenuItem onClick={() => setSubjectType("user")}>{t(($) => $.permissions.user)}</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSubjectType("role")}>{t(($) => $.permissions.role)}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setSubjectType("organization")}>{t(($) => $.permissions.organization)}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setSubjectType("everyone")}>{t(($) => $.permissions.everyone)}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {subjectType === "role" ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button type="button" variant="outline" size="sm" className="min-w-28 justify-between text-caption">
-                    {roleByKey.get(subjectId) ? roleLabel(roleByKey.get(subjectId)!) : t(($) => $.permissions.role)}
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="start">
-                {roles.map((item) => (
-                  <DropdownMenuItem key={item.key} onClick={() => setSubjectId(item.key)}>
-                    {roleLabel(item)}
-                    {item.key === subjectId && <Check className="ml-auto size-3.5" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
-          {subjectType === "role" ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button type="button" variant="outline" size="sm" className="min-w-32 justify-between text-caption">
-                    {PROJECT_PERMISSIONS.find((item) => item.key === selectedPermission)?.label || selectedPermission}
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="start">
-                {PROJECT_PERMISSIONS.map((item) => (
-                  <DropdownMenuItem key={item.key} onClick={() => setSelectedPermission(item.key)}>
-                    {item.label}
-                    {item.key === selectedPermission && <Check className="ml-auto size-3.5" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
-          {subjectType !== "role" ? <DropdownMenu>
+          <DropdownMenu>
             <DropdownMenuTrigger
               render={
                 <Button type="button" variant="outline" size="sm" className="min-w-28 justify-between text-caption">
@@ -326,7 +270,7 @@ export function ProjectPermissionPicker({
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
-          </DropdownMenu> : null}
+          </DropdownMenu>
           <Button type="button" size="sm" onClick={addPending} disabled={subjectType === "user" ? pendingIds.size === 0 : subjectType === "everyone" ? false : !subjectId.trim()}>
             {t(($) => $.permissions.add_members)}
           </Button>
