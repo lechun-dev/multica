@@ -177,8 +177,13 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		if identity.Name == "" {
 			identity.Name = enterpriseIdentity.Name
 		}
-		if identity.Email == "" {
-			identity.Email = enterpriseIdentity.Email
+		// The OAuth `/contact/users/me` mailbox can be a DingTalk account
+		// mailbox that is stale or outside the enterprise domain. When the
+		// enterprise directory returns an email, it is the authoritative
+		// identity for Multica account resolution; retain the OAuth value only
+		// as a fallback for tenants whose directory response omits email.
+		if enterpriseEmail := strings.ToLower(strings.TrimSpace(enterpriseIdentity.Email)); enterpriseEmail != "" {
+			identity.Email = enterpriseEmail
 		}
 		if identity.AvatarURL == "" {
 			identity.AvatarURL = enterpriseIdentity.AvatarURL

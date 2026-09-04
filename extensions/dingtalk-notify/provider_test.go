@@ -273,6 +273,44 @@ func TestDingTalkOAuthProviderBackfillsMissingNickname(t *testing.T) {
 	}
 }
 
+func TestDingTalkOAuthProviderPrefersEnterpriseEmail(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			// The OAuth mailbox may be a stale DingTalk account mailbox.
+			return jsonResponse(http.StatusOK, `{"userId":"u1","unionId":"union-1","openId":"open-1","nick":"Alice","email":"old@example.com"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/union":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","name":"Alice","email":"Alice@LeChun.CC"}}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:         client,
+		TokenURL:       "https://example.test/oauth-token",
+		UserURL:        "https://example.test/me",
+		AppTokenURL:    "https://example.test/app-token",
+		UnionLookupURL: "https://example.test/union",
+		UserDetailURL:  "https://example.test/detail",
+		ClientID:       "id",
+		ClientSecret:   "secret",
+	}
+
+	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Email != "alice@lechun.cc" {
+		t.Fatalf("email=%q, want enterprise email alice@lechun.cc", user.Email)
+	}
+}
+
 func TestDingTalkOAuthProviderLoadsMultipleDepartmentsWithoutExposingIDsAsNames(t *testing.T) {
 	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
