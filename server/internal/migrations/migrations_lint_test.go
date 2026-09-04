@@ -71,6 +71,14 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"447": {"447_issue_archive", "447_issue_properties_bigm_index_statistics", "447_projectauth_access_grants_issue_unique"},
 	"448": {"448_attachment_pending_comment", "448_autopilot_quota_rejection_notified_at", "448_projectauth_access_grants_workspace_project_index"},
 	"449": {"449_autopilot_trigger_created_by", "449_project_issue_archive_permission", "449_projectauth_access_grants_subject_index"},
+	// 2026-09-04 coder(lq): Prefix 450 was released independently by the
+	// private authorization stream and upstream before their histories merged.
+	// Preserve both recorded stems so upgraded installations do not replay DDL.
+	"450": {"450_drop_comment_delegated_failure_pending_index", "450_projectauth_organizations_unique"},
+	// 2026-09-04 coder(lq): Prefix 456 was also released independently in both
+	// streams. Renaming either migration after release would make existing
+	// installations execute an already-applied migration under a new identity.
+	"456": {"456_projectauth_integrity", "456_task_retry_policy"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
