@@ -34,10 +34,8 @@ export interface LatestRelease {
   assets: DownloadAssets;
 }
 
-// Five candidates tolerates four consecutive incomplete releases before
-// the page has to fall back to showing the newest one as-is. Releases
-// ship roughly daily, so that is days of head room — while staying one
-// cheap request.
+// Cache GitHub's response for five minutes so the page does not consume the
+// unauthenticated API quota on every request.
 const REVALIDATE_SECONDS = 300;
 
 interface GitHubReleasePayload {

@@ -1,9 +1,14 @@
 import { useLocale } from "../../i18n";
-import type { DownloadAssets } from "../../utils/parse-release-assets";
+import {
+  hasCompleteAssetSet,
+  type DownloadAssets,
+} from "../../utils/parse-release-assets";
 import { AppleIcon, WindowsIcon } from "./os-icons";
 
 interface Props {
   assets: DownloadAssets;
+  /** GitHub releases escape hatch when the API cannot resolve an asset. */
+  fallbackHref?: string;
 }
 
 /**
@@ -12,6 +17,7 @@ interface Props {
  */
 export function AllPlatforms({
   assets,
+  fallbackHref,
 }: Props) {
   const { t } = useLocale();
   const d = t.download.allPlatforms;
@@ -70,6 +76,18 @@ export function AllPlatforms({
             isLast
           />
         </div>
+        {fallbackHref && !hasCompleteAssetSet(assets) ? (
+          <p className="mt-6 text-label text-[#0a0d12]/60">
+            <a
+              href={fallbackHref}
+              className="underline decoration-[#0a0d12]/30 underline-offset-4 hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {t.download.footer.allReleases}
+            </a>
+          </p>
+        ) : null}
       </div>
     </section>
   );
