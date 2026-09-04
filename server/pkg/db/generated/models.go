@@ -174,6 +174,22 @@ type AgentTaskQueue struct {
 	ChannelContextRevision    pgtype.Int8 `json:"channel_context_revision"`
 }
 
+// TaskRetryPolicy stores a workspace-scoped rule used by the failed-task retry scanner.
+type TaskRetryPolicy struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	Name          string             `json:"name"`
+	Enabled       bool               `json:"enabled"`
+	Priority      int32              `json:"priority"`
+	MatchType     string             `json:"match_type"`
+	MatchValue    string             `json:"match_value"`
+	MaxAttempts   int32              `json:"max_attempts"`
+	DelaySchedule []byte             `json:"delay_schedule"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentToLabel struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	LabelID   pgtype.UUID        `json:"label_id"`

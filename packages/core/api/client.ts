@@ -234,6 +234,9 @@ import type {
   CreateCommentSubIssueManualRequest,
   CreateCommentSubIssueAgentRequest,
   CreateCommentSubIssueRequest,
+  TaskRetryPolicy,
+  TaskRetryPolicyRequest,
+  UpdateTaskRetryPolicyRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -3895,6 +3898,40 @@ export class ApiClient {
 
   async deleteProjectPermissionRole(key: string): Promise<void> {
     await this.fetch(`/api/project-permission-roles/${encodeURIComponent(key)}`, { method: "DELETE" });
+  }
+
+  // Workspace-configured failed-task retry rules.
+  async listTaskRetryPolicies(workspaceId: string): Promise<TaskRetryPolicy[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies`);
+    if (Array.isArray(raw)) return raw as TaskRetryPolicy[];
+    if (raw && typeof raw === "object" && "policies" in raw) {
+      return (raw as { policies?: TaskRetryPolicy[] }).policies ?? [];
+    }
+    return [];
+  }
+
+  async createTaskRetryPolicy(workspaceId: string, data: TaskRetryPolicyRequest): Promise<TaskRetryPolicy> {
+    return this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTaskRetryPolicy(
+    workspaceId: string,
+    policyId: string,
+    data: UpdateTaskRetryPolicyRequest,
+  ): Promise<TaskRetryPolicy> {
+    return this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies/${encodeURIComponent(policyId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTaskRetryPolicy(workspaceId: string, policyId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies/${encodeURIComponent(policyId)}`, {
+      method: "DELETE",
+    });
   }
 
   // Project resources

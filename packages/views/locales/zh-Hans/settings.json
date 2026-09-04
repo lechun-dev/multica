@@ -96,6 +96,45 @@
     "delete_title": "删除这条快捷操作？",
     "delete_description": "它会从所有任务侧边栏消失，历史运行记录仍保留在执行日志中。如果以后可能还要用，建议改为归档。"
   },
+  "task_retry_policies": {
+    "title": "失败任务重试策略",
+    "description": "配置哪些失败任务需要重试，以及重试频率。",
+    "loading": "正在加载重试策略…",
+    "load_failed": "加载重试策略失败。",
+    "empty": "还没有配置重试策略。",
+    "add": "添加策略",
+    "owner_only": "只有工作区 owner 可以管理重试策略。",
+    "disabled": "已停用",
+    "enabled": "已启用",
+    "edit": "编辑重试策略",
+    "delete": "删除重试策略",
+    "delete_confirm": "删除“{{name}}”？",
+    "create_title": "创建重试策略",
+    "edit_title": "编辑重试策略",
+    "form_description": "第一条匹配失败原因的启用策略会决定重试次数和延迟。",
+    "name": "名称",
+    "match_type": "匹配类型",
+    "match_value": "匹配值",
+    "priority": "优先级",
+    "max_attempts": "最大尝试次数",
+    "delay_schedule": "延迟计划（秒）",
+    "delay_placeholder": "0, 5, 30",
+    "delay_hint": "输入逗号分隔的延迟，例如：0, 5, 30。",
+    "cancel": "取消",
+    "save": "保存",
+    "saved": "重试策略已保存。",
+    "save_failed": "无法保存重试策略。",
+    "deleted": "重试策略已删除。",
+    "delete_failed": "无法删除重试策略。",
+    "invalid": "请检查策略字段和延迟值。",
+    "attempts": "{{count}} 次尝试",
+    "summary": "{{matchType}}：{{matchValue}} · {{attempts}} · {{delays}}秒",
+    "match_types": {
+      "failure_reason": "失败原因",
+      "http_status": "HTTP 状态码",
+      "error_contains": "错误文本包含"
+    }
+  },
   "auto_save": {
     "saving": "正在保存…",
     "saved": "已保存",
@@ -335,7 +374,8 @@
       "billing": "账单与套餐",
       "project_permissions": "项目权限",
       "project_permission_roles": "权限角色",
-      "project_authorization_organizations": "组织目录"
+      "project_authorization_organizations": "组织目录",
+      "task_retry_policies": "重试策略"
     }
   },
   "plugins": {

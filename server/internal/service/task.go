@@ -4761,20 +4761,21 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		retryFireAt      pgtype.Timestamptz
 		retryMaxAttempts pgtype.Int4
 	)
-	if retryableReasons[failureReason] {
-		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
-			slog.Warn("fail task auto-retry: load parent failed",
-				"task_id", util.UUIDToString(taskID), "error", perr)
-		} else if retryEligible(failureReason, parent) {
+	if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
+		slog.Warn("fail task auto-retry: load parent failed",
+			"task_id", util.UUIDToString(taskID), "error", perr)
+	} else {
+		plan := s.retryPlanForTask(ctx, parent, failureReason, errMsg)
+		if plan.Allowed {
 			wantRetry = true
 			// Persist the reason-aware effective budget into the child so the
 			// retry chain self-describes (e.g. provider_network → max_attempts=3),
 			// rather than leaking a contradictory attempt=N/max_attempts=2 row.
-			retryMaxAttempts = pgtype.Int4{Int32: retryAttemptCeiling(failureReason, parent.MaxAttempts), Valid: true}
+			retryMaxAttempts = pgtype.Int4{Int32: plan.MaxAttempts, Valid: true}
 			// Defer this attempt when the reason's schedule calls for a backoff
 			// (provider_network's final attempt waits ~5s); a zero delay leaves
 			// fire_at NULL so the child is created immediately-claimable.
-			if delay := retryDelayForAttempt(failureReason, parent.Attempt); delay > 0 {
+			if delay := plan.Delay; delay > 0 {
 				retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
 			}
 			if agent, aerr := s.Queries.GetAgent(ctx, parent.AgentID); aerr != nil {
@@ -5316,15 +5317,13 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	if parent.FailureReason.Valid {
 		reason = parent.FailureReason.String
 	}
-	if !retryableReasons[reason] {
-		return nil, nil
-	}
+	plan := s.retryPlanForTask(ctx, parent, reason, parent.Error.String)
 	// Use the reason-aware ceiling, not the raw max_attempts column, so an
 	// orphaned provider_network task recovered on its 2nd attempt is still
 	// allowed its deferred 3rd attempt (retryAttemptCeiling raises the ceiling
 	// to 3). Kept in sync with retryEligible below, which applies the same
 	// ceiling to the primary FailTask path.
-	if parent.Attempt >= retryAttemptCeiling(reason, parent.MaxAttempts) {
+	if !plan.Allowed {
 		slog.Info("task auto-retry skipped: budget exhausted",
 			"task_id", util.UUIDToString(parent.ID),
 			"attempt", parent.Attempt,
@@ -5336,9 +5335,6 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	// Autopilot has its own retry semantics (don't double-trigger) and a task
 	// with no issue/chat link has nowhere to report its retry — retryEligible
 	// covers both, keeping this sweeper path in sync with FailTask's in-tx retry.
-	if !retryEligible(reason, parent) {
-		return nil, nil
-	}
 
 	var runtimeMCPOverlay runtimeMCPOverlayData
 	agent, agentErr := s.Queries.GetAgent(ctx, parent.AgentID)
@@ -5359,7 +5355,7 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	// NULL for an immediate child), and write the reason-aware ceiling into the
 	// child's max_attempts so the retry chain stays self-consistent.
 	var retryFireAt pgtype.Timestamptz
-	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
+	if delay := plan.Delay; delay > 0 {
 		retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
 	}
 	// Same advisory slot check as FailTask's path, for the same reason: skip the
@@ -5389,7 +5385,7 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 		NewTaskID:            dbid.NewV7(),
 		ID:                   parent.ID,
 		FireAt:               retryFireAt,
-		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
+		MaxAttempts:          pgtype.Int4{Int32: plan.MaxAttempts, Valid: true},
 		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
 		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
 	})

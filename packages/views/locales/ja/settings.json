@@ -96,6 +96,45 @@
     "delete_title": "このクイックアクションを削除しますか？",
     "delete_description": "すべてのタスクのサイドバーから消えます。過去の記録は実行ログに残ります。後で使う可能性があればアーカイブを選んでください。"
   },
+  "task_retry_policies": {
+    "title": "失敗タスクの再試行ポリシー",
+    "description": "再試行する失敗タスクと頻度を設定します。",
+    "loading": "再試行ポリシーを読み込み中…",
+    "load_failed": "再試行ポリシーを読み込めませんでした。",
+    "empty": "再試行ポリシーはまだ設定されていません。",
+    "add": "ポリシーを追加",
+    "owner_only": "再試行ポリシーを管理できるのはワークスペース owner のみです。",
+    "disabled": "無効",
+    "enabled": "有効",
+    "edit": "再試行ポリシーを編集",
+    "delete": "再試行ポリシーを削除",
+    "delete_confirm": "「{{name}}」を削除しますか？",
+    "create_title": "再試行ポリシーを作成",
+    "edit_title": "再試行ポリシーを編集",
+    "form_description": "失敗に一致する最初の有効なポリシーが、再試行回数と遅延を決めます。",
+    "name": "名前",
+    "match_type": "一致タイプ",
+    "match_value": "一致する値",
+    "priority": "優先度",
+    "max_attempts": "最大試行回数",
+    "delay_schedule": "遅延スケジュール（秒）",
+    "delay_placeholder": "0, 5, 30",
+    "delay_hint": "カンマ区切りで入力します（例: 0, 5, 30）。",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "saved": "再試行ポリシーを保存しました。",
+    "save_failed": "再試行ポリシーを保存できませんでした。",
+    "deleted": "再試行ポリシーを削除しました。",
+    "delete_failed": "再試行ポリシーを削除できませんでした。",
+    "invalid": "ポリシーの項目と遅延値を確認してください。",
+    "attempts": "{{count}} 回",
+    "summary": "{{matchType}}：{{matchValue}} · {{attempts}} · {{delays}}秒",
+    "match_types": {
+      "failure_reason": "失敗理由",
+      "http_status": "HTTP ステータス",
+      "error_contains": "エラーに含まれる文字列"
+    }
+  },
   "auto_save": {
     "saving": "保存中…",
     "saved": "保存済み",
@@ -335,7 +374,8 @@
       "billing": "請求とプラン",
       "project_permissions": "プロジェクト権限",
       "project_permission_roles": "権限ロール",
-      "project_authorization_organizations": "組織ディレクトリ"
+      "project_authorization_organizations": "組織ディレクトリ",
+      "task_retry_policies": "再試行ポリシー"
     }
   },
   "plugins": {

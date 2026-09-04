@@ -96,6 +96,45 @@
     "delete_title": "Delete this quick action?",
     "delete_description": "It disappears from every issue sidebar. Past runs stay in the execution log. Archive instead if you may want it back."
   },
+  "task_retry_policies": {
+    "title": "Failed task retry policies",
+    "description": "Configure which failed tasks should be retried and how often.",
+    "loading": "Loading retry policies…",
+    "load_failed": "Failed to load retry policies.",
+    "empty": "No retry policies configured.",
+    "add": "Add policy",
+    "owner_only": "Only workspace owners can manage retry policies.",
+    "disabled": "disabled",
+    "enabled": "Enabled",
+    "edit": "Edit retry policy",
+    "delete": "Delete retry policy",
+    "delete_confirm": "Delete {{name}}?",
+    "create_title": "Create retry policy",
+    "edit_title": "Edit retry policy",
+    "form_description": "The first enabled policy that matches a failure determines its retry budget and delay.",
+    "name": "Name",
+    "match_type": "Match type",
+    "match_value": "Match value",
+    "priority": "Priority",
+    "max_attempts": "Maximum attempts",
+    "delay_schedule": "Delay schedule (seconds)",
+    "delay_placeholder": "0, 5, 30",
+    "delay_hint": "Enter comma-separated delays, for example: 0, 5, 30.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saved": "Retry policy saved.",
+    "save_failed": "Could not save the retry policy.",
+    "deleted": "Retry policy deleted.",
+    "delete_failed": "Could not delete the retry policy.",
+    "invalid": "Check the policy fields and delay values.",
+    "attempts": "{{count}} attempts",
+    "summary": "{{matchType}}: {{matchValue}} · {{attempts}} · {{delays}}s",
+    "match_types": {
+      "failure_reason": "Failure reason",
+      "http_status": "HTTP status",
+      "error_contains": "Error contains"
+    }
+  },
   "auto_save": {
     "saving": "Saving…",
     "saved": "Saved",
@@ -335,7 +374,8 @@
       "billing": "Billing",
       "project_permissions": "Project Permissions",
       "project_permission_roles": "Permission Roles",
-      "project_authorization_organizations": "Organization Directory"
+      "project_authorization_organizations": "Organization Directory",
+      "task_retry_policies": "Retry Policies"
     }
   },
   "plugins": {

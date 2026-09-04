@@ -96,6 +96,45 @@
     "delete_title": "이 퀵 액션을 삭제할까요?",
     "delete_description": "모든 태스크 사이드바에서 사라집니다. 과거 실행 기록은 실행 로그에 남습니다. 다시 쓸 수 있다면 보관을 선택하세요."
   },
+  "task_retry_policies": {
+    "title": "실패한 태스크 재시도 정책",
+    "description": "재시도할 실패 태스크와 재시도 간격을 설정합니다.",
+    "loading": "재시도 정책 불러오는 중…",
+    "load_failed": "재시도 정책을 불러오지 못했습니다.",
+    "empty": "설정된 재시도 정책이 없습니다.",
+    "add": "정책 추가",
+    "owner_only": "워크스페이스 owner만 재시도 정책을 관리할 수 있습니다.",
+    "disabled": "사용 안 함",
+    "enabled": "사용",
+    "edit": "재시도 정책 편집",
+    "delete": "재시도 정책 삭제",
+    "delete_confirm": "“{{name}}”을(를) 삭제할까요?",
+    "create_title": "재시도 정책 만들기",
+    "edit_title": "재시도 정책 편집",
+    "form_description": "실패와 일치하는 첫 번째 활성 정책이 재시도 횟수와 지연을 결정합니다.",
+    "name": "이름",
+    "match_type": "일치 유형",
+    "match_value": "일치 값",
+    "priority": "우선순위",
+    "max_attempts": "최대 시도 횟수",
+    "delay_schedule": "지연 일정(초)",
+    "delay_placeholder": "0, 5, 30",
+    "delay_hint": "쉼표로 구분해 입력하세요(예: 0, 5, 30).",
+    "cancel": "취소",
+    "save": "저장",
+    "saved": "재시도 정책을 저장했습니다.",
+    "save_failed": "재시도 정책을 저장하지 못했습니다.",
+    "deleted": "재시도 정책을 삭제했습니다.",
+    "delete_failed": "재시도 정책을 삭제하지 못했습니다.",
+    "invalid": "정책 필드와 지연 값을 확인하세요.",
+    "attempts": "{{count}}회 시도",
+    "summary": "{{matchType}}: {{matchValue}} · {{attempts}} · {{delays}}초",
+    "match_types": {
+      "failure_reason": "실패 원인",
+      "http_status": "HTTP 상태 코드",
+      "error_contains": "오류에 포함된 텍스트"
+    }
+  },
   "auto_save": {
     "saving": "저장 중…",
     "saved": "저장됨",
@@ -335,7 +374,8 @@
       "billing": "결제 및 요금제",
       "project_permissions": "프로젝트 권한",
       "project_permission_roles": "권한 역할",
-      "project_authorization_organizations": "조직 디렉터리"
+      "project_authorization_organizations": "조직 디렉터리",
+      "task_retry_policies": "재시도 정책"
     }
   },
   "plugins": {
