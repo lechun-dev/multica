@@ -2389,14 +2389,53 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 		if err != nil {
 			slog.Debug("grok model discovery fell back to static catalog", "error", err)
 		}
-		return Catalog{Models: grokStaticModels(), Fallback: true}, nil
+		return Catalog{Models: ensureGrokModels(grokStaticModels()), Fallback: true}, nil
 	}
 	for i := range models {
 		if models[i].Provider == "" {
 			models[i].Provider = "xai"
 		}
 	}
-	return Catalog{Models: models}, nil
+	return Catalog{Models: ensureGrokModels(models)}, nil
+}
+
+// ensureGrokModels normalizes the Grok catalog so the two supported flagship
+// models remain available even when an installed CLI returns a partial list.
+// 2026-09-04 coder(lq): Keep this provider-local so other runtimes never see
+// models that their own CLI cannot execute.
+func ensureGrokModels(models []Model) []Model {
+	byID := make(map[string]Model, len(models)+2)
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		if _, exists := byID[model.ID]; !exists {
+			byID[model.ID] = model
+		}
+	}
+
+	result := make([]Model, 0, len(byID)+2)
+	defaults := []Model{
+		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai"},
+		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
+	}
+	annotateGrokThinking(defaults)
+	for _, model := range defaults {
+		if discovered, exists := byID[model.ID]; exists {
+			result = append(result, discovered)
+			delete(byID, model.ID)
+			continue
+		}
+		result = append(result, model)
+	}
+
+	for _, model := range models {
+		if discovered, exists := byID[model.ID]; exists {
+			result = append(result, discovered)
+			delete(byID, model.ID)
+		}
+	}
+	return result
 }
 
 // grokStaticModels is the offline fallback catalog for the Grok Build CLI.
@@ -2404,7 +2443,7 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 // Grok 4.6 is the current Grok Build default (xAI, 2026-08-12).
 func grokStaticModels() []Model {
 	models := []Model{
-		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "xai", Default: true},
+		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai", Default: true},
 		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
 		{ID: "grok-composer-2.5-fast", Label: "Grok Composer 2.5 Fast", Provider: "xai"},
 	}
