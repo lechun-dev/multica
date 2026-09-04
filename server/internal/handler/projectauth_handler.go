@@ -1430,12 +1430,10 @@ func (h *Handler) requireNewIssueProjectPermission(w http.ResponseWriter, r *htt
 		return true
 	}
 	if !projectID.Valid {
-		// 2026-08-31 coder(lq): The authorization overlay makes project binding
-		// mandatory. Without a canonical project there is no safe inheritance
-		// boundary for task visibility or direct grants. The disabled path above
-		// deliberately preserves Multica's legacy projectless behavior.
-		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
-		return false
+		// 2026-09-04 coder(lq): Project permissions are additive and must not
+		// disable Multica's existing projectless task flow. There is no project
+		// grant to check here; the normal workspace/task checks apply instead.
+		return true
 	}
 	return h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, permission)
 }
@@ -1448,8 +1446,19 @@ func (h *Handler) requireParentIssueProjectPermission(w http.ResponseWriter, r *
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return true
 	}
-	if !projectID.Valid || !parent.ProjectID.Valid || parent.ProjectID != projectID {
+	// A missing project on the child inherits the parent's project in the
+	// service. Resolve that effective project before checking authorization so
+	// project-bound parents still require IssueCreate on their project, while a
+	// genuinely projectless parent remains valid.
+	effectiveProjectID := projectID
+	if !effectiveProjectID.Valid {
+		effectiveProjectID = parent.ProjectID
+	}
+	if effectiveProjectID.Valid && parent.ProjectID.Valid && parent.ProjectID != effectiveProjectID {
 		writeError(w, http.StatusBadRequest, "parent issue must belong to the same project")
+		return false
+	}
+	if effectiveProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(effectiveProjectID), uuidToString(parent.WorkspaceID), projectauth.IssueCreate) {
 		return false
 	}
 	return h.requireIssueProjectPermission(w, r, parent, projectauth.View)

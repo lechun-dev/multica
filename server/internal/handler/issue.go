@@ -3367,10 +3367,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		AllowDuplicate: req.AllowDuplicate,
 	}, service.IssueCreateOpts{
 		ActorID: actualCreatorID,
-		// 2026-09-01 coder(lq): Keep the project binding invariant at the
-		// service boundary as well as the HTTP permission guard so alternate
-		// callers cannot create projectless tasks while the overlay is enabled.
-		RequireProject:   h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
+		// 2026-09-04 coder(lq): Project authorization is additive. A task may
+		// remain projectless, so the overlay must not turn project binding into
+		// a global creation invariant.
+		RequireProject:   false,
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BeforeCommit:     h.issueAccessBeforeCommit(),

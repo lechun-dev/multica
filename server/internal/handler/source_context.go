@@ -737,10 +737,10 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
 		ActorID: util.UUIDToString(userID),
-		// 2026-09-01 coder(lq): Source-context creates share the normal issue
-		// creation invariant; the service guard prevents future callers from
-		// bypassing project authorization through this specialized endpoint.
-		RequireProject: h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
+		// 2026-09-04 coder(lq): Source-context tasks preserve Multica's
+		// projectless create capability; project authorization applies only
+		// when a project is actually selected.
+		RequireProject: false,
 		BeforeCommit:   h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
 			response := issueToResponse(issue, prefix)
