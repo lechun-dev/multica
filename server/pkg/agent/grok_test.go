@@ -852,6 +852,51 @@ func TestGrokThinkingCatalogIsPerModel(t *testing.T) {
 	}
 }
 
+func TestEnsureGrokModelsAddsMissingModels(t *testing.T) {
+	models := ensureGrokModels([]Model{
+		{ID: "grok-composer-2.5-fast", Label: "Grok Composer 2.5 Fast", Provider: "xai"},
+	})
+
+	if got := []string{models[0].ID, models[1].ID, models[2].ID}; strings.Join(got, ",") != "grok-4.6,grok-4.5,grok-composer-2.5-fast" {
+		t.Fatalf("model order = %v, want flagship models first", got)
+	}
+	for _, id := range []string{"grok-4.6", "grok-4.5"} {
+		model := grokMustFindModel(t, models, id)
+		if model.Provider != "xai" {
+			t.Errorf("%s provider = %q, want xai", id, model.Provider)
+		}
+		if model.Thinking == nil {
+			t.Errorf("%s should include its documented thinking catalog", id)
+		}
+	}
+	if model := grokMustFindModel(t, models, "grok-4.6"); model.Label != "Grok-4.6" {
+		t.Errorf("grok-4.6 label = %q, want Grok-4.6", model.Label)
+	}
+}
+
+func TestEnsureGrokModelsPreservesDiscoveredEntries(t *testing.T) {
+	customThinking := &ModelThinking{DefaultLevel: "medium", SupportedLevels: []ThinkingLevel{{Value: "medium", Label: "Custom"}}}
+	models := ensureGrokModels([]Model{
+		{ID: "other", Label: "Other", Provider: "xai"},
+		{ID: "grok-4.6", Label: "Runtime Grok 4.6", Provider: "custom", Default: true, Thinking: customThinking},
+		{ID: "grok-4.6", Label: "Duplicate"},
+		{ID: "other", Label: "Duplicate other"},
+	})
+
+	if len(models) != 3 {
+		t.Fatalf("deduplicated model count = %d, want 3: %+v", len(models), models)
+	}
+	if models[0].ID != "grok-4.6" || models[0].Label != "Runtime Grok 4.6" || models[0].Provider != "custom" || !models[0].Default {
+		t.Fatalf("discovered flagship entry was not preserved: %+v", models[0])
+	}
+	if models[0].Thinking != customThinking {
+		t.Fatal("discovered thinking catalog was replaced")
+	}
+	if models[1].ID != "grok-4.5" || models[2].ID != "other" {
+		t.Fatalf("non-flagship model order changed: %+v", models)
+	}
+}
+
 func TestGrokValidateThinkingLevelUsesPerModelCatalog(t *testing.T) {
 	for _, tc := range []struct {
 		model string
