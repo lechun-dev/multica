@@ -257,14 +257,14 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, permission projectauth.Permission) error {
 	if _, err := executor.Exec(ctx, `
 		INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by)
-		VALUES ($1,$2,$3,$4,$3)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$3::uuid)
 		ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, string(permission)); err != nil {
 		return err
 	}
 	_, err := executor.Exec(ctx, `
 		INSERT INTO projectauth_access_grants (workspace_id, project_id, issue_id, subject_type, subject_id, permission, source, granted_by)
-		SELECT p.workspace_id, $2, $1, 'user', $3, $4, 'system', $3
-		FROM project p WHERE p.id=$2
+		SELECT p.workspace_id, $2::uuid, $1::uuid, 'user', $3::text, $4, 'system', $3::uuid
+		FROM project p WHERE p.id=$2::uuid
 		ON CONFLICT DO NOTHING`, issueID, projectID, userID, string(permission))
 	return err
 }

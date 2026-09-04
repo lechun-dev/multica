@@ -175,7 +175,7 @@ func TestDingTalkNotifyRuntimeNotifiesCompletedAgentOwnerAndInitiator(t *testing
 		if want[item.Message.TargetID] != item.Message.DingUserID || item.Message.ChannelType != "p2p" {
 			t.Fatalf("unexpected completion message: %+v", item.Message)
 		}
-		if item.Message.Text != "✅ 智能体「Multica Agent」已完成执行" {
+		if item.Message.Text != "✅ 智能体「MissionOS Agent」已完成执行" {
 			t.Fatalf("unexpected completion text: %q", item.Message.Text)
 		}
 		delete(want, item.Message.TargetID)

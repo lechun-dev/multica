@@ -119,7 +119,7 @@ func (s *TaskService) RetryFailedTasksByPolicy(ctx context.Context, limit int32)
 	if limit <= 0 {
 		return TaskRetryPolicySweepResult{}, nil
 	}
-	ids, err := s.Queries.ListFailedTaskIDsForRetry(ctx, db.ListFailedTaskIDsForRetryParams{Limit: limit})
+	ids, err := s.Queries.ListFailedTaskIDsForRetry(ctx, limit)
 	if err != nil {
 		return TaskRetryPolicySweepResult{}, err
 	}

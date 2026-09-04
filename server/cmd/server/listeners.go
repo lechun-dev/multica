@@ -75,7 +75,6 @@ var workspaceSafeProjectionEvents = map[string]bool{
 	protocol.EventTaskDispatch:              true,
 	protocol.EventTaskRunning:               true,
 	protocol.EventTaskWaitingLocalDirectory: true,
-	protocol.EventTaskProgress:              true,
 	protocol.EventTaskCompleted:             true,
 	protocol.EventTaskFailed:                true,
 	protocol.EventTaskCancelled:             true,

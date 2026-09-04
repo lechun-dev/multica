@@ -2,11 +2,23 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useCurrentWorkspace } from "@multica/core/paths";
+import {
+  QueryClient,
+  QueryClientContext,
+  useQuery,
+} from "@tanstack/react-query";
+import { useWorkspaceSlug } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
 import { useIssueViewStore } from "@multica/core/issues/stores/view-store";
-import { memberListOptions } from "@multica/core/workspace/queries";
+import { api } from "@multica/core/api";
+import type { MemberWithUser, Workspace } from "@multica/core/types";
+
+// 2026-09-04 coder(lq): Shared surfaces can render before the platform
+// providers are mounted. A stable fallback client keeps the hook callable in
+// those embedded contexts without issuing any network requests.
+const fallbackQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
 
 /**
  * Task-surface visibility scope shared by row decorations and the canonical
@@ -59,19 +71,35 @@ export function useIssueSurfaceVisibilityReady(): boolean {
  */
 export function useWorkspaceTaskVisibility(): IssueSurfaceVisibility {
   const context = useContext(IssueSurfaceVisibilityContext);
-  const workspace = useCurrentWorkspace();
-  const wsId = workspace?.id ?? "";
-  const currentUser = useAuthStore((state) => state.user);
+  const queryClient = useContext(QueryClientContext);
+  const effectiveQueryClient = queryClient ?? fallbackQueryClient;
+  const slug = useWorkspaceSlug();
+  const currentUser = useOptionalCurrentUser();
   const showWorkspaceOwnedItems = useIssueViewStore(
     (state) => state.showWorkspaceOwnedItems,
   );
+  const workspaceQuery = useQuery<Workspace[]>(
+    {
+      queryKey: ["visibility-workspaces"],
+      queryFn: () => api.listWorkspaces(),
+      enabled: !!queryClient && !!slug,
+    },
+    effectiveQueryClient,
+  );
+  const wsId =
+    (workspaceQuery.data ?? []).find((workspace) => workspace.slug === slug)
+      ?.id ?? "";
   // 2026-09-01 coder(lq): Desktop chrome mounts before a workspace route is
   // resolved; keep this shared hook fail-closed without calling a workspace
   // endpoint with an empty id.
-  const membersQuery = useQuery({
-    ...memberListOptions(wsId),
-    enabled: !!wsId,
-  });
+  const membersQuery = useQuery<MemberWithUser[]>(
+    {
+      queryKey: ["visibility-members", wsId],
+      queryFn: () => api.listMembers(wsId),
+      enabled: !!queryClient && !!wsId,
+    },
+    effectiveQueryClient,
+  );
   const members = membersQuery.data ?? [];
   const isWorkspaceOwner = useMemo(
     () =>
@@ -89,4 +117,12 @@ export function useWorkspaceTaskVisibility(): IssueSurfaceVisibility {
       ? !isWorkspaceOwner || showWorkspaceOwnedItems
       : false,
   };
+}
+
+function useOptionalCurrentUser() {
+  try {
+    return useAuthStore((state) => state.user);
+  } catch {
+    return null;
+  }
 }

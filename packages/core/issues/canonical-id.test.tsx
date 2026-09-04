@@ -73,7 +73,7 @@ describe("useCanonicalIssue", () => {
     await waitFor(() => expect(result.current.issue).toEqual(issue));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(getIssue).toHaveBeenCalledTimes(1);
-    expect(getIssue).toHaveBeenCalledWith(ISSUE_UUID);
+    expect(getIssue).toHaveBeenCalledWith(ISSUE_UUID, { includeWorkspaceOwned: true });
   });
 
   it("resolves an identifier to the issue UUID", async () => {
@@ -85,7 +85,7 @@ describe("useCanonicalIssue", () => {
     await waitFor(() => expect(result.current.canonicalId).toBe(ISSUE_UUID));
     expect(result.current.isResolving).toBe(false);
     expect(result.current.issue).toEqual(issue);
-    expect(getIssue).toHaveBeenCalledWith("TRS-134");
+    expect(getIssue).toHaveBeenCalledWith("TRS-134", expect.objectContaining({ includeWorkspaceOwned: true }));
   });
 
   // The whole point of `initialData` over a post-resolve cache seed: the
