@@ -58,16 +58,36 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            set -e
+            # 2026-09-04 coder(lq): Make deploy failures explicit by checking compose
+            # file availability before pull, and support hosts where override compose file
+            # is intentionally absent.
+            set -euo pipefail
             cd "${{ inputs.deploy_path || '/deploy/multica' }}"
             image_tag="${{ inputs.image_tag || '' }}"
+            compose_project="${{ inputs.compose_project || 'multica' }}"
+            compose_base_file="docker-compose.selfhost.yml"
+            compose_override_file="docker-compose.selfhost.override.yml"
             if [ -n "$image_tag" ]; then
               export MULTICA_IMAGE_TAG="$image_tag"
             fi
+
+            if [ ! -f "$compose_base_file" ]; then
+              echo "Error: missing required $compose_base_file in $PWD"
+              ls -la
+              exit 1
+            fi
+
+            compose_files="-f $compose_base_file"
+            if [ -f "$compose_override_file" ]; then
+              compose_files="$compose_files -f $compose_override_file"
+            else
+              echo "Warning: optional override file $compose_override_file not found, deploying with base compose file."
+            fi
+
             # 2026-09-02 coder(lq): Keep the compose sequence identical between
             # staging and production. Only the target directory and compose
             # project name vary, so both environments reuse the same image pull
             # and recreate flow.
-            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml pull backend frontend
-            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml up -d --no-build backend frontend
+            docker compose -p "$compose_project" $compose_files pull backend frontend
+            docker compose -p "$compose_project" $compose_files up -d --no-build backend frontend
             docker image prune -f
