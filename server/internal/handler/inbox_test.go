@@ -98,6 +98,15 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		"issue_id":       mentionedIssueID,
 		"title":          "You were mentioned",
 	})
+	for _, permission := range []string{"project.view", "project.issue.comment"} {
+		dbfx.InsertNoID(t, "issue_permissions", testutil.Cols{
+			"issue_id":   mentionedIssueID,
+			"project_id": projectID,
+			"user_id":     recipientID,
+			"permission":  permission,
+			"granted_by":  testUserID,
+		}, "issue_id = $1 AND user_id = $2 AND permission = $3", mentionedIssueID, recipientID, permission)
+	}
 	dbfx.Insert(t, "inbox_item", testutil.Cols{
 		"workspace_id":   testWorkspaceID,
 		"recipient_type": "member",
@@ -135,10 +144,8 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		}
 	}
 
-	// 2026-09-05 coder(lq): A mention notification is the compatibility
-	// fallback for rows written before task-member grants were introduced. The
-	// recipient must still be able to open and reply to this task, without being
-	// added to project_members.
+	// 2026-09-05 coder(lq): The notification is only the inbox surface; task
+	// access comes from the explicit task-member grants above.
 	view := httptest.NewRecorder()
 	get := newRequestAs(recipientID, http.MethodGet, "/api/issues/"+mentionedIssueID, nil)
 	get.Header.Set("X-Workspace-ID", testWorkspaceID)

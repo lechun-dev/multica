@@ -311,9 +311,9 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 
 func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
 	// 2026-09-05 coder(lq): Project-bound tasks inherit visibility from their
-	// project, with a narrow exception for users explicitly mentioned on that
-	// task. The issue grant is joined to workspace membership so stale grants
-	// cannot restore access after a user leaves the workspace.
+	// project, with task-member grants as the only exception. The issue grant
+	// is joined to workspace membership so stale grants cannot restore access
+	// after a user leaves the workspace.
 	ownerProjectClause := "FALSE"
 	ownerProjectlessClause := "FALSE"
 	if includeWorkspaceOwned {
@@ -800,24 +800,12 @@ func inboxIssueProjectVisibilityPredicate(inboxAlias, workspaceRef, userRef stri
 // workspace-owner scope as the inbox list, otherwise unread badges can reveal
 // activity from projects hidden by the owner toggle.
 func inboxIssueProjectVisibilityPredicateWithWorkspaceScope(inboxAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	// 2026-09-05 coder(lq): A mention is an explicit, recipient-scoped
-	// invitation to inspect this task. Keep the exception on inbox rows only;
-	// ordinary project and issue lists continue to use project membership.
-	return fmt.Sprintf(`(%s.issue_id IS NULL OR (
-		%s.type = 'mentioned'
-		AND %s.recipient_type = 'member'
-		AND %s.recipient_id = %s::uuid
-		AND EXISTS (
-			SELECT 1 FROM issue mentioned_issue
-			WHERE mentioned_issue.id = %s.issue_id
-			  AND mentioned_issue.workspace_id = %s
-		)
-	) OR EXISTS (
+	return fmt.Sprintf(`(%s.issue_id IS NULL OR EXISTS (
 		SELECT 1 FROM issue acl_issue
 		WHERE acl_issue.id = %s.issue_id
 		  AND acl_issue.workspace_id = %s
 		  AND %s
-	))`, inboxAlias, inboxAlias, inboxAlias, inboxAlias, userRef, inboxAlias, workspaceRef, inboxAlias, workspaceRef,
+	))`, inboxAlias, inboxAlias, workspaceRef,
 		issueProjectVisibilityPredicateWithWorkspaceScope("acl_issue", workspaceRef, userRef, includeWorkspaceOwned))
 }
 
@@ -1283,28 +1271,6 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	err = h.ProjectAuth.CheckIssueWithWorkspaceScope(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission, includeWorkspaceOwned)
 	if err != nil {
-		if permission == projectauth.View || permission == projectauth.IssueComment {
-			// 2026-09-05 coder(lq): Keep old mention notifications usable after
-			// deployments that created the inbox row before task grants existed.
-			// The row is recipient-scoped and workspace-scoped, so it grants only
-			// this task's MEMBER-level view/comment access; it never grants project
-			// membership or edit/manage permissions.
-			var mentioned bool
-			if mentionErr := h.DB.QueryRow(r.Context(), `SELECT EXISTS (
-				SELECT 1
-				FROM inbox_item ii
-				WHERE ii.workspace_id = $1
-				  AND ii.issue_id = $2
-				  AND ii.recipient_type = 'member'
-				  AND ii.recipient_id = $3::uuid
-				  AND ii.type = 'mentioned'
-			)`, issue.WorkspaceID, issue.ID, userID).Scan(&mentioned); mentionErr != nil {
-				return false, "internal"
-			}
-			if mentioned {
-				return true, ""
-			}
-		}
 		if errors.Is(err, projectauth.ErrDisabled) {
 			return false, "internal"
 		}
