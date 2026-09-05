@@ -97,7 +97,7 @@
   border-radius: 0.75rem;
   background: linear-gradient(180deg, #fafdff 0%, #edf5ff 100%);
   color: #1264d8;
-  font-size: 1rem;
+  font-size: var(--text-body-lg);
   font-weight: 700;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -126,7 +126,7 @@
 
 .frame :global(.download-supporting) {
   color: #6b7280;
-  font-size: 0.75rem;
+  font-size: var(--text-caption);
   font-weight: 500;
   letter-spacing: 0.04em;
   line-height: 1;
@@ -146,7 +146,7 @@
   .frame :global(.download-link) {
     width: min(12rem, calc(100% - 1.5rem));
     padding-inline: 1rem;
-    font-size: 0.9375rem;
+    font-size: var(--text-body-lg);
   }
 }
 

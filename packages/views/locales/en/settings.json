@@ -1301,6 +1301,7 @@
     "create_title": "Create permission role",
     "edit_title": "Edit permission role",
     "key": "Key",
+    "key_placeholder": "reviewer",
     "name": "Name",
     "description_field": "Description",
     "permissions": "Permissions",

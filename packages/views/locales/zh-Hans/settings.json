@@ -1294,6 +1294,7 @@
     "create_title": "创建权限角色",
     "edit_title": "编辑权限角色",
     "key": "标识",
+    "key_placeholder": "reviewer",
     "name": "名称",
     "description_field": "描述",
     "permissions": "权限",

@@ -1032,6 +1032,7 @@
     "create_title": "권한 역할 만들기",
     "edit_title": "권한 역할 편집",
     "key": "키",
+    "key_placeholder": "reviewer",
     "name": "이름",
     "description_field": "설명",
     "permissions": "권한",

@@ -1294,6 +1294,7 @@
     "create_title": "権限ロールを作成",
     "edit_title": "権限ロールを編集",
     "key": "キー",
+    "key_placeholder": "reviewer",
     "name": "名前",
     "description_field": "説明",
     "permissions": "権限",
