@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/dbreader"
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -177,11 +178,20 @@ type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
 }
 
+// RuntimeRecoveryNotifier republishes the daemon registration lifecycle event
+// after a heartbeat brings an offline runtime back online.
+// 2026-09-05 coder(lq): Keep the notifier contract available to the heartbeat
+// scheduler while the project authorization overlay remains additive.
+type RuntimeRecoveryNotifier interface {
+	NotifyRuntimeRecovered(ctx context.Context, workspaceID string)
+}
+
 type Handler struct {
-	Queries     *db.Queries
-	DB          dbExecutor
-	TxStarter   txStarter
-	ProjectAuth *projectauth.Service
+	Queries      *db.Queries
+	ReadSelector *dbreader.Selector
+	DB           dbExecutor
+	TxStarter    txStarter
+	ProjectAuth  *projectauth.Service
 	// issueTableWindowCache is initialized only on the request-local Handler
 	// copy used by a repeatable-read table request. It lets facets reuse one
 	// visible-id snapshot without adding mutable state to the shared Handler.
@@ -454,6 +464,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	taskSvc.QuickActions = llmClient
 	h := &Handler{
 		Queries:                      queries,
+		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
 		TxStarter:                    txStarter,
 		ProjectAuth:                  projectauth.New(newProjectAuthRepository(executor), cfg.ProjectPermissionEnabled),
@@ -489,7 +500,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
-
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key
 	// is unconfigured, so the feature degrades cleanly. main.go calls
@@ -502,6 +512,17 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
 
 	return h
+}
+
+// NotifyRuntimeRecovered republishes the daemon registration refresh after a
+// heartbeat restores an offline runtime.
+// 2026-09-05 coder(lq): Preserve the scheduler callback expected by the
+// existing heartbeat implementation after syncing upstream main.
+func (h *Handler) NotifyRuntimeRecovered(_ context.Context, workspaceID string) {
+	if h == nil || workspaceID == "" {
+		return
+	}
+	h.PublishRuntimeRefresh(workspaceID, "system", "", "heartbeat_recovery")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

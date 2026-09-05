@@ -981,7 +981,6 @@ func buildProjectSearchQueryForUser(phrase string, terms []string, includeClosed
 		p.created_by, p.status, p.priority, p.lead_type, p.lead_id,
 		p.start_date, p.due_date,
 		p.created_at, p.updated_at,
-		COUNT(*) OVER() AS total_count,
 		%s AS match_source
 	FROM project p
 	WHERE p.workspace_id = %s AND %s
@@ -1152,7 +1151,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		resp[i] = spr
 	}
 
-	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"projects": resp,
 		"total":    total,

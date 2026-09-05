@@ -1064,7 +1064,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		resp[i] = sir
 	}
 
-	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
 		"total":  total,

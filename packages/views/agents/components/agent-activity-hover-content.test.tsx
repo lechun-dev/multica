@@ -2,7 +2,7 @@
 
 import { cleanup, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentTask, Issue } from "@multica/core/types";
+import type { Agent, AgentRuntime, AgentTask, Issue } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 
 // The hover card renders one row per task and counts tasks, so its header
@@ -36,10 +36,6 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
 }));
 
-vi.mock("@multica/core/agents", () => ({
-  deriveAgentAvailability: () => "online",
-}));
-
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({
   ActorAvatar: ({ name }: { name: string }) => (
     <span data-testid="actor-avatar">{name}</span>
@@ -51,7 +47,15 @@ vi.mock("@tanstack/react-query", async () => {
     await vi.importActual<typeof import("@tanstack/react-query")>(
       "@tanstack/react-query",
     );
-  return { ...actual, useQuery: () => ({ data: [] }) };
+  return {
+    ...actual,
+    useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+      data:
+        options.queryKey?.[0] === "agents"
+          ? activityQueryData.agents
+          : activityQueryData.runtimes,
+    }),
+  };
 });
 
 import {
@@ -104,7 +108,11 @@ function makeTask(overrides: Partial<AgentTask>): AgentTask {
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  activityQueryData.agents = [];
+  activityQueryData.runtimes = [];
+});
 
 describe("AgentActivityHoverContent", () => {
   // Two agents, three running tasks (Niko runs two at once). The header must

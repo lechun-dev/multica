@@ -611,6 +611,11 @@ func main() {
 		LLMMaxRetries:       llmMaxRetries,
 	})
 
+	// Reconciled race recoveries in the batched scheduler reuse the same
+	// daemon:register refresh the sync transition path publishes. Wired before
+	// the scheduler's Run goroutine starts so the field write is race-free.
+	heartbeatScheduler.RecoveryNotifier = h
+
 	srv := newMainHTTPServer(":"+port, r)
 	profilingServer := profiling.NewServer()
 

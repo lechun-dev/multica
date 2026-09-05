@@ -869,6 +869,9 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if d, _ := cmd.Flags().GetDuration("poll-interval"); d > 0 {
 		args = append(args, "--poll-interval", d.String())
 	}
+	if d, _ := cmd.Flags().GetDuration("ws-claim-poll-interval"); d > 0 {
+		args = append(args, "--ws-claim-poll-interval", d.String())
+	}
 	if d, _ := cmd.Flags().GetDuration("heartbeat-interval"); d > 0 {
 		args = append(args, "--heartbeat-interval", d.String())
 	}
@@ -988,6 +991,14 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	if pollOverride > 0 {
 		overrides.PollInterval = pollOverride
+	}
+	wsClaimPollFlag, _ := cmd.Flags().GetDuration("ws-claim-poll-interval")
+	wsClaimPollOverride, err := resolveDaemonDurationOverride(wsClaimPollFlag, "MULTICA_DAEMON_WS_CLAIM_POLL_INTERVAL", fileCfg.WSClaimPollInterval)
+	if err != nil {
+		return err
+	}
+	if wsClaimPollOverride > 0 {
+		overrides.WSClaimPollInterval = wsClaimPollOverride
 	}
 	heartbeatFlag, _ := cmd.Flags().GetDuration("heartbeat-interval")
 	heartbeatOverride, err := resolveDaemonDurationOverride(heartbeatFlag, "MULTICA_DAEMON_HEARTBEAT_INTERVAL", fileCfg.HeartbeatInterval)
