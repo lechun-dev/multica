@@ -157,7 +157,10 @@ func promoteIssueMentionedMembersWithWorkspaceWithExecutor(ctx context.Context, 
 			continue
 		}
 		for _, permission := range []string{"project.view", "project.issue.comment"} {
-			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,NULLIF($2, '')::uuid,$3,$4,$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, permission); err != nil {
+			// 2026-09-05 coder(lq): Refresh the task-to-project binding when a
+			// task moves projects. Keeping the old binding makes the inbox show a
+			// mention while every task endpoint correctly rejects the stale grant.
+			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,NULLIF($2, '')::uuid,$3,$4,$3) ON CONFLICT (issue_id,user_id,permission) DO UPDATE SET project_id = EXCLUDED.project_id, granted_by = EXCLUDED.granted_by, updated_at = now()`, issueID, projectID, userID, permission); err != nil {
 				return err
 			}
 		}

@@ -49,7 +49,18 @@ func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, user
 
 func (r *projectAuthRepository) IssuePermission(ctx context.Context, issueID, userID string, permission projectauth.Permission) (bool, error) {
 	var exists bool
-	err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM issue_permissions WHERE issue_id=$1 AND user_id=$2 AND permission=$3)`, issueID, userID, string(permission)).Scan(&exists)
+	// 2026-09-05 coder(lq): A task grant is bound to the task's current
+	// project. A task move must invalidate the old grant instead of allowing a
+	// stale issue_permissions row to bypass the new project's membership check.
+	err := r.db.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1
+		FROM issue_permissions ip
+		JOIN issue i ON i.id = ip.issue_id
+		WHERE ip.issue_id = $1
+		  AND ip.user_id = $2
+		  AND ip.permission = $3
+		  AND ip.project_id IS NOT DISTINCT FROM i.project_id
+	)`, issueID, userID, string(permission)).Scan(&exists)
 	return exists, err
 }
 

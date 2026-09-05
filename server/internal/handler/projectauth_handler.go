@@ -1283,6 +1283,28 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	err = h.ProjectAuth.CheckIssueWithWorkspaceScope(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission, includeWorkspaceOwned)
 	if err != nil {
+		if permission == projectauth.View || permission == projectauth.IssueComment {
+			// 2026-09-05 coder(lq): Keep old mention notifications usable after
+			// deployments that created the inbox row before task grants existed.
+			// The row is recipient-scoped and workspace-scoped, so it grants only
+			// this task's MEMBER-level view/comment access; it never grants project
+			// membership or edit/manage permissions.
+			var mentioned bool
+			if mentionErr := h.DB.QueryRow(r.Context(), `SELECT EXISTS (
+				SELECT 1
+				FROM inbox_item ii
+				WHERE ii.workspace_id = $1
+				  AND ii.issue_id = $2
+				  AND ii.recipient_type = 'member'
+				  AND ii.recipient_id = $3::uuid
+				  AND ii.type = 'mentioned'
+			)`, issue.WorkspaceID, issue.ID, userID).Scan(&mentioned); mentionErr != nil {
+				return false, "internal"
+			}
+			if mentioned {
+				return true, ""
+			}
+		}
 		if errors.Is(err, projectauth.ErrDisabled) {
 			return false, "internal"
 		}

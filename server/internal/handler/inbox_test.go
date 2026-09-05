@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,28 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		if item.IssueID != nil && *item.IssueID == mentionedIssueID {
 			t.Fatalf("unmentioned member saw direct mention inbox row: %+v", item)
 		}
+	}
+
+	// 2026-09-05 coder(lq): A mention notification is the compatibility
+	// fallback for rows written before task-member grants were introduced. The
+	// recipient must still be able to open and reply to this task, without being
+	// added to project_members.
+	view := httptest.NewRecorder()
+	get := newRequestAs(recipientID, http.MethodGet, "/api/issues/"+mentionedIssueID, nil)
+	get.Header.Set("X-Workspace-ID", testWorkspaceID)
+	get = withURLParam(get, "id", mentionedIssueID)
+	testHandler.GetIssue(view, get)
+	if view.Code != http.StatusOK {
+		t.Fatalf("mentioned recipient GetIssue: expected 200, got %d: %s", view.Code, view.Body.String())
+	}
+
+	reply := httptest.NewRecorder()
+	comment := newRequestAs(recipientID, http.MethodPost, "/api/issues/"+mentionedIssueID+"/comments", map[string]any{"content": "I will review this."})
+	comment.Header.Set("X-Workspace-ID", testWorkspaceID)
+	comment = withURLParam(comment, "id", mentionedIssueID)
+	testHandler.CreateComment(reply, comment)
+	if reply.Code != http.StatusCreated {
+		t.Fatalf("mentioned recipient CreateComment: expected 201, got %d: %s", reply.Code, reply.Body.String())
 	}
 }
 
