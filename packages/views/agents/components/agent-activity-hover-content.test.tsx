@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Agent, AgentRuntime, AgentTask, Issue } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 
+const activityQueryData = vi.hoisted(() => ({
+  agents: [] as Agent[],
+  runtimes: [] as AgentRuntime[],
+}));
+
 // The hover card renders one row per task and counts tasks, so its header
 // must describe tasks — not agents. A single agent can run several tasks at
 // once (e.g. the workspace chip reads "2 working" for two unique agents while

@@ -196,6 +196,7 @@ type Attachment struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
+	PendingComment  bool               `json:"pending_comment"`
 }
 
 type Autopilot struct {

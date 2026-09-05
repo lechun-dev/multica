@@ -40,19 +40,19 @@ SELECT inserted.id, inserted.workspace_id, inserted.issue_id, inserted.comment_i
 FROM inserted;
 
 -- name: ListAttachmentsByIssue :many
--- Keep the projection explicit: pending_comment is an internal lifecycle flag,
--- not part of the public Attachment model.
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+-- 2026-09-05 coder(lq): Keep pending_comment in the generated value so sqlc's
+-- Attachment model stays complete; the predicate below still hides drafts.
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE issue_id = $1 AND workspace_id = $2 AND pending_comment = FALSE
 ORDER BY created_at ASC;
 
 -- name: ListAttachmentsByComment :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE comment_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC;
 
 -- name: GetAttachment :one
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: IsAttachmentPendingComment :one
@@ -66,11 +66,11 @@ WHERE id = $1 AND workspace_id = $2;
 -- workspace_id before serving the bytes — this query is access-neutral on
 -- purpose so a self-contained URL like /api/attachments/{id}/download can
 -- work as a native <img>/<video> resource load (no header attachment).
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE id = $1;
 
 -- name: ListAttachmentsByCommentIDs :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE comment_id = ANY($1::uuid[]) AND workspace_id = $2
 ORDER BY created_at ASC;
 
@@ -78,7 +78,7 @@ ORDER BY created_at ASC;
 -- Source snapshots keep issue-owned attachments separate from comment-owned
 -- attachments. In this schema a comment attachment retains issue_id, so the
 -- generic ListAttachmentsByIssue query is intentionally too broad here.
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND issue_id = sqlc.arg(issue_id)
   AND comment_id IS NULL
@@ -89,7 +89,7 @@ ORDER BY created_at ASC, id ASC;
 -- name: ListSourceContextCommentAttachments :many
 -- The issue predicate is a defense-in-depth owner guard for damaged rows; the
 -- comment ids were already derived from the guarded thread history.
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND issue_id = sqlc.arg(issue_id)
   AND comment_id = ANY(sqlc.arg(comment_ids)::uuid[])
@@ -172,7 +172,7 @@ SET chat_message_id = NULL
 WHERE chat_message_id IN (
   SELECT id FROM chat_message WHERE chat_message.task_id = $1 AND role = 'user'
 )
-RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id;
+RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment;
 
 -- name: CountUnboundChatAttachmentsForTask :one
 -- How many attachments the agent produced for this chat task that are still
@@ -202,12 +202,12 @@ WHERE workspace_id = sqlc.arg(workspace_id)
 RETURNING id;
 
 -- name: ListAttachmentsByChatMessage :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE chat_message_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC;
 
 -- name: ListAttachmentsByChatMessageIDs :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE chat_message_id = ANY($1::uuid[]) AND workspace_id = $2
 ORDER BY created_at ASC;
 
@@ -286,7 +286,7 @@ SELECT EXISTS(SELECT 1 FROM deleted) AS changed,
        COALESCE((SELECT revision FROM bumped_comment), 0)::bigint AS comment_revision;
 
 -- name: ListAttachmentsByIDs :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE id = ANY(sqlc.arg(attachment_ids)::uuid[]) AND workspace_id = sqlc.arg(workspace_id)
 ORDER BY created_at ASC;
 
@@ -295,7 +295,7 @@ ORDER BY created_at ASC;
 -- can finish creating or editing a comment after the upload request returns.
 -- Only unbound drafts are eligible; once linked, the row follows normal
 -- comment-attachment lifecycle rules.
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE pending_comment = TRUE
   AND comment_id IS NULL
   AND source_context_id IS NULL
@@ -322,10 +322,10 @@ INSERT INTO attachment (
   sqlc.arg(uploader_type), sqlc.arg(uploader_id), sqlc.arg(filename),
   sqlc.arg(url), sqlc.arg(content_type), sqlc.arg(size_bytes)
 )
-RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id;
+RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment;
 
 -- name: ListAttachmentsBySourceContext :many
-SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id FROM attachment
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND source_context_id = sqlc.arg(source_context_id)
 ORDER BY created_at ASC, id ASC;
@@ -334,7 +334,7 @@ ORDER BY created_at ASC, id ASC;
 DELETE FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND source_context_id = sqlc.arg(source_context_id)
-RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id;
+RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, source_context_id, pending_comment;
 
 -- name: ListSourceContextAttachmentURLsByWorkspace :many
 SELECT url FROM attachment

@@ -212,6 +212,10 @@ describe("unreadWorkspaceIds", () => {
 
 describe("inboxKeys.unreadSummary", () => {
   it("is a stable account-level key independent of any workspace", () => {
-    expect(inboxKeys.unreadSummary()).toEqual(["inbox", "unread-summary"]);
+    expect(inboxKeys.unreadSummary()).toEqual([
+      "inbox",
+      "unread-summary",
+      { includeWorkspaceOwned: true },
+    ]);
   });
 });

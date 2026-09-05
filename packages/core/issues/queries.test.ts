@@ -343,6 +343,7 @@ describe("projectGanttIssuesOptions", () => {
     expect(listIssues).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       scheduled: true,
+      archive_state: "active",
       limit: PROJECT_GANTT_PAGE_LIMIT,
       offset: 0,
     });
