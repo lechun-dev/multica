@@ -30,6 +30,11 @@ import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
+import {
+  type SessionTeardown,
+  tearDownOnLogout,
+  tearDownOnSessionExpiry,
+} from "./platform/session-teardown";
 import { DESKTOP_PRODUCT_NAME } from "./desktop-brand";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring

@@ -343,6 +343,14 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 			OR (%s.assignee_type = 'agent' AND EXISTS (
 				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
 			))
+			OR EXISTS (
+				SELECT 1 FROM issue_permissions ip
+				JOIN member im ON im.workspace_id = %s.workspace_id AND im.user_id = ip.user_id
+				WHERE ip.issue_id = %s.id
+				  AND ip.project_id IS NULL
+				  AND ip.user_id = %s::uuid
+				  AND ip.permission IN ('project.view', 'project.issue.comment')
+			)
 		))
 	)`, issueAlias, ownerProjectClause, issueAlias, userRef,
 		issueAlias, issueAlias, issueAlias, userRef,
@@ -350,7 +358,8 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef,
-		issueAlias, issueAlias, workspaceRef, userRef)
+		issueAlias, issueAlias, workspaceRef, userRef,
+		issueAlias, issueAlias, userRef)
 }
 
 // workspaceOwnerBypassPredicate is embedded into all SQL visibility scopes so
@@ -1250,6 +1259,24 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 		ownerBypassEnabled = ownerBypassEnabled && includeWorkspaceOwned
 		if projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, userUUID, projectauth.WorkspaceRole(member.Role), permission, ownerBypassEnabled, creatorOwnerID, assigneeOwnerID) {
 			return true, ""
+		}
+		if permission == projectauth.View || permission == projectauth.IssueComment {
+			var granted bool
+			err := h.DB.QueryRow(r.Context(), `
+				SELECT EXISTS (
+					SELECT 1 FROM issue_permissions ip
+					JOIN member im ON im.workspace_id = $2 AND im.user_id = ip.user_id
+					WHERE ip.issue_id = $1
+					  AND ip.project_id IS NULL
+					  AND ip.user_id = $3
+					  AND ip.permission = $4
+				)`, issue.ID, issue.WorkspaceID, userUUID, string(permission)).Scan(&granted)
+			if err != nil {
+				return false, "internal"
+			}
+			if granted {
+				return true, ""
+			}
 		}
 		return false, "projectless"
 	}

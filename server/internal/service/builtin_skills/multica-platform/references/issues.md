@@ -240,6 +240,24 @@ exact target `(issue, agent)` pair already has a non-terminal task, but it
 deliberately keeps same-agent handoffs to a fresh issue starting runs: cross-issue
 serial chains and triage batches rely on that.
 
+## Who else is running right now
+
+Concurrent runs are not included in the prompt because the answer changes while
+a turn is running. Query the server when coordination matters, especially before
+opening a PR against code a sibling issue may also touch:
+
+```bash
+multica issue runs <issue-id> --active --output json
+multica issue runs <issue-id> --siblings --output json
+```
+
+The active query returns only in-flight runs. `--siblings` widens the read to the
+issue's parent and its child issues, so each row identifies the issue another agent
+is working on. Results are compact and capped at 20; a truncation warning on stderr
+means the returned list is not complete. Nothing here reserves an issue or
+serialises anything: use issue comments to coordinate because the run set can
+change immediately after the read.
+
 ## Sub-issues: `todo` starts work now, `backlog` parks it
 
 On an agent-assigned issue, create status decides whether the assignee fires

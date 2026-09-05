@@ -132,11 +132,23 @@ func promoteMentionedMembersWithExecutor(ctx context.Context, executor dbExecuto
 // only. Grant conversation access alongside visibility; do not add a
 // project_members row because that would expose every task in the project.
 func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, content string) error {
+	return promoteIssueMentionedMembersWithWorkspaceWithExecutor(ctx, executor, issueID, projectID, "", content)
+}
+
+// 2026-09-05 coder(lq): Projectless issues still persist mention grants, but
+// resolve Agent mentions through the issue workspace and leave project_id NULL.
+// This keeps the task MEMBER boundary without turning a mention into a project
+// membership grant.
+func promoteIssueMentionedMembersWithWorkspaceWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, workspaceID, content string) error {
 	for _, mention := range util.ParseMentions(content) {
 		userID := mention.ID
 		if mention.Type == "agent" {
 			var err error
-			userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+			if projectID != "" {
+				userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+			} else {
+				userID, err = resolveAgentOwnerInWorkspaceWithExecutor(ctx, executor, workspaceID, mention.ID)
+			}
 			if err != nil {
 				return err
 			}
@@ -145,7 +157,7 @@ func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbEx
 			continue
 		}
 		for _, permission := range []string{"project.view", "project.issue.comment"} {
-			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,$4,$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, permission); err != nil {
+			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,NULLIF($2, '')::uuid,$3,$4,$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, permission); err != nil {
 				return err
 			}
 		}
@@ -155,6 +167,14 @@ func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbEx
 
 func promoteIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID pgtype.UUID, projectID pgtype.UUID, assigneeType pgtype.Text, assigneeID pgtype.UUID, description pgtype.Text) error {
 	if !projectID.Valid {
+		if description.Valid {
+			// The issue workspace is the only safe scope for Agent-owner lookup.
+			var workspaceID pgtype.UUID
+			if err := executor.QueryRow(ctx, `SELECT workspace_id FROM issue WHERE id = $1`, issueID).Scan(&workspaceID); err != nil {
+				return err
+			}
+			return promoteIssueMentionedMembersWithWorkspaceWithExecutor(ctx, executor, uuidToString(issueID), "", uuidToString(workspaceID), description.String)
+		}
 		return nil
 	}
 	projectIDString := uuidToString(projectID)
@@ -239,7 +259,7 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 // execution; this adapter also maps Agent mentions to their owner's viewer
 // grant without creating a separate Agent permission record.
 func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.Issue, params db.CreateCommentParams) (db.CreateCommentRow, error) {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || !issue.ProjectID.Valid {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return h.Queries.CreateComment(ctx, params)
 	}
 	if h.TxStarter == nil {
@@ -255,7 +275,7 @@ func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.I
 	if err != nil {
 		return db.CreateCommentRow{}, err
 	}
-	if err := promoteIssueMentionedMembersWithExecutor(ctx, tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), params.Content); err != nil {
+	if err := promoteIssueMentionedMembersWithWorkspaceWithExecutor(ctx, tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), uuidToString(issue.WorkspaceID), params.Content); err != nil {
 		return db.CreateCommentRow{}, fmt.Errorf("promote comment mention project access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

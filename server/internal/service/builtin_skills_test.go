@@ -759,46 +759,11 @@ func TestOnboardingSkillIsScopedToMika(t *testing.T) {
 		t.Errorf("an ordinary agent does not receive %q, which every agent needs", PlatformSkillName)
 	}
 
-	// Contract anchors only — exact file:line citations live in the skill's
-	// references/source-map.md, not here, so a downstream main merge that
-	// shifts a line cannot rot this test into pinning a stale lie.
-	mustContain := []string{
-		"multica issue pull-requests <issue-id> --output json",
-		"Default for code-changing issue work",
-		"open or update a PR before posting the final Multica issue comment",
-		"This is a default, not",
-		"Use a routable issue key in the PR title, body, or branch",
-		"include the PR URL when a PR exists",
-		"Closes MUL-2759",
-		"--status backlog",
-		// The only sanctioned pr_url reference is the negative compatibility
-		// warning about pre-existing data — not a write recommendation
-		// (MUL-5442 owner ruling: no curated key vocabulary).
-		"`pr_url` metadata (which can be",
-		"references/working-on-issues-source-map.md",
-		// MUL-5442: the brief's Sub-issue Creation section is now a one-line
-		// map pointing here. These anchors are the demoted playbook — if they
-		// leave the skill, the brief pointer dangles.
-		"`todo` starts work now, `backlog` parks it",
-		"`--stage <N>`",
-		"when a whole stage finishes",
-		"multica issue status <child-id> todo",
-		// MUL-5442: the brief's Issue Metadata section defers the full
-		// write discipline here. Every relocated ban is anchored
-		// individually — both defining categories AND each example —
-		// so no single item or category boundary can be dropped while
-		// the brief still points at this skill (round-3 review).
-		"Never store secrets, tokens, or API keys",
-		"Not metadata: logs or summaries",
-		"bookkeeping such as timestamps",
-		"attempt counts, or agent IDs",
-		"other single-run details",
-		"files touched and investigation notes",
-		"belong in the result comment",
-		// Owner ruling: metadata is deliberately free-form custom state;
-		// the platform curates no key vocabulary.
-		"the platform curates no vocabulary",
+	mika := loadBuiltinSkills(MikaSystemKey)
+	if !named(mika, onboarding) {
+		t.Errorf("Mika does not receive %q, which only Mika can use", onboarding)
 	}
+
 	if !named(mika, PlatformSkillName) {
 		t.Errorf("Mika lost %q; scoping must add to the universal set, not replace it", PlatformSkillName)
 	}

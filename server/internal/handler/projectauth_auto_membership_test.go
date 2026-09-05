@@ -223,6 +223,67 @@ func TestCreateIssuePromotesAssigneeAndMentionedMember(t *testing.T) {
 	}
 }
 
+// 2026-09-05 coder(lq): Projectless task members must be able to open and
+// reply to the task from an inbox mention, while another workspace member is
+// still denied.
+func TestProjectlessMentionedMemberCanOpenAndReply(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	viewerID := dbfx.User(t, "Projectless task viewer", fmt.Sprintf("projectless-task-viewer-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, viewerID, "member")
+	otherID := dbfx.User(t, "Projectless task other", fmt.Sprintf("projectless-task-other-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, otherID, "member")
+
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":       "Projectless mentioned task",
+		"description": fmt.Sprintf("Please review [@Viewer](mention://member/%s)", viewerID),
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created issue: %v", err)
+	}
+
+	var projectIDIsNull bool
+	if err := testPool.QueryRow(t.Context(), `
+		SELECT project_id IS NULL FROM issue_permissions WHERE issue_id = $1 AND user_id = $2 AND permission = 'project.view'`, created.ID, viewerID).Scan(&projectIDIsNull); err != nil {
+		t.Fatalf("query projectless task grant: %v", err)
+	}
+	if !projectIDIsNull {
+		t.Fatal("projectless task grant project_id is not NULL")
+	}
+
+	view := httptest.NewRecorder()
+	get := newRequestAs(viewerID, http.MethodGet, "/api/issues/"+created.ID+"?workspace_id="+testWorkspaceID, nil)
+	get = withURLParam(get, "id", created.ID)
+	testHandler.GetIssue(view, get)
+	if view.Code != http.StatusOK {
+		t.Fatalf("GetIssue as mentioned member: expected 200, got %d: %s", view.Code, view.Body.String())
+	}
+
+	reply := httptest.NewRecorder()
+	comment := newRequestAs(viewerID, http.MethodPost, "/api/issues/"+created.ID+"/comments?workspace_id="+testWorkspaceID, map[string]any{"content": "I will review this."})
+	comment = withURLParam(comment, "id", created.ID)
+	testHandler.CreateComment(reply, comment)
+	if reply.Code != http.StatusCreated {
+		t.Fatalf("CreateComment as mentioned member: expected 201, got %d: %s", reply.Code, reply.Body.String())
+	}
+
+	denied := httptest.NewRecorder()
+	otherGet := newRequestAs(otherID, http.MethodGet, "/api/issues/"+created.ID+"?workspace_id="+testWorkspaceID, nil)
+	otherGet = withURLParam(otherGet, "id", created.ID)
+	testHandler.GetIssue(denied, otherGet)
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("GetIssue as unrelated member: expected 404, got %d: %s", denied.Code, denied.Body.String())
+	}
+}
+
 // 2026-09-05 coder(lq): A human mentioned in a task comment becomes a member
 // of that task only and can reply without joining the project.
 func TestCreateCommentPromotesMentionedMemberViewer(t *testing.T) {
