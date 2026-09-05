@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 func inboxRequest(method, path, workspaceID string) *http.Request {
@@ -57,6 +59,79 @@ func TestListInboxProjectsCurrentIssueStatusAndPriority(t *testing.T) {
 	}
 	if items[0].IssuePriority == nil || *items[0].IssuePriority != "high" {
 		t.Errorf("issue_priority = %v, want high", items[0].IssuePriority)
+	}
+}
+
+func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	recipientID := createSecondWorkspaceMember(t)
+	var projectID string
+	if err := testPool.QueryRow(ctx,
+		`INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id`,
+		testWorkspaceID, "Inbox direct mention project",
+	).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	mentionedIssueID := dbfx.Issue(t, "Directly mentioned issue", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"project_id":   projectID,
+	})
+	filteredIssueID := dbfx.Issue(t, "Unrelated inbox issue", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"project_id":   projectID,
+	})
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = ANY($1::uuid[])`, []string{mentionedIssueID, filteredIssueID})
+		_, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+	})
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   recipientID,
+		"type":           "mentioned",
+		"severity":       "info",
+		"issue_id":       mentionedIssueID,
+		"title":          "You were mentioned",
+	})
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   recipientID,
+		"type":           "status_changed",
+		"severity":       "info",
+		"issue_id":       filteredIssueID,
+		"title":          "Hidden project update",
+	})
+
+	previous := testHandler.ProjectAuth
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
+	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
+	t.Cleanup(func() { testHandler.ProjectAuth = previous })
+
+	request := newRequestAs(recipientID, http.MethodGet, "/api/inbox", nil)
+	request.Header.Set("X-Workspace-ID", testWorkspaceID)
+	var items []InboxItemResponse
+	testutil.Call(t, inboxWorkspaceHandler(testHandler.ListInbox), request).
+		Want(http.StatusOK).
+		JSON(&items)
+	if len(items) != 1 || items[0].IssueID == nil || *items[0].IssueID != mentionedIssueID {
+		t.Fatalf("recipient inbox = %+v, want only direct mention for %s", items, mentionedIssueID)
+	}
+
+	request = newRequestAs(testUserID, http.MethodGet, "/api/inbox", nil)
+	request.Header.Set("X-Workspace-ID", testWorkspaceID)
+	items = nil
+	testutil.Call(t, inboxWorkspaceHandler(testHandler.ListInbox), request).
+		Want(http.StatusOK).
+		JSON(&items)
+	for _, item := range items {
+		if item.IssueID != nil && *item.IssueID == mentionedIssueID {
+			t.Fatalf("unmentioned member saw direct mention inbox row: %+v", item)
+		}
 	}
 }
 

@@ -135,6 +135,11 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to list inbox")
 			return
 		}
+		for _, item := range items {
+			if item.Type == "mentioned" && item.IssueID.Valid && item.RecipientID == parseUUID(userID) {
+				visible[item.IssueID] = struct{}{}
+			}
+		}
 	}
 	if windowEnabled && policy.action == entitlement.ActionEnforce {
 		windowVisible, windowErr := h.visibleIssueIDSet(r.Context(), wsUUID, policy, issueIDs)
@@ -215,6 +220,11 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list archived inbox")
 			return
+		}
+		for _, item := range items {
+			if item.Type == "mentioned" && item.IssueID.Valid && item.RecipientID == parseUUID(userID) {
+				visible[item.IssueID] = struct{}{}
+			}
 		}
 	}
 	if windowEnabled && policy.action == entitlement.ActionEnforce {

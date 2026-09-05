@@ -128,8 +128,9 @@ func promoteMentionedMembersWithExecutor(ctx context.Context, executor dbExecuto
 	return nil
 }
 
-// 2026-08-28 coder(lq): Mention grants are task-scoped; project descriptions
-// continue using the legacy project-level helper above.
+// 2026-09-05 coder(lq): A mention makes the recipient a member of this task
+// only. Grant conversation access alongside visibility; do not add a
+// project_members row because that would expose every task in the project.
 func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, content string) error {
 	for _, mention := range util.ParseMentions(content) {
 		userID := mention.ID
@@ -143,8 +144,10 @@ func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbEx
 		if mention.Type != "member" && mention.Type != "agent" || userID == "" {
 			continue
 		}
-		if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,'project.view',$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID); err != nil {
-			return err
+		for _, permission := range []string{"project.view", "project.issue.comment"} {
+			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,$4,$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, permission); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

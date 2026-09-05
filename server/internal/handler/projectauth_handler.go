@@ -310,11 +310,10 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 }
 
 func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	// 2026-09-01 coder(lq): Project-bound tasks inherit visibility from their
-	// project. Projectless tasks remain visible only to their creator/assignee,
-	// the owning user of an Agent identity, or the workspace owner. Historical
-	// issue_permissions rows are intentionally ignored because tasks no longer
-	// support independent authorization.
+	// 2026-09-05 coder(lq): Project-bound tasks inherit visibility from their
+	// project, with a narrow exception for users explicitly mentioned on that
+	// task. The issue grant is joined to workspace membership so stale grants
+	// cannot restore access after a user leaves the workspace.
 	ownerProjectClause := "FALSE"
 	ownerProjectlessClause := "FALSE"
 	if includeWorkspaceOwned {
@@ -325,6 +324,14 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		(%s.project_id IS NOT NULL AND (
 			%s
 			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
+			OR EXISTS (
+				SELECT 1 FROM issue_permissions ip
+				JOIN member im ON im.workspace_id = %s.workspace_id AND im.user_id = ip.user_id
+				WHERE ip.issue_id = %s.id
+				  AND ip.project_id = %s.project_id
+				  AND ip.user_id = %s::uuid
+				  AND ip.permission IN ('project.view', 'project.issue.comment')
+			)
 		))
 		OR (%s.project_id IS NULL AND (
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
@@ -338,6 +345,7 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 			))
 		))
 	)`, issueAlias, ownerProjectClause, issueAlias, userRef,
+		issueAlias, issueAlias, issueAlias, userRef,
 		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, userRef,
@@ -783,12 +791,24 @@ func inboxIssueProjectVisibilityPredicate(inboxAlias, workspaceRef, userRef stri
 // workspace-owner scope as the inbox list, otherwise unread badges can reveal
 // activity from projects hidden by the owner toggle.
 func inboxIssueProjectVisibilityPredicateWithWorkspaceScope(inboxAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	return fmt.Sprintf(`(%s.issue_id IS NULL OR EXISTS (
+	// 2026-09-05 coder(lq): A mention is an explicit, recipient-scoped
+	// invitation to inspect this task. Keep the exception on inbox rows only;
+	// ordinary project and issue lists continue to use project membership.
+	return fmt.Sprintf(`(%s.issue_id IS NULL OR (
+		%s.type = 'mentioned'
+		AND %s.recipient_type = 'member'
+		AND %s.recipient_id = %s::uuid
+		AND EXISTS (
+			SELECT 1 FROM issue mentioned_issue
+			WHERE mentioned_issue.id = %s.issue_id
+			  AND mentioned_issue.workspace_id = %s
+		)
+	) OR EXISTS (
 		SELECT 1 FROM issue acl_issue
 		WHERE acl_issue.id = %s.issue_id
 		  AND acl_issue.workspace_id = %s
 		  AND %s
-	))`, inboxAlias, inboxAlias, workspaceRef,
+	))`, inboxAlias, inboxAlias, inboxAlias, inboxAlias, userRef, inboxAlias, workspaceRef, inboxAlias, workspaceRef,
 		issueProjectVisibilityPredicateWithWorkspaceScope("acl_issue", workspaceRef, userRef, includeWorkspaceOwned))
 }
 

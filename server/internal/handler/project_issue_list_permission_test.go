@@ -90,11 +90,12 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 	`, projectIDs[0], memberID); err != nil {
 		t.Fatalf("grant visible project: %v", err)
 	}
-	// 2026-09-01 coder(lq): Legacy task grants must not bypass the project
-	// boundary now that task visibility is inherited exclusively from projects.
+	// 2026-09-05 coder(lq): A task-member grant is intentionally limited to the
+	// mention-specific view/comment permissions; an edit grant must not make the
+	// task visible or add the user to the project.
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by)
-		VALUES ($1, $2, $3, 'project.view', $3)
+		VALUES ($1, $2, $3, 'project.edit', $3)
 	`, issueIDs[1], projectIDs[1], memberID); err != nil {
 		t.Fatalf("grant legacy issue permission: %v", err)
 	}

@@ -6,15 +6,13 @@ import (
 	"testing"
 )
 
-type fakeLegacyIssuePermissionRepo struct {
+type fakeIssuePermissionRepo struct {
 	fakeRepo
+	grants map[string]bool
 }
 
-// 2026-08-27 coder(lq): Model an adapter that still exposes the historical
-// issue grant lookup. CheckIssue must never call it after task permissions
-// became fully inherited from the parent project.
-func (f *fakeLegacyIssuePermissionRepo) IssuePermission(context.Context, string, string, string, Permission) (bool, error) {
-	return true, nil
+func (f *fakeIssuePermissionRepo) IssuePermission(_ context.Context, _, _ string, permission Permission) (bool, error) {
+	return f.grants[string(permission)], nil
 }
 
 func TestCheckIssueInheritsProjectPermission(t *testing.T) {
@@ -103,25 +101,31 @@ func TestCheckIssueRequiresProjectBinding(t *testing.T) {
 	}
 }
 
-func TestCheckIssueDoesNotBypassProjectMembership(t *testing.T) {
-	service := New(&fakeRepo{
+func TestCheckIssueAllowsMentionedTaskMember(t *testing.T) {
+	service := New(&fakeIssuePermissionRepo{fakeRepo: fakeRepo{
 		workspace:        string(WorkspaceMember),
 		projectWorkspace: "ws-1",
 		projectErr:       errors.New("project membership not found"),
-	}, true)
+	}, grants: map[string]bool{string(View): true, string(IssueComment): true}}, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
 
-	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); !errors.Is(err, ErrNoProjectAccess) {
-		t.Fatalf("task access must inherit project membership, got %v", err)
+	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); err != nil {
+		t.Fatalf("mentioned task member should view task: %v", err)
+	}
+	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", IssueComment); err != nil {
+		t.Fatalf("mentioned task member should comment: %v", err)
+	}
+	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", Edit); !errors.Is(err, ErrNoProjectAccess) {
+		t.Fatalf("task member must not edit through task grant, got %v", err)
 	}
 }
 
-func TestCheckIssueIgnoresLegacyDirectGrant(t *testing.T) {
-	repo := &fakeLegacyIssuePermissionRepo{fakeRepo: fakeRepo{
+func TestCheckIssueRejectsTaskMemberWithoutGrant(t *testing.T) {
+	repo := &fakeIssuePermissionRepo{fakeRepo: fakeRepo{
 		workspace:        string(WorkspaceMember),
 		projectWorkspace: "ws-1",
 		projectErr:       errors.New("project membership not found"),
-	}}
+	}, grants: map[string]bool{}}
 
 	err := New(repo, true).CheckIssue(
 		context.Background(),

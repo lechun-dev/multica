@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,28 @@ func projectRoleForTest(t *testing.T, projectID, userID string) string {
 	var role string
 	dbfx.QueryRow(t, `SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID).Scan(&role)
 	return role
+}
+
+func issueMemberPermissionsForTest(t *testing.T, issueID, userID string) map[string]bool {
+	t.Helper()
+	rows, err := testPool.Query(t.Context(), `
+		SELECT permission FROM issue_permissions WHERE issue_id = $1 AND user_id = $2`, issueID, userID)
+	if err != nil {
+		t.Fatalf("query task member permissions: %v", err)
+	}
+	defer rows.Close()
+	permissions := map[string]bool{}
+	for rows.Next() {
+		var permission string
+		if err := rows.Scan(&permission); err != nil {
+			t.Fatalf("scan task member permission: %v", err)
+		}
+		permissions[permission] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read task member permissions: %v", err)
+	}
+	return permissions
 }
 
 // 2026-08-27 coder(lq): Project lead updates and project descriptions are
@@ -152,9 +175,8 @@ func TestIssueUpdateAssigneePromotionPreservesStrongerProjectRoles(t *testing.T)
 	}
 }
 
-// 2026-08-27 coder(lq): Task creation must apply both project inheritance
-// rules before commit: the member assignee receives member access and a human
-// mentioned in the task description receives viewer access.
+// 2026-09-05 coder(lq): Task creation keeps assignee inheritance separate from
+// task-member mention grants; mentions do not create project membership.
 func TestCreateIssuePromotesAssigneeAndMentionedMember(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -183,16 +205,26 @@ func TestCreateIssuePromotesAssigneeAndMentionedMember(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created issue: %v", err)
+	}
 	if got := projectRoleForTest(t, projectID, assigneeID); got != "member" {
 		t.Fatalf("created issue assignee project role = %q, want member", got)
 	}
-	if got := projectRoleForTest(t, projectID, viewerID); got != "viewer" {
-		t.Fatalf("created issue mention project role = %q, want viewer", got)
+	if got := projectRoleForTest(t, projectID, viewerID); got != "" {
+		t.Fatalf("created issue mention unexpectedly became project role %q", got)
+	}
+	permissions := issueMemberPermissionsForTest(t, created.ID, viewerID)
+	for _, permission := range []string{"project.view", "project.issue.comment"} {
+		if !permissions[permission] {
+			t.Fatalf("created issue mention missing task permission %q: %v", permission, permissions)
+		}
 	}
 }
 
-// 2026-08-27 coder(lq): A human mentioned in a project task comment needs
-// viewer access before the comment becomes visible to downstream consumers.
+// 2026-09-05 coder(lq): A human mentioned in a task comment becomes a member
+// of that task only and can reply without joining the project.
 func TestCreateCommentPromotesMentionedMemberViewer(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -218,14 +250,19 @@ func TestCreateCommentPromotesMentionedMemberViewer(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := projectRoleForTest(t, projectID, viewerID); got != "viewer" {
-		t.Fatalf("comment mention project role = %q, want viewer", got)
+	if got := projectRoleForTest(t, projectID, viewerID); got != "" {
+		t.Fatalf("comment mention unexpectedly became project role %q", got)
+	}
+	permissions := issueMemberPermissionsForTest(t, issueID, viewerID)
+	for _, permission := range []string{"project.view", "project.issue.comment"} {
+		if !permissions[permission] {
+			t.Fatalf("comment mention missing task permission %q: %v", permission, permissions)
+		}
 	}
 }
 
-// 2026-08-27 coder(lq): Editing an existing task comment can introduce a new
-// member mention, so that edit must grant the same project viewer role as a
-// newly-created comment.
+// 2026-09-05 coder(lq): Editing an existing task comment can introduce a new
+// task member mention without changing project membership.
 func TestUpdateCommentPromotesMentionedMemberViewer(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -257,8 +294,14 @@ func TestUpdateCommentPromotesMentionedMemberViewer(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("UpdateComment: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := projectRoleForTest(t, projectID, viewerID); got != "viewer" {
-		t.Fatalf("edited comment mention project role = %q, want viewer", got)
+	if got := projectRoleForTest(t, projectID, viewerID); got != "" {
+		t.Fatalf("edited comment unexpectedly became project role %q", got)
+	}
+	permissions := issueMemberPermissionsForTest(t, issueID, viewerID)
+	for _, permission := range []string{"project.view", "project.issue.comment"} {
+		if !permissions[permission] {
+			t.Fatalf("edited comment mention missing task permission %q: %v", permission, permissions)
+		}
 	}
 }
 
@@ -289,7 +332,13 @@ func TestPatchPluginIssuePromotesMentionedMemberViewer(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("PatchPluginIssue: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := projectRoleForTest(t, projectID, viewerID); got != "viewer" {
-		t.Fatalf("plugin mention project role = %q, want viewer", got)
+	if got := projectRoleForTest(t, projectID, viewerID); got != "" {
+		t.Fatalf("plugin mention unexpectedly became project role %q", got)
+	}
+	permissions := issueMemberPermissionsForTest(t, issueID, viewerID)
+	for _, permission := range []string{"project.view", "project.issue.comment"} {
+		if !permissions[permission] {
+			t.Fatalf("plugin mention missing task permission %q: %v", permission, permissions)
+		}
 	}
 }
