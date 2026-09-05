@@ -156,13 +156,6 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]InboxItemResponse, 0, len(items))
 	for _, item := range items {
-		// 2026-09-05 coder(lq): A direct @mention is an explicit address to
-		// this recipient. Keep the notification visible while task-level
-		// mention access is reconciled, so the user can open the task.
-		if item.Type == "mentioned" {
-			resp = append(resp, inboxRowToResponse(item))
-			continue
-		}
 		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && item.IssueID.Valid {
 			if _, ok := visible[item.IssueID]; !ok {
 				continue
@@ -244,12 +237,6 @@ func (h *Handler) ListArchivedInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]InboxItemResponse, 0, len(items))
 	for _, item := range items {
-		// 2026-09-05 coder(lq): Preserve direct mention notifications in the
-		// archived view for the same reason as the active inbox.
-		if item.Type == "mentioned" {
-			resp = append(resp, archivedInboxRowToResponse(item))
-			continue
-		}
 		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && item.IssueID.Valid {
 			if _, ok := visible[item.IssueID]; !ok {
 				continue
