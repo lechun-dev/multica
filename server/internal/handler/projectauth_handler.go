@@ -539,6 +539,42 @@ func projectlessIssuePermissionAllowedWithOwnersAndBypass(issue db.Issue, userID
 	return issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && assigneeOwnerID.Valid && assigneeOwnerID == userID
 }
 
+// 2026-09-05 coder(lq): A direct member mention grants task-level Member
+// access even when the task has no project. The aggregate grant table cannot
+// store a NULL project_id, so resolve this narrow projectless case from the
+// issue description and comments instead of weakening the owner boundary.
+func (h *Handler) projectlessIssueMentionedUser(ctx context.Context, issue db.Issue, userID string) (bool, error) {
+	mentioned := func(content string) bool {
+		for _, mention := range util.ParseMentions(content) {
+			if mention.Type == "member" && mention.ID == userID {
+				return true
+			}
+		}
+		return false
+	}
+	if issue.Description.Valid && mentioned(issue.Description.String) {
+		return true, nil
+	}
+	rows, err := h.DB.Query(ctx, `SELECT content FROM comment WHERE issue_id=$1`, issue.ID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return false, err
+		}
+		if mentioned(content) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
 // 2026-08-27 coder(lq): Dashboard rollups need a project boundary even when
 // no project_id is supplied. Keep this predicate in the Handler adapter so
 // the upstream sqlc queries remain untouched and the overlay can be removed
@@ -1395,6 +1431,16 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 		ownerBypassEnabled = ownerBypassEnabled && includeWorkspaceOwned
 		if projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, userUUID, projectauth.WorkspaceRole(member.Role), permission, ownerBypassEnabled, creatorOwnerID, assigneeOwnerID) {
 			return true, ""
+		}
+		if mentioned, mentionErr := h.projectlessIssueMentionedUser(r.Context(), issue, userID); mentionErr != nil {
+			return false, "internal"
+		} else if mentioned {
+			// A mention is equivalent to the task Member role. It cannot grant
+			// project administration through a task URL.
+			switch permission {
+			case projectauth.View, projectauth.Edit, projectauth.IssueComment, projectauth.IssueManage, projectauth.IssueArchive, projectauth.AgentUse:
+				return true, ""
+			}
 		}
 		return false, "projectless"
 	}
