@@ -3,10 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
@@ -152,11 +154,13 @@ func decodeProjectAccessGrant(r *http.Request) (projectauth.AccessGrant, error) 
 
 func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Request, grant projectauth.AccessGrant, issueID string) {
 	if h.TxStarter == nil {
+		logProjectAccessGrantFailure("begin", grant, issueID, errors.New("transaction starter is nil"))
 		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
+		logProjectAccessGrantFailure("begin", grant, issueID, err)
 		writeProjectAccessGrantError(w, err)
 		return
 	}
@@ -167,6 +171,7 @@ func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 	if issueID == "" {
 		var workspaceID string
 		if err := tx.QueryRow(r.Context(), `SELECT workspace_id::text FROM project WHERE id=$1 FOR UPDATE`, grant.ProjectID).Scan(&workspaceID); err != nil {
+			logProjectAccessGrantFailure("lock_project", grant, issueID, err)
 			writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
 			return
 		}
@@ -174,6 +179,10 @@ func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 	} else {
 		var workspaceID, projectID string
 		if err := tx.QueryRow(r.Context(), `SELECT workspace_id::text, project_id::text FROM issue WHERE id=$1 AND project_id IS NOT NULL FOR UPDATE`, issueID).Scan(&workspaceID, &projectID); err != nil || projectID != grant.ProjectID {
+			if err == nil {
+				err = errors.New("task belongs to a different project")
+			}
+			logProjectAccessGrantFailure("lock_issue", grant, issueID, err)
 			writeProjectAccessGrantError(w, projectauth.ErrCrossWorkspace)
 			return
 		}
@@ -185,12 +194,14 @@ func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 	}
 	member, err := h.getWorkspaceMember(r.Context(), userID, grant.WorkspaceID)
 	if err != nil {
+		logProjectAccessGrantFailure("member", grant, issueID, err)
 		writeProjectAccessGrantError(w, projectauth.ErrNotWorkspaceMember)
 		return
 	}
 	actor := projectauth.Subject{UserID: userID, WorkspaceID: grant.WorkspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	service := projectauth.New(newProjectAuthRepository(tx), true)
 	if err := service.GrantAccess(r.Context(), actor, grant); err != nil {
+		logProjectAccessGrantFailure("grant", grant, issueID, err)
 		writeProjectAccessGrantError(w, err)
 		return
 	}
@@ -206,16 +217,45 @@ func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 		persisted, readErr := reader.GetAccessGrant(r.Context(), grant.WorkspaceID, grant.ProjectID, grant.IssueID,
 			grant.SubjectType, grant.SubjectID, grant.Role, grant.Permission)
 		if readErr != nil {
+			logProjectAccessGrantFailure("readback", grant, issueID, readErr)
 			writeProjectAccessGrantError(w, readErr)
 			return
 		}
 		created = persisted
 	}
 	if err := tx.Commit(r.Context()); err != nil {
+		logProjectAccessGrantFailure("commit", grant, issueID, err)
 		writeProjectAccessGrantError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// 2026-09-05 coder(lq): Keep the public error intentionally generic while
+// exposing the failing transaction stage and PostgreSQL state in local logs.
+// Subject IDs are deliberately reduced to a presence bit to avoid placing
+// directory identifiers in request logs.
+func logProjectAccessGrantFailure(stage string, grant projectauth.AccessGrant, issueID string, err error) {
+	attrs := []any{
+		"stage", stage,
+		"project_id", grant.ProjectID,
+		"issue_id", issueID,
+		"subject_type", string(grant.SubjectType),
+		"has_subject_id", strings.TrimSpace(grant.SubjectID) != "",
+		"role", string(grant.Role),
+		"permission", string(grant.Permission),
+		"sqlstate", projectPermissionSQLState(err),
+		"error", err,
+	}
+	slog.Error("project permission grant failed", attrs...)
+}
+
+func projectPermissionSQLState(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
 }
 
 func (h *Handler) createProjectAccessGrant(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +369,11 @@ func writeProjectAccessGrantError(w http.ResponseWriter, err error) {
 		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
 	case errors.Is(err, projectauth.ErrInvalidRole), errors.Is(err, projectauth.ErrInvalidIssuePermission), errors.Is(err, projectauth.ErrInvalidSubject):
 		writeErrorCode(w, http.StatusBadRequest, "invalid_access_grant", "invalid access grant")
+	case errors.Is(err, projectauth.ErrLastOwner):
+		// 2026-09-05 coder(lq): Creator Owner grants are immutable. Return a
+		// conflict so the UI can explain why a downgrade/revoke was rejected
+		// instead of surfacing an opaque 500 response.
+		writeErrorCode(w, http.StatusConflict, "project_owner_protected", "owner permission cannot be revoked or downgraded")
 	case errors.Is(err, projectauth.ErrForbidden):
 		writeErrorCode(w, http.StatusForbidden, "project_permission_forbidden", "insufficient project permissions")
 	case errors.Is(err, projectauth.ErrNotWorkspaceMember), errors.Is(err, projectauth.ErrNoProjectAccess), errors.Is(err, projectauth.ErrCrossWorkspace):

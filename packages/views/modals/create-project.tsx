@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { CalendarClock, CalendarDays, ChevronRight, FolderOpen, GitBranch, Maximize2, Minimize2, MoreHorizontal, Pencil, Search, X as XIcon, UserMinus } from "lucide-react";
 
 /**
@@ -24,12 +24,14 @@ function GithubIcon({ className }: { className?: string }) {
 import { useQuery } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
+import { errorCode } from "@multica/core/api";
 import {
   PROJECT_STATUS_CONFIG,
   PROJECT_STATUS_ORDER,
   PROJECT_PRIORITY_ORDER,
 } from "@multica/core/projects/config";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -137,6 +139,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const workspaceName = workspace?.name;
   const wsPaths = useWorkspacePaths();
   const wsId = useWorkspaceId();
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { getActorName } = useActorName();
@@ -151,8 +154,16 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const descEditorRef = useRef<ContentEditorRef>(null);
   const [status, setStatus] = useState<ProjectStatus>(draft.status);
   const [priority, setPriority] = useState<ProjectPriority>(draft.priority);
-  const [leadType, setLeadType] = useState<"member" | "agent" | undefined>(draft.leadType);
-  const [leadId, setLeadId] = useState<string | undefined>(draft.leadId);
+  const hasDraftLead = Boolean(draft.leadType && draft.leadId);
+  const [leadType, setLeadType] = useState<"member" | "agent" | undefined>(
+    draft.leadType ?? (currentUserId ? "member" : undefined),
+  );
+  const [leadId, setLeadId] = useState<string | undefined>(
+    draft.leadId ?? (currentUserId ?? undefined),
+  );
+  // 2026-09-04 coder(lq): Apply the signed-in member only once; explicit lead
+  // choices, including "No lead", must survive late auth refreshes.
+  const leadTouchedRef = useRef(hasDraftLead);
   const [icon, setIcon] = useState<string | undefined>(draft.icon);
   const [startDate, setStartDate] = useState<string>(draft.startDate ?? "");
   const [dueDate, setDueDate] = useState<string>(draft.dueDate ?? "");
@@ -302,6 +313,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const updateStatus = (v: ProjectStatus) => { setStatus(v); setDraft({ status: v }); };
   const updatePriority = (v: ProjectPriority) => { setPriority(v); setDraft({ priority: v }); };
   const updateLead = (type?: "member" | "agent", id?: string) => {
+    leadTouchedRef.current = true;
     setLeadType(type); setLeadId(id);
     setDraft({ leadType: type, leadId: id });
   };
@@ -311,6 +323,15 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
 
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadFilter, setLeadFilter] = useState("");
+
+  // 2026-09-04 coder(lq): Complete the default after auth loads if the picker
+  // has not been touched yet.
+  useEffect(() => {
+    if (leadTouchedRef.current || leadType || leadId || !currentUserId) return;
+    setLeadType("member");
+    setLeadId(currentUserId);
+    setDraft({ leadType: "member", leadId: currentUserId });
+  }, [currentUserId, leadId, leadType, setDraft]);
 
   const leadQuery = leadFilter.toLowerCase();
   const filteredMembers = members.filter((m) => m.name.toLowerCase().includes(leadQuery) || matchesPinyin(m.name, leadQuery));
@@ -379,11 +400,19 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       toast.success(t(($) => $.create_project.toast_created));
       router.push(wsPaths.projectDetail(project.id));
     } catch (err) {
-      toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.create_project.toast_failed),
-      );
+      const code = errorCode(err);
+      const message =
+        code === "project_permission_migration_required"
+          ? t(($) => $.create_project.toast_permission_migration_required)
+          : code === "project_permission_unavailable"
+            ? t(($) => $.create_project.toast_permission_unavailable)
+            : err instanceof Error &&
+                err.message === "failed to initialize project permissions"
+              ? t(($) => $.create_project.toast_permission_init_failed)
+              : err instanceof Error && err.message
+                ? err.message
+                : t(($) => $.create_project.toast_failed);
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }

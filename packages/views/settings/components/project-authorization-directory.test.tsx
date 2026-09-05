@@ -151,4 +151,15 @@ describe("ProjectAuthorizationDirectory", () => {
     expect((await screen.findAllByText("All people")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("David Wu")).toBeInTheDocument();
   });
+
+  it("uses the workspace name as the organization tree root", async () => {
+    renderWithI18n(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ProjectAuthorizationDirectory workspaceId="workspace-1" workspaceName="Acme Foods" />
+      </QueryClientProvider>,
+    );
+
+    expect((await screen.findAllByText("Acme Foods")).length).toBe(2);
+    expect(screen.queryByText("All people")).not.toBeInTheDocument();
+  });
 });

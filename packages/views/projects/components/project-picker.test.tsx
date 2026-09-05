@@ -54,6 +54,13 @@ function renderPicker(props: Partial<React.ComponentProps<typeof ProjectPicker>>
 const SEARCH_PLACEHOLDER = "Search projects...";
 
 describe("ProjectPicker", () => {
+  it("does not present an existing but inaccessible project as unassigned", () => {
+    renderPicker({ projectId: "project-hidden" });
+
+    expect(screen.getByRole("button", { name: /project unavailable/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /no project/i })).not.toBeInTheDocument();
+  });
+
   it("renders the trigger alone — the pill carries no inline clear control", () => {
     // Regression: the clear × used to be an absolutely-positioned sibling
     // overlaying the trigger, and only the picker's own default trigger

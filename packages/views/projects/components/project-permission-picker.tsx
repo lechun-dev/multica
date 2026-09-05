@@ -1,12 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, Search, ShieldCheck, UserMinus } from "lucide-react";
+import { Check, ShieldCheck, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type { MemberWithUser, ProjectPermissionRole } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import {
   DropdownMenu,
@@ -17,6 +16,7 @@ import {
 import { PillButton } from "../../common/pill-button";
 import { useT } from "../../i18n";
 import { ProjectPermissionOrganizationSelect } from "./project-permission-organization-select";
+import { ProjectMemberMultiSelect } from "./project-member-multi-select";
 
 export interface ProjectPermissionSelection {
   subjectType: "user" | "role" | "organization" | "everyone";
@@ -50,14 +50,13 @@ export function ProjectPermissionPicker({
 }: ProjectPermissionPickerProps) {
   const { t } = useT("projects");
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [selectedRole, setSelectedRole] = useState("member");
   // 2026-09-04 coder(lq): New-project authorization is scoped to users,
   // departments, and everyone. The selection type still accepts "role" in
   // the public shape so older callers and persisted data remain compatible.
   const [subjectType, setSubjectType] = useState<"user" | "organization" | "everyone">("user");
-  const [subjectId, setSubjectId] = useState("");
+  const [subjectIds, setSubjectIds] = useState<string[]>([]);
 
   const rolesQuery = useQuery({
     queryKey: ["project-permission-roles", workspaceId],
@@ -103,16 +102,10 @@ export function ProjectPermissionPicker({
     () => new Set(value.filter((item) => item.subjectType === "user").map((item) => item.subjectId)),
     [value],
   );
-  const filteredMembers = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    return members
-      .filter((member) => !selectedByUser.has(member.user_id))
-      .filter((member) => {
-        if (!needle) return true;
-        return `${member.name} ${member.email}`.toLocaleLowerCase().includes(needle);
-      })
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [members, search, selectedByUser]);
+  const selectableMembers = useMemo(
+    () => members.filter((member) => !selectedByUser.has(member.user_id)),
+    [members, selectedByUser],
+  );
 
   const togglePending = (userId: string) => {
     setPendingIds((current) => {
@@ -123,34 +116,27 @@ export function ProjectPermissionPicker({
     });
   };
 
-  const setPending = (userId: string, checked: boolean) => {
-    setPendingIds((current) => {
-      const next = new Set(current);
-      if (checked) next.add(userId);
-      else next.delete(userId);
-      return next;
-    });
-  };
-
   const addPending = () => {
-    const assignment = { role: selectedRole };
+    // 2026-09-04 coder(lq): Keep the optional permission field available when
+    // deduplicating organization grants while preserving the role-only UI.
+    const assignment: Pick<ProjectPermissionSelection, "role" | "permission"> = { role: selectedRole };
     if (subjectType === "everyone") {
       if (!value.some((item) => item.subjectType === "everyone")) {
         onChange([...value, { subjectType, ...assignment }]);
       }
     } else if (subjectType === "organization") {
-      const normalizedSubjectId = subjectId.trim();
-      if (!normalizedSubjectId) return;
-      if (!value.some((item) => item.subjectType === subjectType && item.subjectId === normalizedSubjectId && item.role === assignment.role && item.permission === assignment.permission)) {
-        onChange([...value, { subjectType, subjectId: normalizedSubjectId, ...assignment }]);
-      }
+      const additions = subjectIds
+        .filter((subjectId) => !value.some((item) => item.subjectType === subjectType && item.subjectId === subjectId && item.role === assignment.role && item.permission === assignment.permission))
+        .map((subjectId) => ({ subjectType, subjectId, ...assignment }));
+      if (additions.length === 0) return;
+      onChange([...value, ...additions]);
     } else {
       if (pendingIds.size === 0) return;
       const additions = [...pendingIds].map((subjectId) => ({ subjectType, subjectId, ...assignment }));
       onChange([...value, ...additions]);
     }
     setPendingIds(new Set());
-    setSubjectId("");
+    setSubjectIds([]);
   };
 
   const removeSelection = (selection: ProjectPermissionSelection) => {
@@ -158,11 +144,10 @@ export function ProjectPermissionPicker({
   };
 
   const resetTransientState = () => {
-    setSearch("");
     setPendingIds(new Set());
     setSelectedRole("member");
     setSubjectType("user");
-    setSubjectId("");
+    setSubjectIds([]);
   };
 
   return (
@@ -223,18 +208,6 @@ export function ProjectPermissionPicker({
           </div>
         )}
 
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t(($) => $.permissions.search_placeholder)}
-            aria-label={t(($) => $.permissions.search_placeholder)}
-            className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-caption outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
-          />
-        </div>
-
         <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -271,7 +244,7 @@ export function ProjectPermissionPicker({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button type="button" size="sm" onClick={addPending} disabled={subjectType === "user" ? pendingIds.size === 0 : subjectType === "everyone" ? false : !subjectId.trim()}>
+          <Button type="button" size="sm" onClick={addPending} disabled={subjectType === "user" ? pendingIds.size === 0 : subjectType === "everyone" ? false : subjectIds.length === 0}>
             {t(($) => $.permissions.add_members)}
           </Button>
         </div>
@@ -280,40 +253,30 @@ export function ProjectPermissionPicker({
           <ProjectPermissionOrganizationSelect
             workspaceId={workspaceId}
             open={open}
-            value={subjectId}
-            onValueChange={setSubjectId}
+            value={subjectIds}
+            onValueChange={setSubjectIds}
             ariaLabel={t(($) => $.permissions.organization)}
             placeholder={t(($) => $.permissions.select_organization)}
             emptyLabel={t(($) => $.permissions.no_organizations)}
           />
         ) : null}
 
-        {subjectType === "user" && <div className="max-h-44 space-y-1 overflow-y-auto">
-          {filteredMembers.length === 0 ? (
-            <div className="py-4 text-center text-caption text-muted-foreground">{t(($) => $.permissions.no_results)}</div>
-          ) : (
-            filteredMembers.map((member) => (
-              <div
-                key={member.user_id}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-caption hover:bg-accent"
-                onClick={(event) => {
-                  if ((event.target as HTMLElement).closest('[data-slot="checkbox"]')) return;
-                  togglePending(member.user_id);
-                }}
-              >
-                <Checkbox
-                  checked={pendingIds.has(member.user_id)}
-                  aria-label={member.name || member.email}
-                  onCheckedChange={(nextChecked) =>
-                    setPending(member.user_id, nextChecked === true)
-                  }
-                />
-                <span className="min-w-0 flex-1 truncate">{member.name || member.email}</span>
-                {member.name && member.email && <span className="max-w-32 truncate text-muted-foreground">{member.email}</span>}
-              </div>
-            ))
-          )}
-        </div>}
+        {subjectType === "user" && <ProjectMemberMultiSelect
+          members={selectableMembers}
+          selectedIds={pendingIds}
+          onToggle={togglePending}
+          onSelectAll={(userIds) => setPendingIds((current) => new Set([...current, ...userIds]))}
+          onClear={() => setPendingIds(new Set())}
+          placeholder={t(($) => $.permissions.search_placeholder)}
+          selectedLabel={t(($) => $.permissions.selected_prefix)}
+          selectAllLabel={t(($) => $.permissions.select_all)}
+          clearLabel={t(($) => $.permissions.clear_selection)}
+          noResultsLabel={t(($) => $.permissions.no_results)}
+          loadingLabel={t(($) => $.permissions.loading)}
+          errorLabel={t(($) => $.permissions.no_results)}
+          removeLabel={t(($) => $.permissions.remove_aria)}
+          ariaLabel={t(($) => $.permissions.search_placeholder)}
+        />}
       </PopoverContent>
     </Popover>
   );

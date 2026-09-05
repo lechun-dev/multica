@@ -57,6 +57,7 @@ type Router struct {
 
 	logger                   *slog.Logger
 	projectPermissionEnabled bool
+	beforeIssueCommit        func(context.Context, pgx.Tx, db.Issue) error
 }
 
 // Config tunes the Router. Zero values default.
@@ -78,6 +79,11 @@ type RouterConfig struct {
 	MediaConcurrency int
 	Logger           *slog.Logger
 	Lifecycle        ChannelChatLifecycle
+	// 2026-09-05 coder(lq): BeforeIssueCommit is an optional policy hook run in the same transaction
+	// as a channel-created issue. The server injects projectauth here so a
+	// channel-created task owner receives the same Owner grant as other create
+	// entry points.
+	BeforeIssueCommit func(context.Context, pgx.Tx, db.Issue) error
 	// ProjectPermissionEnabled makes channel-created tasks obey the same
 	// project binding invariant as HTTP-created tasks. Channel commands do not
 	// currently carry a project selector, so enabling this flag intentionally
@@ -116,6 +122,7 @@ func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cf
 		mediaSem:                 make(chan struct{}, cfg.MediaConcurrency),
 		logger:                   cfg.Logger,
 		projectPermissionEnabled: cfg.ProjectPermissionEnabled,
+		beforeIssueCommit:        cfg.BeforeIssueCommit,
 		mediaQueues:              make(map[string]*mediaQueueEntry),
 	}
 }
@@ -1082,6 +1089,7 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 	// shape regardless of which entry point created the issue.
 	opts := service.IssueCreateOpts{
 		AssignedAgentRunFireAt: assignedRunFireAt,
+		BeforeCommit:           r.beforeIssueCommit,
 		// 2026-09-04 coder(lq): The project-permission overlay must not make
 		// channel-created tasks require a project. Projectless tasks continue
 		// to use the regular workspace/task visibility rules.

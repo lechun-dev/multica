@@ -101,14 +101,14 @@ func TestCheckIssueDelegatesEveryPermissionToProject(t *testing.T) {
 	}{
 		{"viewer can view", ProjectViewer, View, true},
 		{"viewer cannot edit", ProjectViewer, Edit, false},
-		{"member can create issues", ProjectMember, IssueCreate, true},
+		{"member cannot create issues through a task", ProjectMember, IssueCreate, false},
 		{"member can comment on issues", ProjectMember, IssueComment, true},
 		{"viewer cannot comment on issues", ProjectViewer, IssueComment, false},
 		{"member cannot manage issues", ProjectMember, IssueManage, false},
 		{"manager can manage issues", ProjectManager, IssueManage, true},
 		{"manager can use agents", ProjectManager, AgentUse, true},
 		{"manager cannot manage members", ProjectManager, MemberManage, false},
-		{"owner can manage settings", ProjectOwner, SettingsManage, true},
+		{"owner cannot manage settings through a task", ProjectOwner, SettingsManage, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,6 +121,27 @@ func TestCheckIssueDelegatesEveryPermissionToProject(t *testing.T) {
 			err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", tc.permission)
 			if (err == nil) != tc.want {
 				t.Fatalf("CheckIssue(%s) got %v, want allowed=%v", tc.permission, err, tc.want)
+			}
+		})
+	}
+}
+
+// 2026-09-05 coder(lq): Project roles still govern inherited task work, but
+// project administration and task creation must never be reachable through a
+// task URL, even for a project Owner.
+func TestCheckIssueNeverEscalatesProjectAdministration(t *testing.T) {
+	service := New(&fakeRepo{
+		workspace:        string(WorkspaceMember),
+		project:          string(ProjectOwner),
+		projectWorkspace: "ws-1",
+		issueProject:     "project-1",
+	}, true)
+	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
+
+	for _, permission := range []Permission{IssueCreate, MemberManage, SettingsManage} {
+		t.Run(string(permission), func(t *testing.T) {
+			if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", permission); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("CheckIssue(%s) = %v, want %v", permission, err, ErrForbidden)
 			}
 		})
 	}

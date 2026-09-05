@@ -539,7 +539,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := h.ensureProjectOwnerInTx(r.Context(), tx, uuidToString(project.ID), userID); err != nil {
 			slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
+			writeProjectAccessGrantError(w, err)
 			return
 		}
 		if err := h.initializeProjectAccessInTx(r.Context(), tx, workspaceID, uuidToString(project.ID), userID, req.AccessGrants); err != nil {
@@ -549,7 +549,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
 			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
+			writeProjectAccessGrantError(w, err)
 			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
@@ -614,7 +614,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.ensureProjectOwnerInTx(r.Context(), tx, uuidToString(project.ID), userID); err != nil {
 		slog.Error("seed project owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-		writeError(w, http.StatusInternalServerError, "failed to initialize project permissions")
+		writeProjectAccessGrantError(w, err)
 		return
 	}
 	if err := h.initializeProjectAccessInTx(r.Context(), tx, workspaceID, uuidToString(project.ID), userID, req.AccessGrants); err != nil {
@@ -624,7 +624,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
 		slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-		writeError(w, http.StatusInternalServerError, "failed to initialize project lead permissions")
+		writeProjectAccessGrantError(w, err)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -802,6 +802,10 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		project, err = h.Queries.UpdateProject(r.Context(), params)
 	}
 	if err != nil {
+		if errors.Is(err, projectauth.ErrMigrationRequired) || errors.Is(err, projectauth.ErrStorageUnavailable) {
+			writeProjectAccessGrantError(w, err)
+			return
+		}
 		h.writeProjectWriteError(w, r, err, "update")
 		return
 	}

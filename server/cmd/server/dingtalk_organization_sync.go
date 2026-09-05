@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 )
@@ -38,13 +40,13 @@ func (h *dingtalkLoginHandler) SyncDingTalkOrganizations(w http.ResponseWriter, 
 	}
 	snapshot, err := h.provider.LoadDirectory(r.Context())
 	if err != nil {
-		writeDingTalkError(w, http.StatusBadGateway, "failed to load DingTalk directory")
+		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadGateway, err, "failed to load DingTalk directory")
 		return
 	}
 	if len(snapshot.Departments) == 0 {
 		// 2026-09-03 coder(lq): Never turn a transiently empty provider response
 		// into a destructive deactivation of the last known directory snapshot.
-		writeDingTalkError(w, http.StatusBadGateway, "DingTalk directory is empty")
+		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadGateway, errors.New("DingTalk directory is empty"), "DingTalk directory is empty")
 		return
 	}
 	if len(snapshot.Departments) > 0 {
@@ -55,7 +57,7 @@ func (h *dingtalkLoginHandler) SyncDingTalkOrganizations(w http.ResponseWriter, 
 			}
 		}
 		if validDepartments == 0 {
-			writeDingTalkError(w, http.StatusBadGateway, "DingTalk directory has no valid departments")
+			h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadGateway, errors.New("DingTalk directory has no valid departments"), "DingTalk directory has no valid departments")
 			return
 		}
 	}
@@ -63,10 +65,54 @@ func (h *dingtalkLoginHandler) SyncDingTalkOrganizations(w http.ResponseWriter, 
 	// pgx.Tx is used by the host's transaction starter; keep the persistence
 	// implementation in a helper so provider API errors never touch the DB.
 	if err := h.persistDingTalkDirectory(r.Context(), workspaceID, snapshot, &result); err != nil {
-		writeDingTalkError(w, http.StatusBadRequest, err.Error())
+		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadRequest, err, "failed to persist DingTalk directory")
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// 2026-09-04 coder(lq): Keep every directory-sync failure correlated in logs
+// and make the request ID machine-readable for clients without changing the
+// existing `error` field consumed by the web toast.
+func (h *dingtalkLoginHandler) writeDingTalkSyncFailure(w http.ResponseWriter, r *http.Request, workspaceID string, status int, err error, fallback string) {
+	requestID := chimw.GetReqID(r.Context())
+	logDingTalkDirectorySyncError(r.Context(), workspaceID, requestID, err)
+	message := strings.TrimSpace(fallback)
+	if err != nil {
+		if errMessage := strings.TrimSpace(err.Error()); errMessage != "" {
+			message = errMessage
+		}
+	}
+	response := map[string]string{"error": message}
+	if requestID != "" {
+		response["request_id"] = requestID
+	}
+	writeJSON(w, status, response)
+}
+
+// 2026-09-04 coder(lq): Keep provider failures searchable without logging
+// access tokens or member payloads. The request ID is returned to the caller
+// so an operator can correlate the toast with this structured log entry.
+func logDingTalkDirectorySyncError(ctx context.Context, workspaceID, requestID string, err error) {
+	attrs := []any{"event", "dingtalk_directory_sync_failed", "workspace_id", workspaceID}
+	if requestID != "" {
+		attrs = append(attrs, "request_id", requestID)
+	}
+	var syncErr *notify.DingTalkDirectorySyncError
+	if errors.As(err, &syncErr) {
+		attrs = append(attrs, "stage", syncErr.Stage)
+		if syncErr.DepartmentID != "" {
+			attrs = append(attrs, "department_id", syncErr.DepartmentID)
+		}
+		if syncErr.ErrCode != 0 {
+			attrs = append(attrs, "dingtalk_errcode", syncErr.ErrCode)
+		}
+		if syncErr.ErrMessage != "" {
+			attrs = append(attrs, "dingtalk_errmsg", syncErr.ErrMessage)
+		}
+	}
+	attrs = append(attrs, "error", err)
+	slog.ErrorContext(ctx, "dingtalk directory sync failed", attrs...)
 }
 
 func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, workspaceID string, snapshot notify.DingTalkDirectorySnapshot, result *dingtalkOrganizationSyncResult) error {

@@ -169,12 +169,13 @@ describe("ProjectPermissionsDialog", () => {
     const addMembers = screen.getByRole("region", { name: "Add members" });
     expect(within(addMembers).queryByText("Alice Owner")).not.toBeInTheDocument();
     expect(within(addMembers).queryByText("Bob Builder")).not.toBeInTheDocument();
-    expect(within(addMembers).getByText("Carol Reviewer")).toBeInTheDocument();
+    await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
+    expect(await screen.findByRole("option", { name: /Carol Reviewer/ })).toBeInTheDocument();
 
-    await user.type(screen.getByRole("textbox", { name: "Search by name or email" }), "carol@example");
+    await user.type(screen.getByPlaceholderText("Search by name or email"), "carol@example");
 
-    expect(within(addMembers).getByText("Carol Reviewer")).toBeInTheDocument();
-    expect(within(addMembers).queryByText("Dave Designer")).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Carol Reviewer/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Dave Designer/ })).not.toBeInTheDocument();
   });
 
   it("changes one existing project member role directly", async () => {
@@ -196,7 +197,9 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    await screen.findByText("Carol Reviewer");
+    const addMembers = screen.getByRole("region", { name: "Add members" });
+    await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
+    await screen.findByRole("option", { name: /Carol Reviewer/ });
     await user.click(screen.getByRole("checkbox", { name: "Carol Reviewer" }));
     await user.click(screen.getByRole("checkbox", { name: "Dave Designer" }));
     expect(screen.getByRole("checkbox", { name: "Carol Reviewer" })).toBeChecked();
@@ -204,7 +207,9 @@ describe("ProjectPermissionsDialog", () => {
 
     const rolePicker = screen.getByRole("combobox", { name: "Role for selected members" });
     await user.click(rolePicker);
-    await user.click(await screen.findByRole("option", { name: "Viewer" }));
+    const viewerOption = await screen.findByRole("option", { name: "Viewer" });
+    expect(viewerOption.closest('[data-slot="select-content"]')).toHaveAttribute("data-align-trigger", "false");
+    await user.click(viewerOption);
     await user.click(screen.getByRole("button", { name: "Grant access" }));
 
     await waitFor(() => expect(addProjectMember).toHaveBeenCalledTimes(2));
@@ -221,7 +226,9 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    await screen.findByText("Carol Reviewer");
+    const addMembers = screen.getByRole("region", { name: "Add members" });
+    await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
+    await screen.findByRole("option", { name: /Carol Reviewer/ });
     await user.click(screen.getByRole("checkbox", { name: "Carol Reviewer" }));
     await user.click(screen.getByRole("checkbox", { name: "Dave Designer" }));
     expect(screen.getByRole("checkbox", { name: "Carol Reviewer" })).toBeChecked();
@@ -229,7 +236,7 @@ describe("ProjectPermissionsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Grant access" }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Some members could not be updated. Try again."));
-    expect(screen.getByText(/Selected\s+1/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Search by name or email" }));
     expect(screen.getByRole("checkbox", { name: "Carol Reviewer" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Dave Designer" })).toBeChecked();
   });
@@ -277,7 +284,8 @@ describe("ProjectPermissionsDialog", () => {
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
     const addMembers = screen.getByRole("region", { name: "Add members" });
-    await user.click(within(addMembers).getByRole("checkbox", { name: "Carol Reviewer" }));
+    await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Carol Reviewer" }));
     await user.click(within(addMembers).getByRole("combobox", { name: "Role for selected members" }));
     await user.click(await screen.findByRole("option", { name: "Member" }));
     await user.click(screen.getByRole("button", { name: "Grant access" }));
@@ -300,9 +308,10 @@ describe("ProjectPermissionsDialog", () => {
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
     const addMembers = screen.getByRole("region", { name: "Add members" });
-    expect(within(addMembers).getByText("Alice Owner")).toBeInTheDocument();
-    expect(within(addMembers).getByText("Bob Builder")).toBeInTheDocument();
-    expect(within(addMembers).queryByText("Carol Reviewer")).not.toBeInTheDocument();
+    await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
+    expect(await screen.findByRole("option", { name: /Alice Owner/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Bob Builder/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Carol Reviewer/ })).not.toBeInTheDocument();
   });
 
   it("updates a unified grant by creating the replacement before revoking the old one", async () => {

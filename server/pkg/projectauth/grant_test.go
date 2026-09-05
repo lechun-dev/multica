@@ -14,6 +14,23 @@ type fakeGrantRepo struct {
 	invalidUser         bool
 	invalidOrganization bool
 	subjectErr          error
+	deleted             bool
+}
+
+type creatorGrantRepo struct {
+	*fakeGrantRepo
+	creator         string
+	creatorErr      error
+	issueCreator    string
+	issueCreatorErr error
+}
+
+func (r *creatorGrantRepo) ProjectCreator(context.Context, string) (string, error) {
+	return r.creator, r.creatorErr
+}
+
+func (r *creatorGrantRepo) IssueCreator(context.Context, string) (string, error) {
+	return r.issueCreator, r.issueCreatorErr
 }
 
 // subjectlessGrantRepo exposes only the unified ACL contract. Embedding the
@@ -66,6 +83,7 @@ func (f *fakeGrantRepo) UpsertAccessGrant(_ context.Context, grant AccessGrant) 
 	return nil
 }
 func (f *fakeGrantRepo) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, ProjectRole, Permission) error {
+	f.deleted = true
 	return nil
 }
 
@@ -205,6 +223,100 @@ func TestGrantAccessAllowsTaskCommentAndArchiveButRejectsProjectAdministration(t
 		}); !errors.Is(err, ErrInvalidIssuePermission) {
 			t.Fatalf("task %s grant = %v, want %v", permission, err, ErrInvalidIssuePermission)
 		}
+	}
+}
+
+func TestGrantAccessProtectsTaskCreatorOwnerRole(t *testing.T) {
+	ctx := context.Background()
+	actor := Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}
+	cases := []struct {
+		name          string
+		creatorGrants []AccessGrant
+		role          ProjectRole
+		permission    Permission
+		wantErr       error
+	}{
+		{
+			name:          "cannot add member when owner grant exists",
+			creatorGrants: []AccessGrant{{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner}},
+			role:          ProjectMember,
+			wantErr:       ErrLastOwner,
+		},
+		{
+			name:    "cannot add viewer when owner grant is missing",
+			role:    ProjectViewer,
+			wantErr: ErrLastOwner,
+		},
+		{
+			name:       "direct task permission remains additive",
+			permission: View,
+		},
+		{
+			name: "owner role remains valid",
+			role: ProjectOwner,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &creatorGrantRepo{fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
+				workspace: string(WorkspaceOwner), projectWorkspace: "ws-1", issueWorkspace: "ws-1", issueProject: "p-1",
+			}, grants: tc.creatorGrants}, issueCreator: "creator-1"}
+			grant := AccessGrant{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: tc.role, Permission: tc.permission}
+			err := New(repo, true).GrantAccess(ctx, actor, grant)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("GrantAccess error = %v, want %v", err, tc.wantErr)
+				}
+				if repo.upserted != nil {
+					t.Fatal("protected creator grant must not be persisted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GrantAccess error = %v", err)
+			}
+			if repo.upserted == nil {
+				t.Fatal("expected grant to be persisted")
+			}
+		})
+	}
+}
+
+func TestGrantAccessProtectsProjectCreatorOwnerRole(t *testing.T) {
+	ctx := context.Background()
+	actor := Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}
+	for _, tc := range []struct {
+		name       string
+		role       ProjectRole
+		permission Permission
+		wantErr    error
+	}{
+		{name: "cannot add member", role: ProjectMember, wantErr: ErrLastOwner},
+		{name: "direct permission remains additive", permission: View},
+		{name: "owner role remains valid", role: ProjectOwner},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &creatorGrantRepo{fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
+				workspace: string(WorkspaceOwner), projectWorkspace: "ws-1",
+			}}, creator: "creator-1"}
+			grant := AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: tc.role, Permission: tc.permission}
+			err := New(repo, true).GrantAccess(ctx, actor, grant)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("GrantAccess error = %v, want %v", err, tc.wantErr)
+				}
+				if repo.upserted != nil {
+					t.Fatal("protected creator grant must not be persisted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GrantAccess error = %v", err)
+			}
+			if repo.upserted == nil {
+				t.Fatal("expected grant to be persisted")
+			}
+		})
 	}
 }
 
@@ -374,6 +486,136 @@ func TestRevokeAccessValidatesGrantShapeBeforeDelete(t *testing.T) {
 				t.Fatalf("RevokeAccess error = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestRevokeAccessCannotRevokeProjectCreatorOwner(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, grants: []AccessGrant{{
+			ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner,
+		}}},
+		creator: "creator-1",
+	}
+	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
+		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner,
+	})
+	if !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("creator owner revoke error = %v, want %v", err, ErrLastOwner)
+	}
+	if repo.deleted {
+		t.Fatal("creator owner grant must not be deleted")
+	}
+}
+
+func TestRevokeAccessCannotRemoveLastProjectOwner(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, grants: []AccessGrant{{
+			ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner,
+		}}},
+		creator: "creator-1",
+	}
+	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
+		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner,
+	})
+	if !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("last owner revoke error = %v, want %v", err, ErrLastOwner)
+	}
+	if repo.deleted {
+		t.Fatal("last owner grant must not be deleted")
+	}
+}
+
+func TestRevokeAccessAllowsNonCreatorWhenAnotherOwnerRemains(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, grants: []AccessGrant{
+			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner},
+			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner},
+		}},
+		creator: "creator-1",
+	}
+	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
+		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner,
+	})
+	if err != nil {
+		t.Fatalf("non-creator owner revoke error = %v", err)
+	}
+	if !repo.deleted {
+		t.Fatal("non-creator owner grant should be deleted when another owner remains")
+	}
+}
+
+func TestRevokeAccessCannotRevokeTaskCreatorOwner(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1", issueWorkspace: "ws-1", issueProject: "p-1"}},
+		issueCreator:  "creator-1",
+	}
+	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
+		ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner,
+	})
+	if !errors.Is(err, ErrLastOwner) {
+		t.Fatalf("task creator owner revoke error = %v, want %v", err, ErrLastOwner)
+	}
+	if repo.deleted {
+		t.Fatal("task creator owner grant must not be deleted")
+	}
+}
+
+func TestTaskCreatorHasHardOwnerTaskAccessWithoutGrant(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
+			workspace:        string(WorkspaceMember),
+			projectWorkspace: "ws-1",
+			issueWorkspace:   "ws-1",
+			issueProject:     "p-1",
+		}},
+		issueCreator: "creator-1",
+	}
+	service := New(repo, true)
+	subject := Subject{UserID: "creator-1", WorkspaceID: "ws-1"}
+	for _, permission := range []Permission{View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse} {
+		if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", permission); err != nil {
+			t.Fatalf("task creator permission %s = %v", permission, err)
+		}
+	}
+	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", MemberManage); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("task creator unexpectedly received project member management: %v", err)
+	}
+}
+
+func TestProjectCreatorHasHardOwnerAccessWithoutGrant(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
+			workspace:        string(WorkspaceMember),
+			projectWorkspace: "ws-1",
+			issueProject:     "p-1",
+			issueWorkspace:   "ws-1",
+		}},
+		creator: "creator-1",
+	}
+	service := New(repo, true)
+	subject := Subject{UserID: "creator-1", WorkspaceID: "ws-1"}
+
+	for _, permission := range []Permission{SettingsManage, IssueManage} {
+		if err := service.Check(context.Background(), subject, "p-1", permission); err != nil {
+			t.Fatalf("creator project permission %s = %v", permission, err)
+		}
+	}
+	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", IssueManage); err != nil {
+		t.Fatalf("creator task permission = %v", err)
+	}
+}
+
+func TestNonCreatorWithoutGrantIsForbidden(t *testing.T) {
+	repo := &creatorGrantRepo{
+		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
+			workspace:        string(WorkspaceMember),
+			projectWorkspace: "ws-1",
+		}},
+		creator: "creator-1",
+	}
+	err := New(repo, true).Check(context.Background(), Subject{UserID: "member-1", WorkspaceID: "ws-1"}, "p-1", View)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-creator without grant = %v, want %v", err, ErrForbidden)
 	}
 }
 

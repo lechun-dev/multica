@@ -147,6 +147,7 @@
   },
   "picker": {
     "no_project": "プロジェクトなし",
+    "project_unavailable": "プロジェクトを表示できません",
     "empty": "プロジェクトはまだありません",
     "search_placeholder": "プロジェクトを検索...",
     "clear_aria": "プロジェクトをクリア"
@@ -170,6 +171,11 @@
     "dialog_description": "ワークスペースメンバーを選択し、共通のプロジェクトロールを付与します。既存メンバーのロールも変更できます。",
     "current_access": "現在のプロジェクト権限",
     "current_access_empty": "明示的なプロジェクト権限はありません",
+    "project_permission_source": "権限の出所",
+    "project_permission_role": "権限ロール",
+    "project_permission_granted_at": "付与日時",
+    "direct_project_grant": "プロジェクトへの直接付与",
+    "project_member_source": "プロジェクトメンバー",
     "add_members": "メンバーを追加",
     "add_members_description": "まだプロジェクト権限を持っていないワークスペースメンバーを選択します。",
     "selected_role_aria": "選択したメンバーのロール",
@@ -232,6 +238,18 @@
     "task_authorization_removed": "タスク権限を削除しました",
     "task_authorization_remove_failed": "タスク権限の削除に失敗しました",
     "remove_task_access_aria": "タスク権限を削除：",
+    "task_permission_name": "名前",
+    "task_permission_source": "権限の出所",
+    "task_permission_role": "権限ロール",
+    "task_permission_granted_at": "付与日時",
+    "task_permission_object_type": "付与対象の種類",
+    "task_permission_object": "付与対象",
+    "task_permission_people_selected": "選択したユーザー",
+    "task_permission_organizations_selected": "選択した部署",
+    "task_permission_remove_selected": "削除",
+    "task_permission_select_people": "ユーザーを選択",
+    "task_permission_select_departments": "部署を選択",
+    "task_permission_no_members": "ワークスペースメンバーがいません",
     "select_project_role_key": "プロジェクトロールキー"
   },
   "toolbar": {

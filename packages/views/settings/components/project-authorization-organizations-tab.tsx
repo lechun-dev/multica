@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import type {
   ProjectAuthorizationDingTalkSyncResult,
@@ -28,6 +29,7 @@ const IMPORT_KINDS: ProjectAuthorizationImportKind[] = ["organizations", "member
 export function ProjectAuthorizationOrganizationsTab() {
   const { t } = useT("settings");
   const workspaceId = useWorkspaceId();
+  const workspaceName = useCurrentWorkspace()?.name;
   const currentUser = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -162,7 +164,7 @@ export function ProjectAuthorizationOrganizationsTab() {
           </div>
         }
       >
-        <ProjectAuthorizationDirectory workspaceId={workspaceId} />
+        <ProjectAuthorizationDirectory workspaceId={workspaceId} workspaceName={workspaceName} />
         {!canManage ? <p className="text-caption text-muted-foreground">{t(($) => $.project_authorization_organizations.admin_only)}</p> : null}
       </SettingsTab>
 

@@ -138,6 +138,23 @@ func (s *Service) checkWithWorkspaceScope(ctx context.Context, subject Subject, 
 		}
 		return authorizationStorageError(err)
 	}
+	// 2026-09-04 coder(lq): The project creator is an immutable Owner even
+	// when an older database is missing the seeded grant row. Resolve this
+	// identity after workspace membership, then short-circuit every permission
+	// check so ACL edits cannot strand the creator or silently reduce Owner
+	// capabilities.
+	if creatorRepo, creatorRepoOK := s.repo.(ProjectCreatorRepository); creatorRepoOK {
+		creator, creatorErr := creatorRepo.ProjectCreator(ctx, projectID)
+		if creatorErr != nil {
+			if errors.Is(creatorErr, ErrNoProjectAccess) {
+				return creatorErr
+			}
+			return authorizationStorageError(creatorErr)
+		}
+		if creator != "" && creator == subject.UserID {
+			return nil
+		}
+	}
 	if role == WorkspaceOwner {
 		bypassEnabled, bypassErr := s.WorkspaceOwnerBypassEnabled(ctx, subject.WorkspaceID)
 		if bypassErr != nil {
@@ -544,11 +561,22 @@ func (s *Service) GrantAccess(ctx context.Context, actor Subject, grant AccessGr
 			return err
 		}
 	}
+	// 2026-09-05 coder(lq): A resource creator's Owner role is immutable. A
+	// second, weaker role grant would otherwise coexist in the role-key unique
+	// index and make the creator appear downgraded in permission reports. Keep
+	// direct permission grants additive; only role grants can downgrade an
+	// Owner and therefore need this guard.
+	if err := s.protectCreatorOwnerGrant(ctx, grant); err != nil {
+		return err
+	}
 	if grant.IssueID != "" {
 		if grant.Permission != "" && !taskGrantPermissionAllowed(grant.Permission) {
 			return ErrInvalidIssuePermission
 		}
-		if grant.Role != "" {
+		// An Owner role is valid at task scope too. checkGrants still caps a
+		// task-scoped role at task permissions, so project member/settings
+		// administration cannot leak through a task Owner grant.
+		if grant.Role != "" && grant.Role != ProjectOwner {
 			permissions, _, err := s.rolePermissions(ctx, actor.WorkspaceID, grant.Role)
 			if err != nil {
 				return err
@@ -573,6 +601,45 @@ func (s *Service) GrantAccess(ctx context.Context, actor Subject, grant AccessGr
 		Action:      "project_permission_granted",
 		Details:     grantAuditDetails(grant),
 	})
+}
+
+// protectCreatorOwnerGrant prevents a project or task creator from receiving
+// a weaker role through the mutable grants table. The creator remains an
+// Owner even when the historical Owner row is absent; adapters that expose
+// creator identities opt into this invariant while older dry-run adapters
+// remain source-compatible.
+// 2026-09-05 coder(lq): Enforce creator Owner protection on the grant path,
+// complementing the read and revoke guards.
+func (s *Service) protectCreatorOwnerGrant(ctx context.Context, grant AccessGrant) error {
+	if grant.SubjectType != SubjectUser || grant.Role == "" || grant.Role == ProjectOwner {
+		return nil
+	}
+	if grant.IssueID != "" {
+		creatorRepo, ok := s.repo.(IssueCreatorRepository)
+		if !ok {
+			return nil
+		}
+		creator, err := creatorRepo.IssueCreator(ctx, grant.IssueID)
+		if err != nil {
+			return authorizationStorageError(err)
+		}
+		if creator != "" && creator == grant.SubjectID {
+			return ErrLastOwner
+		}
+		return nil
+	}
+	creatorRepo, ok := s.repo.(ProjectCreatorRepository)
+	if !ok {
+		return nil
+	}
+	creator, err := creatorRepo.ProjectCreator(ctx, grant.ProjectID)
+	if err != nil {
+		return authorizationStorageError(err)
+	}
+	if creator != "" && creator == grant.SubjectID {
+		return ErrLastOwner
+	}
+	return nil
 }
 
 // 2026-09-01 coder(lq): Keep subject existence checks at the authorization
@@ -750,6 +817,16 @@ func (s *Service) RevokeAccess(ctx context.Context, actor Subject, grant AccessG
 			return ErrInvalidSubject
 		}
 	}
+	if grant.IssueID == "" && grant.Role == ProjectOwner {
+		if err := s.protectProjectOwnerRevoke(ctx, repo, actor.WorkspaceID, grant); err != nil {
+			return err
+		}
+	}
+	if grant.IssueID != "" && grant.Role == ProjectOwner {
+		if err := s.protectIssueOwnerRevoke(ctx, actor.WorkspaceID, grant); err != nil {
+			return err
+		}
+	}
 	if err := repo.DeleteAccessGrant(ctx, actor.WorkspaceID, grant.ProjectID, grant.IssueID, grant.SubjectType, grant.SubjectID, grant.Role, grant.Permission); err != nil {
 		return authorizationStorageError(err)
 	}
@@ -761,6 +838,60 @@ func (s *Service) RevokeAccess(ctx context.Context, actor Subject, grant AccessG
 		Action:      "project_permission_revoked",
 		Details:     grantAuditDetails(grant),
 	})
+}
+
+// protectIssueOwnerRevoke keeps task ownership anchored to the effective task
+// creator. Unlike project ownership there is no "last task owner" rule: only
+// the creator's immutable Owner grant is protected, while other task Owner
+// grants remain revocable.
+// 2026-09-05 coder(lq): Enforce task creator ownership in the service layer;
+// the PostgreSQL adapter repeats the same predicate for direct SQL safety.
+func (s *Service) protectIssueOwnerRevoke(ctx context.Context, workspaceID string, grant AccessGrant) error {
+	creatorRepo, ok := s.repo.(IssueCreatorRepository)
+	if !ok {
+		return ErrMigrationRequired
+	}
+	creator, err := creatorRepo.IssueCreator(ctx, grant.IssueID)
+	if err != nil {
+		return authorizationStorageError(err)
+	}
+	if grant.SubjectType == SubjectUser && creator != "" && grant.SubjectID == creator {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+// protectProjectOwnerRevoke keeps project ownership anchored to the creator
+// and prevents a project from becoming ownerless. The database adapter also
+// repeats the owner-count check atomically so concurrent revoke requests
+// cannot both observe the same final owner and delete it.
+// 2026-09-04 coder(lq): Restore creator Owner as a hard authorization invariant.
+func (s *Service) protectProjectOwnerRevoke(ctx context.Context, repo GrantRepository, workspaceID string, grant AccessGrant) error {
+	creatorRepo, ok := s.repo.(ProjectCreatorRepository)
+	if !ok {
+		return ErrMigrationRequired
+	}
+	creator, err := creatorRepo.ProjectCreator(ctx, grant.ProjectID)
+	if err != nil {
+		return authorizationStorageError(err)
+	}
+	if grant.SubjectType == SubjectUser && creator != "" && grant.SubjectID == creator {
+		return ErrLastOwner
+	}
+	grants, err := repo.ListAccessGrants(ctx, workspaceID, grant.ProjectID, "")
+	if err != nil {
+		return authorizationStorageError(err)
+	}
+	ownerCount := 0
+	for _, candidate := range grants {
+		if candidate.IssueID == "" && candidate.Role == ProjectOwner {
+			ownerCount++
+		}
+	}
+	if ownerCount <= 1 {
+		return ErrLastOwner
+	}
+	return nil
 }
 
 func grantAuditDetails(grant AccessGrant) map[string]any {

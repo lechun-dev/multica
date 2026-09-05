@@ -36,9 +36,14 @@ func (h *Handler) cancelAgentTasksWithProjectPermission(ctx context.Context, age
 			if issueErr != nil {
 				continue
 			}
-			// 2026-08-27 coder(lq): Once project permissions are enabled, every
-			// task must resolve to a project that the caller can manage.
 			if !issue.ProjectID.Valid {
+				// 2026-09-05 coder(lq): Projectless tasks still have an
+				// immutable creator/assignee Owner-equivalent boundary. Do not
+				// let this aggregate operation accidentally skip work the task
+				// owner is allowed to manage.
+				if allowed, _ := h.projectlessIssueAllowedWithWorkspaceScope(ctx, issue, userID, member, projectauth.IssueManage, true); allowed {
+					allowedIDs = append(allowedIDs, task.ID)
+				}
 				continue
 			}
 			if err := h.ProjectAuth.CheckIssue(ctx, subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), projectauth.IssueManage); err == nil {
@@ -163,7 +168,17 @@ func projectVisibleTaskPredicateWithWorkspaceScope(taskAlias, workspaceRef, user
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
 			OR %s.originator_user_id = %s::uuid
 			OR %s.accountable_user_id = %s::uuid
-			OR EXISTS (SELECT 1 FROM agent a WHERE a.id = %s.agent_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid)
+			OR EXISTS (
+				SELECT 1
+				FROM agent a
+				JOIN member agent_owner_member
+				  ON agent_owner_member.workspace_id = a.workspace_id
+				 AND agent_owner_member.user_id = a.owner_id
+				WHERE a.id = %s.agent_id
+				  AND a.workspace_id = %s
+				  AND a.kind = 'user'
+				  AND a.owner_id = %s::uuid
+			)
 		))
 	)`, taskAlias, taskAlias, workspaceRef,
 		issueProjectVisibilityPredicateWithWorkspaceScope("acl_issue", workspaceRef, userRef, includeWorkspaceOwned),
@@ -193,12 +208,44 @@ func chatProjectVisibilityPredicateWithWorkspaceScope(chatAlias, workspaceRef, u
 		))
 		OR (%s.project_id IS NULL AND (
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
-			OR %s.creator_id = %s::uuid
-			OR EXISTS (SELECT 1 FROM agent a WHERE a.id = %s.agent_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid)
+			OR %s
+			OR %s
 		))
 	)`, chatAlias, ownerProjectClause, projectAccessPredicate(chatAlias+".project_id", workspaceRef, userRef),
-		chatAlias, ownerProjectClause, workspaceRef, userRef, chatAlias, userRef,
-		chatAlias, workspaceRef, userRef)
+		chatAlias, ownerProjectClause, workspaceRef, userRef,
+		chatCreatorAccessPredicate(chatAlias, workspaceRef, userRef),
+		chatAgentOwnerAccessPredicate(chatAlias, workspaceRef, userRef))
+}
+
+// 2026-09-05 coder(lq): A projectless chat creator is a native workspace
+// member, not merely a matching UUID. Keep this predicate aligned with the
+// task/issue creator fallback so a removed member cannot reopen old chats.
+func chatCreatorAccessPredicate(chatAlias, workspaceRef, userRef string) string {
+	return fmt.Sprintf(`(
+		%s.creator_id = %s::uuid
+		AND EXISTS (
+			SELECT 1 FROM member creator_member
+			WHERE creator_member.workspace_id = %s
+			  AND creator_member.user_id = %s::uuid
+		)
+	)`, chatAlias, userRef, workspaceRef, userRef)
+}
+
+// 2026-09-05 coder(lq): User-owned Agent chats inherit visibility from the
+// human owner only while that owner remains an active workspace member.
+func chatAgentOwnerAccessPredicate(chatAlias, workspaceRef, userRef string) string {
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM agent a
+		WHERE a.id = %s.agent_id
+		  AND a.workspace_id = %s
+		  AND a.kind = 'user'
+		  AND a.owner_id = %s::uuid
+		  AND EXISTS (
+			SELECT 1 FROM member agent_owner_member
+			WHERE agent_owner_member.workspace_id = %s
+			  AND agent_owner_member.user_id = a.owner_id
+		)
+	)`, chatAlias, workspaceRef, userRef, workspaceRef)
 }
 
 // 2026-08-28 coder(lq): Project-authenticated Chat lists must not inherit the
@@ -310,9 +357,9 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 }
 
 func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	// 2026-09-03 coder(lq): Project-bound tasks accept inherited project View or
-	// a direct View-capable task grant. Projectless Agent tasks retain the
-	// upstream creator/assignee visibility.
+	// 2026-09-05 coder(lq): Project-bound tasks also keep their creator's hard
+	// Owner visibility when historical creator grants were never backfilled.
+	// This is task-scoped and therefore cannot expose sibling tasks.
 	ownerProjectClause := "FALSE"
 	ownerProjectlessClause := "FALSE"
 	if includeWorkspaceOwned {
@@ -320,25 +367,48 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		ownerProjectlessClause = ownerProjectClause
 	}
 	return fmt.Sprintf(`(
-		(%s.project_id IS NOT NULL AND (%s OR %s OR %s))
+		(%s.project_id IS NOT NULL AND (%s OR %s OR %s OR %s))
 		OR (%s.project_id IS NULL AND (
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
-			OR (%s.creator_type = 'member' AND %s.creator_id = %s::uuid)
+			OR %s
 			OR (%s.assignee_type = 'member' AND %s.assignee_id = %s::uuid)
-			OR (%s.creator_type = 'agent' AND EXISTS (
-				SELECT 1 FROM agent a WHERE a.id = %s.creator_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
-			))
 			OR (%s.assignee_type = 'agent' AND EXISTS (
 				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
 			))
 		))
 	)`, issueAlias, ownerProjectClause, projectAccessPredicate(issueAlias+".project_id", workspaceRef, userRef),
 		issueDirectAccessPredicate(issueAlias+".id", workspaceRef, userRef),
+		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
 		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
+		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
 		issueAlias, issueAlias, userRef,
-		issueAlias, issueAlias, userRef,
-		issueAlias, issueAlias, workspaceRef, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef)
+}
+
+// 2026-09-05 coder(lq): Resolve the effective native creator for a task in
+// SQL so list/search/grouped queries honor the same immutable Owner rule as
+// CheckIssue, including tasks created by user-owned agents.
+func issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef string) string {
+	return fmt.Sprintf(`(
+		(%s.creator_type = 'member' AND %s.creator_id = %s::uuid AND EXISTS (
+			SELECT 1 FROM member creator_member
+			WHERE creator_member.workspace_id = %s
+			  AND creator_member.user_id = %s::uuid
+		))
+		OR (%s.creator_type = 'agent' AND EXISTS (
+			SELECT 1 FROM agent a
+			WHERE a.id = %s.creator_id
+			  AND a.workspace_id = %s
+			  AND a.kind = 'user'
+			  AND a.owner_id = %s::uuid
+			  AND EXISTS (
+				SELECT 1 FROM member creator_member
+				WHERE creator_member.workspace_id = %s
+				  AND creator_member.user_id = a.owner_id
+			  )
+		))
+	)`, issueAlias, issueAlias, userRef, workspaceRef, userRef,
+		issueAlias, issueAlias, workspaceRef, userRef, workspaceRef)
 }
 
 // 2026-09-03 coder(lq): Resolve one authenticated user against a canonical
@@ -452,6 +522,11 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 	// membership row must never make a project visible by itself.
 	// 2026-09-01 coder(lq): Keep the principal expression identical for the
 	// grant being evaluated and the grant that assigns a project role.
+	// 2026-09-05 coder(lq): A creator fallback is valid only while the creator
+	// remains a workspace member, matching the service-level hard Owner check
+	// and preventing a stale creator UUID from leaking project visibility.
+	// 2026-09-05 coder(lq): Keep the subquery alias private because callers may
+	// evaluate this fragment against an outer issue alias named `p`.
 	grantSubject := accessGrantPrincipalPredicate("g")
 	roleHolder := accessGrantPrincipalPredicate("rg")
 	return fmt.Sprintf(`EXISTS (
@@ -459,23 +534,29 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
 		)
 		SELECT 1
-		FROM project p
+		FROM project auth_project
 		CROSS JOIN auth_subject a
-		WHERE p.id = %s
-		  AND p.workspace_id = a.workspace_id
-		  AND EXISTS (
+		WHERE auth_project.id = %s
+		  AND auth_project.workspace_id = a.workspace_id
+		  AND (
+			(auth_project.created_by = a.user_id AND EXISTS (
+				SELECT 1 FROM member creator_member
+				WHERE creator_member.workspace_id = auth_project.workspace_id
+				  AND creator_member.user_id = auth_project.created_by
+			))
+			OR EXISTS (
 			SELECT 1
 			FROM projectauth_access_grants g
-			WHERE g.workspace_id = p.workspace_id
-			  AND g.project_id = p.id
+			WHERE g.workspace_id = auth_project.workspace_id
+			  AND g.project_id = auth_project.id
 			  AND g.issue_id IS NULL
 			  AND (
 				%s
 				OR (g.subject_type = 'role' AND EXISTS (
 					SELECT 1
 					FROM projectauth_access_grants rg
-					WHERE rg.workspace_id = p.workspace_id
-					  AND rg.project_id = p.id
+					WHERE rg.workspace_id = auth_project.workspace_id
+					  AND rg.project_id = auth_project.id
 					  AND rg.issue_id IS NULL
 					  AND rg.role_key IS NOT NULL
 					  AND %s
@@ -486,9 +567,10 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 				g.permission = 'project.view'
 				OR (g.role_key IS NOT NULL AND %s)
 			  )
-		)
+			)
+		  )
 	)`, workspaceRef, userRef, projectExpr, grantSubject, roleHolder,
-		systemRoleViewPermissionPredicate("g.role_key", "p.workspace_id"))
+		systemRoleViewPermissionPredicate("g.role_key", "auth_project.workspace_id"))
 }
 
 // workspaceOwnerBypassPredicate is embedded into all SQL visibility scopes so
@@ -537,6 +619,91 @@ func projectlessIssuePermissionAllowedWithOwnersAndBypass(issue db.Issue, userID
 		return true
 	}
 	return issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && assigneeOwnerID.Valid && assigneeOwnerID == userID
+}
+
+// 2026-09-05 coder(lq): A direct member mention grants task-level Member
+// access even when the task has no project. The aggregate grant table cannot
+// store a NULL project_id, so resolve this narrow projectless case from the
+// issue description and comments instead of weakening the owner boundary.
+func (h *Handler) projectlessIssueMentionedUser(ctx context.Context, issue db.Issue, userID string) (bool, error) {
+	mentioned := func(content string) bool {
+		for _, mention := range util.ParseMentions(content) {
+			if mention.Type == "member" && mention.ID == userID {
+				return true
+			}
+		}
+		return false
+	}
+	if issue.Description.Valid && mentioned(issue.Description.String) {
+		return true, nil
+	}
+	rows, err := h.DB.Query(ctx, `SELECT content FROM comment WHERE issue_id=$1`, issue.ID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return false, err
+		}
+		if mentioned(content) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// 2026-09-05 coder(lq): Keep HTTP and aggregate task entry points on the same
+// projectless owner rule. The unified grant table cannot represent a task with
+// no project, so creator/assignee access is resolved at runtime instead.
+func (h *Handler) projectlessIssueAllowedWithWorkspaceScope(ctx context.Context, issue db.Issue, userID string, member db.Member, permission projectauth.Permission, includeWorkspaceOwned bool) (bool, string) {
+	userUUID, err := util.ParseUUID(userID)
+	if err != nil {
+		return false, "denied"
+	}
+	creatorOwnerID := pgtype.UUID{}
+	if issue.CreatorType == "agent" && issue.CreatorID.Valid {
+		ownerID, resolveErr := resolveAgentOwnerInWorkspaceWithExecutor(ctx, h.DB, uuidToString(issue.WorkspaceID), uuidToString(issue.CreatorID))
+		if resolveErr != nil {
+			return false, "internal"
+		}
+		if ownerID != "" {
+			creatorOwnerID, _ = util.ParseUUID(ownerID)
+		}
+	}
+	assigneeOwnerID := pgtype.UUID{}
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid {
+		ownerID, resolveErr := resolveAgentOwnerInWorkspaceWithExecutor(ctx, h.DB, uuidToString(issue.WorkspaceID), uuidToString(issue.AssigneeID))
+		if resolveErr != nil {
+			return false, "internal"
+		}
+		if ownerID != "" {
+			assigneeOwnerID, _ = util.ParseUUID(ownerID)
+		}
+	}
+	ownerBypassEnabled, err := h.ProjectAuth.WorkspaceOwnerBypassEnabled(ctx, uuidToString(issue.WorkspaceID))
+	if err != nil {
+		return false, "internal"
+	}
+	ownerBypassEnabled = ownerBypassEnabled && includeWorkspaceOwned
+	if projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, userUUID, projectauth.WorkspaceRole(member.Role), permission, ownerBypassEnabled, creatorOwnerID, assigneeOwnerID) {
+		return true, ""
+	}
+	if mentioned, mentionErr := h.projectlessIssueMentionedUser(ctx, issue, userID); mentionErr != nil {
+		return false, "internal"
+	} else if mentioned {
+		// A mention is equivalent to the task Member role. Do not let it grant
+		// project administration, which is never task-scoped.
+		switch permission {
+		case projectauth.View, projectauth.Edit, projectauth.IssueComment, projectauth.IssueManage, projectauth.IssueArchive, projectauth.AgentUse:
+			return true, ""
+		}
+	}
+	return false, "projectless"
 }
 
 // 2026-08-27 coder(lq): Dashboard rollups need a project boundary even when
@@ -1072,7 +1239,16 @@ func (h *Handler) visibleUnscopedTaskIDsByProjectPermissionWithWorkspaceScope(ct
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = $1 AND m.user_id = $2 AND m.role = 'owner'))
 			OR atq.originator_user_id = $2
 			OR atq.accountable_user_id = $2
-			OR (a.kind = 'user' AND a.owner_id = $2)
+			OR (
+				a.kind = 'user'
+				AND a.owner_id = $2
+				AND EXISTS (
+					SELECT 1
+					FROM member agent_owner_member
+					WHERE agent_owner_member.workspace_id = a.workspace_id
+					  AND agent_owner_member.user_id = a.owner_id
+				)
+			)
 		  )`, ownerClause), workspaceID, userID, taskIDs)
 	if err != nil {
 		return nil, err
@@ -1365,38 +1541,7 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 		return false, "denied"
 	}
 	if !issue.ProjectID.Valid {
-		userUUID, parseErr := util.ParseUUID(userID)
-		if parseErr != nil {
-			return false, "denied"
-		}
-		var creatorOwnerID, assigneeOwnerID pgtype.UUID
-		if issue.CreatorType == "agent" && issue.CreatorID.Valid {
-			ownerID, resolveErr := resolveAgentOwnerInWorkspaceWithExecutor(r.Context(), h.DB, uuidToString(issue.WorkspaceID), uuidToString(issue.CreatorID))
-			if resolveErr != nil {
-				return false, "internal"
-			}
-			if ownerID != "" {
-				creatorOwnerID, _ = util.ParseUUID(ownerID)
-			}
-		}
-		if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid {
-			ownerID, resolveErr := resolveAgentOwnerInWorkspaceWithExecutor(r.Context(), h.DB, uuidToString(issue.WorkspaceID), uuidToString(issue.AssigneeID))
-			if resolveErr != nil {
-				return false, "internal"
-			}
-			if ownerID != "" {
-				assigneeOwnerID, _ = util.ParseUUID(ownerID)
-			}
-		}
-		ownerBypassEnabled, bypassErr := h.ProjectAuth.WorkspaceOwnerBypassEnabled(r.Context(), uuidToString(issue.WorkspaceID))
-		if bypassErr != nil {
-			return false, "internal"
-		}
-		ownerBypassEnabled = ownerBypassEnabled && includeWorkspaceOwned
-		if projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, userUUID, projectauth.WorkspaceRole(member.Role), permission, ownerBypassEnabled, creatorOwnerID, assigneeOwnerID) {
-			return true, ""
-		}
-		return false, "projectless"
+		return h.projectlessIssueAllowedWithWorkspaceScope(r.Context(), issue, userID, member, permission, includeWorkspaceOwned)
 	}
 	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	err = h.ProjectAuth.CheckIssueWithWorkspaceScope(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission, includeWorkspaceOwned)

@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,6 +53,105 @@ type DingTalkDirectoryMember struct {
 	Name          string
 	Email         string
 	DepartmentIDs []string
+}
+
+// 2026-09-04 coder(lq): Keep directory-sync failures actionable without
+// coupling the host application to provider response structs. Stage and
+// department ID identify the failing request; Err preserves the underlying
+// network/API detail for logs and support diagnostics.
+type DingTalkDirectorySyncError struct {
+	Stage        string
+	DepartmentID string
+	ErrCode      int
+	ErrMessage   string
+	Err          error
+}
+
+func (e *DingTalkDirectorySyncError) Error() string {
+	if e == nil {
+		return "DingTalk directory sync failed"
+	}
+	parts := []string{"DingTalk directory sync failed at " + strings.TrimSpace(e.Stage)}
+	if departmentID := strings.TrimSpace(e.DepartmentID); departmentID != "" {
+		parts = append(parts, "department "+departmentID)
+	}
+	if e.ErrCode != 0 {
+		message := redactDingTalkSecrets(strings.TrimSpace(e.ErrMessage))
+		if message != "" {
+			parts = append(parts, fmt.Sprintf("DingTalk error %d: %s", e.ErrCode, message))
+		} else {
+			parts = append(parts, fmt.Sprintf("DingTalk error %d", e.ErrCode))
+		}
+	} else if e.Err != nil {
+		parts = append(parts, redactDingTalkSecrets(e.Err.Error()))
+	} else if message := redactDingTalkSecrets(strings.TrimSpace(e.ErrMessage)); message != "" {
+		parts = append(parts, message)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (e *DingTalkDirectorySyncError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func redactDingTalkSecrets(message string) string {
+	for _, key := range []string{"access_token=", "appSecret=", "clientSecret=", "client_secret="} {
+		var redacted strings.Builder
+		position := 0
+		for position < len(message) {
+			relativeStart := strings.Index(message[position:], key)
+			if relativeStart < 0 {
+				redacted.WriteString(message[position:])
+				break
+			}
+			start := position + relativeStart
+			valueStart := start + len(key)
+			valueEnd := valueStart
+			for valueEnd < len(message) {
+				switch message[valueEnd] {
+				case '&', ' ', '\t', '\r', '\n', ')', '"':
+					goto done
+				default:
+					valueEnd++
+				}
+			}
+		done:
+			redacted.WriteString(message[position:valueStart])
+			redacted.WriteString("[redacted]")
+			position = valueEnd
+		}
+		message = redacted.String()
+	}
+	return message
+}
+
+func newDingTalkDirectorySyncError(stage, departmentID string, errCode int, errMessage string, err error) error {
+	// postJSON converts legacy {errcode,errmsg} responses into DingTalkHTTPError
+	// before the endpoint-specific decoder sees them. Recover those fields here
+	// so all directory failures expose the same structured diagnostics.
+	if errCode == 0 && err != nil {
+		var apiErr *DingTalkHTTPError
+		if errors.As(err, &apiErr) {
+			if strings.HasPrefix(apiErr.Code, "errcode:") {
+				if parsed, parseErr := strconv.Atoi(strings.TrimPrefix(apiErr.Code, "errcode:")); parseErr == nil {
+					errCode = parsed
+				}
+			}
+			if strings.TrimSpace(errMessage) == "" {
+				errMessage = apiErr.Message
+			}
+		}
+	}
+	return &DingTalkDirectorySyncError{
+		Stage:        stage,
+		DepartmentID: departmentID,
+		ErrCode:      errCode,
+		ErrMessage:   redactDingTalkSecrets(strings.TrimSpace(errMessage)),
+		Err:          err,
+	}
 }
 
 type OAuthProvider interface {

@@ -38,6 +38,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  QueryClient: class QueryClient {
+    constructor(_options?: unknown) {}
+  },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey?.[0];
@@ -296,27 +299,19 @@ describe("ProjectsPage compact row navigation", () => {
     expect(within(projectRow()).getByText("Viewer")).toBeInTheDocument();
   });
 
-  it("lets a workspace owner hide workspace-owned projects", async () => {
-    const user = userEvent.setup();
+  it("hides the workspace-owned toggle and keeps the request backend-inclusive", () => {
     mocks.members = [
       { user_id: "user-1", name: "User One", role: "owner" },
     ];
-    mocks.projectViewState.showWorkspaceOwnedItems = true;
     renderProjects();
 
-    const toggle = screen.getByRole("switch", {
-      name: "Show workspace-owned projects",
-    });
-    expect(toggle).toBeChecked();
+    expect(
+      screen.queryByRole("switch", { name: "Show workspace-owned projects" }),
+    ).not.toBeInTheDocument();
     expect(mocks.projectListOptionsCalls.at(-1)).toEqual([
       "workspace-1",
       true,
     ]);
-
-    await user.click(toggle);
-
-    expect(mocks.projectViewState.setShowWorkspaceOwnedItems).toHaveBeenCalled();
-    expect(mocks.projectViewState.setShowWorkspaceOwnedItems.mock.calls[0]?.[0]).toBe(false);
   });
 
   it("does not show the workspace-owned toggle to non-owners", () => {

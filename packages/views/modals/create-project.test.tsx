@@ -51,6 +51,10 @@ vi.mock("@multica/core/api", () => ({
   api: {
     listProjectPermissionRoles: listProjectPermissionRolesMock,
   },
+  errorCode: (error: unknown) =>
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: string }).code
+      : undefined,
 }));
 
 vi.mock("@multica/core/projects", () => ({
@@ -72,6 +76,11 @@ vi.mock("@multica/core/projects", () => ({
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
+}));
+
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector: (state: { user: { id: string } | null }) => unknown) =>
+    selector({ user: { id: "alice" } }),
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -235,6 +244,23 @@ describe("CreateProjectModal", () => {
     expect(screen.getByRole("button", { name: "Access" })).toBeInTheDocument();
   });
 
+  it("defaults the project lead to the signed-in member", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText("Project title"), "Owned project");
+    await user.click(screen.getByRole("button", { name: "Create Project" }));
+
+    await waitFor(() => {
+      expect(createProjectMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lead_type: "member",
+          lead_id: "alice",
+        }),
+      );
+    });
+  });
+
   it("submits selected members with their project role atomically", async () => {
     const user = userEvent.setup();
     renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
@@ -278,6 +304,25 @@ describe("CreateProjectModal", () => {
 
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith("permission denied");
+    });
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it("localizes project permission migration failures", async () => {
+    const user = userEvent.setup();
+    createProjectMock.mockRejectedValue({
+      code: "project_permission_migration_required",
+      message: "project permission migration is required",
+    });
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText("Project title"), "Needs migration");
+    await user.click(screen.getByRole("button", { name: "Create Project" }));
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Project permissions are not initialized. Run the project-permission database migrations, then try again.",
+      );
     });
     expect(toastSuccessMock).not.toHaveBeenCalled();
   });

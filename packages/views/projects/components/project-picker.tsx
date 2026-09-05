@@ -44,8 +44,19 @@ export function ProjectPicker({
 }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const {
+    data: projects = [],
+    isPending: projectsPending = false,
+    isFetching: projectsFetching = false,
+  } = useQuery(projectListOptions(wsId));
   const current = projects.find((p) => p.id === projectId);
+  // 2026-09-04 coder(lq): A task can remain visible through a direct task
+  // grant while its project is hidden by project permissions. Keep the stored
+  // relationship visible instead of presenting it as an unassigned task.
+  // While the project list is still loading, retain the normal loading state
+  // so a temporary empty response does not flash the unavailable label.
+  const projectUnavailable =
+    !!projectId && !current && !projectsPending && !projectsFetching;
   const [filter, setFilter] = useState("");
   // Normalize to an always-boolean controlled `open`, matching the other
   // pickers (status/priority/assignee/labels). Base UI latches a controlled
@@ -87,6 +98,11 @@ export function ProjectPicker({
               <ProjectIcon project={current} size="sm" />
               <span className="truncate">{current.title}</span>
             </>
+          ) : projectUnavailable ? (
+            <>
+              <FolderKanban className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{t(($) => $.picker.project_unavailable)}</span>
+            </>
           ) : (
             <>
               <FolderKanban className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -101,6 +117,7 @@ export function ProjectPicker({
         <PickerItem
           emptyValue
           selected={!projectId}
+          disabled={projectUnavailable}
           onClick={() => {
             onUpdate({ project_id: null });
             setOpen(false);

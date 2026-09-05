@@ -217,6 +217,29 @@ func TestDingTalkOAuthProviderLoadsCompleteDirectory(t *testing.T) {
 	}
 }
 
+func TestDingTalkOAuthProviderAcceptsArrayDepartmentResult(t *testing.T) {
+	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/departments":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":[{"dept_id":2,"name":"研发","parent_id":1}]}`), nil
+		case "/users":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[],"next_cursor":0,"has_more":false}}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{Client: client, AppTokenURL: "https://example.test/token", DepartmentListURL: "https://example.test/departments", UserListURL: "https://example.test/users", ClientID: "id", ClientSecret: "secret"}
+	snapshot, err := p.LoadDirectory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Departments) != 1 || snapshot.Departments[0].ID != "2" || snapshot.Departments[0].ParentID != "1" {
+		t.Fatalf("unexpected departments: %+v", snapshot.Departments)
+	}
+}
+
 func TestDingTalkOAuthProviderRejectsStalledDirectoryCursor(t *testing.T) {
 	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
@@ -233,6 +256,48 @@ func TestDingTalkOAuthProviderRejectsStalledDirectoryCursor(t *testing.T) {
 	p := DingTalkOAuthProvider{Client: client, AppTokenURL: "https://example.test/token", DepartmentListURL: "https://example.test/departments", UserListURL: "https://example.test/users", ClientID: "id", ClientSecret: "secret"}
 	if _, err := p.LoadDirectory(context.Background()); err == nil || !strings.Contains(err.Error(), "cursor did not advance") {
 		t.Fatalf("expected stalled cursor error, got %v", err)
+	}
+}
+
+func TestDingTalkOAuthProviderSurfacesDirectorySyncContext(t *testing.T) {
+	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/departments":
+			return jsonResponse(http.StatusOK, `{"errcode":88,"errmsg":"缺少通讯录权限"}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:            client,
+		AppTokenURL:       "https://example.test/token",
+		DepartmentListURL: "https://example.test/departments",
+		UserListURL:       "https://example.test/users",
+		ClientID:          "id",
+		ClientSecret:      "secret",
+	}
+	_, err := p.LoadDirectory(context.Background())
+	var syncErr *DingTalkDirectorySyncError
+	if !errors.As(err, &syncErr) {
+		t.Fatalf("expected directory sync error, got %v", err)
+	}
+	if syncErr.Stage != "departments" || syncErr.DepartmentID != "1" || syncErr.ErrCode != 88 || syncErr.ErrMessage != "缺少通讯录权限" {
+		t.Fatalf("syncErr=%+v", syncErr)
+	}
+	if !strings.Contains(err.Error(), "缺少通讯录权限") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestDingTalkHTTPErrorRedactsAccessTokenFromEndpoint(t *testing.T) {
+	err := newDingTalkHTTPError("https://example.test/users?access_token=secret-token&foo=bar", http.StatusForbidden, []byte(`{"code":"Forbidden","message":"denied"}`))
+	if strings.Contains(err.Path, "secret-token") || strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("access token leaked in error: path=%q error=%q", err.Path, err.Error())
+	}
+	if !strings.Contains(err.Path, "access_token=%5Bredacted%5D") {
+		t.Fatalf("redacted token missing from path: %q", err.Path)
 	}
 }
 

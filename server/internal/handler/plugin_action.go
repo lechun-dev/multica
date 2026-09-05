@@ -266,14 +266,25 @@ func (h *Handler) requirePluginIssueProjectPermission(w http.ResponseWriter, r *
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return true
 	}
-	if !issue.ProjectID.Valid {
-		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
-		return false
-	}
 	workspaceID := uuidToString(issue.WorkspaceID)
 	member, err := h.getWorkspaceMember(r.Context(), uuidToString(caller.UserID), workspaceID)
 	if err != nil {
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
+		return false
+	}
+	if !issue.ProjectID.Valid {
+		// 2026-09-05 coder(lq): Plugins must honor the same task-owner rule
+		// as the ordinary issue API. A projectless task has no grant row, so
+		// its creator/assignee is resolved as the effective Owner at runtime.
+		allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(r.Context(), issue, uuidToString(caller.UserID), member, permission, true)
+		if allowed {
+			return true
+		}
+		if reason == "internal" {
+			publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to check project permissions")
+		} else {
+			publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
+		}
 		return false
 	}
 	subject := projectauth.Subject{
@@ -655,7 +666,11 @@ func (h *Handler) CreatePluginComment(w http.ResponseWriter, r *http.Request) {
 		authorID = caller.Installation.ID
 	}
 
-	createdComment, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	// 2026-09-05 coder(lq): Route plugin-authored comments through the same
+	// project-access transaction as regular comments. Plugin content can carry
+	// member mentions, and bypassing the helper leaves the inbox permission
+	// filter unable to see the resulting notification.
+	createdComment, err := h.createCommentWithProjectAccess(r.Context(), issue, db.CreateCommentParams{
 		ID:          dbid.NewV7(),
 		IssueID:     issue.ID,
 		WorkspaceID: caller.WorkspaceID,

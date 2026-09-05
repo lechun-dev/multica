@@ -58,7 +58,14 @@ function collectDescendantIds(rootId: string, organizations: ProjectAuthorizatio
 
 // 2026-09-03 coder(lq): Keep directory browsing separate from import controls
 // so future OA adapters can reuse the same normalized department tree.
-export function ProjectAuthorizationDirectory({ workspaceId }: { workspaceId: string }) {
+export function ProjectAuthorizationDirectory({
+  workspaceId,
+  workspaceName,
+}: {
+  workspaceId: string;
+  /** The workspace name is the local, provider-neutral company label. */
+  workspaceName?: string | null;
+}) {
   const { t } = useT("settings");
   const [selectedId, setSelectedId] = useState(ALL_PEOPLE);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -103,6 +110,7 @@ export function ProjectAuthorizationDirectory({ workspaceId }: { workspaceId: st
     return counts;
   }, [members, organizations]);
   const uniqueMemberTotal = useMemo(() => new Set(members.map((member) => member.user_id)).size, [members]);
+  const directoryRootLabel = workspaceName?.trim() || t(($) => $.project_authorization_organizations.all_people);
 
   const toggleExpanded = (organizationId: string) => {
     setExpandedIds((current) => {
@@ -161,7 +169,7 @@ export function ProjectAuthorizationDirectory({ workspaceId }: { workspaceId: st
                 className={cn("mb-1 flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-body hover:bg-accent/60", selectedId === ALL_PEOPLE && "bg-accent")}
                 onClick={() => setSelectedId(ALL_PEOPLE)}
               >
-                <span className="flex min-w-0 items-center gap-2"><Users className="size-4 shrink-0" />{t(($) => $.project_authorization_organizations.all_people)}</span>
+                <span className="flex min-w-0 items-center gap-2"><Users className="size-4 shrink-0" /><span className="truncate">{directoryRootLabel}</span></span>
                 <span className="text-caption text-muted-foreground">{uniqueMemberTotal}</span>
               </button>
               {tree.map((node) => renderNode(node, 0))}
@@ -178,7 +186,7 @@ export function ProjectAuthorizationDirectory({ workspaceId }: { workspaceId: st
                 />
               </div>
               <div className="mb-2 flex items-center justify-between text-caption text-muted-foreground">
-                <span>{selectedId === ALL_PEOPLE ? t(($) => $.project_authorization_organizations.all_people) : organizations.find((item) => item.id === selectedId)?.name}</span>
+                <span>{selectedId === ALL_PEOPLE ? directoryRootLabel : organizations.find((item) => item.id === selectedId)?.name}</span>
                 <span>{t(($) => $.project_authorization_organizations.people_count, { count: visibleMembers.length })}</span>
               </div>
               <div className="max-h-[26rem] space-y-1 overflow-y-auto">

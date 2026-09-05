@@ -332,6 +332,38 @@ func (id *dingTalkID) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type dingTalkSubDepartment struct {
+	ID       dingTalkID `json:"dept_id"`
+	Name     string     `json:"name"`
+	ParentID dingTalkID `json:"parent_id"`
+}
+
+// 2026-09-05 coder(lq): DingTalk returns department `result` as an array on
+// some tenant/API versions and as {"list": [...]} on others. Accept both
+// wire shapes so a tenant-specific response does not abort a full sync.
+type dingTalkDepartmentListResult struct {
+	List []dingTalkSubDepartment
+}
+
+func (r *dingTalkDepartmentListResult) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		r.List = nil
+		return nil
+	}
+	if data[0] == '[' {
+		return json.Unmarshal(data, &r.List)
+	}
+	var wrapped struct {
+		List []dingTalkSubDepartment `json:"list"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		return err
+	}
+	r.List = wrapped.List
+	return nil
+}
+
 func (p DingTalkOAuthProvider) loadDepartments(ctx context.Context, accessToken string, departmentIDs []dingTalkID) ([]DingTalkDepartment, error) {
 	endpoint := p.DepartmentDetailURL
 	if endpoint == "" {
@@ -390,10 +422,10 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 		AccessToken string `json:"accessToken"`
 	}
 	if err := p.postJSON(ctx, tokenURL, payload, &token); err != nil {
-		return DingTalkDirectorySnapshot{}, fmt.Errorf("load DingTalk application token: %w", err)
+		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "", err)
 	}
 	if token.AccessToken == "" {
-		return DingTalkDirectorySnapshot{}, errors.New("DingTalk application token response missing accessToken")
+		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "DingTalk application token response missing accessToken", nil)
 	}
 
 	departments := make([]DingTalkDirectoryDepartment, 0)
@@ -466,21 +498,15 @@ func (p DingTalkOAuthProvider) loadDingTalkSubDepartments(ctx context.Context, t
 	}
 	payload, _ := json.Marshal(map[string]any{"dept_id": id, "language": "zh_CN"})
 	var response struct {
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
-		Result  struct {
-			List []struct {
-				ID       dingTalkID `json:"dept_id"`
-				Name     string     `json:"name"`
-				ParentID dingTalkID `json:"parent_id"`
-			} `json:"list"`
-		} `json:"result"`
+		ErrCode int                          `json:"errcode"`
+		ErrMsg  string                       `json:"errmsg"`
+		Result  dingTalkDepartmentListResult `json:"result"`
 	}
 	if err := p.postAppJSON(ctx, endpoint, token, payload, &response); err != nil {
-		return nil, fmt.Errorf("list DingTalk departments: %w", err)
+		return nil, newDingTalkDirectorySyncError("departments", parentID, 0, "", err)
 	}
 	if response.ErrCode != 0 {
-		return nil, fmt.Errorf("list DingTalk departments: DingTalk error %d", response.ErrCode)
+		return nil, newDingTalkDirectorySyncError("departments", parentID, response.ErrCode, response.ErrMsg, nil)
 	}
 	out := make([]DingTalkDirectoryDepartment, 0, len(response.Result.List))
 	for _, d := range response.Result.List {
@@ -518,10 +544,10 @@ func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, 
 			} `json:"result"`
 		}
 		if err := p.postAppJSON(ctx, endpoint, token, payload, &response); err != nil {
-			return nil, fmt.Errorf("list DingTalk department users: %w", err)
+			return nil, newDingTalkDirectorySyncError("department_users", departmentID, 0, "", err)
 		}
 		if response.ErrCode != 0 {
-			return nil, fmt.Errorf("list DingTalk department users: DingTalk error %d", response.ErrCode)
+			return nil, newDingTalkDirectorySyncError("department_users", departmentID, response.ErrCode, response.ErrMsg, nil)
 		}
 		for _, u := range response.Result.List {
 			deptIDs := make([]string, 0, len(u.DeptIDs))
@@ -534,7 +560,7 @@ func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, 
 			break
 		}
 		if response.Result.NextCursor == cursor {
-			return nil, errors.New("DingTalk user list cursor did not advance")
+			return nil, newDingTalkDirectorySyncError("department_users", departmentID, 0, "DingTalk user list cursor did not advance", nil)
 		}
 		cursor = response.Result.NextCursor
 	}

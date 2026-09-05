@@ -951,8 +951,6 @@ export function ProjectsPage() {
   const sortDirection = useProjectViewStore((s) => s.sortDirection);
   const hiddenColumns = useProjectViewStore((s) => s.hiddenColumns);
   const filters = useProjectViewStore((s) => s.filters);
-  const showWorkspaceOwnedItems = useProjectViewStore((s) => s.showWorkspaceOwnedItems);
-  const setShowWorkspaceOwnedItems = useProjectViewStore((s) => s.setShowWorkspaceOwnedItems);
   const toggleSort = useProjectViewStore((s) => s.toggleSort);
   const setSortField = useProjectViewStore((s) => s.setSortField);
   const setSortDirection = useProjectViewStore((s) => s.setSortDirection);
@@ -965,15 +963,10 @@ export function ProjectsPage() {
   const membersQuery = useQuery(memberListOptions(wsId));
   const members = membersQuery.data ?? [];
   const visibilityReady = membersQuery.isSuccess;
-  const isWorkspaceOwner = visibilityReady && !!currentUser && members.some(
-    (member: MemberWithUser) => member.user_id === currentUser.id && member.role === "owner",
-  );
-  // 2026-09-04 coder(lq): The owner-only visibility preference is a display
-  // choice, while the backend remains authoritative for project access.
-  // Fail closed until membership resolves to avoid a brief owner-only leak.
-  const includeWorkspaceOwned = visibilityReady
-    ? !isWorkspaceOwner || showWorkspaceOwnedItems
-    : false;
+  // 2026-09-04 coder(lq): Do not let a hidden local preference decide
+  // authorization. Once membership is ready, the backend applies the
+  // PROJECT_OWNER_BYPASS_ENABLED policy and project grants.
+  const includeWorkspaceOwned = visibilityReady;
   const {
     data: projects = [],
     isLoading: projectsLoading,
@@ -1160,17 +1153,6 @@ export function ProjectsPage() {
                 label={tSettings(($) => $.page.tabs.project_permissions)}
                 onClick={() => setProjectPermissionsOpen(true)}
               />
-
-              {isWorkspaceOwner && (
-                <label className="flex h-8 cursor-pointer items-center gap-2 rounded-md border px-2 text-caption text-muted-foreground">
-                  <span>{t(($) => $.toolbar.show_workspace_owned_items)}</span>
-                  <Switch
-                    size="sm"
-                    checked={showWorkspaceOwnedItems}
-                    onCheckedChange={setShowWorkspaceOwnedItems}
-                  />
-                </label>
-              )}
 
               {/* Filter */}
               <DropdownMenu>

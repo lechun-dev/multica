@@ -90,6 +90,7 @@ type AccessGrant struct {
 	Permission  Permission  `json:"permission,omitempty"`
 	Source      GrantSource `json:"source"`
 	GrantedBy   string      `json:"granted_by,omitempty"`
+	CreatedAt   string      `json:"created_at,omitempty"`
 }
 
 // 2026-08-24 coder(lq): Use strings so new permissions can be added

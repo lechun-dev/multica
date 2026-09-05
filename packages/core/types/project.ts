@@ -170,6 +170,8 @@ export interface ProjectAccessGrant {
   permission?: ProjectPermissionReportPermission | string;
   source: ProjectAccessGrantSource;
   granted_by?: string;
+  /** Timestamp assigned by the canonical projectauth grant row. */
+  created_at?: string;
 }
 
 export interface ProjectAccessGrantsResponse {

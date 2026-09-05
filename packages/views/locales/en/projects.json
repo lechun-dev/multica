@@ -148,6 +148,7 @@
   },
   "picker": {
     "no_project": "No project",
+    "project_unavailable": "Project unavailable",
     "empty": "No projects yet",
     "search_placeholder": "Search projects...",
     "clear_aria": "Clear project"
@@ -171,6 +172,11 @@
     "dialog_description": "Select workspace members and grant one project role. Existing members can be selected to change their role.",
     "current_access": "Current project access",
     "current_access_empty": "No explicit project access",
+    "project_permission_source": "Permission source",
+    "project_permission_role": "Permission role",
+    "project_permission_granted_at": "Granted at",
+    "direct_project_grant": "Direct project grant",
+    "project_member_source": "Project member",
     "add_members": "Add members",
     "add_members_description": "Select workspace members who do not yet have project access.",
     "selected_role_aria": "Role for selected members",
@@ -233,6 +239,18 @@
     "task_authorization_removed": "Task authorization removed",
     "task_authorization_remove_failed": "Failed to remove task authorization",
     "remove_task_access_aria": "Remove task access for",
+    "task_permission_name": "Name",
+    "task_permission_source": "Permission source",
+    "task_permission_role": "Permission role",
+    "task_permission_granted_at": "Granted at",
+    "task_permission_object_type": "Object type",
+    "task_permission_object": "Object",
+    "task_permission_people_selected": "Selected people",
+    "task_permission_organizations_selected": "Selected departments",
+    "task_permission_remove_selected": "Remove",
+    "task_permission_select_people": "Select people",
+    "task_permission_select_departments": "Select departments",
+    "task_permission_no_members": "No workspace members",
     "select_project_role_key": "Project role key"
   },
   "toolbar": {

@@ -384,9 +384,10 @@ export function issueListOptions(
     queryKey: [...issueKeys.listSorted(wsId, sort), { includeWorkspaceOwned }] as const,
     queryFn: () => fetchFirstPages({}, sort, includeWorkspaceOwned),
     select: flattenIssueBuckets,
-    // Do not carry an inclusive cache into the restricted view. That would
-    // briefly expose workspace-owned tasks after the owner turns the toggle
-    // off while the restricted request is still in flight.
+    // Do not carry an inclusive cache into an explicitly restricted request.
+    // The restriction remains useful for callers that intentionally ask the
+    // backend for project-granted items only, even though the owner toggle is
+    // no longer exposed in the UI.
     placeholderData: includeWorkspaceOwned ? keepPreviousData : undefined,
   });
 }

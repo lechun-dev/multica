@@ -49,6 +49,18 @@ func (r *projectAuthRepository) WorkspaceRole(ctx context.Context, workspaceID, 
 	return projectauth.WorkspaceRole(role), wrapProjectPermissionRepositoryError(err)
 }
 
+func (r *projectAuthRepository) ProjectCreator(ctx context.Context, projectID string) (string, error) {
+	var creator string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(created_by::text, '')
+		FROM project
+		WHERE id = $1`, projectID).Scan(&creator)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", projectauth.ErrNoProjectAccess
+	}
+	return creator, wrapProjectPermissionRepositoryError(err)
+}
+
 // UserInWorkspace and ActiveOrganizationInWorkspace are deliberately narrow
 // directory queries. They let the provider-neutral authorization service
 // reject stale/cross-workspace subjects without coupling it to an OA API.
@@ -80,59 +92,93 @@ func (r *projectAuthRepository) WorkspaceOwnerBypassEnabled(ctx context.Context,
 func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, userID string) (projectauth.ProjectRole, error) {
 	var role string
 	err := r.db.QueryRow(ctx, `
-		SELECT role_key FROM projectauth_access_grants
-		JOIN project p ON p.id = projectauth_access_grants.project_id
-		WHERE projectauth_access_grants.project_id=$1
-		  AND projectauth_access_grants.workspace_id = p.workspace_id
-		  AND issue_id IS NULL AND role_key IS NOT NULL
-		  AND ((subject_type='user' AND subject_id=$2)
-		    OR (subject_type='everyone' AND (subject_id='' OR subject_id=p.workspace_id::text))
-			OR (subject_type='organization' AND subject_id IN (
-		        WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
-		            SELECT org.id, org.parent_id
-		            FROM projectauth_organization_members om
-		            JOIN projectauth_organizations org ON org.id = om.organization_id
-		            WHERE om.user_id=$2
-				  AND om.workspace_id=p.workspace_id
-				  AND org.workspace_id=p.workspace_id
-		              AND org.status = 'active'
-		            UNION
-		            SELECT parent.id, parent.parent_id
-		            FROM user_orgs child
-		            JOIN projectauth_organizations parent ON parent.id = child.parent_id
-				  WHERE parent.workspace_id=p.workspace_id
-		              AND parent.status = 'active'
-		        )
-		        SELECT organization_id::text FROM user_orgs
-		    )))
-		ORDER BY CASE role_key WHEN 'owner' THEN 4 WHEN 'manager' THEN 3 WHEN 'member' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END DESC
-		LIMIT 1`, projectID, userID).Scan(&role)
+		SELECT CASE WHEN EXISTS (
+			SELECT 1
+			FROM project p
+			WHERE p.id=$1
+			  AND p.created_by=$2::uuid
+			  AND EXISTS (
+				SELECT 1
+				FROM member m
+				WHERE m.workspace_id = p.workspace_id
+				  AND m.user_id = p.created_by
+			  )
+		) THEN 'owner'
+		ELSE COALESCE((
+			SELECT role_key
+			FROM projectauth_access_grants g
+			JOIN project p ON p.id = g.project_id
+			WHERE g.project_id=$1
+			  AND g.workspace_id = p.workspace_id
+			  AND g.issue_id IS NULL AND g.role_key IS NOT NULL
+			  AND ((g.subject_type='user' AND g.subject_id=$2::text)
+			    OR (g.subject_type='everyone' AND (g.subject_id='' OR g.subject_id=p.workspace_id::text))
+			    OR (g.subject_type='organization' AND g.subject_id IN (
+			        WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+			            SELECT org.id, org.parent_id
+			            FROM projectauth_organization_members om
+			            JOIN projectauth_organizations org ON org.id = om.organization_id
+			            WHERE om.user_id=$2::uuid
+			              AND om.workspace_id=p.workspace_id
+			              AND org.workspace_id=p.workspace_id
+			              AND org.status = 'active'
+			            UNION
+			            SELECT parent.id, parent.parent_id
+			            FROM user_orgs child
+			            JOIN projectauth_organizations parent ON parent.id = child.parent_id
+			              WHERE parent.workspace_id=p.workspace_id
+			              AND parent.status = 'active'
+			        )
+			        SELECT organization_id::text FROM user_orgs
+			    )))
+			ORDER BY CASE role_key WHEN 'owner' THEN 4 WHEN 'manager' THEN 3 WHEN 'member' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END DESC
+			LIMIT 1
+		), '') END`, projectID, userID).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
+		return "", projectauth.ErrNoProjectAccess
+	}
+	if err == nil && role == "" {
 		return "", projectauth.ErrNoProjectAccess
 	}
 	return projectauth.ProjectRole(role), wrapProjectPermissionRepositoryError(err)
 }
 
 func (r *projectAuthRepository) IssuePermission(ctx context.Context, issueID, userID string, permission projectauth.Permission) (bool, error) {
-	// 2026-09-01 coder(lq): Keep this compatibility method on the canonical
-	// grants table. New authorization checks use projectauth.Service.CheckIssue;
-	// this narrow reader exists only for older callers and must never make the
-	// legacy issue_permissions table an authorization source.
-	var exists bool
-	err := r.db.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM issue i
-			JOIN projectauth_access_grants g
-			  ON g.workspace_id = i.workspace_id
-			 AND g.project_id = i.project_id
-			 AND g.issue_id = i.id
-			 AND g.subject_type = 'user'
-			 AND g.subject_id = $2
-			 AND g.permission = $3
-			WHERE i.id = $1 AND i.project_id IS NOT NULL
-		)`, issueID, userID, string(permission)).Scan(&exists)
-	return exists, wrapProjectPermissionRepositoryError(err)
+	// 2026-09-05 coder(lq): Route this legacy compatibility reader through the
+	// canonical task authorization service so creator ownership and project
+	// inheritance cannot drift from HTTP permission checks.
+	if r == nil || r.db == nil {
+		return false, projectauth.ErrStorageUnavailable
+	}
+	workspaceID, projectID, err := r.IssueProject(ctx, issueID)
+	if err != nil {
+		if errors.Is(err, projectauth.ErrNoProjectAccess) || errors.Is(err, projectauth.ErrCrossWorkspace) {
+			return false, nil
+		}
+		return false, err
+	}
+	workspaceRole, err := r.WorkspaceRole(ctx, workspaceID, userID)
+	if err != nil {
+		if errors.Is(err, projectauth.ErrNotWorkspaceMember) || errors.Is(err, projectauth.ErrNoProjectAccess) {
+			return false, nil
+		}
+		return false, err
+	}
+	service := projectauth.New(r, true)
+	if err := service.CheckIssue(ctx, projectauth.Subject{
+		UserID:        userID,
+		WorkspaceID:   workspaceID,
+		WorkspaceRole: workspaceRole,
+	}, issueID, projectID, permission); err != nil {
+		if errors.Is(err, projectauth.ErrForbidden) ||
+			errors.Is(err, projectauth.ErrNoProjectAccess) ||
+			errors.Is(err, projectauth.ErrNotWorkspaceMember) ||
+			errors.Is(err, projectauth.ErrCrossWorkspace) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // 2026-08-31 coder(lq): Unified grant reads are kept in this adapter so the
@@ -141,7 +187,7 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 	query := `
 		SELECT id::text, workspace_id::text, project_id::text, COALESCE(issue_id::text, ''),
 		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
-		       COALESCE(permission, ''), source, COALESCE(granted_by::text, '')
+		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text
 		FROM projectauth_access_grants
 		WHERE workspace_id = $1 AND project_id = $2 AND (($3 = '' AND issue_id IS NULL) OR ($3 <> '' AND (issue_id IS NULL OR issue_id = $3::uuid)))
 		ORDER BY created_at, id`
@@ -149,19 +195,119 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 	if err != nil {
 		return nil, wrapProjectPermissionRepositoryError(err)
 	}
-	defer rows.Close()
 	grants := make([]projectauth.AccessGrant, 0)
 	for rows.Next() {
 		var grant projectauth.AccessGrant
 		var issueID, roleKey, permission, grantedBy string
 		if err := rows.Scan(&grant.ID, &grant.WorkspaceID, &grant.ProjectID, &issueID,
-			&grant.SubjectType, &grant.SubjectID, &roleKey, &permission, &grant.Source, &grantedBy); err != nil {
+			&grant.SubjectType, &grant.SubjectID, &roleKey, &permission, &grant.Source, &grantedBy, &grant.CreatedAt); err != nil {
 			return nil, wrapProjectPermissionRepositoryError(err)
 		}
 		grant.IssueID, grant.Role, grant.Permission, grant.GrantedBy = issueID, projectauth.ProjectRole(roleKey), projectauth.Permission(permission), grantedBy
 		grants = append(grants, grant)
 	}
-	return grants, wrapProjectPermissionRepositoryError(rows.Err())
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	rows.Close()
+	// 2026-09-05 coder(lq): Project and task creators have immutable Owner
+	// access even when the deployment has not run either creator backfill
+	// migration. Return read-only virtual rows for both scopes so the dialogs
+	// accurately describe effective access without mutating data during GET.
+	var projectCreatorID, projectCreatedAt string
+	err = r.db.QueryRow(ctx, `
+		SELECT CASE WHEN EXISTS (
+			SELECT 1
+			FROM member m
+			WHERE m.workspace_id = p.workspace_id
+			  AND m.user_id = p.created_by
+		) THEN COALESCE(p.created_by::text, '') ELSE '' END,
+			COALESCE(p.created_at::text, '')
+		FROM project p
+		WHERE p.id = $1 AND p.workspace_id = $2`, projectID, workspaceID).Scan(&projectCreatorID, &projectCreatedAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	if projectCreatorID != "" {
+		projectCreatorOwnerExists := false
+		for _, grant := range grants {
+			if grant.IssueID == "" && grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == projectCreatorID && grant.Role == projectauth.ProjectOwner {
+				projectCreatorOwnerExists = true
+				break
+			}
+		}
+		if !projectCreatorOwnerExists {
+			grants = append(grants, projectauth.AccessGrant{
+				ID:          "creator-owner-" + projectID + "-" + projectCreatorID,
+				WorkspaceID: workspaceID,
+				ProjectID:   projectID,
+				SubjectType: projectauth.SubjectUser,
+				SubjectID:   projectCreatorID,
+				Role:        projectauth.ProjectOwner,
+				Source:      projectauth.GrantSourceSystem,
+				CreatedAt:   projectCreatedAt,
+			})
+		}
+	}
+	if issueID != "" {
+		var issueCreatorID, issueCreatedAt string
+		err = r.db.QueryRow(ctx, `
+			SELECT CASE
+				WHEN EXISTS (
+					SELECT 1
+					FROM member m
+					WHERE m.workspace_id = i.workspace_id
+					  AND m.user_id = CASE
+						WHEN i.creator_type = 'member' THEN i.creator_id
+						WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN a.owner_id
+						ELSE NULL
+					  END
+				) THEN CASE
+					WHEN i.creator_type = 'member' THEN COALESCE(i.creator_id::text, '')
+					WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN COALESCE(a.owner_id::text, '')
+					ELSE ''
+				END
+				ELSE ''
+			END, COALESCE(i.created_at::text, '')
+			FROM issue i
+			LEFT JOIN agent a
+			  ON a.id = i.creator_id
+			 AND a.workspace_id = i.workspace_id
+			 AND a.kind = 'user'
+			WHERE i.id = $1::uuid
+			  AND i.workspace_id = $2
+			  AND i.project_id = $3`, issueID, workspaceID, projectID).Scan(&issueCreatorID, &issueCreatedAt)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, wrapProjectPermissionRepositoryError(err)
+		}
+		// A task creator who is also the project creator already has the
+		// project-scope hard Owner row above; do not duplicate it in the task
+		// dialog. Other task creators receive a task-only virtual Owner row.
+		if issueCreatorID != "" && issueCreatorID != projectCreatorID {
+			issueCreatorOwnerExists := false
+			for _, grant := range grants {
+				if grant.IssueID == issueID && grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == issueCreatorID && grant.Role == projectauth.ProjectOwner {
+					issueCreatorOwnerExists = true
+					break
+				}
+			}
+			if !issueCreatorOwnerExists {
+				grants = append(grants, projectauth.AccessGrant{
+					ID:          "creator-owner-" + issueID + "-" + issueCreatorID,
+					WorkspaceID: workspaceID,
+					ProjectID:   projectID,
+					IssueID:     issueID,
+					SubjectType: projectauth.SubjectUser,
+					SubjectID:   issueCreatorID,
+					Role:        projectauth.ProjectOwner,
+					Source:      projectauth.GrantSourceSystem,
+					CreatedAt:   issueCreatedAt,
+				})
+			}
+		}
+	}
+	return grants, nil
 }
 
 // GetAccessGrant reads the canonical row after an upsert so callers receive
@@ -175,16 +321,16 @@ func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID,
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, workspace_id::text, project_id::text, COALESCE(issue_id::text, ''),
 		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
-		       COALESCE(permission, ''), source, COALESCE(granted_by::text, '')
-		FROM projectauth_access_grants
+		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text
+		FROM projectauth_access_grants g
 		WHERE workspace_id=$1 AND project_id=$2
 		  AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
-		  AND subject_type=$4 AND COALESCE(subject_id, '') = COALESCE($5, '')
-		  AND role_key IS NOT DISTINCT FROM NULLIF($6,'')
-		  AND permission IS NOT DISTINCT FROM NULLIF($7,'')
+		  AND g.subject_type=$4 AND COALESCE(g.subject_id, '') = COALESCE($5, '')
+		  AND g.role_key IS NOT DISTINCT FROM NULLIF($6,'')
+		  AND g.permission IS NOT DISTINCT FROM NULLIF($7,'')
 		LIMIT 1`, workspaceID, projectID, issueID, string(subjectType), subjectID, string(role), string(permission)).
 		Scan(&grant.ID, &grant.WorkspaceID, &grant.ProjectID, &issue, &grant.SubjectType, &grant.SubjectID,
-			&roleKey, &permissionKey, &source, &grantedBy)
+			&roleKey, &permissionKey, &source, &grantedBy, &grant.CreatedAt)
 	if err != nil {
 		return projectauth.AccessGrant{}, wrapProjectPermissionRepositoryError(err)
 	}
@@ -300,12 +446,48 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 		}
 		grant.WorkspaceID = workspaceID
 	}
+	// 2026-09-05 coder(lq): Keep creator Owner immutable at the final
+	// persistence seam. Service methods and compatibility adapters already
+	// normalize this role, but direct repository callers must not be able to
+	// downgrade a project/task creator to Member or Viewer.
+	if grant.SubjectType == projectauth.SubjectUser && grant.Permission == "" && grant.Role != projectauth.ProjectOwner {
+		creatorID := ""
+		var err error
+		if grant.IssueID != "" {
+			creatorID, err = r.IssueCreator(ctx, grant.IssueID)
+		} else if grant.ProjectID != "" {
+			creatorID, err = r.ProjectCreator(ctx, grant.ProjectID)
+		}
+		if err != nil {
+			return err
+		}
+		if creatorID != "" && creatorID == grant.SubjectID {
+			grant.Role = projectauth.ProjectOwner
+		}
+	}
+	// 2026-09-05 coder(lq): The project/task uniqueness indexes are partial
+	// expression indexes, so PostgreSQL cannot infer them for a bare
+	// "ON CONFLICT DO UPDATE". Keep the write idempotent with a conflict-safe
+	// insert followed by a key-based metadata update; both statements run in
+	// the caller's transaction.
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO projectauth_access_grants
 			(workspace_id, project_id, issue_id, subject_type, subject_id, role_key, permission, source, granted_by)
 		VALUES ($1,$2,NULLIF($3,'')::uuid,$4,COALESCE($5,''),NULLIF($6,''),NULLIF($7,''),$8,NULLIF($9,'')::uuid)
-		ON CONFLICT DO UPDATE
-		DO UPDATE SET source = EXCLUDED.source, granted_by = EXCLUDED.granted_by, updated_at = now()`,
+		ON CONFLICT DO NOTHING`,
+		grant.WorkspaceID, grant.ProjectID, grant.IssueID, string(grant.SubjectType), grant.SubjectID,
+		string(grant.Role), string(grant.Permission), string(grant.Source), grant.GrantedBy)
+	if err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	_, err = r.db.Exec(ctx, `
+		UPDATE projectauth_access_grants
+		SET source=$8, granted_by=NULLIF($9,'')::uuid, updated_at=now()
+		WHERE workspace_id=$1 AND project_id=$2
+		  AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
+		  AND subject_type=$4 AND COALESCE(subject_id,'')=COALESCE($5,'')
+		  AND role_key IS NOT DISTINCT FROM NULLIF($6,'')
+		  AND permission IS NOT DISTINCT FROM NULLIF($7,'')`,
 		grant.WorkspaceID, grant.ProjectID, grant.IssueID, string(grant.SubjectType), grant.SubjectID,
 		string(grant.Role), string(grant.Permission), string(grant.Source), grant.GrantedBy)
 	return wrapProjectPermissionRepositoryError(err)
@@ -313,30 +495,107 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 
 func (r *projectAuthRepository) DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType projectauth.SubjectType, subjectID string, role projectauth.ProjectRole, permission projectauth.Permission) error {
 	_, err := r.db.Exec(ctx, `
-		DELETE FROM projectauth_access_grants
-		WHERE workspace_id=$1 AND project_id=$2 AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
-		  AND subject_type=$4 AND COALESCE(subject_id, '') = COALESCE($5, '')
-		  AND role_key IS NOT DISTINCT FROM NULLIF($6,'')
-		  AND permission IS NOT DISTINCT FROM NULLIF($7,'')`, workspaceID, projectID, issueID,
+		WITH project_lock AS (
+			SELECT pg_advisory_xact_lock(hashtextextended($2::text, 0))
+		)
+		DELETE FROM projectauth_access_grants g
+		USING project p
+		WHERE EXISTS (SELECT 1 FROM project_lock)
+		  AND p.id = g.project_id
+		  AND p.workspace_id = $1
+		  AND g.workspace_id=$1 AND g.project_id=$2 AND g.issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
+		  AND g.subject_type=$4 AND COALESCE(g.subject_id, '') = COALESCE($5, '')
+		  AND g.role_key IS NOT DISTINCT FROM NULLIF($6,'')
+		  AND g.permission IS NOT DISTINCT FROM NULLIF($7,'')
+		  AND (
+			-- 2026-09-05 coder(lq): Task-scope creator Owner is immutable,
+			-- while every other task grant is removable independently of the
+			-- number of project Owners.
+			(
+				g.issue_id IS NOT NULL
+				AND NOT (
+					g.role_key = 'owner'
+					AND g.subject_type = 'user'
+					AND EXISTS (
+						SELECT 1
+						FROM issue i
+						LEFT JOIN agent a
+						  ON a.id = i.creator_id
+						 AND a.workspace_id = i.workspace_id
+						 AND a.kind = 'user'
+						WHERE i.id = g.issue_id
+						  AND i.project_id = g.project_id
+						  AND (
+							(i.creator_type = 'member' AND i.creator_id::text = g.subject_id)
+							OR (i.creator_type = 'agent' AND a.owner_id IS NOT NULL AND a.owner_id::text = g.subject_id)
+						  )
+					)
+				)
+			)
+			OR
+			-- Project-scope non-Owner grants are always removable.
+			(
+				g.issue_id IS NULL
+				AND g.role_key IS DISTINCT FROM 'owner'
+			)
+			OR
+			-- A project Owner can be removed only when it is not the immutable
+			-- project creator and another physical project Owner remains.
+			(
+				g.issue_id IS NULL
+				AND g.role_key = 'owner'
+				AND NOT (
+					g.subject_type = 'user'
+					AND p.created_by IS NOT NULL
+					AND g.subject_id = p.created_by::text
+				)
+				AND (
+					SELECT count(*)
+					FROM projectauth_access_grants owners
+					WHERE owners.workspace_id = g.workspace_id
+					  AND owners.project_id = g.project_id
+					  AND owners.issue_id IS NULL
+					  AND owners.role_key = 'owner'
+				) > 1
+			)
+		  )`, workspaceID, projectID, issueID,
 		string(subjectType), subjectID, string(role), string(permission))
 	return wrapProjectPermissionRepositoryError(err)
 }
 
-// CurrentProjectRoles resolves explicit project grants in one query for the
-// project list response. Workspace-owner inheritance remains an access-control
-// rule, but it is intentionally not reported as a project role: the table's
-// "my role" column must describe the caller's membership on that project.
+// CurrentProjectRoles resolves project grants and the immutable creator owner
+// role in one query for the project list response. Workspace-owner inheritance
+// remains an access-control rule, but it is intentionally not reported as a
+// project role: the table's "my role" column describes project-specific access.
 // 2026-08-31 coder(lq): Keep effective workspace access separate from project
-// membership metadata so workspace owners do not appear as project owners.
+// membership metadata so workspace owners are shown as owners only when they
+// are also the immutable creator or have an explicit project owner grant.
 func (r *projectAuthRepository) CurrentProjectRoles(ctx context.Context, workspaceID, userID string) (map[string]projectauth.ProjectRole, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT project_id::text, role_key
+		SELECT p.id::text, 'owner'::text
+		FROM project p
+		WHERE p.workspace_id=$1
+		  AND p.created_by=$2::uuid
+		  AND EXISTS (
+			SELECT 1
+			FROM member m
+			WHERE m.workspace_id = p.workspace_id
+			  AND m.user_id = p.created_by
+		  )
+
+		UNION ALL
+
+		SELECT g.project_id::text, g.role_key
 		FROM projectauth_access_grants g
 		JOIN project p ON p.id = g.project_id AND p.workspace_id = g.workspace_id
 		WHERE g.workspace_id=$1 AND g.issue_id IS NULL AND g.role_key IS NOT NULL
 		  AND (
-			(g.subject_type='user' AND g.subject_id=$2)
-			OR (g.subject_type='everyone' AND (g.subject_id='' OR g.subject_id=$1))
+			-- 2026-09-05 coder(lq): subject_id is stored as text while the
+			-- workspace/user parameters are inferred as UUID by the first
+			-- SELECT; cast them explicitly so the role metadata query cannot
+			-- fail with PostgreSQL's "text = uuid" operator error.
+			(g.subject_type='user' AND g.subject_id=$2::text)
+			OR (g.subject_type='everyone' AND (g.subject_id='' OR g.subject_id=$1::text))
 			OR (g.subject_type='organization' AND g.subject_id IN (
 				WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
 					SELECT org.id, org.parent_id
@@ -447,9 +706,12 @@ func projectPermissionSchemaMissing(err error) bool {
 	// migration-state problem. A partially applied 439 can create one overlay
 	// table while leaving a required column absent, which otherwise surfaces as
 	// the generic report error and gives self-hosted operators no next step.
+	// 42P10 covers an overlay table that exists but is missing the unique index
+	// required by the grant upsert, another symptom of a partial migration.
 	switch pgErr.Code {
 	case "42P01", // undefined_table
-		"42703": // undefined_column
+		"42703", // undefined_column
+		"42P10": // invalid ON CONFLICT target
 		return true
 	default:
 		return false
@@ -626,6 +888,30 @@ func (r *projectAuthRepository) IssueProject(ctx context.Context, issueID string
 	return workspaceID, projectID, wrapProjectPermissionRepositoryError(err)
 }
 
+// IssueCreator resolves a task creator to a native user ID. Agent-authored
+// tasks use the owning human as their effective creator for authorization.
+// 2026-09-05 coder(lq): Keep the immutable task-owner invariant in the SQL
+// adapter so service and direct repository paths use the same identity.
+func (r *projectAuthRepository) IssueCreator(ctx context.Context, issueID string) (string, error) {
+	var creatorID string
+	err := r.db.QueryRow(ctx, `
+		SELECT CASE
+			WHEN i.creator_type = 'member' THEN i.creator_id::text
+			WHEN i.creator_type = 'agent' AND a.kind = 'user' AND a.owner_id IS NOT NULL THEN a.owner_id::text
+			ELSE ''
+		END
+		FROM issue i
+		LEFT JOIN agent a
+		  ON a.id = i.creator_id
+		 AND a.workspace_id = i.workspace_id
+		 AND a.kind = 'user'
+		WHERE i.id = $1 AND i.project_id IS NOT NULL`, issueID).Scan(&creatorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", projectauth.ErrNoProjectAccess
+	}
+	return creatorID, wrapProjectPermissionRepositoryError(err)
+}
+
 func (r *projectAuthRepository) VisibleProjectIDs(ctx context.Context, workspaceID, userID string) ([]string, error) {
 	return r.VisibleProjectIDsWithWorkspaceScope(ctx, workspaceID, userID, true)
 }
@@ -663,7 +949,18 @@ func (r *projectAuthRepository) VisibleProjectIDsWithWorkspaceScope(ctx context.
 }
 
 func (r *projectAuthRepository) AddProjectMember(ctx context.Context, projectID, userID string, role projectauth.ProjectRole) error {
-	_, err := r.db.Exec(ctx, `
+	// 2026-09-05 coder(lq): The creator Owner invariant must hold even when a
+	// legacy caller reaches this adapter without going through Service.AddMember.
+	// Normalize the requested role before writing both compatibility and
+	// canonical rows so a direct update cannot downgrade the project creator.
+	creator, err := r.ProjectCreator(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if creator == userID {
+		role = projectauth.ProjectOwner
+	}
+	_, err = r.db.Exec(ctx, `
 		INSERT INTO project_members (project_id, user_id, role, custom_role_id)
 		SELECT $1, $2, $3
 			, (SELECT id FROM project_permission_roles WHERE workspace_id = (SELECT workspace_id FROM project WHERE id=$1) AND role_key=$3 AND is_system=false)
@@ -675,7 +972,10 @@ func (r *projectAuthRepository) AddProjectMember(ctx context.Context, projectID,
 		ON CONFLICT (project_id, user_id)
 		DO UPDATE SET role = EXCLUDED.role, custom_role_id = EXCLUDED.custom_role_id, updated_at = now()`, projectID, userID, role)
 	if err != nil {
-		return err
+		// 2026-09-04 coder(lq): Preserve migration-state errors at the
+		// authorization boundary so project/member APIs can tell operators to
+		// run the permission migrations instead of returning a generic 500.
+		return wrapProjectPermissionRepositoryError(err)
 	}
 	return r.UpsertAccessGrant(ctx, projectauth.AccessGrant{ProjectID: projectID, SubjectType: projectauth.SubjectUser, SubjectID: userID, Role: role, Source: projectauth.GrantSourceManual})
 }
@@ -683,9 +983,19 @@ func (r *projectAuthRepository) AddProjectMember(ctx context.Context, projectID,
 // 2026-08-27 coder(lq): Keep automatic role upgrades atomic in PostgreSQL so
 // concurrent assignment and mention events cannot downgrade an existing role.
 func (r *projectAuthRepository) PromoteProjectMember(ctx context.Context, projectID, userID string, minimumRole projectauth.ProjectRole) error {
-	_, err := r.db.Exec(ctx, `
+	// 2026-09-05 coder(lq): Automatic promotions (assignee, lead, mention,
+	// onboarding) are monotonic, but the creator rule is stronger: a creator
+	// must remain Owner even when this compatibility API is called directly.
+	creator, err := r.ProjectCreator(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if creator == userID {
+		minimumRole = projectauth.ProjectOwner
+	}
+	_, err = r.db.Exec(ctx, `
 		INSERT INTO project_members (project_id, user_id, role)
-		SELECT $1, $2, $3
+		SELECT $1, $2, CASE WHEN EXISTS (SELECT 1 FROM project p WHERE p.id=$1 AND p.created_by=$2::uuid) THEN 'owner' ELSE $3 END
 		WHERE EXISTS (
 			SELECT 1 FROM project p
 			JOIN member m ON m.workspace_id = p.workspace_id
@@ -702,17 +1012,53 @@ func (r *projectAuthRepository) PromoteProjectMember(ctx context.Context, projec
 			ELSE EXCLUDED.role
 		END, updated_at = now()`, projectID, userID, minimumRole)
 	if err != nil {
-		return err
+		// 2026-09-04 coder(lq): The owner seed runs inside project creation;
+		// normalize missing permission columns/tables before the handler maps
+		// the error to a client-visible migration response.
+		return wrapProjectPermissionRepositoryError(err)
 	}
 	return r.UpsertAccessGrant(ctx, projectauth.AccessGrant{ProjectID: projectID, SubjectType: projectauth.SubjectUser, SubjectID: userID, Role: minimumRole, Source: projectauth.GrantSourceSystem})
 }
 
 func (r *projectAuthRepository) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
-	if _, err := r.db.Exec(ctx, `DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID); err != nil {
+	// 2026-09-05 coder(lq): Keep the immutable creator Owner and the final
+	// project Owner protected at the storage seam as well as in Service. This
+	// covers old jobs or adapters that call the compatibility method directly.
+	creator, err := r.ProjectCreator(ctx, projectID)
+	if err != nil {
 		return err
 	}
-	_, err := r.db.Exec(ctx, `DELETE FROM projectauth_access_grants WHERE project_id=$1 AND issue_id IS NULL AND subject_type='user' AND subject_id=$2`, projectID, userID)
-	return err
+	if creator == userID {
+		return projectauth.ErrLastOwner
+	}
+	var targetRole string
+	if err := r.db.QueryRow(ctx, `
+		SELECT COALESCE((
+			SELECT role_key
+			FROM projectauth_access_grants
+			WHERE project_id=$1 AND issue_id IS NULL AND subject_type='user' AND subject_id=$2
+			ORDER BY CASE role_key WHEN 'owner' THEN 4 WHEN 'manager' THEN 3 WHEN 'member' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END DESC
+			LIMIT 1
+		), '')`, projectID, userID).Scan(&targetRole); err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	if targetRole == string(projectauth.ProjectOwner) {
+		var ownerCount int
+		if err := r.db.QueryRow(ctx, `
+			SELECT count(*)
+			FROM projectauth_access_grants
+			WHERE project_id=$1 AND issue_id IS NULL AND role_key='owner'`, projectID).Scan(&ownerCount); err != nil {
+			return wrapProjectPermissionRepositoryError(err)
+		}
+		if ownerCount <= 1 {
+			return projectauth.ErrLastOwner
+		}
+	}
+	if _, err := r.db.Exec(ctx, `DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID); err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	_, err = r.db.Exec(ctx, `DELETE FROM projectauth_access_grants WHERE project_id=$1 AND issue_id IS NULL AND subject_type='user' AND subject_id=$2`, projectID, userID)
+	return wrapProjectPermissionRepositoryError(err)
 }
 
 func (r *projectAuthRepository) ListProjectMembers(ctx context.Context, projectID string) ([]projectauth.ProjectMemberRecord, error) {
@@ -740,7 +1086,45 @@ func (r *projectAuthRepository) ListProjectMembers(ctx context.Context, projectI
 		member.Role = projectauth.ProjectRole(role)
 		result = append(result, member)
 	}
-	return result, wrapProjectPermissionRepositoryError(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	rows.Close()
+
+	// 2026-09-05 coder(lq): The project creator is an immutable Owner even
+	// when the historical creator backfill was not run. Include a virtual
+	// member row for this legacy endpoint so owner-count protection and the
+	// project member dialog use the same runtime rule as ProjectRole/Check.
+	var creatorID string
+	err = r.db.QueryRow(ctx, `
+		SELECT CASE WHEN EXISTS (
+			SELECT 1
+			FROM member m
+			WHERE m.workspace_id = p.workspace_id
+			  AND m.user_id = p.created_by
+		) THEN COALESCE(p.created_by::text, '') ELSE '' END
+		FROM project p
+		WHERE p.id = $1`, projectID).Scan(&creatorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	if creatorID == "" {
+		return result, nil
+	}
+	for _, member := range result {
+		if member.UserID == creatorID && member.Role == projectauth.ProjectOwner {
+			return result, nil
+		}
+	}
+	result = append(result, projectauth.ProjectMemberRecord{
+		ProjectID: projectID,
+		UserID:    creatorID,
+		Role:      projectauth.ProjectOwner,
+	})
+	return result, nil
 }
 
 // 2026-08-31 coder(lq): Keep report SQL in the Handler adapter so the
@@ -773,6 +1157,78 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			  -- Project grants remain in scope when the report is filtered to one
 			  -- issue because they materialize inherited permissions below.
 			  AND ($3 = '' OR g.issue_id IS NULL OR g.issue_id::text = $3)
+
+			UNION ALL
+
+			-- 2026-09-05 coder(lq): Creator Owner is an immutable runtime rule,
+			-- not dependent on the optional backfill migration. Keep it in the
+			-- report's canonical facts so legacy projects still show their real
+			-- effective Owner role. A physical Owner grant wins this de-dup check.
+			SELECT 'creator-owner-project-' || p.id::text, p.workspace_id::text,
+				p.id::text, ''::text, 'user'::text, p.created_by::text,
+				'owner'::text, NULL::text, 'system'::text, ''::text
+			FROM project p
+			JOIN member creator_member
+			  ON creator_member.workspace_id = p.workspace_id
+			 AND creator_member.user_id = p.created_by
+			WHERE p.workspace_id = $1
+			  AND p.created_by IS NOT NULL
+			  AND ($2 = '' OR p.id::text = $2)
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM projectauth_access_grants owner_grant
+				WHERE owner_grant.workspace_id = p.workspace_id
+				  AND owner_grant.project_id = p.id
+				  AND owner_grant.issue_id IS NULL
+				  AND owner_grant.subject_type = 'user'
+				  AND owner_grant.subject_id = p.created_by::text
+				  AND owner_grant.role_key = 'owner'
+			  )
+
+			UNION ALL
+
+			-- 2026-09-05 coder(lq): Tasks have the same immutable Owner rule.
+			-- Agent-authored tasks resolve to the owning human; the task scope is
+			-- deliberately kept on issue_id so it cannot become project access.
+			SELECT 'creator-owner-issue-' || i.id::text, i.workspace_id::text,
+				i.project_id::text, i.id::text, 'user'::text,
+				CASE
+					WHEN i.creator_type = 'member' THEN i.creator_id::text
+					WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN a.owner_id::text
+					ELSE ''
+				END,
+				'owner'::text, NULL::text, 'system'::text, ''::text
+			FROM issue i
+			JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
+			LEFT JOIN agent a
+			  ON a.id = i.creator_id
+			 AND a.workspace_id = i.workspace_id
+			 AND a.kind = 'user'
+			JOIN member creator_member
+			  ON creator_member.workspace_id = i.workspace_id
+			 AND creator_member.user_id = CASE
+				WHEN i.creator_type = 'member' THEN i.creator_id
+				WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN a.owner_id
+				ELSE NULL
+			 END
+			WHERE i.workspace_id = $1
+			  AND i.project_id IS NOT NULL
+			  AND ($2 = '' OR i.project_id::text = $2)
+			  AND ($3 = '' OR i.id::text = $3)
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM projectauth_access_grants owner_grant
+				WHERE owner_grant.workspace_id = i.workspace_id
+				  AND owner_grant.project_id = i.project_id
+				  AND owner_grant.issue_id = i.id
+				  AND owner_grant.subject_type = 'user'
+				  AND owner_grant.subject_id = CASE
+					WHEN i.creator_type = 'member' THEN i.creator_id::text
+					WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN a.owner_id::text
+					ELSE ''
+				  END
+				  AND owner_grant.role_key = 'owner'
+			  )
 		), permission_rows AS (
 			SELECT c.*, c.permission AS permission_key
 			FROM canonical c WHERE c.permission IS NOT NULL

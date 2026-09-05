@@ -147,6 +147,7 @@
   },
   "picker": {
     "no_project": "无项目",
+    "project_unavailable": "项目不可见",
     "empty": "还没有项目",
     "search_placeholder": "搜索项目...",
     "clear_aria": "清除项目"
@@ -170,6 +171,11 @@
     "dialog_description": "选择工作区成员，并统一授予项目角色。已授权成员也可以重新选择角色。",
     "current_access": "当前项目权限",
     "current_access_empty": "暂无明确的项目权限",
+    "project_permission_source": "权限来源",
+    "project_permission_role": "权限角色",
+    "project_permission_granted_at": "授权时间",
+    "direct_project_grant": "项目直接授权",
+    "project_member_source": "项目成员",
     "add_members": "添加成员",
     "add_members_description": "选择尚未获得项目权限的工作区成员。",
     "selected_role_aria": "为所选成员设置角色",
@@ -232,6 +238,18 @@
     "task_authorization_removed": "任务权限已移除",
     "task_authorization_remove_failed": "任务权限移除失败",
     "remove_task_access_aria": "移除任务权限",
+    "task_permission_name": "姓名",
+    "task_permission_source": "权限来源",
+    "task_permission_role": "权限角色",
+    "task_permission_granted_at": "授权时间",
+    "task_permission_object_type": "授权对象类型",
+    "task_permission_object": "授权对象",
+    "task_permission_people_selected": "已选人员",
+    "task_permission_organizations_selected": "已选部门",
+    "task_permission_remove_selected": "移除",
+    "task_permission_select_people": "选择人员",
+    "task_permission_select_departments": "选择部门",
+    "task_permission_no_members": "暂无工作区成员",
     "select_project_role_key": "项目角色标识"
   },
   "toolbar": {

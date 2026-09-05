@@ -18,6 +18,7 @@ func TestProjectPermissionSchemaMissing(t *testing.T) {
 		{name: "missing table", err: &pgconn.PgError{Code: "42P01"}, want: true},
 		{name: "wrapped missing table", err: errors.Join(errors.New("query failed"), &pgconn.PgError{Code: "42P01"}), want: true},
 		{name: "missing column", err: &pgconn.PgError{Code: "42703"}, want: true},
+		{name: "missing grant uniqueness", err: &pgconn.PgError{Code: "42P10"}, want: true},
 		{name: "different postgres error", err: &pgconn.PgError{Code: "42501"}, want: false},
 		{name: "plain error", err: errors.New("query failed"), want: false},
 		{name: "nil", err: nil, want: false},

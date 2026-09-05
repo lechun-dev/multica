@@ -3391,6 +3391,7 @@ export const ProjectAccessGrantSchema = z.object({
   permission: z.string().optional(),
   source: z.string().default("manual"),
   granted_by: z.string().optional(),
+  created_at: z.string().optional(),
 }).loose();
 
 export const ProjectAccessGrantsResponseSchema = z.object({

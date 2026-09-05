@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, ShieldCheck, UserMinus } from "lucide-react";
+import { ShieldCheck, UserMinus } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useConfigStore } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
-import { Input } from "@multica/ui/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -29,6 +27,7 @@ import { toast } from "sonner";
 import { useT } from "../../i18n";
 import type { ProjectAccessGrant, ProjectAccessGrantSubjectType } from "@multica/core/types";
 import { ProjectPermissionOrganizationSelect } from "./project-permission-organization-select";
+import { ProjectMemberMultiSelect } from "./project-member-multi-select";
 
 type ProjectRole = string;
 
@@ -43,6 +42,14 @@ type ProjectPermissionsDialogProps = {
 const BUILTIN_PROJECT_ROLES = ["owner", "manager", "member", "viewer"];
 function projectMembersKey(workspaceId: string, projectId: string) {
   return ["project-members", workspaceId, projectId] as const;
+}
+
+function formatGrantTime(value?: string) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "short" }).format(date);
 }
 
 // 2026-08-27 coder(lq): Keep the private authorization experience in one
@@ -61,14 +68,13 @@ export function ProjectPermissionsDialog({
   const unifiedApi = useConfigStore((state) => state.projectPermissionsEnabled);
   const queryClient = useQueryClient();
   const [internalOpen, setInternalOpen] = useState(false);
-  const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [role, setRole] = useState<ProjectRole>("member");
   // 2026-09-04 coder(lq): Project grants are assigned to people, departments,
   // or everyone. Keep role-subject records readable below for compatibility,
   // but do not offer that advanced grant type in the creation UI.
   const [subjectType, setSubjectType] = useState<Exclude<ProjectAccessGrantSubjectType, "role">>("user");
-  const [subjectId, setSubjectId] = useState("");
+  const [subjectIds, setSubjectIds] = useState<string[]>([]);
   const [granting, setGranting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
@@ -164,16 +170,6 @@ export function ProjectPermissionsDialog({
       : workspaceMembers.filter((member) => !roleByUser.has(member.user_id)),
     [roleByUser, unifiedApi, unifiedUserGrantIds, workspaceMembers],
   );
-  const filteredMembers = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase();
-    return [...addableMembers]
-      .filter((member) => {
-        if (!needle) return true;
-        return `${member.name} ${member.email}`.toLocaleLowerCase().includes(needle);
-      })
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [addableMembers, search]);
-
   // 2026-09-01 coder(lq): The selected subject depends on the grant type;
   // organization and everyone grants must not be blocked by the user
   // checklist left over from the previous subject type.
@@ -181,22 +177,21 @@ export function ProjectPermissionsDialog({
     ? selectedIds.size > 0
     : subjectType === "everyone"
       ? true
-      : Boolean(subjectId.trim());
+      : subjectIds.length > 0;
 
   useEffect(() => {
     if (open) return;
-    setSearch("");
     setSelectedIds(new Set());
     setRole("member");
     setSubjectType("user");
-    setSubjectId("");
+    setSubjectIds([]);
   }, [open]);
 
   useEffect(() => {
     // 2026-09-01 coder(lq): Clear stale selections when switching subject
     // types so a grant cannot accidentally submit an unrelated user or ID.
     setSelectedIds(new Set());
-    setSubjectId("");
+    setSubjectIds([]);
   }, [subjectType]);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: projectMembersKey(workspaceId, projectId) });
@@ -209,18 +204,9 @@ export function ProjectPermissionsDialog({
       return next;
     });
   };
-  const setMemberSelected = (userId: string, selected: boolean) => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (selected) next.add(userId);
-      else next.delete(userId);
-      return next;
-    });
-  };
-
   const grantSelected = async () => {
     if (unifiedApi) {
-      const selectedSubjectIds = subjectType === "user" ? [...selectedIds] : [subjectType === "everyone" ? "" : subjectId.trim()];
+      const selectedSubjectIds = subjectType === "user" ? [...selectedIds] : subjectType === "everyone" ? [""] : subjectIds;
       if ((subjectType === "user" && selectedSubjectIds.length === 0) || (subjectType !== "everyone" && !selectedSubjectIds[0])) return;
       setGranting(true);
       try {
@@ -231,7 +217,7 @@ export function ProjectPermissionsDialog({
         })));
         await refreshGrants();
         setSelectedIds(new Set());
-        setSubjectId("");
+        setSubjectIds([]);
         toast.success(t(($) => $.permissions.grant_success));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : t(($) => $.permissions.grant_failed));
@@ -342,8 +328,6 @@ export function ProjectPermissionsDialog({
     value: item.key,
     label: item.name || item.key,
   }));
-  const allFilteredSelected = filteredMembers.length > 0 && filteredMembers.every((member) => selectedIds.has(member.user_id));
-
   return (
     <>
       {!hideTrigger && (
@@ -353,7 +337,7 @@ export function ProjectPermissionsDialog({
         </Button>
       )}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>{t(($) => $.permissions.dialog_title)}</DialogTitle>
             <DialogDescription>{t(($) => $.permissions.dialog_description)}</DialogDescription>
@@ -367,79 +351,145 @@ export function ProjectPermissionsDialog({
             {unifiedApi && accessGrantsQuery.isLoading ? (
               <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.loading)}</div>
             ) : unifiedApi && accessGrantsQuery.data ? (
-              accessGrantsQuery.data.grants.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-4 text-center text-body text-muted-foreground">{t(($) => $.permissions.current_access_empty)}</div>
-              ) : (
-                <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
-                  {accessGrantsQuery.data.grants.map((grant) => {
-                    const user = grant.subject_id ? workspaceMemberByUser.get(grant.subject_id) : undefined;
-                    const organization = grant.subject_id ? organizationById.get(grant.subject_id) : undefined;
-                    const roleSubject = grant.subject_id ? roleByKey.get(grant.subject_id) : undefined;
-                    const label = grant.subject_type === "everyone"
-                      ? t(($) => $.permissions.everyone)
-                      : grant.subject_type === "organization"
-                        ? t(($) => $.permissions.organization_prefix, { name: organization?.name || grant.subject_id || "" })
-                        : grant.subject_type === "role"
-                          ? t(($) => $.permissions.role_prefix, { name: roleSubject?.name || grant.subject_id || "" })
-                          : `${t(($) => $.permissions.user)}: ${user?.name || user?.email || grant.subject_id || ""}`;
-                    return <div key={grant.id || `${grant.subject_type}-${grant.subject_id}-${grant.role}-${grant.permission}`} className="flex items-center gap-3 rounded-lg border px-2 py-2">
-                      <div className="min-w-0 flex-1"><div className="truncate text-body font-medium">{label}</div><div className="truncate text-caption text-muted-foreground">{grant.role || grant.permission || grant.source}</div></div>
-                      {canManage && grant.subject_type !== "role" && grant.role && <Select items={roleItems} value={grant.role} onValueChange={(value) => value && void updateGrantRole(grant, value)}><SelectTrigger className="w-28" aria-label={`${t(($) => $.permissions.change_role_aria)} ${label}`}><SelectValue /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>}
-                      {canManage && <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_aria)} ${label}`} onClick={() => void removeGrant(grant)}><UserMinus className="size-3.5" /></Button>}
-                    </div>;
-                  })}
-                </div>
-              )
+              <div className="max-h-64 overflow-auto rounded-lg border">
+                <table className="w-full min-w-[620px] text-body">
+                  <thead className="bg-muted/40 text-left text-caption text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.user)}</th>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.project_permission_source)}</th>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.project_permission_role)}</th>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.project_permission_granted_at)}</th>
+                      <th className="w-12 px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accessGrantsQuery.data.grants.length === 0 ? (
+                      <tr><td colSpan={5} className="px-3 py-6 text-center text-caption text-muted-foreground">{t(($) => $.permissions.current_access_empty)}</td></tr>
+                    ) : accessGrantsQuery.data.grants.map((grant) => {
+                      const user = grant.subject_id ? workspaceMemberByUser.get(grant.subject_id) : undefined;
+                      const organization = grant.subject_id ? organizationById.get(grant.subject_id) : undefined;
+                      const roleSubject = grant.subject_id ? roleByKey.get(grant.subject_id) : undefined;
+                      const label = grant.subject_type === "everyone"
+                        ? t(($) => $.permissions.everyone)
+                        : grant.subject_type === "organization"
+                          ? t(($) => $.permissions.organization_prefix, { name: organization?.name || grant.subject_id || "" })
+                          : grant.subject_type === "role"
+                            ? t(($) => $.permissions.role_prefix, { name: roleSubject?.name || grant.subject_id || "" })
+                            : user?.name || user?.email || grant.subject_id || "—";
+                      const subjectTypeLabel = grant.subject_type === "organization"
+                        ? t(($) => $.permissions.organization)
+                        : grant.subject_type === "everyone"
+                          ? t(($) => $.permissions.everyone)
+                          : grant.subject_type === "role"
+                            ? t(($) => $.permissions.role)
+                            : t(($) => $.permissions.user);
+                      const source = grant.source === "manual" ? t(($) => $.permissions.direct_project_grant) : grant.source;
+                      // 2026-09-05 coder(lq): The project creator's Owner is a
+                      // hard permission. Keep system/migration rows visible in
+                      // the audit list, but do not offer mutations that the
+                      // server must reject.
+                      const isImmutableCreatorOwner = grant.issue_id == null
+                        && grant.subject_type === "user"
+                        && grant.role === "owner"
+                        && (grant.source === "system" || grant.source === "migration");
+                      return (
+                        <tr key={grant.id || `${grant.subject_type}-${grant.subject_id}-${grant.role}-${grant.permission}`} className="border-t">
+                          <td className="px-3 py-2"><div className="font-medium">{label}</div><div className="text-caption text-muted-foreground">{subjectTypeLabel}</div></td>
+                          <td className="px-3 py-2 text-muted-foreground">{source}</td>
+                          <td className="px-3 py-2">
+                            {canManage && !isImmutableCreatorOwner && grant.subject_type !== "role" && grant.role ? (
+                              <Select modal={false} items={roleItems} value={grant.role} onValueChange={(value) => value && void updateGrantRole(grant, value)}>
+                                <SelectTrigger className="w-32" aria-label={`${t(($) => $.permissions.change_role_aria)} ${label}`}><SelectValue /></SelectTrigger>
+                                <SelectContent alignItemWithTrigger={false}>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent>
+                              </Select>
+                            ) : <span>{roleByKey.get(grant.role || "")?.name || grant.role || grant.permission || "—"}</span>}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{formatGrantTime(grant.created_at)}</td>
+                          <td className="px-3 py-2">{canManage && !isImmutableCreatorOwner && <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_aria)} ${label}`} onClick={() => void removeGrant(grant)}><UserMinus className="size-3.5" /></Button>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : projectMembersQuery.isLoading ? (
               <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.loading)}</div>
-            ) : currentMembers.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-4 text-center text-body text-muted-foreground">{t(($) => $.permissions.current_access_empty)}</div>
             ) : (
-              <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
-                {currentMembers.map((member) => {
-                  const profile = member.profile;
-                  const name = profile?.name || member.user_id;
-                  return (
-                    <div key={member.user_id} className="flex items-center gap-3 rounded-lg border px-2 py-2">
-                      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-caption font-medium">{name.slice(0, 1).toLocaleUpperCase()}</div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-body font-medium">{name}</div>
-                        {profile?.email && <div className="truncate text-caption text-muted-foreground">{profile.email}</div>}
-                      </div>
-                      <Select items={roleItems} value={member.role as ProjectRole} onValueChange={(value) => value && void updateMemberRole(member.user_id, value)}>
-                        <SelectTrigger className="w-28" aria-label={`${t(($) => $.permissions.change_role_aria)} ${name}`}><SelectValue /></SelectTrigger>
-                        <SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent>
-                      </Select>
-                      <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_aria)} ${name}`} disabled={removingId === member.user_id} onClick={() => void removeMember(member.user_id)}><UserMinus className="size-3.5" /></Button>
-                    </div>
-                  );
-                })}
+              <div className="max-h-64 overflow-auto rounded-lg border">
+                <table className="w-full min-w-[620px] text-body">
+                  <thead className="bg-muted/40 text-left text-caption text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.user)}</th>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.project_permission_source)}</th>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.project_permission_role)}</th>
+                      <th className="px-3 py-2 font-medium">{t(($) => $.permissions.project_permission_granted_at)}</th>
+                      <th className="w-12 px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {currentMembers.length === 0 ? (
+                      <tr><td colSpan={5} className="px-3 py-6 text-center text-caption text-muted-foreground">{t(($) => $.permissions.current_access_empty)}</td></tr>
+                    ) : currentMembers.map((member) => {
+                      const profile = member.profile;
+                      const name = profile?.name || member.user_id;
+                      return (
+                        <tr key={member.user_id} className="border-t">
+                          <td className="px-3 py-2"><div className="font-medium">{name}</div>{profile?.email && <div className="text-caption text-muted-foreground">{profile.email}</div>}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{t(($) => $.permissions.project_member_source)}</td>
+                          <td className="px-3 py-2">
+                            {canManage ? (
+                              <Select modal={false} items={roleItems} value={member.role as ProjectRole} onValueChange={(value) => value && void updateMemberRole(member.user_id, value)}>
+                                <SelectTrigger className="w-32" aria-label={`${t(($) => $.permissions.change_role_aria)} ${name}`}><SelectValue /></SelectTrigger>
+                                <SelectContent alignItemWithTrigger={false}>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent>
+                              </Select>
+                            ) : <span>{roleByKey.get(member.role)?.name || member.role || "—"}</span>}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">—</td>
+                          <td className="px-3 py-2">{canManage && <Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_aria)} ${name}`} disabled={removingId === member.user_id} onClick={() => void removeMember(member.user_id)}><UserMinus className="size-3.5" /></Button>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
 
-          <section role="region" aria-label={t(($) => $.permissions.add_members)} className="space-y-2">
+          {canManage && <section role="region" aria-label={t(($) => $.permissions.add_members)} className="space-y-2 border-t pt-3">
             <div>
               <h3 className="text-body font-medium">{t(($) => $.permissions.add_members)}</h3>
               <p className="text-caption text-muted-foreground">{t(($) => $.permissions.add_members_description)}</p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
-              {unifiedApi && <Select items={[{ value: "user", label: t(($) => $.permissions.user) }, { value: "organization", label: t(($) => $.permissions.organization) }, { value: "everyone", label: t(($) => $.permissions.everyone) }]} value={subjectType} onValueChange={(value) => setSubjectType((value as Exclude<ProjectAccessGrantSubjectType, "role">) || "user")}><SelectTrigger className="w-full sm:w-36" aria-label={t(($) => $.permissions.dialog_title)}><SelectValue /></SelectTrigger><SelectContent>{[{ value: "user", label: t(($) => $.permissions.user) }, { value: "organization", label: t(($) => $.permissions.organization) }, { value: "everyone", label: t(($) => $.permissions.everyone) }].map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>}
-              {subjectType === "user" ? <div className="relative flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t(($) => $.permissions.search_placeholder)} aria-label={t(($) => $.permissions.search_placeholder)} className="pl-8" /></div> : unifiedApi && subjectType === "organization" && workspaceId ? <div className="flex-1"><ProjectPermissionOrganizationSelect workspaceId={workspaceId} open={open} value={subjectId} onValueChange={setSubjectId} ariaLabel={t(($) => $.permissions.organization)} placeholder={t(($) => $.permissions.select_organization)} emptyLabel={t(($) => $.permissions.no_organizations)} /></div> : <div className="flex-1" />}
-              <Select items={roleItems} value={role} onValueChange={(value) => setRole(value ?? "member")}><SelectTrigger className="w-full sm:w-44" aria-label={t(($) => $.permissions.selected_role_aria)}><SelectValue /></SelectTrigger><SelectContent>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>
+              {unifiedApi && <Select modal={false} items={[{ value: "user", label: t(($) => $.permissions.user) }, { value: "organization", label: t(($) => $.permissions.organization) }, { value: "everyone", label: t(($) => $.permissions.everyone) }]} value={subjectType} onValueChange={(value) => setSubjectType((value as Exclude<ProjectAccessGrantSubjectType, "role">) || "user")}><SelectTrigger className="w-full sm:w-36" aria-label={t(($) => $.permissions.dialog_title)}><SelectValue /></SelectTrigger><SelectContent alignItemWithTrigger={false}>{[{ value: "user", label: t(($) => $.permissions.user) }, { value: "organization", label: t(($) => $.permissions.organization) }, { value: "everyone", label: t(($) => $.permissions.everyone) }].map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select>}
+              {subjectType === "user" ? <ProjectMemberMultiSelect
+                members={addableMembers}
+                selectedIds={selectedIds}
+                onToggle={toggleMember}
+                onSelectAll={(userIds) => setSelectedIds((current) => new Set([...current, ...userIds]))}
+                onClear={() => setSelectedIds(new Set())}
+                placeholder={t(($) => $.permissions.search_placeholder)}
+                selectedLabel={t(($) => $.permissions.selected_prefix)}
+                selectAllLabel={t(($) => $.permissions.select_all)}
+                clearLabel={t(($) => $.permissions.clear_selection)}
+                noResultsLabel={t(($) => $.permissions.no_results)}
+                loadingLabel={t(($) => $.permissions.loading)}
+                errorLabel={t(($) => $.permissions.workspace_members_failed)}
+                removeLabel={t(($) => $.permissions.remove_aria)}
+                isLoading={membersLoading}
+                hasError={membersError}
+                ariaLabel={t(($) => $.permissions.search_placeholder)}
+              /> : unifiedApi && subjectType === "organization" && workspaceId ? <div className="flex-1"><ProjectPermissionOrganizationSelect workspaceId={workspaceId} open={open} value={subjectIds} onValueChange={setSubjectIds} ariaLabel={t(($) => $.permissions.organization)} placeholder={t(($) => $.permissions.select_organization)} emptyLabel={t(($) => $.permissions.no_organizations)} /></div> : <div className="flex-1" />}
+              <Select modal={false} items={roleItems} value={role} onValueChange={(value) => setRole(value ?? "member")}><SelectTrigger className="w-full sm:w-44" aria-label={t(($) => $.permissions.selected_role_aria)}><SelectValue /></SelectTrigger><SelectContent alignItemWithTrigger={false}>{roles.map((item) => <SelectItem key={item.key} value={item.key}>{item.name || item.key}</SelectItem>)}</SelectContent></Select>
+              <Button className="shrink-0" onClick={() => void grantSelected()} disabled={!canGrant || granting}>
+                {granting ? t(($) => $.permissions.granting) : t(($) => $.permissions.grant)}
+              </Button>
             </div>
             <p className="text-caption text-muted-foreground">{roleByKey.get(role)?.description || t(($) => $.permissions.add_members_description)}</p>
-            {subjectType === "user" ? <><div className="flex items-center justify-between border-b pb-2 text-caption"><span className="text-muted-foreground">{t(($) => $.permissions.selected_prefix)} {selectedIds.size}</span><div className="flex items-center gap-1"><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set(filteredMembers.map((member) => member.user_id)))} disabled={allFilteredSelected || filteredMembers.length === 0}>{t(($) => $.permissions.select_all)}</Button><Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}>{t(($) => $.permissions.clear_selection)}</Button></div></div>
-            <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
-              {membersLoading ? <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.loading)}</div> : membersError ? <div className="py-6 text-center text-body text-destructive">{t(($) => $.permissions.workspace_members_failed)}</div> : filteredMembers.length === 0 ? <div className="py-6 text-center text-body text-muted-foreground">{t(($) => $.permissions.no_results)}</div> : filteredMembers.map((member) => <div key={member.user_id} className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-accent/60" onClick={(event) => { if ((event.target as HTMLElement).closest('[data-slot="checkbox"]')) return; toggleMember(member.user_id); }}><Checkbox checked={selectedIds.has(member.user_id)} aria-label={member.name} onCheckedChange={(nextChecked) => setMemberSelected(member.user_id, nextChecked)} /><div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-caption font-medium">{(member.name || member.email || "?").slice(0, 1).toLocaleUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-body font-medium">{member.name || member.email}</div>{member.name && member.email && <div className="truncate text-caption text-muted-foreground">{member.email}</div>}</div></div>)}
-            </div></> : null}
-          </section>
+          </section>}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>{t(($) => $.permissions.cancel)}</Button>
-            <Button onClick={() => void grantSelected()} disabled={!canGrant || granting}>
-              {granting ? t(($) => $.permissions.granting) : t(($) => $.permissions.grant)}
-            </Button>
+            <Button variant="outline" onClick={() => setOpen(false)}>{t(($) => $.permissions.close)}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

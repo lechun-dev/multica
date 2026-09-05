@@ -1076,6 +1076,27 @@ func TestRouter_IssueCommand_Creates(t *testing.T) {
 	}
 }
 
+func TestRouter_IssueCommand_PassesBeforeIssueCommitHook(t *testing.T) {
+	h := newHarness(t)
+	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Seed owner grant"}}
+	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 43, Title: "Seed owner grant"}}
+	hook := func(context.Context, pgx.Tx, db.Issue) error { return nil }
+	router := NewRouter(h.issues, h.tasks, h.reader, RouterConfig{
+		Logger:            discardLogger(),
+		Lifecycle:         h.lifecycle,
+		BeforeIssueCommit: hook,
+	})
+	router.sets = h.router.sets
+	h.router = router
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h.issues.opts.BeforeCommit == nil {
+		t.Fatal("channel issue create must receive the configured BeforeIssueCommit hook")
+	}
+}
+
 func TestRouter_IssueCommandWithMediaBindsWithoutChatRun(t *testing.T) {
 	h := newHarness(t)
 	issueTaskID := uuidFromString(t, "99999999-9999-4999-8999-999999999999")

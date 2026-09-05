@@ -76,6 +76,22 @@ describe("useProjectViewStore", () => {
     expect(useProjectViewStore.getState().viewMode).toBe("compact");
   });
 
+  it("forces the legacy workspace-owned preference off when rehydrating", async () => {
+    localStorage.setItem(
+      "multica_projects_view:acme",
+      JSON.stringify({
+        state: { showWorkspaceOwnedItems: true },
+        version: 0,
+      }),
+    );
+
+    setCurrentWorkspace("acme", "ws_a");
+    await flush();
+    await flush();
+
+    expect(useProjectViewStore.getState().showWorkspaceOwnedItems).toBe(false);
+  });
+
   it("resets to 'compact' when switching to a workspace with no persisted value", async () => {
     localStorage.setItem(
       "multica_projects_view:acme",

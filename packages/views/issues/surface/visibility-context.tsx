@@ -1,15 +1,12 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import { useMemo } from "react";
 import {
   QueryClient,
   QueryClientContext,
   useQuery,
 } from "@tanstack/react-query";
 import { useWorkspaceSlug } from "@multica/core/paths";
-import { useAuthStore } from "@multica/core/auth";
-import { useIssueViewStore } from "@multica/core/issues/stores/view-store";
 import { api } from "@multica/core/api";
 import type { MemberWithUser, Workspace } from "@multica/core/types";
 
@@ -25,8 +22,9 @@ const fallbackQueryClient = new QueryClient({
  * issue queries. Keeping this in the surface layer avoids coupling the core
  * Agent query helpers to a particular page preference.
  *
- * 2026-09-01 coder(lq): Keep the default inclusive for embedded surfaces that
- * do not opt into the task-list visibility scope yet.
+ * 2026-09-04 coder(lq): Keep the request inclusive after workspace readiness;
+ * the backend deployment policy, not a page preference, decides whether a
+ * workspace owner may bypass project grants.
  */
 interface IssueSurfaceVisibility {
   includeWorkspaceOwned: boolean;
@@ -65,19 +63,15 @@ export function useIssueSurfaceVisibilityReady(): boolean {
 
 /**
  * Workspace-wide visibility state for surfaces that are not descendants of an
- * IssueSurface provider (Inbox and Chat). Those surfaces still need to honor
- * the same owner toggle, so they derive it from the singleton issue view
- * store and workspace membership when no local provider is present.
+ * IssueSurface provider (Inbox and Chat). These surfaces use the same
+ * fail-closed readiness gate; once ready, the backend remains authoritative
+ * for workspace-owner visibility.
  */
 export function useWorkspaceTaskVisibility(): IssueSurfaceVisibility {
   const context = useContext(IssueSurfaceVisibilityContext);
   const queryClient = useContext(QueryClientContext);
   const effectiveQueryClient = queryClient ?? fallbackQueryClient;
   const slug = useWorkspaceSlug();
-  const currentUser = useOptionalCurrentUser();
-  const showWorkspaceOwnedItems = useIssueViewStore(
-    (state) => state.showWorkspaceOwnedItems,
-  );
   const workspaceQuery = useQuery<Workspace[]>(
     {
       queryKey: ["visibility-workspaces"],
@@ -100,29 +94,10 @@ export function useWorkspaceTaskVisibility(): IssueSurfaceVisibility {
     },
     effectiveQueryClient,
   );
-  const members = membersQuery.data ?? [];
-  const isWorkspaceOwner = useMemo(
-    () =>
-      !!currentUser &&
-      members.some(
-        (member) => member.user_id === currentUser.id && member.role === "owner",
-      ),
-    [currentUser, members],
-  );
   if (context) return context;
   const ready = !!wsId && membersQuery.isSuccess;
   return {
     ready,
-    includeWorkspaceOwned: ready
-      ? !isWorkspaceOwner || showWorkspaceOwnedItems
-      : false,
+    includeWorkspaceOwned: ready,
   };
-}
-
-function useOptionalCurrentUser() {
-  try {
-    return useAuthStore((state) => state.user);
-  } catch {
-    return null;
-  }
 }

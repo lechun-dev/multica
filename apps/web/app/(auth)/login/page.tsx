@@ -231,7 +231,6 @@ function LoginPageContent() {
   return (
     <DingTalkFirstLoginFrame>
       <LoginPage
-        hideEmailLogin
         onSuccess={handleSuccess}
         google={
           ENABLE_GOOGLE_LOGIN && googleClientId

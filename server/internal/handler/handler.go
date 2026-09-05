@@ -504,6 +504,9 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	// 2026-09-05 coder(lq): Keep autopilot-created tasks on the same project
+	// authorization path as HTTP and channel-created tasks.
+	h.AutopilotService.BeforeIssueCommit = h.issueAccessBeforeCommit()
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key

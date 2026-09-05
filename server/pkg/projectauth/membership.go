@@ -28,10 +28,13 @@ func (s *Service) EnsureOwner(ctx context.Context, projectID, userID string) err
 	}
 	workspaceID, err := mr.ProjectWorkspace(ctx, projectID)
 	if err != nil {
-		return ErrNoProjectAccess
+		// 2026-09-04 coder(lq): Keep migration/storage failures intact. The
+		// project-create handler needs to distinguish an unavailable permission
+		// schema from a genuinely missing project.
+		return authorizationStorageError(err)
 	}
 	if _, err = mr.WorkspaceRole(ctx, workspaceID, userID); err != nil {
-		return ErrCrossWorkspace
+		return authorizationStorageError(err)
 	}
 	return mr.PromoteProjectMember(ctx, projectID, userID, ProjectOwner)
 }
@@ -52,10 +55,10 @@ func (s *Service) PromoteMember(ctx context.Context, projectID, userID string, m
 	}
 	workspaceID, err := mr.ProjectWorkspace(ctx, projectID)
 	if err != nil {
-		return ErrNoProjectAccess
+		return authorizationStorageError(err)
 	}
 	if _, err = mr.WorkspaceRole(ctx, workspaceID, userID); err != nil {
-		return ErrCrossWorkspace
+		return authorizationStorageError(err)
 	}
 	return mr.PromoteProjectMember(ctx, projectID, userID, minimumRole)
 }
@@ -109,6 +112,15 @@ func (s *Service) AddMember(ctx context.Context, actor Subject, projectID, userI
 		if targetIsOwner && ownerCount <= 1 {
 			return ErrLastOwner
 		}
+		if targetIsOwner {
+			creator, creatorErr := s.projectCreator(ctx, projectID)
+			if creatorErr != nil {
+				return creatorErr
+			}
+			if creator == userID {
+				return ErrLastOwner
+			}
+		}
 	}
 	return mr.AddProjectMember(ctx, projectID, userID, role)
 }
@@ -161,5 +173,30 @@ func (s *Service) RemoveMember(ctx context.Context, actor Subject, projectID, us
 	if targetIsOwner && ownerCount <= 1 {
 		return ErrLastOwner
 	}
+	if targetIsOwner {
+		creator, creatorErr := s.projectCreator(ctx, projectID)
+		if creatorErr != nil {
+			return creatorErr
+		}
+		if creator == userID {
+			return ErrLastOwner
+		}
+	}
 	return mr.RemoveProjectMember(ctx, projectID, userID)
+}
+
+// projectCreator returns the immutable creator identity when the persistence
+// adapter exposes it. Older compatibility adapters may omit this optional
+// lookup; their existing last-owner protection remains unchanged.
+// 2026-09-04 coder(lq): Keep creator ownership intact on legacy member APIs.
+func (s *Service) projectCreator(ctx context.Context, projectID string) (string, error) {
+	creatorRepo, ok := s.repo.(ProjectCreatorRepository)
+	if !ok {
+		return "", nil
+	}
+	creator, err := creatorRepo.ProjectCreator(ctx, projectID)
+	if err != nil {
+		return "", authorizationStorageError(err)
+	}
+	return creator, nil
 }

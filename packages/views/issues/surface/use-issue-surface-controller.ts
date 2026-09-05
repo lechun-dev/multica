@@ -32,7 +32,6 @@ import {
 import type { IssueDateFilter, SortField } from "@multica/core/issues/stores/view-store";
 import { propertyListOptions } from "@multica/core/properties";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import { useAuthStore } from "@multica/core/auth";
 import { propertyIdFromViewKey } from "@multica/core/issues/stores/view-store";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import type { IssueFilters } from "../utils/filter";
@@ -211,21 +210,13 @@ export function useIssueSurfaceController({
   search = "",
 }: UseIssueSurfaceControllerInput): IssueSurfaceController {
   const wsId = useWorkspaceId();
-  const currentUser = useAuthStore((s) => s.user);
-  const showWorkspaceOwnedItems = useViewStore((s) => s.showWorkspaceOwnedItems);
   const workspaceMembersQuery = useQuery(memberListOptions(wsId));
-  const workspaceMembers = workspaceMembersQuery.data ?? EMPTY_LIST;
   const visibilityReady = workspaceMembersQuery.isSuccess;
-  const isWorkspaceOwner = useMemo(() => {
-    if (!visibilityReady || !currentUser) return false;
-    const me = workspaceMembers.find((member) => member.user_id === currentUser.id);
-    return me?.role === "owner";
-  }, [currentUser, visibilityReady, workspaceMembers]);
-  // 2026-09-01 coder(lq): Fail closed until membership resolves so an owner
-  // visibility toggle cannot briefly expose workspace-owned tasks.
-  const includeWorkspaceOwned = visibilityReady
-    ? !isWorkspaceOwner || showWorkspaceOwnedItems
-    : false;
+  // 2026-09-04 coder(lq): The hidden local owner-visibility preference must
+  // not override the deployment-level authorization policy. Once membership
+  // is ready, send the inclusive request and let the backend apply
+  // PROJECT_OWNER_BYPASS_ENABLED and project grants.
+  const includeWorkspaceOwned = visibilityReady;
   const queryPlan = useMemo<IssueSurfaceQueryPlan>(
     () => buildIssueSurfaceQueryPlan(scope),
     [scope],

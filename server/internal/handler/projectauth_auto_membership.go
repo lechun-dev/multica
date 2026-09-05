@@ -120,11 +120,31 @@ func resolveIssueAssigneeUserWithExecutor(ctx context.Context, executor dbExecut
 	}
 }
 
+// 2026-09-04 coder(lq): A task creator must retain Owner access to that task
+// even when project-level access is restricted. Agent-authored tasks resolve
+// to the owning human so the unified grant table remains user-scoped.
+func resolveIssueCreatorUserWithExecutor(ctx context.Context, executor dbExecutor, issue db.Issue) (string, error) {
+	if !issue.CreatorID.Valid {
+		return "", nil
+	}
+	switch issue.CreatorType {
+	case "member":
+		return uuidToString(issue.CreatorID), nil
+	case "agent":
+		if issue.ProjectID.Valid {
+			return resolveAgentOwnerWithExecutor(ctx, executor, uuidToString(issue.ProjectID), uuidToString(issue.CreatorID))
+		}
+		return resolveAgentOwnerInWorkspaceWithExecutor(ctx, executor, uuidToString(issue.WorkspaceID), uuidToString(issue.CreatorID))
+	default:
+		return "", nil
+	}
+}
+
 // 2026-09-01 coder(lq): Reconcile mention grants from the complete issue
 // surface (description plus every comment). Grants are source=system, so a
 // removed mention can be revoked safely without touching manual task shares;
 // keeping the aggregate set also avoids revoking a user mentioned elsewhere
-// on the same task.
+// on the same task. Mentions and assignees both receive the task Member role.
 func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, description string) error {
 	desired := make(map[string]struct{})
 	addMentions := func(content string) error {
@@ -153,27 +173,52 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 	if err != nil {
 		return err
 	}
+	// 2026-09-04 coder(lq): Materialize comment content before resolving Agent
+	// mentions. resolveAgentOwnerWithExecutor issues a QueryRow on the same
+	// transaction connection; doing that while this result set is open makes
+	// pgx return "conn busy".
+	commentContents := make([]string, 0)
 	for rows.Next() {
 		var content string
 		if err := rows.Scan(&content); err != nil {
 			rows.Close()
 			return err
 		}
-		if err := addMentions(content); err != nil {
-			rows.Close()
-			return err
-		}
+		commentContents = append(commentContents, content)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
+	for _, content := range commentContents {
+		if err := addMentions(content); err != nil {
+			return err
+		}
+	}
+	// Keep an assignee's automatic Member grant while reconciling mentions.
+	// This helper is also called from comment transactions, so read the current
+	// assignment from the same transaction instead of relying on a stale issue
+	// value supplied by the caller.
+	var assigneeType pgtype.Text
+	var assigneeID pgtype.UUID
+	if err := executor.QueryRow(ctx, `
+		SELECT assignee_type, assignee_id
+		FROM issue
+		WHERE id=$1 AND project_id=$2`, issueID, projectID).Scan(&assigneeType, &assigneeID); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	} else if assigneeUserID, err := resolveIssueAssigneeUserWithExecutor(ctx, executor, projectID, assigneeType, assigneeID); err != nil {
+		return err
+	} else if assigneeUserID != "" {
+		desired[assigneeUserID] = struct{}{}
+	}
 
 	currentRows, err := executor.Query(ctx, `
 		SELECT subject_id FROM projectauth_access_grants
 		WHERE issue_id=$1 AND project_id=$2 AND subject_type='user'
-		  AND permission=$3 AND source='system'`, issueID, projectID, string(projectauth.View))
+		  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.ProjectMember))
 	if err != nil {
 		return err
 	}
@@ -197,12 +242,12 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		}
 		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
 			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND permission=$4 AND source='system'`, issueID, projectID, userID, string(projectauth.View)); err != nil {
+			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.ProjectMember)); err != nil {
 			return err
 		}
 	}
 	for userID := range desired {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.View); err != nil {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.ProjectMember); err != nil {
 			return err
 		}
 	}
@@ -210,9 +255,9 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 }
 
 // 2026-09-01 coder(lq): Synchronize automatic task grants after every issue
-// write. Assignee Edit grants are revoked when the assignee changes; mention
-// View grants are reconciled against current issue/comment content. Manual
-// grants remain untouched because only source=system rows are removed.
+// write. Assignee and mention grants use the task Member role and are
+// reconciled against current issue/comment content. Manual grants remain
+// untouched because only source=system rows are removed.
 func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previous *db.Issue, issue db.Issue) error {
 	if previous != nil && previous.ProjectID.Valid && (!issue.ProjectID.Valid || previous.ProjectID != issue.ProjectID) {
 		_, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants WHERE issue_id=$1 AND source='system'`, uuidToString(issue.ID))
@@ -225,6 +270,15 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 	}
 	projectID := uuidToString(issue.ProjectID)
 	issueID := uuidToString(issue.ID)
+	creatorUserID, err := resolveIssueCreatorUserWithExecutor(ctx, executor, issue)
+	if err != nil {
+		return err
+	}
+	if creatorUserID != "" {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, creatorUserID, projectauth.ProjectOwner); err != nil {
+			return err
+		}
+	}
 	currentAssignee, err := resolveIssueAssigneeUserWithExecutor(ctx, executor, projectID, issue.AssigneeType, issue.AssigneeID)
 	if err != nil {
 		return err
@@ -239,12 +293,12 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 	if previousAssignee != "" && previousAssignee != currentAssignee {
 		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
 			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND permission=$4 AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.Edit)); err != nil {
+			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.ProjectMember)); err != nil {
 			return err
 		}
 	}
 	if currentAssignee != "" {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.Edit); err != nil {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.ProjectMember); err != nil {
 			return err
 		}
 	}
@@ -253,19 +307,50 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 
 // 2026-08-31 coder(lq): Keep automatic assignee/mention grants mirrored into
 // the unified source while legacy issue_permissions remains available for
-// rollback and older handlers.
-func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, permission projectauth.Permission) error {
+// rollback and older handlers. The canonical grant is always a task role;
+// the legacy project.view row is compatibility data only.
+func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, role projectauth.ProjectRole) error {
+	// 2026-09-05 coder(lq): Normalize every automatic task grant against the
+	// task creator, not only the initial create path. A creator can also be the
+	// assignee or a mention target; those events must not leave a duplicate
+	// system Member row beside the immutable Owner row.
+	var creatorID string
+	err := executor.QueryRow(ctx, `
+		SELECT CASE
+			WHEN i.creator_type = 'member' THEN i.creator_id::text
+			WHEN i.creator_type = 'agent' AND a.kind = 'user' AND a.owner_id IS NOT NULL THEN a.owner_id::text
+			ELSE ''
+		END
+		FROM issue i
+		LEFT JOIN agent a
+		  ON a.id = i.creator_id
+		 AND a.workspace_id = i.workspace_id
+		 AND a.kind = 'user'
+		WHERE i.id = $1::uuid AND i.project_id = $2::uuid`, issueID, projectID).Scan(&creatorID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if creatorID != "" && creatorID == userID {
+		role = projectauth.ProjectOwner
+		if _, err := executor.Exec(ctx, `
+			DELETE FROM projectauth_access_grants
+			WHERE issue_id=$1::uuid AND project_id=$2::uuid AND subject_type='user'
+			  AND subject_id=$3 AND role_key=$4 AND permission IS NULL AND source='system'`,
+			issueID, projectID, userID, string(projectauth.ProjectMember)); err != nil {
+			return err
+		}
+	}
 	if _, err := executor.Exec(ctx, `
 		INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by)
 		VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$3::uuid)
-		ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, string(permission)); err != nil {
+		ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, string(projectauth.View)); err != nil {
 		return err
 	}
-	_, err := executor.Exec(ctx, `
-		INSERT INTO projectauth_access_grants (workspace_id, project_id, issue_id, subject_type, subject_id, permission, source, granted_by)
-		SELECT p.workspace_id, $2::uuid, $1::uuid, 'user', $3::text, $4, 'system', $3::uuid
+	_, err = executor.Exec(ctx, `
+		INSERT INTO projectauth_access_grants (workspace_id, project_id, issue_id, subject_type, subject_id, role_key, permission, source, granted_by)
+		SELECT p.workspace_id, $2::uuid, $1::uuid, 'user', $3::text, $4, NULL, 'system', $3::uuid
 		FROM project p WHERE p.id=$2::uuid
-		ON CONFLICT DO NOTHING`, issueID, projectID, userID, string(permission))
+		ON CONFLICT DO NOTHING`, issueID, projectID, userID, string(role))
 	return err
 }
 
@@ -278,6 +363,15 @@ func (h *Handler) issueAccessBeforeCommit() func(context.Context, pgx.Tx, db.Iss
 	return func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
 		return syncIssueAccessWithExecutor(ctx, tx, nil, issue)
 	}
+}
+
+// IssueAccessBeforeCommitForChannel exposes the narrow transaction hook needed
+// by the channel engine without coupling that integration package to Handler's
+// projectauth implementation.
+// 2026-09-05 coder(lq): Wire channel-created task owners through the same
+// atomic grant path as HTTP, onboarding, and autopilot issue creation.
+func (h *Handler) IssueAccessBeforeCommitForChannel() func(context.Context, pgx.Tx, db.Issue) error {
+	return h.issueAccessBeforeCommit()
 }
 
 // 2026-08-27 coder(lq): Ordinary issue updates do not otherwise need a
@@ -323,9 +417,9 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	return issue, nil
 }
 
-// 2026-08-27 coder(lq): Persist a human comment and viewer inheritance in one
+// 2026-08-27 coder(lq): Persist a human comment and Member task access in one
 // PostgreSQL transaction. Native comment triggers still handle agent/squad
-// execution; this adapter also maps Agent mentions to their owner's viewer
+// execution; this adapter also maps Agent mentions to their owner's Member
 // grant without creating a separate Agent permission record.
 func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.Issue, params db.CreateCommentParams) (db.CreateCommentRow, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || !issue.ProjectID.Valid {

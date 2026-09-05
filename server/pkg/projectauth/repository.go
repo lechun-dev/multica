@@ -53,6 +53,15 @@ type GrantRepository interface {
 	DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType SubjectType, subjectID string, role ProjectRole, permission Permission) error
 }
 
+// ProjectCreatorRepository exposes the immutable project creator identity to
+// the authorization core. It is optional for adapters that only need to
+// support non-owner grant changes; production adapters implement it so the
+// creator's owner grant cannot be revoked through any permission endpoint.
+// 2026-09-04 coder(lq): Keep creator ownership independent from mutable ACL rows.
+type ProjectCreatorRepository interface {
+	ProjectCreator(ctx context.Context, projectID string) (string, error)
+}
+
 // AuthorizationAuditEvent is the storage-neutral audit record emitted for
 // authorization mutations. The Handler adapter persists it in Multica's
 // existing activity_log table; keeping the event here avoids coupling the
@@ -90,6 +99,16 @@ type AccessGrantReader interface {
 // boundary instead of relying on callers to pass a matching project ID.
 type ResourceRepository interface {
 	IssueProject(ctx context.Context, issueID string) (workspaceID, projectID string, err error)
+}
+
+// IssueCreatorRepository exposes the effective native user who created a task.
+// Agent-authored tasks are resolved to the owning human by the SQL adapter, so
+// the authorization core can enforce creator ownership without depending on
+// provider-specific agent records.
+// 2026-09-05 coder(lq): Add a hard task-creator ownership seam alongside the
+// existing task-to-project consistency check.
+type IssueCreatorRepository interface {
+	IssueCreator(ctx context.Context, issueID string) (userID string, err error)
 }
 
 // SubjectRepository is an optional provider-neutral directory boundary. The
