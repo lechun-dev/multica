@@ -2,45 +2,35 @@ package projectauth
 
 import (
 	"context"
-	"errors"
 	"fmt"
 )
 
-// 2026-08-31 coder(lq): Permission reports expose authorization facts for
-// projects and tasks, including inherited project grants and their original
-// subject/source. Keeping this shape in the independent package lets callers
-// render a matrix or an audit table without coupling to PostgreSQL.
+// 2026-08-27 coder(lq): Permission reports expose effective workspace/project
+// authorization only. Tasks inherit these project permissions and therefore
+// are intentionally absent as an independent report scope.
 type PermissionReportFilter struct {
 	WorkspaceID string
 	ProjectID   string
-	IssueID     string
 	UserID      string
 	Role        string
 	Permission  Permission
-	SubjectType SubjectType
-	SubjectID   string
-	Scope       string // all, project, or issue
+	Scope       string // all or project
 	Limit       int
 	Offset      int
 }
 
 type PermissionReportRow struct {
-	Scope                string        `json:"scope"`
-	ProjectID            string        `json:"project_id"`
-	ProjectTitle         string        `json:"project_title"`
-	IssueID              string        `json:"issue_id,omitempty"`
-	IssueTitle           string        `json:"issue_title,omitempty"`
-	UserID               string        `json:"user_id"`
-	UserName             string        `json:"user_name"`
-	UserEmail            string        `json:"user_email"`
-	SubjectType          SubjectType   `json:"subject_type"`
-	SubjectID            string        `json:"subject_id,omitempty"`
-	WorkspaceRole        WorkspaceRole `json:"workspace_role"`
-	ProjectRole          ProjectRole   `json:"project_role,omitempty"`
-	Permission           Permission    `json:"permission"`
-	Source               string        `json:"source"`
-	GrantedBy            string        `json:"granted_by,omitempty"`
-	InheritedFromProject bool          `json:"inherited_from_project"`
+	Scope         string        `json:"scope"`
+	ProjectID     string        `json:"project_id"`
+	ProjectTitle  string        `json:"project_title"`
+	UserID        string        `json:"user_id"`
+	UserName      string        `json:"user_name"`
+	UserEmail     string        `json:"user_email"`
+	WorkspaceRole WorkspaceRole `json:"workspace_role"`
+	ProjectRole   ProjectRole   `json:"project_role,omitempty"`
+	Permission    Permission    `json:"permission"`
+	Source        string        `json:"source"` // workspace_role, project_role
+	GrantedBy     string        `json:"granted_by,omitempty"`
 }
 
 type PermissionReportResult struct {
@@ -76,11 +66,8 @@ func (s *Service) ListPermissionReport(ctx context.Context, subject Subject, fil
 	if filter.Scope == "" {
 		filter.Scope = "all"
 	}
-	if filter.Scope != "all" && filter.Scope != "project" && filter.Scope != "issue" {
+	if filter.Scope != "all" && filter.Scope != "project" {
 		return PermissionReportResult{}, fmt.Errorf("%w: scope=%s", ErrInvalidReportFilter, filter.Scope)
-	}
-	if filter.SubjectType != "" && filter.SubjectType != SubjectUser && filter.SubjectType != SubjectRole && filter.SubjectType != SubjectOrganization && filter.SubjectType != SubjectEveryone {
-		return PermissionReportResult{}, fmt.Errorf("%w: subject_type=%s", ErrInvalidReportFilter, filter.SubjectType)
 	}
 	if filter.Role != "" && !validReportRole(ctx, s.repo, filter.WorkspaceID, filter.Role) {
 		return PermissionReportResult{}, fmt.Errorf("%w: role=%s", ErrInvalidReportFilter, filter.Role)
@@ -97,27 +84,6 @@ func (s *Service) ListPermissionReport(ctx context.Context, subject Subject, fil
 	role, err := s.repo.WorkspaceRole(ctx, subject.WorkspaceID, subject.UserID)
 	if err != nil {
 		return PermissionReportResult{}, ErrNotWorkspaceMember
-	}
-	if filter.IssueID != "" {
-		resourceRepo, ok := s.repo.(ResourceRepository)
-		if !ok {
-			return PermissionReportResult{}, ErrMigrationRequired
-		}
-		workspaceID, projectID, issueErr := resourceRepo.IssueProject(ctx, filter.IssueID)
-		if issueErr != nil {
-			if errors.Is(issueErr, ErrMigrationRequired) {
-				return PermissionReportResult{}, issueErr
-			}
-			return PermissionReportResult{}, ErrNoProjectAccess
-		}
-		if workspaceID != subject.WorkspaceID {
-			return PermissionReportResult{}, ErrNoProjectAccess
-		}
-		if filter.ProjectID == "" {
-			filter.ProjectID = projectID
-		} else if filter.ProjectID != projectID {
-			return PermissionReportResult{}, ErrCrossWorkspace
-		}
 	}
 	if role != WorkspaceOwner {
 		if filter.ProjectID == "" {

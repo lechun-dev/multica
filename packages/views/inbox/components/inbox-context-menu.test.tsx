@@ -27,10 +27,7 @@ vi.mock("../../issues/components/issue-agent-activity-indicator", () => ({
   IssueAgentActivityIndicator: () => null,
 }));
 vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
-vi.mock("./inbox-detail-label", () => ({
-  InboxDetailLabel: () => null,
-  useTypeLabels: () => ({}),
-}));
+vi.mock("./inbox-detail-label", () => ({ InboxDetailLabel: () => null }));
 
 // Import after mocks.
 import { InboxContextMenuProvider } from "./inbox-context-menu";

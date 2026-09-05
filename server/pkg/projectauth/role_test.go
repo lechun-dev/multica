@@ -12,19 +12,6 @@ type fakeRoleRepo struct {
 	permissions map[ProjectRole][]Permission
 }
 
-// 2026-08-31 coder(lq): Keep role mutation audit assertions independent from
-// the PostgreSQL adapter while exercising the same optional repository seam.
-type auditRoleRepo struct {
-	*fakeRoleRepo
-	auditEvents []AuthorizationAuditEvent
-	auditErr    error
-}
-
-func (f *auditRoleRepo) RecordAuthorizationAudit(_ context.Context, event AuthorizationAuditEvent) error {
-	f.auditEvents = append(f.auditEvents, event)
-	return f.auditErr
-}
-
 func (f *fakeRoleRepo) RolePermissions(_ context.Context, _ string, role ProjectRole) ([]Permission, bool, error) {
 	permissions, found := f.permissions[role]
 	return permissions, found, nil
@@ -163,51 +150,5 @@ func TestWorkspaceOwnerCanManageRoleDefinitions(t *testing.T) {
 	}
 	if err := service.DeleteRole(context.Background(), subject, "reviewer"); err != nil {
 		t.Fatalf("delete role: %v", err)
-	}
-}
-
-func TestRoleMutationsRecordAudit(t *testing.T) {
-	repo := &auditRoleRepo{fakeRoleRepo: &fakeRoleRepo{
-		fakeRepo:    fakeRepo{workspace: string(WorkspaceOwner)},
-		roles:       map[string]RoleDefinition{},
-		permissions: map[ProjectRole][]Permission{},
-	}}
-	service := New(repo, true)
-	owner := Subject{UserID: "owner-1", WorkspaceID: "ws-1"}
-
-	if _, err := service.CreateRole(context.Background(), owner, RoleDefinition{Key: "auditor", Name: "Auditor", Permissions: []Permission{View}}); err != nil {
-		t.Fatalf("CreateRole: %v", err)
-	}
-	if _, err := service.UpdateRole(context.Background(), owner, "auditor", RoleDefinition{Name: "Audit", Permissions: []Permission{View, Edit}}); err != nil {
-		t.Fatalf("UpdateRole: %v", err)
-	}
-	if err := service.DeleteRole(context.Background(), owner, "auditor"); err != nil {
-		t.Fatalf("DeleteRole: %v", err)
-	}
-	if len(repo.auditEvents) != 3 {
-		t.Fatalf("audit event count = %d, want 3", len(repo.auditEvents))
-	}
-	want := []string{"project_permission_role_created", "project_permission_role_updated", "project_permission_role_deleted"}
-	for i, action := range want {
-		if repo.auditEvents[i].Action != action {
-			t.Fatalf("audit action[%d] = %q, want %q", i, repo.auditEvents[i].Action, action)
-		}
-	}
-}
-
-func TestRoleMutationReturnsAuditFailure(t *testing.T) {
-	auditErr := errors.New("audit unavailable")
-	repo := &auditRoleRepo{
-		fakeRoleRepo: &fakeRoleRepo{
-			fakeRepo:    fakeRepo{workspace: string(WorkspaceOwner)},
-			roles:       map[string]RoleDefinition{},
-			permissions: map[ProjectRole][]Permission{},
-		},
-		auditErr: auditErr,
-	}
-	service := New(repo, true)
-	owner := Subject{UserID: "owner-1", WorkspaceID: "ws-1"}
-	if _, err := service.CreateRole(context.Background(), owner, RoleDefinition{Key: "auditor", Name: "Auditor", Permissions: []Permission{View}}); !errors.Is(err, auditErr) {
-		t.Fatalf("CreateRole error = %v, want audit failure", err)
 	}
 }

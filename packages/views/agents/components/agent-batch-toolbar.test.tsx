@@ -151,6 +151,12 @@ describe("AgentBatchToolbar — presence", () => {
 });
 
 describe("AgentBatchToolbar — bulk Set access scope", () => {
+  it("shows the Set access scope button for active owned agents", () => {
+    renderToolbar([makeRow("a", "user-1")]);
+    expect(
+      screen.getByRole("button", { name: "Set access scope" }),
+    ).toBeInTheDocument();
+  });
 
   it("renders Applies to N with skip count in the dialog", async () => {
     renderToolbar([

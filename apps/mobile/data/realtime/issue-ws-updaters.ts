@@ -259,15 +259,7 @@ export function replaceCommentTimelineEntry(
     wsId,
     issueId,
     (current) => current.type === "comment" && current.id === entry.id,
-    (current) =>
-      acceptsRevision(current.revision, entry.revision)
-        ? {
-            ...entry,
-            actor_name: entry.actor_name ?? current.actor_name,
-            actor_avatar_url:
-              entry.actor_avatar_url ?? current.actor_avatar_url,
-          }
-        : current,
+    (current) => acceptsRevision(current.revision, entry.revision) ? entry : current,
   );
 }
 

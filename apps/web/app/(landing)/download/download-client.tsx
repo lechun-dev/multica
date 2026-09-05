@@ -39,28 +39,51 @@ export function DownloadClient({ release }: { release: LatestRelease }) {
         <DownloadHero
           detected={detected}
           assets={release.assets}
+          fallbackHref={release.allReleasesUrl}
           versionUnavailable={versionUnavailable}
         />
       </div>
 
       {/* 2026-08-30 coder(lq): Keep the private deployment download page
           focused on the three supported desktop platform builds. */}
-      <AllPlatforms assets={release.assets} />
-      <VersionInfoFooter version={release.version} />
+      <AllPlatforms
+        assets={release.assets}
+        fallbackHref={release.allReleasesUrl}
+      />
+      <VersionInfoFooter
+        version={release.version}
+        allReleasesUrl={release.allReleasesUrl}
+      />
     </>
   );
 }
 
-function VersionInfoFooter({ version }: { version: string | null }) {
+function VersionInfoFooter({
+  version,
+  allReleasesUrl,
+}: {
+  version: string | null;
+  allReleasesUrl: string;
+}) {
   const { t } = useLocale();
   const d = t.download.footer;
 
   return (
     <section className="bg-white pb-16 text-[#0a0d12] sm:pb-20">
-      <div className="mx-auto max-w-[920px] border-t border-[#0a0d12]/8 px-4 pt-8 text-label text-[#0a0d12]/60 sm:px-6 lg:px-8">
-        {version
-          ? d.currentVersion.replace("{version}", version)
-          : d.versionUnavailable}
+      <div className="mx-auto flex max-w-[920px] flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#0a0d12]/8 px-4 pt-8 text-label text-[#0a0d12]/60 sm:px-6 lg:px-8">
+        <span>
+          {version
+            ? d.currentVersion.replace("{version}", version)
+            : d.versionUnavailable}
+        </span>
+        <a
+          href={allReleasesUrl}
+          className="underline decoration-[#0a0d12]/30 underline-offset-4 hover:text-[#0a0d12] hover:decoration-[#0a0d12]/70"
+          target="_blank"
+          rel="noreferrer"
+        >
+          {d.allReleases}
+        </a>
       </div>
     </section>
   );

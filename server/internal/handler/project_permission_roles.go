@@ -147,10 +147,6 @@ func (h *Handler) withProjectPermissionRoleTransaction(ctx context.Context, fn f
 
 func writeProjectPermissionRoleError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, projectauth.ErrMigrationRequired):
-		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_migration_required", "project permission migration is required")
-	case errors.Is(err, projectauth.ErrStorageUnavailable), errors.Is(err, projectauth.ErrDisabled):
-		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
 	case errors.Is(err, projectauth.ErrInvalidRole):
 		writeError(w, http.StatusBadRequest, "invalid project permission role")
 	case errors.Is(err, projectauth.ErrForbidden):

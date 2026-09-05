@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
@@ -183,10 +182,12 @@ func (h *Handler) issueMoveAnchorPosition(
 	if id == nil {
 		return nil, true
 	}
-	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-		ID:          *id,
-		WorkspaceID: workspaceID,
-	})
+	var position float64
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT position
+		FROM issue
+		WHERE workspace_id = $1 AND id = $2
+	`, workspaceID, *id).Scan(&position)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusBadRequest, "move anchor not found in this workspace")
@@ -195,20 +196,7 @@ func (h *Handler) issueMoveAnchorPosition(
 		}
 		return nil, false
 	}
-	// 2026-09-03 coder(lq): Anchor tasks participate in ordering only when
-	// visible to the caller. Otherwise a caller who knows an unrelated issue ID
-	// could use it as a sorting side channel even though no task content is
-	// returned.
-	allowed, reason := h.issueProjectAllowed(r, issue, projectauth.View)
-	if !allowed {
-		if reason == "internal" {
-			writeIssueTableQueryFailure(w, r, "failed to check move anchor permissions")
-		} else {
-			writeError(w, http.StatusBadRequest, "move anchor not found in this workspace")
-		}
-		return nil, false
-	}
-	return &issue.Position, true
+	return &position, true
 }
 
 func issueMovePosition(current float64, before, after *float64) (float64, error) {

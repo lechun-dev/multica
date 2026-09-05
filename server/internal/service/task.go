@@ -544,16 +544,14 @@ func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issu
 		}
 	}
 	// Autopilot-origin issues (origin_id is the autopilot id) from a schedule /
-	// webhook trigger attribute to the firing trigger's CREATOR — trigger_owner
-	// (MUL-4302; MUL-6951) — degrading to the audit-only rule publisher when no
-	// creator is recoverable. That human is the originator as well as the
-	// accountable, so a create_issue-mode run carries the same authorization a
-	// manual "run now" by that member would; an edit of the trigger does not move
-	// it. Resolved the same way
-	// run_only dispatch resolves it, so both autopilot execution modes attribute
-	// identically. (A manual trigger carries an actor and is already handled above.)
-	// The issue only stores the autopilot id, so bridge issue → active run →
-	// trigger_id to find the trigger.
+	// webhook trigger: no human authorized the run, so originator stays NULL, but it
+	// is accountable to the human currently RESPONSIBLE for the firing trigger's
+	// effective config (creator, then last substantive editor) — trigger_owner
+	// (MUL-4302; Elon must-fix), degrading to the rule publisher when no such member
+	// is recoverable. Resolved the same way run_only dispatch resolves
+	// it, so both autopilot execution modes attribute identically. (A manual trigger
+	// carries an actor and is already handled above.) The issue only stores the
+	// autopilot id, so bridge issue → active run → trigger_id to find the trigger.
 	if s != nil && s.Queries != nil && issue.OriginType.Valid &&
 		issue.OriginType.String == "autopilot" && issue.OriginID.Valid {
 		var triggerID pgtype.UUID
@@ -589,10 +587,9 @@ func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issu
 // ruleOwnerAttribution resolves the rule_owner attribution for an autopilot run
 // from its active (latest) rule version snapshot (MUL-4302 §3.4). Shared by both
 // autopilot execution modes — run_only dispatch and the create_issue enqueue path —
-// so they attribute identically. originator stays NULL: an autopilot DOES carry a
-// human's authority since MUL-6951, but it comes from the trigger's creator, and
-// this is the fallback for when that creator cannot be proven. Only the
-// audit-accountable side is set, to the version's member publisher. A missing version (autopilot published before this feature, or
+// so they attribute identically. originator stays NULL (an autopilot carries no
+// human's authority); only the audit-accountable side is set, to the version's
+// member publisher. A missing version (autopilot published before this feature, or
 // none yet) or a non-member/absent publisher degrades to unattributed rather than
 // fabricating a human. Never returns an error: attribution must not fail an
 // enqueue, and a degraded label is the honest fallback.
@@ -614,80 +611,29 @@ func ruleOwnerAttribution(ctx context.Context, q *db.Queries, workspaceID, autop
 	return attribution.RuleOwner(publisher, ver.ID, evidenceKind, evidenceRefID)
 }
 
-// triggerOwnerAttribution resolves an autopilot schedule/webhook run to the firing
-// trigger's CREATOR (MUL-4302; MUL-6951). triggerID is the autopilot_run's
-// trigger_id.
-//
-// The creator is immutable — a substantive edit re-stamps published_by, not
-// created_by, so it cannot re-authorize the automation as the editor (MUL-6951,
-// Bohan's ruling). Because the DB invariant forces accountable == originator once
-// the originator is set, BOTH columns on the task name the creator; the editor's
-// responsibility for the config lives on autopilot_trigger.published_by.
-//
-// A trigger with no recoverable creator degrades to ruleOwnerAttribution, which is
-// audit-only — the run then carries no originator and the invoke gate fails closed.
-// Never errors: attribution must not fail an enqueue.
+// triggerOwnerAttribution resolves an autopilot schedule/webhook run to the human
+// currently RESPONSIBLE for the firing trigger's effective config (MUL-4302; Bohan +
+// Elon must-fix). triggerID is the autopilot_run's trigger_id. The trigger row's
+// published_by starts at the creator and transfers to whoever later substantively
+// edits it, so the run attributes to whoever last shaped what fires it — not the
+// original creator. A trigger with no recorded publisher (predating this migration)
+// or an agent publisher degrades to ruleOwnerAttribution (rule publisher, then
+// owner_fallback) — the same coarser behavior autopilots had before, so nothing
+// regresses. Never errors: attribution must not fail an enqueue.
 func triggerOwnerAttribution(ctx context.Context, q *db.Queries, triggerID, workspaceID, autopilotID pgtype.UUID, evidenceKind attribution.EvidenceKind, evidenceRefID pgtype.UUID) attribution.Result {
-	if principal := ResolveAutopilotTriggerPrincipal(ctx, q, triggerID, autopilotID, workspaceID); principal.Valid {
-		return attribution.TriggerOwner(principal, evidenceKind, evidenceRefID)
+	if q != nil && triggerID.Valid {
+		// published_by is the member CURRENTLY responsible for this trigger's
+		// effective config: the creator until someone substantively edits it (that
+		// trigger's cron/filter/webhook, or an autopilot-level change that bumps all
+		// its triggers), then the editor. So a run attributes to whoever last shaped
+		// what fires it, not the original creator — and editing another trigger never
+		// moves this one (MUL-4302; Elon must-fix).
+		if trig, err := q.GetAutopilotTrigger(ctx, triggerID); err == nil &&
+			trig.PublishedByType.Valid && trig.PublishedByType.String == "member" && trig.PublishedByID.Valid {
+			return attribution.TriggerOwner(trig.PublishedByID, evidenceKind, evidenceRefID)
+		}
 	}
-	// No provable principal: degrade to the rule publisher, which is AUDIT-ONLY.
-	// rule_owner must never become an authorization identity — it is a guess at
-	// "who probably owns this rule", and promoting it would hand a legacy trigger
-	// somebody's invoke rights without that person ever arming anything. The run
-	// then carries no originator and the invoke gate fails closed (MUL-6951).
 	return ruleOwnerAttribution(ctx, q, workspaceID, autopilotID, evidenceKind, evidenceRefID)
-}
-
-// ResolveAutopilotTriggerPrincipal returns the human a schedule/webhook dispatch
-// ACTS AS, or an invalid UUID when none can be proven — in which case every
-// caller must fail closed rather than substitute a different human.
-//
-// This is the single source of that answer (MUL-6951). Admission
-// (autopilotAdmitInvoke), the originator stamped on the task, and every run
-// delegated from it all resolve through here, so one dispatch can never admit as
-// person A and then run with person B's rights — a combination neither of them
-// could produce by hand, and the exact fork Elon's review found.
-//
-// The principal is the trigger's IMMUTABLE created_by, not published_by:
-// published_by transfers to whoever last substantively edits the trigger, so
-// using it would let a collaborator adjusting a cron expression silently hand the
-// automation their own rights (MUL-6951, Bohan's ruling: the run always acts as
-// the trigger's creator).
-//
-// Three conditions, all required, all fail-closed:
-//
-//   - the trigger row is fetched BOUND to this autopilot AND its workspace, so a
-//     trigger id from another autopilot, or from an autopilot in another tenant,
-//     cannot select the principal. The membership check below is not a substitute:
-//     it proves the resolved human is in the workspace passed in, which a member of
-//     two workspaces satisfies even when the trigger came from the other one;
-//   - created_by names a member — a legacy trigger predating the column (and with
-//     no published_by to backfill from) resolves nobody rather than a guess;
-//   - that member is STILL in the autopilot's workspace, re-checked on every
-//     dispatch, so removing someone actually revokes what their triggers can do.
-func ResolveAutopilotTriggerPrincipal(ctx context.Context, q *db.Queries, triggerID, autopilotID, workspaceID pgtype.UUID) pgtype.UUID {
-	if q == nil || !triggerID.Valid || !autopilotID.Valid || !workspaceID.Valid {
-		return pgtype.UUID{}
-	}
-	trig, err := q.GetAutopilotTriggerForAutopilot(ctx, db.GetAutopilotTriggerForAutopilotParams{
-		ID:          triggerID,
-		AutopilotID: autopilotID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		return pgtype.UUID{}
-	}
-	if !trig.CreatedByType.Valid || trig.CreatedByType.String != "member" || !trig.CreatedByID.Valid {
-		return pgtype.UUID{}
-	}
-	if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		UserID:      trig.CreatedByID,
-		WorkspaceID: workspaceID,
-	}); err != nil {
-		return pgtype.UUID{}
-	}
-	return trig.CreatedByID
 }
 
 // ErrAttributionFailClosed signals that a run resolved to no precise accountable
@@ -1157,18 +1103,12 @@ func (s *TaskService) hydrateDeferredChannelIssueTaskOverlay(ctx context.Context
 	return nil
 }
 
-// EnqueueTaskForIssueByActor is the assign/promote variant of
-// EnqueueTaskForIssue. actorUserID is the member who performed the
-// assign/promote and becomes the accountable human for the run (MUL-4302 §4);
-// invalid when the caller has no member actor.
-func (s *TaskService) EnqueueTaskForIssueByActor(ctx context.Context, issue db.Issue, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", actorUserID, pgtype.UUID{}, pgtype.Timestamptz{})
-}
-
-// EnqueueTaskForIssueWithHandoff is the backward-compatible assign/promote
-// variant used when an installed client still sends handoff_note. The note is
-// persisted on the task so both old and current daemons can render it in the
-// run's opening prompt. Empty text behaves like EnqueueTaskForIssueByActor.
+// EnqueueTaskForIssueWithHandoff is the assign/promote variant that carries a
+// handoff note into the run's opening context (MUL-3375). The note rides a
+// dedicated task column; the daemon renders it via the assignment-handoff
+// branch. Empty note behaves exactly like EnqueueTaskForIssue. actorUserID is the
+// member who performed the assign/promote and becomes the accountable human for
+// the run (MUL-4302 §4); invalid when the caller has no member actor.
 func (s *TaskService) EnqueueTaskForIssueWithHandoff(ctx context.Context, issue db.Issue, handoffNote string, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
 	return s.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, handoffNote, actorUserID, pgtype.UUID{}, pgtype.Timestamptz{})
 }
@@ -1370,16 +1310,11 @@ func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Is
 	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, squadID, false, "", pgtype.UUID{}, pgtype.UUID{})
 }
 
-// EnqueueTaskForSquadLeaderByActor is the assign/promote variant of
-// EnqueueTaskForSquadLeader. actorUserID is the member who performed the
-// assign/promote and becomes the accountable human (MUL-4302 §4); invalid when
-// the caller has no member actor.
-func (s *TaskService) EnqueueTaskForSquadLeaderByActor(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, pgtype.UUID{}, true, squadID, false, "", actorUserID, pgtype.UUID{})
-}
-
-// EnqueueTaskForSquadLeaderWithHandoff is the squad equivalent of
-// EnqueueTaskForIssueWithHandoff.
+// EnqueueTaskForSquadLeaderWithHandoff is the assign/promote variant carrying a
+// handoff note into the leader run's opening context (MUL-3375). Empty note
+// behaves exactly like EnqueueTaskForSquadLeader. actorUserID is the member who
+// performed the assign/promote and becomes the accountable human (MUL-4302 §4);
+// invalid when the caller has no member actor.
 func (s *TaskService) EnqueueTaskForSquadLeaderWithHandoff(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, handoffNote string, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
 	return s.enqueueMentionTask(ctx, issue, leaderID, pgtype.UUID{}, true, squadID, false, handoffNote, actorUserID, pgtype.UUID{})
 }
@@ -4761,21 +4696,20 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		retryFireAt      pgtype.Timestamptz
 		retryMaxAttempts pgtype.Int4
 	)
-	if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
-		slog.Warn("fail task auto-retry: load parent failed",
-			"task_id", util.UUIDToString(taskID), "error", perr)
-	} else {
-		plan := s.retryPlanForTask(ctx, parent, failureReason, errMsg)
-		if plan.Allowed {
+	if retryableReasons[failureReason] {
+		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
+			slog.Warn("fail task auto-retry: load parent failed",
+				"task_id", util.UUIDToString(taskID), "error", perr)
+		} else if retryEligible(failureReason, parent) {
 			wantRetry = true
 			// Persist the reason-aware effective budget into the child so the
 			// retry chain self-describes (e.g. provider_network → max_attempts=3),
 			// rather than leaking a contradictory attempt=N/max_attempts=2 row.
-			retryMaxAttempts = pgtype.Int4{Int32: plan.MaxAttempts, Valid: true}
+			retryMaxAttempts = pgtype.Int4{Int32: retryAttemptCeiling(failureReason, parent.MaxAttempts), Valid: true}
 			// Defer this attempt when the reason's schedule calls for a backoff
 			// (provider_network's final attempt waits ~5s); a zero delay leaves
 			// fire_at NULL so the child is created immediately-claimable.
-			if delay := plan.Delay; delay > 0 {
+			if delay := retryDelayForAttempt(failureReason, parent.Attempt); delay > 0 {
 				retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
 			}
 			if agent, aerr := s.Queries.GetAgent(ctx, parent.AgentID); aerr != nil {
@@ -5317,13 +5251,15 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	if parent.FailureReason.Valid {
 		reason = parent.FailureReason.String
 	}
-	plan := s.retryPlanForTask(ctx, parent, reason, parent.Error.String)
+	if !retryableReasons[reason] {
+		return nil, nil
+	}
 	// Use the reason-aware ceiling, not the raw max_attempts column, so an
 	// orphaned provider_network task recovered on its 2nd attempt is still
 	// allowed its deferred 3rd attempt (retryAttemptCeiling raises the ceiling
 	// to 3). Kept in sync with retryEligible below, which applies the same
 	// ceiling to the primary FailTask path.
-	if !plan.Allowed {
+	if parent.Attempt >= retryAttemptCeiling(reason, parent.MaxAttempts) {
 		slog.Info("task auto-retry skipped: budget exhausted",
 			"task_id", util.UUIDToString(parent.ID),
 			"attempt", parent.Attempt,
@@ -5335,6 +5271,9 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	// Autopilot has its own retry semantics (don't double-trigger) and a task
 	// with no issue/chat link has nowhere to report its retry — retryEligible
 	// covers both, keeping this sweeper path in sync with FailTask's in-tx retry.
+	if !retryEligible(reason, parent) {
+		return nil, nil
+	}
 
 	var runtimeMCPOverlay runtimeMCPOverlayData
 	agent, agentErr := s.Queries.GetAgent(ctx, parent.AgentID)
@@ -5355,7 +5294,7 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	// NULL for an immediate child), and write the reason-aware ceiling into the
 	// child's max_attempts so the retry chain stays self-consistent.
 	var retryFireAt pgtype.Timestamptz
-	if delay := plan.Delay; delay > 0 {
+	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
 		retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
 	}
 	// Same advisory slot check as FailTask's path, for the same reason: skip the
@@ -5385,7 +5324,7 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 		NewTaskID:            dbid.NewV7(),
 		ID:                   parent.ID,
 		FireAt:               retryFireAt,
-		MaxAttempts:          pgtype.Int4{Int32: plan.MaxAttempts, Valid: true},
+		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
 		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
 		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
 	})

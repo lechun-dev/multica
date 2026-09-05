@@ -249,6 +249,11 @@ describe("useBoardDragPan", () => {
     expect(fireSelectStart()).toBe(true); // released after gesture end
   });
 
+  it("does not set touch-action because touch/pen stay browser-owned", () => {
+    const { getByTestId } = render(<Harness />);
+    expect(getByTestId("scroller").style.touchAction).toBe("");
+  });
+
   it("ignores touch and pen pointerdown entirely (mouse-only scope)", () => {
     const { getByTestId } = render(<Harness />);
     const el = getByTestId("scroller");

@@ -311,8 +311,7 @@ func (h *Handler) ListIssueViews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && scopeType == "project" {
-		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		visibleProjects, err := h.visibleProjectIDSet(r.Context(), uuidToString(wsUUID), userID, includeWorkspaceOwned)
+		visibleProjects, err := h.visibleProjectIDSet(r.Context(), uuidToString(wsUUID), userID)
 		if err != nil {
 			if errors.Is(err, projectauth.ErrNotWorkspaceMember) {
 				visibleProjects = map[pgtype.UUID]struct{}{}

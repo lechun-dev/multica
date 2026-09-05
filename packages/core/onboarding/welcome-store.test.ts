@@ -11,6 +11,11 @@ describe("welcome-store", () => {
     useWelcomeStore.getState().reset();
   });
 
+  it("starts empty and not dismissed", () => {
+    expect(useWelcomeStore.getState().signal).toBeNull();
+    expect(useWelcomeStore.getState().dismissed).toBe(false);
+  });
+
   it("set() stores the signal and clears any prior dismissed flag", () => {
     useWelcomeStore.getState().dismiss();
     expect(useWelcomeStore.getState().dismissed).toBe(true);

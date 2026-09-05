@@ -6,7 +6,7 @@
  * means the MissionOS build and local development retain their existing
  * behavior without reading runtime environment variables.
  */
-export type DesktopVariant = "official" | "lechun" | "lechun-preview";
+export type DesktopVariant = "official" | "lechun";
 
 export type DesktopIdentity = {
   variant: DesktopVariant;
@@ -14,12 +14,11 @@ export type DesktopIdentity = {
   /** Directory name under Electron's appData root. */
   userDataDirectoryName: string;
   appId: string;
-  protocol: "multica" | "multica-dev" | "multica-lechun" | "multica-lechun-preview";
-  oauthClient: "desktop" | "desktop-dev" | "desktop-lechun" | "desktop-lechun-preview";
+  protocol: "multica" | "multica-dev" | "multica-lechun";
+  oauthClient: "desktop" | "desktop-dev" | "desktop-lechun";
 };
 
 export const LECHUN_UPDATE_CHANNEL = "latest-lechun" as const;
-export const LECHUN_PREVIEW_UPDATE_CHANNEL = "latest-lechun-preview" as const;
 
 type ResolveDesktopIdentityOptions = {
   isDev: boolean;
@@ -53,17 +52,6 @@ export function resolveDesktopIdentity({
     };
   }
 
-  if (variant === "lechun-preview") {
-    return {
-      variant: "lechun-preview",
-      productName: "MissionOS Preview",
-      userDataDirectoryName: "Multica Lechun Preview",
-      appId: "ai.multica.desktop.lechun.preview",
-      protocol: "multica-lechun-preview",
-      oauthClient: "desktop-lechun-preview",
-    };
-  }
-
   return {
     variant: "official",
     productName: "MissionOS",
@@ -91,19 +79,14 @@ export function resolveDesktopUpdateChannel({
   platform: string;
   arch: string;
 }): string | null {
-  if (variant !== "lechun" && variant !== "lechun-preview") return null;
-
-  const channel =
-    variant === "lechun-preview"
-      ? LECHUN_PREVIEW_UPDATE_CHANNEL
-      : LECHUN_UPDATE_CHANNEL;
+  if (variant !== "lechun") return null;
 
   if (platform === "darwin" && arch === "x64") {
-    return `${channel}-x64`;
+    return `${LECHUN_UPDATE_CHANNEL}-x64`;
   }
   if (platform === "win32" && arch === "arm64") {
-    return `${channel}-arm64`;
+    return `${LECHUN_UPDATE_CHANNEL}-arm64`;
   }
 
-  return channel;
+  return LECHUN_UPDATE_CHANNEL;
 }

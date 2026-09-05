@@ -64,7 +64,7 @@ describe("fetchLatestRelease", () => {
     expect(result.version).toBe("v0.2.14");
     expect(result.assets.winX64Exe).toContain("0.2.14");
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://api.github.com/repos/lechun-dev/multica/releases?per_page=5",
+      "https://api.github.com/repos/lechun-dev/multica/releases?per_page=20",
     );
   });
 
@@ -139,6 +139,23 @@ describe("fetchLatestRelease", () => {
 
     const result = await fetchLatestRelease();
     expect(result.version).toBe("v0.2.14");
+  });
+
+  it("finds the stable release after a beta train", async () => {
+    const betaReleases = Array.from({ length: 9 }, (_, index) =>
+      releasePayload({
+        tag: `v0.4.73-beta.${9 - index}`,
+        prerelease: true,
+      }),
+    );
+    mockFetchWithReleases([
+      ...betaReleases,
+      releasePayload({ tag: "v0.4.72", assets: completeAssets("0.4.72") }),
+    ]);
+
+    const result = await fetchLatestRelease();
+    expect(result.version).toBe("v0.4.72");
+    expect(result.assets.macArm64Dmg).toContain("0.4.72");
   });
 
   it("returns an empty release shape when the API errors", async () => {

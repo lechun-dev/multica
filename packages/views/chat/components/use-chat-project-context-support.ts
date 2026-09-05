@@ -12,7 +12,8 @@ import {
  * project description into the run brief. `null` means "cannot tell" (no
  * agent, no bound runtime, or the runtime row not in cache yet) and must NOT
  * warn: this is a soft gate, and a spurious warning is worse than a
- * description an old daemon drops.
+ * description an old daemon drops — same policy as the handoff note gate in
+ * run-confirm.
  *
  * Shared by both send chains (chat tab controller and floating ChatWindow) so
  * the resolution rule cannot drift between the two surfaces.

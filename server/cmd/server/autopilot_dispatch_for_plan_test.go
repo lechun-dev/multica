@@ -69,10 +69,6 @@ func TestDispatchAutopilotForPlanIsIdempotent(t *testing.T) {
 		Enabled:        true,
 		CronExpression: pgtype.Text{String: "*/5 * * * *", Valid: true},
 		Timezone:       pgtype.Text{String: "UTC", Valid: true},
-		// MUL-6951: the trigger's creator is the human its runs act as, and
-		// dispatch fails closed without one.
-		CreatedByType: pgtype.Text{String: "member", Valid: true},
-		CreatedByID:   ap.CreatedByID,
 	})
 	if err != nil {
 		t.Fatalf("CreateAutopilotTrigger: %v", err)
@@ -190,8 +186,7 @@ func TestDispatchAutopilotSuppressesRecentDuplicateIssue(t *testing.T) {
 		_, _ = testPool.Exec(bg, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	})
 
-	dupTrigger := seedAutopilotScheduleTrigger(t, queries, ap)
-	first, err := autopilotSvc.DispatchAutopilot(ctx, ap, dupTrigger, "manual", nil)
+	first, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 	if err != nil {
 		t.Fatalf("first DispatchAutopilot: %v", err)
 	}
@@ -199,7 +194,7 @@ func TestDispatchAutopilotSuppressesRecentDuplicateIssue(t *testing.T) {
 		t.Fatalf("first dispatch = %+v, want issue_created with issue_id", first)
 	}
 
-	second, err := autopilotSvc.DispatchAutopilot(ctx, ap, dupTrigger, "manual", nil)
+	second, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 	if err != nil {
 		t.Fatalf("second DispatchAutopilot: %v", err)
 	}
@@ -321,9 +316,6 @@ func TestDispatchAutopilotForPlanRecoversPartialRun(t *testing.T) {
 				Enabled:        true,
 				CronExpression: pgtype.Text{String: "*/5 * * * *", Valid: true},
 				Timezone:       pgtype.Text{String: "UTC", Valid: true},
-				// MUL-6951: see the sibling fixture above.
-				CreatedByType: pgtype.Text{String: "member", Valid: true},
-				CreatedByID:   ap.CreatedByID,
 			})
 			if err != nil {
 				t.Fatalf("CreateAutopilotTrigger: %v", err)

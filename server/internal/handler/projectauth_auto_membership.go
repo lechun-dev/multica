@@ -106,167 +106,79 @@ func promoteMemberLeadWithExecutor(ctx context.Context, executor dbExecutor, pro
 	return promoteProjectMemberWithExecutor(ctx, executor, projectID, leadUserID, projectauth.ProjectOwner)
 }
 
-func resolveIssueAssigneeUserWithExecutor(ctx context.Context, executor dbExecutor, projectID string, assigneeType pgtype.Text, assigneeID pgtype.UUID) (string, error) {
-	if !assigneeType.Valid || !assigneeID.Valid {
-		return "", nil
-	}
-	switch assigneeType.String {
-	case "member":
-		return uuidToString(assigneeID), nil
-	case "agent":
-		return resolveAgentOwnerWithExecutor(ctx, executor, projectID, uuidToString(assigneeID))
-	default:
-		return "", nil
-	}
-}
-
-// 2026-09-01 coder(lq): Reconcile mention grants from the complete issue
-// surface (description plus every comment). Grants are source=system, so a
-// removed mention can be revoked safely without touching manual task shares;
-// keeping the aggregate set also avoids revoking a user mentioned elsewhere
-// on the same task.
-func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, description string) error {
-	desired := make(map[string]struct{})
-	addMentions := func(content string) error {
-		for _, mention := range util.ParseMentions(content) {
-			if mention.Type != "member" && mention.Type != "agent" {
-				continue
+func promoteMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, projectID, content string) error {
+	for _, mention := range util.ParseMentions(content) {
+		userID := ""
+		switch mention.Type {
+		case "member":
+			userID = mention.ID
+		case "agent":
+			var err error
+			userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+			if err != nil {
+				return err
 			}
-			userID := mention.ID
-			if mention.Type == "agent" {
-				var err error
-				userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
-				if err != nil {
-					return err
-				}
-			}
-			if userID != "" {
-				desired[userID] = struct{}{}
-			}
-		}
-		return nil
-	}
-	if err := addMentions(description); err != nil {
-		return err
-	}
-	rows, err := executor.Query(ctx, `SELECT content FROM comment WHERE issue_id=$1`, issueID)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := addMentions(content); err != nil {
-			rows.Close()
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-
-	currentRows, err := executor.Query(ctx, `
-		SELECT subject_id FROM projectauth_access_grants
-		WHERE issue_id=$1 AND project_id=$2 AND subject_type='user'
-		  AND permission=$3 AND source='system'`, issueID, projectID, string(projectauth.View))
-	if err != nil {
-		return err
-	}
-	var current []string
-	for currentRows.Next() {
-		var userID string
-		if err := currentRows.Scan(&userID); err != nil {
-			currentRows.Close()
-			return err
-		}
-		current = append(current, userID)
-	}
-	if err := currentRows.Err(); err != nil {
-		currentRows.Close()
-		return err
-	}
-	currentRows.Close()
-	for _, userID := range current {
-		if _, keep := desired[userID]; keep {
+		default:
 			continue
 		}
-		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
-			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND permission=$4 AND source='system'`, issueID, projectID, userID, string(projectauth.View)); err != nil {
-			return err
-		}
-	}
-	for userID := range desired {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.View); err != nil {
+		if err := promoteProjectMemberWithExecutor(ctx, executor, projectID, userID, projectauth.ProjectViewer); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// 2026-09-01 coder(lq): Synchronize automatic task grants after every issue
-// write. Assignee Edit grants are revoked when the assignee changes; mention
-// View grants are reconciled against current issue/comment content. Manual
-// grants remain untouched because only source=system rows are removed.
-func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previous *db.Issue, issue db.Issue) error {
-	if previous != nil && previous.ProjectID.Valid && (!issue.ProjectID.Valid || previous.ProjectID != issue.ProjectID) {
-		_, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants WHERE issue_id=$1 AND source='system'`, uuidToString(issue.ID))
-		if err != nil {
+// 2026-08-28 coder(lq): Mention grants are task-scoped; project descriptions
+// continue using the legacy project-level helper above.
+func promoteIssueMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, content string) error {
+	for _, mention := range util.ParseMentions(content) {
+		userID := mention.ID
+		if mention.Type == "agent" {
+			var err error
+			userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+			if err != nil {
+				return err
+			}
+		}
+		if mention.Type != "member" && mention.Type != "agent" || userID == "" {
+			continue
+		}
+		if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,'project.view',$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID); err != nil {
 			return err
 		}
 	}
-	if !issue.ProjectID.Valid {
-		return nil
-	}
-	projectID := uuidToString(issue.ProjectID)
-	issueID := uuidToString(issue.ID)
-	currentAssignee, err := resolveIssueAssigneeUserWithExecutor(ctx, executor, projectID, issue.AssigneeType, issue.AssigneeID)
-	if err != nil {
-		return err
-	}
-	previousAssignee := ""
-	if previous != nil && previous.ProjectID.Valid && previous.ProjectID == issue.ProjectID {
-		previousAssignee, err = resolveIssueAssigneeUserWithExecutor(ctx, executor, projectID, previous.AssigneeType, previous.AssigneeID)
-		if err != nil {
-			return err
-		}
-	}
-	if previousAssignee != "" && previousAssignee != currentAssignee {
-		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
-			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND permission=$4 AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.Edit)); err != nil {
-			return err
-		}
-	}
-	if currentAssignee != "" {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.Edit); err != nil {
-			return err
-		}
-	}
-	return syncIssueMentionAccessWithExecutor(ctx, executor, issueID, projectID, issue.Description.String)
+	return nil
 }
 
-// 2026-08-31 coder(lq): Keep automatic assignee/mention grants mirrored into
-// the unified source while legacy issue_permissions remains available for
-// rollback and older handlers.
-func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, permission projectauth.Permission) error {
-	if _, err := executor.Exec(ctx, `
-		INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by)
-		VALUES ($1,$2,$3,$4,$3)
-		ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, userID, string(permission)); err != nil {
-		return err
+func promoteIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID pgtype.UUID, projectID pgtype.UUID, assigneeType pgtype.Text, assigneeID pgtype.UUID, description pgtype.Text) error {
+	if !projectID.Valid {
+		return nil
 	}
-	_, err := executor.Exec(ctx, `
-		INSERT INTO projectauth_access_grants (workspace_id, project_id, issue_id, subject_type, subject_id, permission, source, granted_by)
-		SELECT p.workspace_id, $2, $1, 'user', $3, $4, 'system', $3
-		FROM project p WHERE p.id=$2
-		ON CONFLICT DO NOTHING`, issueID, projectID, userID, string(permission))
-	return err
+	projectIDString := uuidToString(projectID)
+	if assigneeType.Valid && assigneeID.Valid {
+		assigneeUserID := ""
+		switch assigneeType.String {
+		case "member":
+			assigneeUserID = uuidToString(assigneeID)
+		case "agent":
+			var err error
+			assigneeUserID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectIDString, uuidToString(assigneeID))
+			if err != nil {
+				return err
+			}
+		default:
+			assigneeUserID = ""
+		}
+		if assigneeUserID != "" {
+			if _, err := executor.Exec(ctx, `INSERT INTO issue_permissions (issue_id, project_id, user_id, permission, granted_by) VALUES ($1,$2,$3,'project.edit',$3) ON CONFLICT (issue_id,user_id,permission) DO NOTHING`, issueID, projectID, assigneeUserID); err != nil {
+				return err
+			}
+		}
+	}
+	if description.Valid {
+		return promoteIssueMentionedMembersWithExecutor(ctx, executor, uuidToString(issueID), projectIDString, description.String)
+	}
+	return nil
 }
 
 // 2026-08-27 coder(lq): All IssueService.Create transports use the same
@@ -276,7 +188,7 @@ func (h *Handler) issueAccessBeforeCommit() func(context.Context, pgx.Tx, db.Iss
 		return nil
 	}
 	return func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
-		return syncIssueAccessWithExecutor(ctx, tx, nil, issue)
+		return promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description)
 	}
 }
 
@@ -306,15 +218,11 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return db.Issue{}, err
 	}
-	previous, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
-	if err != nil {
-		return db.Issue{}, err
-	}
 	issue, err := qtx.UpdateIssue(ctx, params)
 	if err != nil {
 		return db.Issue{}, err
 	}
-	if err := syncIssueAccessWithExecutor(ctx, tx, &previous, issue); err != nil {
+	if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
 		return db.Issue{}, fmt.Errorf("promote issue project access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -344,7 +252,7 @@ func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.I
 	if err != nil {
 		return db.CreateCommentRow{}, err
 	}
-	if err := syncIssueMentionAccessWithExecutor(ctx, tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), issue.Description.String); err != nil {
+	if err := promoteIssueMentionedMembersWithExecutor(ctx, tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), params.Content); err != nil {
 		return db.CreateCommentRow{}, fmt.Errorf("promote comment mention project access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

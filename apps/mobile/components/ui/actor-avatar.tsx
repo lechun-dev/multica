@@ -36,9 +36,6 @@ import { THEME } from "@/lib/theme";
 interface Props {
   type: "member" | "agent" | "system" | "squad" | null | undefined;
   id: string | null | undefined;
-  /** Timeline-provided identity for actors no longer in the live directory. */
-  name?: string;
-  avatarUrl?: string | null;
   size?: number;
   /**
    * Overlay a 3-state presence dot at the bottom-right corner. No-op for
@@ -48,23 +45,8 @@ interface Props {
   showPresence?: boolean;
 }
 
-export function ActorAvatar({
-  type,
-  id,
-  name,
-  avatarUrl,
-  size = 32,
-  showPresence,
-}: Props) {
-  const avatar = (
-    <BareAvatar
-      type={type}
-      id={id}
-      name={name}
-      avatarUrl={avatarUrl}
-      size={size}
-    />
-  );
+export function ActorAvatar({ type, id, size = 32, showPresence }: Props) {
+  const avatar = <BareAvatar type={type} id={id} size={size} />;
 
   if (!showPresence || type !== "agent" || !id) {
     return avatar;
@@ -78,14 +60,10 @@ export function ActorAvatar({
 function BareAvatar({
   type,
   id,
-  name,
-  avatarUrl,
   size,
 }: {
   type: Props["type"];
   id: Props["id"];
-  name: Props["name"];
-  avatarUrl: Props["avatarUrl"];
   size: number;
 }) {
   const { getName, getAvatarUrl } = useActorLookup();
@@ -110,13 +88,7 @@ function BareAvatar({
   // Only treat a URL as renderable if it actually looks like one — RN <Image>
   // can crash native-side on malformed sources (empty string, plain "foo",
   // etc.). Cheap regex; falsy / bad input falls through to the icon fallback.
-  const rawUrl = avatarUrl === undefined
-    ? type && type !== "system"
-      ? getAvatarUrl(type, id)
-      : null
-    : avatarUrl;
-  const displayName =
-    name ?? (type === "system" ? "Multica" : getName(type, id));
+  const rawUrl = type && type !== "system" ? getAvatarUrl(type, id) : null;
   const emoji = rawUrl?.startsWith("emoji:")
     ? rawUrl.slice("emoji:".length).trim() || null
     : null;
@@ -132,7 +104,7 @@ function BareAvatar({
         className="items-center justify-center bg-muted"
       >
         <Text
-          accessibilityLabel={type === "system" ? "" : displayName}
+          accessibilityLabel={type === "system" ? "" : getName(type, id)}
           style={{ fontSize: Math.round(size * 0.58), lineHeight: size }}
         >
           {emoji}
@@ -145,7 +117,6 @@ function BareAvatar({
     return (
       <Image
         source={{ uri: url }}
-        accessibilityLabel={displayName}
         style={{ width: size, height: size, borderRadius: radius }}
         className="bg-muted"
       />
@@ -174,6 +145,7 @@ function BareAvatar({
     );
   }
 
+  const name = getName(type, id);
   const isAgent = type === "agent";
   return (
     <View
@@ -189,7 +161,7 @@ function BareAvatar({
           isAgent ? "text-brand" : "text-muted-foreground",
         )}
       >
-        {getInitials(displayName)}
+        {getInitials(name)}
       </Text>
     </View>
   );

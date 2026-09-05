@@ -104,13 +104,6 @@ import type {
   ProjectPermissionReportResponse,
   ProjectPermissionRole,
   ProjectPermissionRolesResponse,
-  ProjectAccessGrant,
-  ProjectAccessGrantRequest,
-  ProjectAccessGrantsResponse,
-  ProjectAuthorizationOrganizationsResponse,
-  ProjectAuthorizationDingTalkSyncResult,
-  ProjectAuthorizationImportPreview,
-  ProjectAuthorizationImportResult,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
@@ -234,9 +227,6 @@ import type {
   CreateCommentSubIssueManualRequest,
   CreateCommentSubIssueAgentRequest,
   CreateCommentSubIssueRequest,
-  TaskRetryPolicy,
-  TaskRetryPolicyRequest,
-  UpdateTaskRetryPolicyRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -404,13 +394,6 @@ import {
   EMPTY_PROJECT_MEMBERS_RESPONSE,
   type ProjectMembersResponse,
   ProjectPermissionRolesResponseSchema,
-  ProjectAccessGrantSchema,
-  ProjectAccessGrantsResponseSchema,
-  EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE,
-  ProjectAuthorizationOrganizationsResponseSchema,
-  ProjectAuthorizationDingTalkSyncResultSchema,
-  ProjectAuthorizationImportPreviewSchema,
-  ProjectAuthorizationImportResultSchema,
   ListIssueStatusesResponseSchema,
   IssueStatusEntrySchema,
   IssuePropertySchema,
@@ -2360,17 +2343,10 @@ export class ApiClient {
   // than cast: an unparseable body degrades to an explicit "failed" record that
   // shows the discovery error and keeps manual model entry usable, instead of a
   // fabricated empty catalog or an endless spinner (MUL-5444).
-  async initiateListModels(
-    runtimeId: string,
-    options: { force?: boolean } = {},
-  ): Promise<RuntimeModelListRequest> {
-    const query = options.force === true ? "?force=true" : "";
-    const raw = await this.fetch<unknown>(
-      `/api/runtimes/${runtimeId}/models${query}`,
-      {
-        method: "POST",
-      },
-    );
+  async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
+      method: "POST",
+    });
     return parseWithFallback<RuntimeModelListRequest>(
       raw,
       RuntimeModelListRequestSchema,
@@ -3708,158 +3684,14 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/members/${userId}`, { method: "DELETE" });
   }
 
-  /** Unified project/task authorization API. Kept additive so legacy member
-   * endpoints remain available during migration and upstream rebases. */
-  async listProjectAccessGrants(projectId: string): Promise<ProjectAccessGrantsResponse> {
-    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/access-grants`);
-    return parseWithFallback(raw, ProjectAccessGrantsResponseSchema, EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE, {
-      endpoint: "GET /api/projects/:id/access-grants",
-    });
-  }
-
-  async listProjectAuthorizationOrganizations(workspaceId: string): Promise<ProjectAuthorizationOrganizationsResponse> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations`);
-    return parseWithFallback(raw, ProjectAuthorizationOrganizationsResponseSchema, { organizations: [], members: [], total: 0, member_total: 0 }, {
-      endpoint: "GET /api/workspaces/:id/projectauth/organizations",
-    });
-  }
-
-  // 2026-09-01 coder(lq): Keep organization imports behind the shared client
-  // so multipart uploads receive the same auth, CSRF, and workspace headers as
-  // every other API request.
-  async previewProjectAuthorizationOrganizationImport(
-    workspaceId: string,
-    kind: "organizations" | "members",
-    file: File,
-  ): Promise<ProjectAuthorizationImportPreview> {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await this.fetchRaw(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/import/preview?kind=${encodeURIComponent(kind)}`,
-      { method: "POST", body: form },
-    );
-    const raw = await response.json();
-    return parseWithFallback(raw, ProjectAuthorizationImportPreviewSchema, {
-      kind,
-      errors: [],
-      warnings: [],
-      rows: 0,
-    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import/preview" });
-  }
-
-  async importProjectAuthorizationOrganizations(
-    workspaceId: string,
-    data: {
-      kind: "organizations" | "members";
-      organizations?: ProjectAuthorizationImportPreview["organizations"];
-      members?: ProjectAuthorizationImportPreview["members"];
-    },
-  ): Promise<ProjectAuthorizationImportResult> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/import`,
-      { method: "POST", body: JSON.stringify(data) },
-    );
-    return parseWithFallback(raw, ProjectAuthorizationImportResultSchema, {
-      organizations_created: 0,
-      organizations_updated: 0,
-      members_created: 0,
-      members_updated: 0,
-      disabled: 0,
-      users_created: 0,
-      workspace_members_created: 0,
-      unmatched: [],
-    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/import" });
-  }
-
-  async syncProjectAuthorizationDingTalk(workspaceId: string): Promise<ProjectAuthorizationDingTalkSyncResult> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/sync`,
-      { method: "POST", body: JSON.stringify({}) },
-    );
-    return parseWithFallback(raw, ProjectAuthorizationDingTalkSyncResultSchema, {
-      organizations_created: 0,
-      organizations_updated: 0,
-      organizations_disabled: 0,
-      members_created: 0,
-      members_removed: 0,
-      users_created: 0,
-      users_matched: 0,
-      workspace_members_created: 0,
-      unmatched: [],
-    }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/sync" });
-  }
-
-  async downloadProjectAuthorizationOrganizationTemplate(
-    workspaceId: string,
-    kind: "organizations" | "members",
-  ): Promise<Blob> {
-    const response = await this.fetchRaw(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/projectauth/organizations/template?kind=${encodeURIComponent(kind)}`,
-    );
-    return response.blob();
-  }
-
-  async createProjectAccessGrant(projectId: string, data: ProjectAccessGrantRequest): Promise<ProjectAccessGrant> {
-    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/access-grants`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, ProjectAccessGrantSchema, {
-      id: "",
-      workspace_id: "",
-      project_id: projectId,
-      subject_type: data.subject_type,
-      subject_id: data.subject_id,
-      role: data.role,
-      permission: data.permission,
-      source: "manual",
-    }, { endpoint: "POST /api/projects/:id/access-grants" });
-  }
-
-  async revokeProjectAccessGrant(projectId: string, data: ProjectAccessGrantRequest): Promise<void> {
-    await this.fetch(`/api/projects/${projectId}/access-grants`, { method: "DELETE", body: JSON.stringify(data) });
-  }
-
-  async listIssueAccessGrants(issueId: string): Promise<ProjectAccessGrantsResponse> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/access-grants`);
-    return parseWithFallback(raw, ProjectAccessGrantsResponseSchema, EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE, {
-      endpoint: "GET /api/issues/:id/access-grants",
-    });
-  }
-
-  async createIssueAccessGrant(issueId: string, data: ProjectAccessGrantRequest): Promise<ProjectAccessGrant> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/access-grants`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, ProjectAccessGrantSchema, {
-      id: "",
-      workspace_id: "",
-      project_id: "",
-      issue_id: issueId,
-      subject_type: data.subject_type,
-      subject_id: data.subject_id,
-      role: data.role,
-      permission: data.permission,
-      source: "manual",
-    }, { endpoint: "POST /api/issues/:id/access-grants" });
-  }
-
-  async revokeIssueAccessGrant(issueId: string, data: ProjectAccessGrantRequest): Promise<void> {
-    await this.fetch(`/api/issues/${issueId}/access-grants`, { method: "DELETE", body: JSON.stringify(data) });
-  }
-
   async listProjectPermissionReport(
     params: ProjectPermissionReportParams = {},
   ): Promise<ProjectPermissionReportResponse> {
     const q = new URLSearchParams();
     if (params.project_id) q.set("project_id", params.project_id);
-    if (params.issue_id) q.set("issue_id", params.issue_id);
     if (params.user_id) q.set("user_id", params.user_id);
     if (params.role) q.set("role", params.role);
     if (params.permission) q.set("permission", params.permission);
-    if (params.subject_type) q.set("subject_type", params.subject_type);
-    if (params.subject_id) q.set("subject_id", params.subject_id);
     if (params.scope) q.set("scope", params.scope);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.offset !== undefined) q.set("offset", String(params.offset));
@@ -3898,40 +3730,6 @@ export class ApiClient {
 
   async deleteProjectPermissionRole(key: string): Promise<void> {
     await this.fetch(`/api/project-permission-roles/${encodeURIComponent(key)}`, { method: "DELETE" });
-  }
-
-  // Workspace-configured failed-task retry rules.
-  async listTaskRetryPolicies(workspaceId: string): Promise<TaskRetryPolicy[]> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies`);
-    if (Array.isArray(raw)) return raw as TaskRetryPolicy[];
-    if (raw && typeof raw === "object" && "policies" in raw) {
-      return (raw as { policies?: TaskRetryPolicy[] }).policies ?? [];
-    }
-    return [];
-  }
-
-  async createTaskRetryPolicy(workspaceId: string, data: TaskRetryPolicyRequest): Promise<TaskRetryPolicy> {
-    return this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async updateTaskRetryPolicy(
-    workspaceId: string,
-    policyId: string,
-    data: UpdateTaskRetryPolicyRequest,
-  ): Promise<TaskRetryPolicy> {
-    return this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies/${encodeURIComponent(policyId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async deleteTaskRetryPolicy(workspaceId: string, policyId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies/${encodeURIComponent(policyId)}`, {
-      method: "DELETE",
-    });
   }
 
   // Project resources

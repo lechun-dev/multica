@@ -2,18 +2,13 @@
 
 import { useCallback } from "react";
 import { useWorkspaceId } from "@multica/core/hooks";
-import {
-  useModalStore,
-  type IssueLimitRecoveryReason,
-} from "@multica/core/modals";
+import { useModalStore } from "@multica/core/modals";
 
-/** Opens the shared limit-recovery dialog without closing the current surface. */
-export function useIssueLimitUpgradePrompt(
-  reason: IssueLimitRecoveryReason = "issue_limit",
-): () => void {
+/** Opens the shared issue-limit recovery dialog without closing the current draft. */
+export function useIssueLimitUpgradePrompt(): () => void {
   const wsId = useWorkspaceId();
 
   return useCallback(() => {
-    useModalStore.getState().showIssueLimitRecovery(wsId, reason);
-  }, [reason, wsId]);
+    useModalStore.getState().showIssueLimitRecovery(wsId);
+  }, [wsId]);
 }

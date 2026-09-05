@@ -21,7 +21,6 @@ import {
   CreditCard,
   Server,
   ShieldCheck,
-  RotateCcw,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
@@ -53,8 +52,6 @@ import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
 import { ProjectPermissionsTab } from "./project-permissions-tab";
 import { ProjectPermissionRolesTab } from "./project-permission-roles-tab";
-import { ProjectAuthorizationOrganizationsTab } from "./project-authorization-organizations-tab";
-import { TaskRetryPoliciesTab } from "./task-retry-policies-tab";
 import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
@@ -87,8 +84,6 @@ const WORKSPACE_TAB_KEYS = [
   "plugins",
   "project_permissions",
   "project_permission_roles",
-  "project_authorization_organizations",
-  "task_retry_policies",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -106,8 +101,6 @@ const WORKSPACE_TAB_VALUES = {
   plugins: "plugins",
   project_permissions: "project-permissions",
   project_permission_roles: "project-permission-roles",
-  project_authorization_organizations: "project-authorization-organizations",
-  task_retry_policies: "task-retry-policies",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -125,8 +118,6 @@ const WORKSPACE_TAB_ICONS = {
   plugins: Blocks,
   project_permissions: ShieldCheck,
   project_permission_roles: ShieldCheck,
-  project_authorization_organizations: Users,
-  task_retry_policies: RotateCcw,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -176,8 +167,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           (key !== "plugins" || pluginsEnabled) &&
           (key !== "billing" || billingEnabled) &&
           (key !== "project_permissions" &&
-            key !== "project_permission_roles" &&
-            key !== "project_authorization_organizations" ||
+            key !== "project_permission_roles" ||
             projectPermissionsEnabled),
     ),
     [billingEnabled, pluginsEnabled, projectPermissionsEnabled],
@@ -201,8 +191,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
     ? tabFromUrl === "billing" && !billingEnabled
       ? "workspace"
       : (tabFromUrl === "project-permissions" ||
-          tabFromUrl === "project-permission-roles" ||
-          tabFromUrl === "project-authorization-organizations") &&
+          tabFromUrl === "project-permission-roles") &&
         !projectPermissionsEnabled
       ? "workspace"
       : LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
@@ -216,9 +205,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
     activeTab === "properties" ||
     activeTab === "quick-actions" ||
     activeTab === "project-permissions" ||
-    activeTab === "project-permission-roles" ||
-    activeTab === "project-authorization-organizations" ||
-    activeTab === "task-retry-policies";
+    activeTab === "project-permission-roles";
 
   // replace (not push) so settings tab switches don't pollute browser history.
   // Preserve any other query params the page may carry.
@@ -334,10 +321,8 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
             <>
               <TabsContent value="project-permissions"><ProjectPermissionsTab /></TabsContent>
               <TabsContent value="project-permission-roles"><ProjectPermissionRolesTab /></TabsContent>
-              <TabsContent value="project-authorization-organizations"><ProjectAuthorizationOrganizationsTab /></TabsContent>
             </>
           ) : null}
-          <TabsContent value="task-retry-policies"><TaskRetryPoliciesTab /></TabsContent>
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
           ))}

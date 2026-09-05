@@ -220,18 +220,16 @@ function ResolvedThreadBar({
   const authorsLabel = useMemo(() => {
     const MAX_NAMED = 2;
     const seen = new Set<string>();
-    const ordered: { type: string | null; id: string | null; name?: string }[] =
-      [];
+    const ordered: { type: string | null; id: string | null }[] = [];
     for (const e of [entry, ...replies]) {
       const key = `${e.actor_type}:${e.actor_id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      ordered.push({ type: e.actor_type, id: e.actor_id, name: e.actor_name });
+      ordered.push({ type: e.actor_type, id: e.actor_id });
     }
     const named = ordered
       .slice(0, MAX_NAMED)
       .map((a) =>
-        a.name ||
         getName(a.type as "member" | "agent" | null | undefined, a.id),
       )
       .join(", ");
@@ -409,12 +407,10 @@ function CommentBody({
     issueAttachmentsOptions(wsId, issueId),
   );
 
-  const name =
-    entry.actor_name ||
-    getName(
-      entry.actor_type as "member" | "agent" | null | undefined,
-      entry.actor_id,
-    );
+  const name = getName(
+    entry.actor_type as "member" | "agent" | null | undefined,
+    entry.actor_id,
+  );
   const edited =
     entry.updated_at &&
     entry.created_at &&
@@ -487,8 +483,6 @@ function CommentBody({
         <ActorAvatar
           type={entry.actor_type as "member" | "agent"}
           id={entry.actor_id}
-          name={entry.actor_name}
-          avatarUrl={entry.actor_avatar_url}
           size={24}
           showPresence
         />

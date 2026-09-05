@@ -171,71 +171,6 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	}
 }
 
-func TestDingTalkOAuthProviderLoadsCompleteDirectory(t *testing.T) {
-	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
-		switch r.URL.Path {
-		case "/token":
-			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
-		case "/topapi/v2/department/listsub":
-			var req struct {
-				DeptID int64 `json:"dept_id"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Errorf("decode department request: %v", err)
-			}
-			if req.DeptID == 1 {
-				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[{"dept_id":"2","name":"研发","parent_id":1}]}}`), nil
-			} else {
-				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[]}}`), nil
-			}
-		case "/topapi/v2/user/list":
-			var req struct {
-				Cursor int64 `json:"cursor"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Errorf("decode user request: %v", err)
-			}
-			if req.Cursor == 0 {
-				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[{"userid":"u1","unionid":"union-1","name":"Alice","dept_id_list":[1,2]}],"next_cursor":10,"has_more":true}}`), nil
-			} else {
-				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[{"userid":"u2","unionid":"union-2","name":"Bob","dept_id_list":[2]}],"next_cursor":0,"has_more":false}}`), nil
-			}
-		default:
-			return jsonResponse(http.StatusNotFound, `{}`), nil
-		}
-	})
-	p := DingTalkOAuthProvider{Client: client, AppTokenURL: "https://example.test/token", DepartmentListURL: "https://example.test/topapi/v2/department/listsub", UserListURL: "https://example.test/topapi/v2/user/list", ClientID: "id", ClientSecret: "secret"}
-	snapshot, err := p.LoadDirectory(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshot.Departments) != 1 || snapshot.Departments[0].ID != "2" || snapshot.Departments[0].ParentID != "1" {
-		t.Fatalf("unexpected departments: %+v", snapshot.Departments)
-	}
-	if len(snapshot.Members) != 2 {
-		t.Fatalf("members=%d, want 2", len(snapshot.Members))
-	}
-}
-
-func TestDingTalkOAuthProviderRejectsStalledDirectoryCursor(t *testing.T) {
-	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
-		switch r.URL.Path {
-		case "/token":
-			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
-		case "/departments":
-			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[{"dept_id":2,"name":"研发","parent_id":1}]}}`), nil
-		case "/users":
-			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[],"next_cursor":0,"has_more":true}}`), nil
-		default:
-			return jsonResponse(http.StatusOK, `{}`), nil
-		}
-	})
-	p := DingTalkOAuthProvider{Client: client, AppTokenURL: "https://example.test/token", DepartmentListURL: "https://example.test/departments", UserListURL: "https://example.test/users", ClientID: "id", ClientSecret: "secret"}
-	if _, err := p.LoadDirectory(context.Background()); err == nil || !strings.Contains(err.Error(), "cursor did not advance") {
-		t.Fatalf("expected stalled cursor error, got %v", err)
-	}
-}
-
 func TestDingTalkOAuthProviderBackfillsMissingNickname(t *testing.T) {
 	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
@@ -270,6 +205,44 @@ func TestDingTalkOAuthProviderBackfillsMissingNickname(t *testing.T) {
 	}
 	if user.Name != "Alice" || user.AvatarURL != "https://example.test/alice.png" {
 		t.Fatalf("user=%+v", user)
+	}
+}
+
+func TestDingTalkOAuthProviderPrefersEnterpriseEmail(t *testing.T) {
+	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/oauth-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+		case "/me":
+			// The OAuth mailbox may be a stale DingTalk account mailbox.
+			return jsonResponse(http.StatusOK, `{"userId":"u1","unionId":"union-1","openId":"open-1","nick":"Alice","email":"old@example.com"}`), nil
+		case "/app-token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/union":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1"}}`), nil
+		case "/detail":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"u1","name":"Alice","email":"Alice@LeChun.CC"}}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:         client,
+		TokenURL:       "https://example.test/oauth-token",
+		UserURL:        "https://example.test/me",
+		AppTokenURL:    "https://example.test/app-token",
+		UnionLookupURL: "https://example.test/union",
+		UserDetailURL:  "https://example.test/detail",
+		ClientID:       "id",
+		ClientSecret:   "secret",
+	}
+
+	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Email != "alice@lechun.cc" {
+		t.Fatalf("email=%q, want enterprise email alice@lechun.cc", user.Email)
 	}
 }
 

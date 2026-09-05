@@ -356,3 +356,9 @@ func TestInboundFromCallback_DropsOnlySenderless(t *testing.T) {
 		t.Fatal("nil callback must be dropped")
 	}
 }
+
+func TestCapabilitiesIncludeAttachment(t *testing.T) {
+	if c := (&dingtalkChannel{}).Capabilities(); !c.Has(channel.CapText | channel.CapAttachment) {
+		t.Fatalf("capabilities = %v", c)
+	}
+}

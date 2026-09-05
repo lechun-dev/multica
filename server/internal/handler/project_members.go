@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
@@ -63,11 +62,6 @@ func (h *Handler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := chi.URLParam(r, "id")
-	projectUUID, ok := parseUUIDOrBadRequest(w, projectID, "project id")
-	if !ok {
-		return
-	}
-	projectID = util.UUIDToString(projectUUID)
 	subject, ok := h.projectSubject(w, r, projectID)
 	if !ok {
 		return
@@ -87,11 +81,6 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := chi.URLParam(r, "id")
-	projectUUID, ok := parseUUIDOrBadRequest(w, projectID, "project id")
-	if !ok {
-		return
-	}
-	projectID = util.UUIDToString(projectUUID)
 	subject, ok := h.projectSubject(w, r, projectID)
 	if !ok {
 		return
@@ -101,11 +90,6 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	userUUID, ok := parseUUIDOrBadRequest(w, req.UserID, "user id")
-	if !ok {
-		return
-	}
-	req.UserID = util.UUIDToString(userUUID)
 	if err := h.updateProjectMembers(r.Context(), projectID, func(service *projectauth.Service) error {
 		return service.AddMember(r.Context(), subject, projectID, req.UserID, projectauth.ProjectRole(req.Role))
 	}); err != nil {
@@ -121,21 +105,12 @@ func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := chi.URLParam(r, "id")
-	projectUUID, ok := parseUUIDOrBadRequest(w, projectID, "project id")
-	if !ok {
-		return
-	}
-	projectID = util.UUIDToString(projectUUID)
 	subject, ok := h.projectSubject(w, r, projectID)
 	if !ok {
 		return
 	}
-	userUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "userId"), "user id")
-	if !ok {
-		return
-	}
 	if err := h.updateProjectMembers(r.Context(), projectID, func(service *projectauth.Service) error {
-		return service.RemoveMember(r.Context(), subject, projectID, util.UUIDToString(userUUID))
+		return service.RemoveMember(r.Context(), subject, projectID, chi.URLParam(r, "userId"))
 	}); err != nil {
 		writeProjectAuthError(w, err)
 		return
@@ -145,10 +120,6 @@ func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
 
 func writeProjectAuthError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, projectauth.ErrMigrationRequired):
-		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_migration_required", "project permission migration is required")
-	case errors.Is(err, projectauth.ErrStorageUnavailable), errors.Is(err, projectauth.ErrDisabled):
-		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
 	case errors.Is(err, projectauth.ErrInvalidRole):
 		writeError(w, http.StatusBadRequest, "invalid project role")
 	case errors.Is(err, projectauth.ErrForbidden):

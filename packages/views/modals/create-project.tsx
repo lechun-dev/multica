@@ -24,6 +24,7 @@ function GithubIcon({ className }: { className?: string }) {
 import { useQuery } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
+import { api } from "@multica/core/api";
 import {
   PROJECT_STATUS_CONFIG,
   PROJECT_STATUS_ORDER,
@@ -171,8 +172,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [repoSearch, setRepoSearch] = useState("");
   const [customRepoUrl, setCustomRepoUrl] = useState("");
   // 2026-08-28 coder(lq): Keep creation-time grants separate from the native
-  // form fields until submit; the server persists them atomically with the
-  // project row.
+  // project payload; they are persisted after the server returns the project ID.
   const [projectPermissions, setProjectPermissions] = useState<ProjectPermissionSelection[]>([]);
   const workspaceRepos = workspace?.repos ?? [];
   const repoQuery = repoSearch.trim().toLowerCase();
@@ -367,16 +367,28 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         due_date: dueDate || undefined,
         // Server attaches these in the same transaction as the project.
         resources,
-        access_grants: projectPermissions.map((selection) => ({
-          subject_type: selection.subjectType,
-          ...(selection.subjectId ? { subject_id: selection.subjectId } : {}),
-          ...(selection.role ? { role: selection.role } : {}),
-          ...(selection.permission ? { permission: selection.permission } : {}),
-        })),
       });
+      let permissionGrantFailed = false;
+      if (projectPermissions.length > 0) {
+        const permissionResults = await Promise.allSettled(
+          projectPermissions.map(({ userId, role }) =>
+            api.addProjectMember(project.id, { user_id: userId, role }),
+          ),
+        );
+        const failedCount = permissionResults.filter((result) => result.status === "rejected").length;
+        if (failedCount > 0) {
+          // 2026-08-28 coder(lq): Keep the partial-grant warning as the only
+          // result toast so a later success message does not hide it.
+          permissionGrantFailed = true;
+        }
+      }
       clearDraft();
       onClose();
-      toast.success(t(($) => $.create_project.toast_created));
+      if (permissionGrantFailed) {
+        toast.error(tProjects(($) => $.permissions.grant_failed));
+      } else {
+        toast.success(t(($) => $.create_project.toast_created));
+      }
       router.push(wsPaths.projectDetail(project.id));
     } catch (err) {
       toast.error(

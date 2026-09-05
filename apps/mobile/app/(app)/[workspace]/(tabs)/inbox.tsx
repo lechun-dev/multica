@@ -28,10 +28,7 @@ import {
 import { useWorkspaceStore } from "@/data/workspace-store";
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
-import {
-  deduplicateInboxItems,
-  getInboxNavigationTarget,
-} from "@/lib/inbox-display";
+import { deduplicateInboxItems } from "@/lib/inbox-display";
 
 export default function Inbox() {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
@@ -61,8 +58,17 @@ export default function Inbox() {
       // snapshot for the native stack push transition.
       markRead.mutate(item.id);
     }
-    const target = getInboxNavigationTarget(item, wsSlug, String(Date.now()));
-    if (target) router.push(target);
+    if (item.issue_id && wsSlug) {
+      router.push({
+        pathname: "/[workspace]/issue/[id]",
+        params: {
+          workspace: wsSlug,
+          id: item.issue_id,
+          highlight: item.details?.comment_id,
+          h: String(Date.now()),
+        },
+      });
+    }
   };
 
   // Trailing batch menu — mirrors web's dropdown

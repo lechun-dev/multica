@@ -171,6 +171,14 @@ func TestSourceContextMigrationsRollbackFailsClosedWithCapturedData(t *testing.T
 	}
 }
 
+func TestSourceContextRollbackGuardRegisteredForEveryMigrationStep(t *testing.T) {
+	for _, version := range sourceContextMigrationVersions {
+		if preRollbackHooks[version] == nil {
+			t.Errorf("source-context rollback guard is not registered for %s", version)
+		}
+	}
+}
+
 func assertSourceContextSchema(t *testing.T, pool interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, schema string, want bool) {

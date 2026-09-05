@@ -29,7 +29,6 @@ type dingtalkLoginHandler struct {
 	host        *handler.Handler
 	pool        *pgxpool.Pool
 	service     *notify.LoginOAuthService
-	provider    notify.DingTalkOAuthProvider
 	redirectURI string
 	initErr     error
 }
@@ -56,7 +55,6 @@ func newDingTalkLoginHandler(host *handler.Handler, pool *pgxpool.Pool, redirect
 		pool:        pool,
 		redirectURI: strings.TrimSpace(redirectURI),
 		service:     &notify.LoginOAuthService{Provider: provider, Store: dingtalkOAuthStateStore{pool: pool}, TTL: 10 * time.Minute},
-		provider:    provider,
 	}
 	switch {
 	case clientID == "" || clientSecret == "":

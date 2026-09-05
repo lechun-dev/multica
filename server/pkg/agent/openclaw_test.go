@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+func TestNewReturnsOpenclawBackend(t *testing.T) {
+	t.Parallel()
+	b, err := New("openclaw", Config{ExecutablePath: "/nonexistent/openclaw"})
+	if err != nil {
+		t.Fatalf("New(openclaw) error: %v", err)
+	}
+	if _, ok := b.(*openclawBackend); !ok {
+		t.Fatalf("expected *openclawBackend, got %T", b)
+	}
+}
+
 // ── Legacy result format tests (processOutput with final JSON blob) ──
 
 func TestOpenclawProcessOutputHappyPath(t *testing.T) {

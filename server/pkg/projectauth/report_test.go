@@ -76,7 +76,7 @@ func TestPermissionReportRejectsCrossWorkspaceAndInvalidFilters(t *testing.T) {
 	for name, filter := range map[string]PermissionReportFilter{
 		"cross workspace":    {WorkspaceID: "ws-2"},
 		"invalid scope":      {Scope: "user"},
-		"invalid subject":    {SubjectType: "team"},
+		"task scope":         {Scope: "issue"},
 		"invalid role":       {Role: "unknown"},
 		"invalid permission": {Permission: "project.delete"},
 		"negative offset":    {Offset: -1},

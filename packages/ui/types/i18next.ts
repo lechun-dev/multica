@@ -21,11 +21,6 @@ declare global {
       toggle_sidebar: string;
       copy_code: string;
       plain_text: string;
-      error_boundary: {
-        title: string;
-        description: string;
-        try_again: string;
-      };
     };
   }
 }

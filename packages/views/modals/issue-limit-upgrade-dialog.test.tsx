@@ -160,7 +160,6 @@ describe("IssueLimitUpgradeDialog", () => {
       modal: null,
       data: null,
       issueLimitRecoveryWorkspaceId: null,
-      issueLimitRecoveryReason: "issue_limit",
     });
     mockSummaryQuery.mockImplementation(async () => {
       if (summaryState.pending) return summaryState.pending;
@@ -178,7 +177,6 @@ describe("IssueLimitUpgradeDialog", () => {
       modal: null,
       data: null,
       issueLimitRecoveryWorkspaceId: null,
-      issueLimitRecoveryReason: "issue_limit",
     });
   });
 
@@ -197,35 +195,6 @@ describe("IssueLimitUpgradeDialog", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
-  });
-
-  it("uses autopilot-specific copy when Inbox opens the shared recovery surface", async () => {
-    summaryState.value = { availableActions: actions({ checkout: true }) };
-    renderPrompt();
-
-    act(() => {
-      useModalStore
-        .getState()
-        .showIssueLimitRecovery("ws-test", "autopilot_quota");
-    });
-
-    expect(
-      await screen.findByRole("dialog", {
-        name: "This workspace has reached its autopilot run limit",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText("Upgrade to Pro to restore autopilot runs."),
-    ).toBeInTheDocument();
-
-    act(() => useModalStore.getState().dismissIssueLimitRecovery());
-    await waitFor(() => {
-      expect(
-        screen.queryByRole("dialog", {
-          name: "This workspace has reached its autopilot run limit",
-        }),
-      ).not.toBeInTheDocument();
-    });
   });
 
   it("closes only recovery when Escape is pressed above a create dialog", async () => {

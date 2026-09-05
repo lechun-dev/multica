@@ -151,7 +151,7 @@ func projectVisibleTaskPredicateWithWorkspaceScope(taskAlias, workspaceRef, user
 		SELECT 1 FROM issue acl_issue
 		WHERE acl_issue.id = %s.issue_id
 		  AND acl_issue.workspace_id = %s
-			AND %s
+		  AND %s
 		))
 		OR (%s.issue_id IS NULL AND %s.chat_session_id IS NOT NULL AND EXISTS (
 		SELECT 1 FROM chat_session acl_chat
@@ -174,9 +174,9 @@ func projectVisibleTaskPredicateWithWorkspaceScope(taskAlias, workspaceRef, user
 		taskAlias, workspaceRef, userRef)
 }
 
-// 2026-08-28 coder(lq): Project-bound Chats inherit project visibility. When
-// project permissions are enabled, projectless sessions are excluded so chat
-// task rows cannot become an unscoped authorization side channel.
+// 2026-08-28 coder(lq): Project-bound Chats inherit project visibility.
+// Projectless Chats remain visible to their creator, the owning user of the
+// bound Agent, or the workspace owner.
 func chatProjectVisibilityPredicate(chatAlias, workspaceRef, userRef string) string {
 	return chatProjectVisibilityPredicateWithWorkspaceScope(chatAlias, workspaceRef, userRef, true)
 }
@@ -189,14 +189,14 @@ func chatProjectVisibilityPredicateWithWorkspaceScope(chatAlias, workspaceRef, u
 	return fmt.Sprintf(`(
 		(%s.project_id IS NOT NULL AND (
 			%s
-			OR %s
+			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
 		))
 		OR (%s.project_id IS NULL AND (
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
 			OR %s.creator_id = %s::uuid
 			OR EXISTS (SELECT 1 FROM agent a WHERE a.id = %s.agent_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid)
 		))
-	)`, chatAlias, ownerProjectClause, projectAccessPredicate(chatAlias+".project_id", workspaceRef, userRef),
+	)`, chatAlias, ownerProjectClause, chatAlias, userRef,
 		chatAlias, ownerProjectClause, workspaceRef, userRef, chatAlias, userRef,
 		chatAlias, workspaceRef, userRef)
 }
@@ -310,9 +310,11 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 }
 
 func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	// 2026-09-03 coder(lq): Project-bound tasks accept inherited project View or
-	// a direct View-capable task grant. Projectless Agent tasks retain the
-	// upstream creator/assignee visibility.
+	// 2026-09-01 coder(lq): Project-bound tasks inherit visibility from their
+	// project. Projectless tasks remain visible only to their creator/assignee,
+	// the owning user of an Agent identity, or the workspace owner. Historical
+	// issue_permissions rows are intentionally ignored because tasks no longer
+	// support independent authorization.
 	ownerProjectClause := "FALSE"
 	ownerProjectlessClause := "FALSE"
 	if includeWorkspaceOwned {
@@ -320,7 +322,10 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		ownerProjectlessClause = ownerProjectClause
 	}
 	return fmt.Sprintf(`(
-		(%s.project_id IS NOT NULL AND (%s OR %s OR %s))
+		(%s.project_id IS NOT NULL AND (
+			%s
+			OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = %s.project_id AND pm.user_id = %s::uuid)
+		))
 		OR (%s.project_id IS NULL AND (
 			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
 			OR (%s.creator_type = 'member' AND %s.creator_id = %s::uuid)
@@ -332,163 +337,12 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
 			))
 		))
-	)`, issueAlias, ownerProjectClause, projectAccessPredicate(issueAlias+".project_id", workspaceRef, userRef),
-		issueDirectAccessPredicate(issueAlias+".id", workspaceRef, userRef),
+	)`, issueAlias, ownerProjectClause, issueAlias, userRef,
 		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef)
-}
-
-// 2026-09-03 coder(lq): Resolve one authenticated user against a canonical
-// user, organization, or everyone grant. Both project and task predicates use
-// this fragment so their principal semantics cannot drift.
-func accessGrantPrincipalPredicate(alias string) string {
-	return fmt.Sprintf(`(
-		(%s.subject_type = 'user' AND %s.subject_id = a.user_id::text)
-		OR (%s.subject_type = 'everyone' AND (%s.subject_id = '' OR %s.subject_id = a.workspace_id::text))
-		OR (%s.subject_type = 'organization' AND %s.subject_id IN (
-			WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
-				SELECT org.id, org.parent_id
-				FROM projectauth_organization_members om
-				JOIN projectauth_organizations org ON org.id = om.organization_id
-				WHERE om.workspace_id = a.workspace_id
-				  AND om.user_id = a.user_id
-				  AND org.workspace_id = a.workspace_id
-				  AND org.status = 'active'
-				UNION
-				SELECT parent.id, parent.parent_id
-				FROM user_orgs child
-				JOIN projectauth_organizations parent ON parent.id = child.parent_id
-				WHERE parent.workspace_id = a.workspace_id
-				  AND parent.status = 'active'
-			)
-			SELECT organization_id::text FROM user_orgs
-		))
-	)`, alias, alias, alias, alias, alias, alias, alias)
-}
-
-// 2026-09-04 coder(lq): SQL list paths can run before the first role-catalog
-// read for a newly-created workspace. Keep the system-role defaults aligned
-// with projectauth.Service.roleAllows until migration 439's lazy seeding has
-// materialized those rows. An explicitly-created (even empty) role row wins;
-// fallback is only for a role definition that does not exist yet.
-func systemRoleViewPermissionPredicate(roleExpr, workspaceExpr string) string {
-	return fmt.Sprintf(`(
-		EXISTS (
-			SELECT 1
-			FROM project_permission_roles rr
-			JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
-			WHERE rr.workspace_id = %s
-			  AND rr.role_key = %s
-			  AND rp.permission = 'project.view'
-		)
-		OR (
-			%s IN ('owner', 'manager', 'member', 'viewer')
-			AND NOT EXISTS (
-				SELECT 1 FROM project_permission_roles rr
-				WHERE rr.workspace_id = %s AND rr.role_key = %s
-			)
-		)
-	)`, workspaceExpr, roleExpr, roleExpr, workspaceExpr, roleExpr)
-}
-
-// issueDirectAccessPredicate intentionally checks only grants attached to the
-// current task. It may reveal that task in a list, but never its project or a
-// sibling task. Role subjects match project roles and roles assigned directly
-// on the same task, mirroring projectauth.Service.checkGrants.
-// 2026-09-03 coder(lq): Keep direct task list visibility aligned with URL ACLs.
-func issueDirectAccessPredicate(issueExpr, workspaceRef, userRef string) string {
-	grantSubject := accessGrantPrincipalPredicate("g")
-	roleHolder := accessGrantPrincipalPredicate("rg")
-	return fmt.Sprintf(`EXISTS (
-		WITH auth_subject AS (
-			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
-		)
-		SELECT 1
-		FROM issue direct_issue
-		CROSS JOIN auth_subject a
-		WHERE direct_issue.id = %s
-		  AND direct_issue.workspace_id = a.workspace_id
-		  AND direct_issue.project_id IS NOT NULL
-		  AND EXISTS (
-			SELECT 1
-			FROM projectauth_access_grants g
-			WHERE g.workspace_id = direct_issue.workspace_id
-			  AND g.project_id = direct_issue.project_id
-			  AND g.issue_id = direct_issue.id
-			  AND (
-				%s
-				OR (g.subject_type = 'role' AND EXISTS (
-					SELECT 1
-					FROM projectauth_access_grants rg
-					WHERE rg.workspace_id = direct_issue.workspace_id
-					  AND rg.project_id = direct_issue.project_id
-					  AND (rg.issue_id IS NULL OR rg.issue_id = direct_issue.id)
-					  AND rg.role_key IS NOT NULL
-					  AND %s
-					  AND (rg.role_key = g.subject_id OR (g.subject_id = '' AND rg.role_key = g.role_key))
-				))
-			  )
-			  AND (
-				g.permission = 'project.view'
-				OR (g.role_key IS NOT NULL AND %s)
-			  )
-		)
-	)`, workspaceRef, userRef, issueExpr, grantSubject, roleHolder,
-		systemRoleViewPermissionPredicate("g.role_key", "direct_issue.workspace_id"))
-}
-
-// 2026-08-31 coder(lq): Keep project-list visibility in one SQL adapter so
-// project, task, chat and dashboard queries use the same authorization fact.
-// The predicate intentionally resolves only project.view. Task-level grants
-// are not considered here, which prevents a task share from exposing the
-// remainder of its project.
-func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
-	// 2026-09-01 coder(lq): Once the overlay is enabled, project visibility is
-	// derived exclusively from the canonical grant table. The native member
-	// table remains the source for workspace-owner bypass, but a legacy project
-	// membership row must never make a project visible by itself.
-	// 2026-09-01 coder(lq): Keep the principal expression identical for the
-	// grant being evaluated and the grant that assigns a project role.
-	grantSubject := accessGrantPrincipalPredicate("g")
-	roleHolder := accessGrantPrincipalPredicate("rg")
-	return fmt.Sprintf(`EXISTS (
-		WITH auth_subject AS (
-			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
-		)
-		SELECT 1
-		FROM project p
-		CROSS JOIN auth_subject a
-		WHERE p.id = %s
-		  AND p.workspace_id = a.workspace_id
-		  AND EXISTS (
-			SELECT 1
-			FROM projectauth_access_grants g
-			WHERE g.workspace_id = p.workspace_id
-			  AND g.project_id = p.id
-			  AND g.issue_id IS NULL
-			  AND (
-				%s
-				OR (g.subject_type = 'role' AND EXISTS (
-					SELECT 1
-					FROM projectauth_access_grants rg
-					WHERE rg.workspace_id = p.workspace_id
-					  AND rg.project_id = p.id
-					  AND rg.issue_id IS NULL
-					  AND rg.role_key IS NOT NULL
-					  AND %s
-					  AND (rg.role_key = g.subject_id OR (g.subject_id = '' AND rg.role_key = g.role_key))
-				))
-			  )
-			  AND (
-				g.permission = 'project.view'
-				OR (g.role_key IS NOT NULL AND %s)
-			  )
-		)
-	)`, workspaceRef, userRef, projectExpr, grantSubject, roleHolder,
-		systemRoleViewPermissionPredicate("g.role_key", "p.workspace_id"))
 }
 
 // workspaceOwnerBypassPredicate is embedded into all SQL visibility scopes so
@@ -544,17 +398,18 @@ func projectlessIssuePermissionAllowedWithOwnersAndBypass(issue db.Issue, userID
 // the upstream sqlc queries remain untouched and the overlay can be removed
 // without carrying a forked generated contract.
 func dashboardProjectVisibilityPredicate(projectExpr, workspaceRef, userRef string) string {
-	// 2026-09-01 coder(lq): Dashboard aggregates are another indirect
-	// project-list surface. Keep workspace-owner bypass and canonical project
-	// grants in the same predicate so an aggregate cannot be probed by UUID or
-	// exposed through the old project_members table. Respect the same deployment
-	// switch used by project/task lists.
-	ownerClause := fmt.Sprintf(`(%s AND EXISTS (
-		SELECT 1 FROM member m
-		WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'
-	))`, workspaceOwnerBypassPredicate(workspaceRef), workspaceRef, userRef)
-	return fmt.Sprintf(`(%s IS NOT NULL AND (%s OR %s))`,
-		projectExpr, ownerClause, projectAccessPredicate(projectExpr, workspaceRef, userRef))
+	return fmt.Sprintf(`(%s IS NOT NULL AND EXISTS (
+		SELECT 1 FROM project p
+		WHERE p.id = %s
+		  AND p.workspace_id = %s
+		  AND ((%s) AND EXISTS (
+			SELECT 1 FROM member m
+			WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'
+		  ) OR EXISTS (
+			SELECT 1 FROM project_members pm
+			WHERE pm.project_id = p.id AND pm.user_id = %s::uuid
+		  ))
+	))`, projectExpr, projectExpr, workspaceRef, workspaceOwnerBypassPredicate(workspaceRef), workspaceRef, userRef, userRef)
 }
 
 func (h *Handler) dashboardNeedsProjectFilter(projectID pgtype.UUID) bool {
@@ -1247,20 +1102,12 @@ func (h *Handler) filterPendingChatTasksByProjectPermission(ctx context.Context,
 // 2026-08-27 coder(lq): Project pins use the same visibility scope as project
 // lists. Returning a set lets callers filter mixed pin types without probing
 // each project individually.
-// 2026-09-03 coder(lq): Keep the owner-visibility switch consistent for
-// secondary project consumers (pins, saved views, autopilot). The variadic
-// argument preserves source compatibility for older callers that use the
-// default inclusive scope.
-func (h *Handler) visibleProjectIDSet(ctx context.Context, workspaceID, userID string, scope ...bool) (map[pgtype.UUID]struct{}, error) {
+func (h *Handler) visibleProjectIDSet(ctx context.Context, workspaceID, userID string) (map[pgtype.UUID]struct{}, error) {
 	visible := make(map[pgtype.UUID]struct{})
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return visible, nil
 	}
-	includeWorkspaceOwned := true
-	if len(scope) > 0 {
-		includeWorkspaceOwned = scope[0]
-	}
-	ids, err := h.ProjectAuth.ScopeWithWorkspaceOwned(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}, includeWorkspaceOwned)
+	ids, err := h.ProjectAuth.Scope(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID})
 	if err != nil {
 		return nil, err
 	}
@@ -1300,14 +1147,8 @@ func (h *Handler) requireProjectPermission(w http.ResponseWriter, r *http.Reques
 	if err := h.ProjectAuth.RequireWithWorkspaceScope(r.Context(), subject, projectID, permission, includeWorkspaceOwnedFromRequest(r)); err != nil {
 		// Project membership is intentionally indistinguishable from a missing
 		// project to avoid leaking project IDs across the workspace boundary.
-		if errors.Is(err, projectauth.ErrMigrationRequired) {
-			writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_migration_required", "project permission migration is required")
-		} else if errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrDisabled) {
-			writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
-		} else if errors.Is(err, projectauth.ErrNotWorkspaceMember) || errors.Is(err, projectauth.ErrNoProjectAccess) {
+		if errors.Is(err, projectauth.ErrNotWorkspaceMember) || errors.Is(err, projectauth.ErrNoProjectAccess) || errors.Is(err, projectauth.ErrForbidden) {
 			writeError(w, http.StatusNotFound, "project not found")
-		} else if errors.Is(err, projectauth.ErrForbidden) {
-			writeErrorCode(w, http.StatusForbidden, "project_permission_forbidden", "insufficient project permissions")
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to check project permissions")
 		}
@@ -1326,14 +1167,8 @@ func (h *Handler) requireIssueProjectPermission(w http.ResponseWriter, r *http.R
 	}
 	if reason == "projectless" {
 		writeError(w, http.StatusNotFound, "task is not attached to a project")
-	} else if reason == "migration" {
-		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_migration_required", "project permission migration is required")
-	} else if reason == "unavailable" {
-		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
 	} else if reason == "internal" {
 		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
-	} else if reason == "forbidden" {
-		writeErrorCode(w, http.StatusForbidden, "project_permission_forbidden", "insufficient project permissions")
 	} else {
 		writeError(w, http.StatusNotFound, "project not found")
 	}
@@ -1401,14 +1236,8 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	err = h.ProjectAuth.CheckIssueWithWorkspaceScope(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission, includeWorkspaceOwned)
 	if err != nil {
-		if errors.Is(err, projectauth.ErrMigrationRequired) {
-			return false, "migration"
-		}
-		if errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrDisabled) {
-			return false, "unavailable"
-		}
-		if errors.Is(err, projectauth.ErrForbidden) {
-			return false, "forbidden"
+		if errors.Is(err, projectauth.ErrDisabled) {
+			return false, "internal"
 		}
 		return false, "denied"
 	}
@@ -1430,12 +1259,11 @@ func (h *Handler) requireNewIssueProjectPermission(w http.ResponseWriter, r *htt
 		return true
 	}
 	if !projectID.Valid {
-		// 2026-08-31 coder(lq): The authorization overlay makes project binding
-		// mandatory. Without a canonical project there is no safe inheritance
-		// boundary for task visibility or direct grants. The disabled path above
-		// deliberately preserves Multica's legacy projectless behavior.
-		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
-		return false
+		// 2026-08-28 coder(lq): Projectless issues are workspace-scoped. Keep
+		// membership as the boundary while allowing callers to omit a project;
+		// project-bound issues continue through the project permission policy.
+		_, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
+		return ok
 	}
 	return h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, permission)
 }

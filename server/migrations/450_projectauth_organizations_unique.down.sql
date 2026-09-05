@@ -1,1 +1,0 @@
-DROP INDEX CONCURRENTLY IF EXISTS projectauth_organizations_workspace_provider_external_uniq;

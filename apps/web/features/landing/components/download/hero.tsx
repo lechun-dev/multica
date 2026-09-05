@@ -8,6 +8,8 @@ import { heroButtonClassName } from "../shared";
 interface Props {
   detected: DetectResult | null;
   assets: DownloadAssets;
+  /** GitHub releases escape hatch when the API cannot resolve an asset. */
+  fallbackHref?: string;
   /** True when the GitHub API fetch failed; disables all CTAs and
    *  surfaces a "version unavailable" line. */
   versionUnavailable: boolean;
@@ -21,6 +23,7 @@ interface Props {
 export function DownloadHero({
   detected,
   assets,
+  fallbackHref,
   versionUnavailable,
 }: Props) {
   const { t } = useLocale();
@@ -69,9 +72,19 @@ export function DownloadHero({
         ) : null}
 
         {versionUnavailable ? (
-          <p className="mx-auto mt-6 max-w-[520px] text-caption uppercase tracking-[0.14em] text-white/50">
-            {t.download.footer.versionUnavailable}
-          </p>
+          <div className="mx-auto mt-6 flex max-w-[520px] flex-col items-center gap-3 text-caption text-white/60">
+            <p>{t.download.footer.versionUnavailable}</p>
+            {fallbackHref ? (
+              <a
+                href={fallbackHref}
+                className="text-label text-white/85 underline decoration-white/35 underline-offset-4 hover:text-white hover:decoration-white/80"
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t.download.footer.allReleases}
+              </a>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </section>

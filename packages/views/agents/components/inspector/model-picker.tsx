@@ -1,12 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus } from "lucide-react";
-import {
-  refreshRuntimeModels,
-  runtimeModelsOptions,
-} from "@multica/core/runtimes";
+import { runtimeModelsOptions } from "@multica/core/runtimes";
+import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import {
   PickerItem,
@@ -14,8 +12,6 @@ import {
 } from "../../../issues/components/pickers";
 import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
-import { UnavailableModelsNote } from "../unavailable-models-note";
-import { ModelSearchHeader } from "../model-search-header";
 
 /**
  * Inline model picker for the agent inspector. Lighter cousin of
@@ -49,7 +45,6 @@ export function ModelPicker({
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
-  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -60,11 +55,6 @@ export function ModelPicker({
   // Memoise the model list so every downstream useMemo gets a stable
   // reference; `?? []` would mint a fresh array on every render and
   // invalidate filters needlessly.
-  // Advisory only — never merged into `models`, so no row below can select one.
-  const unavailableModels = useMemo(
-    () => modelsQuery.data?.unavailableModels ?? [],
-    [modelsQuery.data],
-  );
   const models = useMemo(
     () => modelsQuery.data?.models ?? [],
     [modelsQuery.data],
@@ -92,14 +82,6 @@ export function ModelPicker({
     setOpen(false);
     setSearch("");
     if (id !== value) await onChange(id);
-  };
-
-  const refresh = () => {
-    if (!runtimeId || !runtimeOnline) return;
-    void refreshRuntimeModels(queryClient, runtimeId).catch(() => {
-      // React Query retains the last catalog and owns the error state. Avoid
-      // turning a failed button action into an unhandled promise rejection.
-    });
   };
 
   if (!supported && !modelsQuery.isLoading) {
@@ -203,14 +185,18 @@ export function ModelPicker({
         </>
       }
       header={
-        <ModelSearchHeader
-          value={search}
-          onChange={setSearch}
-          onRefresh={refresh}
-          refreshing={modelsQuery.isFetching}
-          refreshDisabled={!runtimeOnline || !runtimeId}
-          compact
-        />
+        <div className="p-1.5">
+          <Input
+            autoFocus
+            name="agent-model-search"
+            autoComplete="off"
+            aria-label={t(($) => $.pickers.model_search_placeholder)}
+            placeholder={t(($) => $.pickers.model_search_placeholder)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-7 text-caption"
+          />
+        </div>
       }
     >
       {modelsQuery.isLoading && (
@@ -256,13 +242,6 @@ export function ModelPicker({
         <p className="px-3 py-3 text-center text-caption text-muted-foreground">
           {t(($) => $.pickers.model_empty)}
         </p>
-      )}
-
-      {!modelsQuery.isLoading && (
-        <UnavailableModelsNote
-          models={unavailableModels}
-          title={t(($) => $.pickers.model_unavailable_heading)}
-        />
       )}
 
       {canCreate && (

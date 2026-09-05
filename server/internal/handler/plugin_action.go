@@ -411,13 +411,6 @@ func (h *Handler) PatchPluginIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// 2026-09-04 coder(lq): Reading a task and editing its content are separate
-	// capabilities. Keep the existing plugin scope check, then require the
-	// project Edit permission for member-backed plugin sessions so a project
-	// viewer cannot mutate a task through issues:write.
-	if caller.UserID.Valid && !h.requirePluginIssueProjectPermission(w, r, caller, issue, projectauth.Edit) {
-		return
-	}
 
 	var req publicapiv1.PatchIssueRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

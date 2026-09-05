@@ -11,11 +11,13 @@ const webRepoUrl = "https://github.com/multica-ai/web";
 
 const {
   createProjectMock,
+  addProjectMemberMock,
   listProjectPermissionRolesMock,
   toastSuccessMock,
   toastErrorMock,
 } = vi.hoisted(() => ({
   createProjectMock: vi.fn(),
+  addProjectMemberMock: vi.fn(),
   listProjectPermissionRolesMock: vi.fn(),
   toastSuccessMock: vi.fn(),
   toastErrorMock: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock("@multica/core/projects/mutations", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
+    addProjectMember: addProjectMemberMock,
     listProjectPermissionRoles: listProjectPermissionRolesMock,
   },
 }));
@@ -215,6 +218,7 @@ import { CreateProjectModal } from "./create-project";
 describe("CreateProjectModal", () => {
   beforeEach(() => {
     createProjectMock.mockReset().mockResolvedValue({ id: "project-1", slug: "project-1" });
+    addProjectMemberMock.mockReset().mockResolvedValue(undefined);
     listProjectPermissionRolesMock.mockReset().mockResolvedValue({ roles: [] });
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
@@ -235,7 +239,7 @@ describe("CreateProjectModal", () => {
     expect(screen.getByRole("button", { name: "Access" })).toBeInTheDocument();
   });
 
-  it("submits selected members with their project role atomically", async () => {
+  it("adds selected members with their project role after creation", async () => {
     const user = userEvent.setup();
     renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
 
@@ -252,23 +256,18 @@ describe("CreateProjectModal", () => {
 
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Private project",
-          access_grants: [
-            {
-              subject_type: "user",
-              subject_id: "alice",
-              role: "manager",
-            },
-          ],
-        }),
+        expect.objectContaining({ title: "Private project" }),
       );
+      expect(addProjectMemberMock).toHaveBeenCalledWith("project-1", {
+        user_id: "alice",
+        role: "manager",
+      });
     });
   });
 
-  it("surfaces an atomic authorization failure without a success toast", async () => {
+  it("does not hide a partial authorization failure with a success toast", async () => {
     const user = userEvent.setup();
-    createProjectMock.mockRejectedValue(new Error("permission denied"));
+    addProjectMemberMock.mockRejectedValue(new Error("permission denied"));
     renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText("Project title"), "Partially shared project");
@@ -277,7 +276,7 @@ describe("CreateProjectModal", () => {
     await user.click(screen.getByRole("button", { name: "Create Project" }));
 
     await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith("permission denied");
+      expect(toastErrorMock).toHaveBeenCalledWith("Some members could not be updated. Try again.");
     });
     expect(toastSuccessMock).not.toHaveBeenCalled();
   });

@@ -174,22 +174,6 @@ type AgentTaskQueue struct {
 	ChannelContextRevision    pgtype.Int8 `json:"channel_context_revision"`
 }
 
-// TaskRetryPolicy stores a workspace-scoped rule used by the failed-task retry scanner.
-type TaskRetryPolicy struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	Name          string             `json:"name"`
-	Enabled       bool               `json:"enabled"`
-	Priority      int32              `json:"priority"`
-	MatchType     string             `json:"match_type"`
-	MatchValue    string             `json:"match_value"`
-	MaxAttempts   int32              `json:"max_attempts"`
-	DelaySchedule []byte             `json:"delay_schedule"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-}
-
 type AgentToLabel struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	LabelID   pgtype.UUID        `json:"label_id"`
@@ -242,15 +226,14 @@ type AutopilotCollaborator struct {
 }
 
 type AutopilotQuotaPeriod struct {
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	PeriodStart         pgtype.Timestamptz `json:"period_start"`
-	PeriodEnd           pgtype.Timestamptz `json:"period_end"`
-	UsedCount           int64              `json:"used_count"`
-	ReservedCount       int64              `json:"reserved_count"`
-	BlockedCounts       []byte             `json:"blocked_counts"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	RejectionNotifiedAt pgtype.Timestamptz `json:"rejection_notified_at"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	PeriodStart   pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd     pgtype.Timestamptz `json:"period_end"`
+	UsedCount     int64              `json:"used_count"`
+	ReservedCount int64              `json:"reserved_count"`
+	BlockedCounts []byte             `json:"blocked_counts"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AutopilotQuotaReservation struct {
@@ -322,14 +305,10 @@ type AutopilotTrigger struct {
 	Provider       string             `json:"provider"`
 	SigningSecret  pgtype.Text        `json:"signing_secret"`
 	EventFilters   []byte             `json:"event_filters"`
-	// Actor type of the trigger's current responsible publisher: member | agent. Set to the creator at creation and re-stamped to the editor on any substantive edit governing this trigger. CONFIG audit only — since MUL-6951 it decides nothing about the runs this trigger fires. NULL on triggers predating MUL-4302.
+	// Actor type of the trigger's current responsible publisher: member | agent. Set to the creator at creation and re-stamped to the editor on any substantive edit governing this trigger. Consumed only for attribution (source=trigger_owner) — never authorization. NULL on pre-migration triggers (MUL-4302).
 	PublishedByType pgtype.Text `json:"published_by_type"`
-	// The member/agent currently responsible for this trigger's effective config (creator, then last substantive editor). CONFIG audit only: since MUL-6951 the runs this trigger fires act as, and are accountable to, created_by_id instead, so an edit recorded here never moves a run's authority. No FK, app-layer integrity (MUL-4302).
+	// The member/agent currently responsible for this trigger's effective config (creator, then last substantive editor). For a member this is the accountable human of runs the trigger fires (source=trigger_owner). No FK, app-layer integrity. NULL on pre-migration triggers, which degrade to rule_owner (MUL-4302).
 	PublishedByID pgtype.UUID `json:"published_by_id"`
-	// Actor type of the trigger's immutable creator: member | agent. Only 'member' yields a run principal. NULL for triggers created before MUL-6951 that had no published_by to backfill from.
-	CreatedByType pgtype.Text `json:"created_by_type"`
-	// The member a schedule/webhook run fires AS: dispatch admission, the task's originator/accountable, and every delegated run all resolve to this one human (MUL-6951). Written once at creation and never re-stamped, so editing the trigger cannot re-authorize its runs as the editor. NULL means no provable principal and the dispatch fails closed. No FK; workspace membership is re-validated on every dispatch.
-	CreatedByID pgtype.UUID `json:"created_by_id"`
 }
 
 type ChannelBindingToken struct {

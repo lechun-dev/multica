@@ -54,4 +54,20 @@ describe("AllPlatforms", () => {
     expect(screen.queryByText("Linux · x64")).not.toBeInTheDocument();
     expect(screen.queryByText("Linux · ARM64")).not.toBeInTheDocument();
   });
+
+  it("keeps a GitHub escape hatch when release assets are unavailable", () => {
+    render(
+      <AllPlatforms
+        assets={{}}
+        fallbackHref="https://github.com/lechun-dev/multica/releases"
+      />,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "View all releases" }),
+    ).toHaveAttribute(
+      "href",
+      "https://github.com/lechun-dev/multica/releases",
+    );
+  });
 });

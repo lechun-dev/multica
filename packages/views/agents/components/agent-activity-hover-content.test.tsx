@@ -5,12 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentTask, Issue } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 
-// The hover card renders one row per internal task record and counts product
-// runs, so its header must describe runs — not agents. A single agent can have
-// several runs at once (e.g. the workspace chip reads "2 working" for two
-// unique agents while the card lists three run rows). An agent-worded header
-// here would print "3 agents working" for those two agents, contradicting the
-// chip. MUL-3872.
+// The hover card renders one row per task and counts tasks, so its header
+// must describe tasks — not agents. A single agent can run several tasks at
+// once (e.g. the workspace chip reads "2 working" for two unique agents while
+// the card lists three task rows). An agent-worded header here would print
+// "3 agents working" for those two agents, contradicting the chip. MUL-3872.
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -108,34 +107,37 @@ function makeTask(overrides: Partial<AgentTask>): AgentTask {
 afterEach(cleanup);
 
 describe("AgentActivityHoverContent", () => {
-  // Two agents, three active runs (Niko has two at once). The header must
-  // count the three run rows, not the two agents.
+  // Two agents, three running tasks (Niko runs two at once). The header must
+  // count the three task rows, not the two agents.
   const threeTasksTwoAgents = [
     makeTask({ id: "t1", agent_id: "agent-1" }),
     makeTask({ id: "t2", agent_id: "agent-1" }),
     makeTask({ id: "t3", agent_id: "agent-2" }),
   ];
 
-  it("counts runs, not agents, in the header", () => {
+  it("counts tasks, not agents, in the header", () => {
     renderWithI18n(<AgentActivityHoverContent tasks={threeTasksTwoAgents} />);
 
-    expect(screen.getByText("3 active runs")).toBeInTheDocument();
-    // One row per run — three avatars for three runs.
+    expect(screen.getByText("3 tasks working")).toBeInTheDocument();
+    // The old agent-worded copy would have read "3 agents working" here and
+    // disagreed with the chip's unique-agent count.
+    expect(screen.queryByText(/agents? working/)).not.toBeInTheDocument();
+    // One row per task — three avatars for three tasks.
     expect(screen.getAllByTestId("actor-avatar")).toHaveLength(3);
   });
 
-  it("uses the singular run copy for a single run", () => {
+  it("uses the singular task copy for a single task", () => {
     renderWithI18n(<AgentActivityHoverContent tasks={[makeTask({})]} />);
 
-    expect(screen.getByText("1 active run")).toBeInTheDocument();
+    expect(screen.getByText("1 task working")).toBeInTheDocument();
   });
 
-  it("renders the Chinese run copy", () => {
+  it("renders the requested Chinese task copy", () => {
     renderWithI18n(<AgentActivityHoverContent tasks={threeTasksTwoAgents} />, {
       locale: "zh-Hans",
     });
 
-    expect(screen.getByText("3 次运行进行中")).toBeInTheDocument();
+    expect(screen.getByText("3 个 task 工作中")).toBeInTheDocument();
   });
 });
 
@@ -169,7 +171,7 @@ describe("WorkspaceAgentActivityHoverContent", () => {
         />,
     );
 
-    expect(screen.getByText("3 issues · 4 runs")).toBeInTheDocument();
+    expect(screen.getByText("3 issues · 4 tasks")).toBeInTheDocument();
     // Rows group under their issue, mirroring what clicking the chip does.
     expect(screen.getByText("MUL-4879")).toBeInTheDocument();
     expect(screen.getByText("Counting logic looks wrong")).toBeInTheDocument();
@@ -191,7 +193,7 @@ describe("WorkspaceAgentActivityHoverContent", () => {
     );
 
     expect(screen.queryByText(/not counted/)).not.toBeInTheDocument();
-    expect(screen.getByText("1 issue · 1 run")).toBeInTheDocument();
+    expect(screen.getByText("1 issue · 1 task")).toBeInTheDocument();
   });
 
   it("falls back to the agent-worded empty copy when nothing is counted", () => {
@@ -219,8 +221,8 @@ describe("WorkspaceAgentActivityHoverContent", () => {
       { locale: "zh-Hans" },
     );
 
-    // issue is 任务 in Chinese; the agent execution is 运行, so the two
-    // counted units remain distinct (conventions.zh.mdx).
-    expect(screen.getByText("1 个任务 · 2 次运行")).toBeInTheDocument();
+    // issue is 任务 in Chinese; the agent run stays lowercase `task` so the two
+    // counted units never collapse into one word (conventions.zh.mdx).
+    expect(screen.getByText("1 个任务 · 2 个 task")).toBeInTheDocument();
   });
 });

@@ -58,10 +58,6 @@ func setupAutopilotScheduleJob(t *testing.T, cron string) (db.AutopilotTrigger, 
 		Enabled:        true,
 		CronExpression: pgtype.Text{String: cron, Valid: true},
 		Timezone:       pgtype.Text{String: "UTC", Valid: true},
-		// MUL-6951: the scheduler dispatches as this human; without it the run
-		// has no principal and fails closed.
-		CreatedByType: pgtype.Text{String: "member", Valid: true},
-		CreatedByID:   ap.CreatedByID,
 	})
 	if err != nil {
 		t.Fatalf("CreateAutopilotTrigger: %v", err)
@@ -644,10 +640,6 @@ func seedColdStartTrigger(t *testing.T, cron string) (db.AutopilotTrigger, *db.Q
 		Enabled:        true,
 		CronExpression: pgtype.Text{String: cron, Valid: true},
 		Timezone:       pgtype.Text{String: "UTC", Valid: true},
-		// MUL-6951: the scheduler dispatches as this human; without it the run
-		// has no principal and fails closed.
-		CreatedByType: pgtype.Text{String: "member", Valid: true},
-		CreatedByID:   ap.CreatedByID,
 	})
 	if err != nil {
 		t.Fatalf("CreateAutopilotTrigger: %v", err)
