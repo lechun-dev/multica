@@ -1102,7 +1102,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 
 	type projectSearchRow struct {
 		project     db.Project
-		totalCount  int64
 		matchSource string
 	}
 
@@ -1125,7 +1124,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				&row.project.DueDate,
 				&row.project.CreatedAt,
 				&row.project.UpdatedAt,
-				&row.totalCount,
 				&row.matchSource,
 			); err != nil {
 				return fmt.Errorf("scan: %w", err)
@@ -1149,11 +1147,6 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to search projects")
 		return
 	}
-	var total int64
-	if len(results) > 0 {
-		total = results[0].totalCount
-	}
-
 	// Batch-fetch issue stats and resource counts
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
@@ -1208,6 +1201,5 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"projects": resp,
-		"total":    total,
 	})
 }

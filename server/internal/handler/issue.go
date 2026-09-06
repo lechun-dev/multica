@@ -625,7 +625,6 @@ func parseQueryNumber(q string) (int, bool) {
 // searchResult holds a raw row from the dynamic search query.
 type searchResult struct {
 	issue                 db.Issue
-	totalCount            int64
 	matchSource           string
 	matchedCommentContent string
 }
@@ -895,7 +894,6 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
 		 i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
 		 i.revision, i.archived_at,
-		COUNT(*) OVER() AS total_count,
 		%s AS match_source,
 		%s AS matched_comment_content
 	FROM issue i
@@ -1006,7 +1004,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 				&sr.issue.ProjectID,
 				&sr.issue.Revision,
 				&sr.issue.ArchivedAt,
-				&sr.totalCount,
 				&sr.matchSource,
 				&sr.matchedCommentContent,
 			); err != nil {
@@ -1035,10 +1032,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var total int64
-	if len(results) > 0 {
-		total = results[0].totalCount
-	}
 	resultIDs := make([]pgtype.UUID, len(results))
 	for i, result := range results {
 		resultIDs[i] = result.issue.ID
@@ -1075,10 +1068,8 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		resp[i] = sir
 	}
 
-	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
-		"total":  total,
 	})
 }
 
