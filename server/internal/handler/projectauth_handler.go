@@ -1673,13 +1673,10 @@ func (h *Handler) requireNewIssueProjectPermission(w http.ResponseWriter, r *htt
 		return true
 	}
 	if !projectID.Valid {
-		// 2026-09-06 coder(lq): New tasks and new task grants must be scoped to
-		// a project while the authorization overlay is enabled. Historical
-		// projectless tasks remain readable through their compatibility rules,
-		// but allowing a new unscoped task here would create an authorization
-		// object that cannot participate in the project grant model.
-		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
-		return false
+		// 2026-09-06 coder(lq): Project permissions apply only when a task is
+		// explicitly bound to a project. Projectless tasks keep the legacy
+		// workspace/creator access rules and remain valid create targets.
+		return true
 	}
 	return h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, permission)
 }

@@ -3245,8 +3245,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		// 2026-09-06 coder(lq): A child without an explicit project inherits
 		// its parent's project before the create authorization check. This keeps
-		// project-bound sub-issue creation valid while still rejecting genuinely
-		// projectless new tasks when the overlay is enabled.
+		// project-bound sub-issue creation subject to project permissions while
+		// still allowing a genuinely projectless task.
 		if !projectID.Valid && parentIssue.ProjectID.Valid {
 			projectID = parentIssue.ProjectID
 		}
@@ -3404,7 +3404,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		AllowDuplicate: req.AllowDuplicate,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
-		RequireProject:   h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BeforeCommit:     h.issueAccessBeforeCommit(),
@@ -3455,7 +3454,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, service.ErrProjectRequired) {
-		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
+		writeError(w, http.StatusBadRequest, "project_id is required for this create operation")
 		return
 	}
 	if errors.Is(err, service.ErrIssueLabelNotFound) {

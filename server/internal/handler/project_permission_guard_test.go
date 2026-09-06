@@ -398,32 +398,42 @@ func TestPreviewIssueTriggerCreateRequiresProjectIssueCreatePermission(t *testin
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("unauthorized create preview: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
+	create := httptest.NewRecorder()
+	testHandler.CreateIssue(create, newRequestAs(deniedID, http.MethodPost,
+		"/api/issues?workspace_id="+testWorkspaceID,
+		map[string]any{"title": "Unauthorized project create guard", "project_id": projectID}))
+	if create.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized project create: expected 404, got %d: %s", create.Code, create.Body.String())
+	}
 }
 
-// 2026-09-06 coder(lq): New tasks must be project-bound while the overlay is
-// enabled; historical projectless tasks remain covered by read compatibility
-// tests elsewhere.
-func TestProjectlessIssueCreateAndTriggerPreviewRejectedWhenPermissionsEnabled(t *testing.T) {
+// 2026-09-06 coder(lq): Project permissions gate only project-bound creates;
+// projectless tasks remain valid even when the authorization overlay is on.
+func TestProjectlessIssueCreateAndTriggerPreviewAllowedWhenPermissionsEnabled(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	previous := testHandler.ProjectAuth
 	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
 	t.Cleanup(func() { testHandler.ProjectAuth = previous })
+	title := "Projectless issue permission guard " + t.Name()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
+	})
 
 	preview := httptest.NewRecorder()
 	testHandler.PreviewIssueTrigger(preview, newRequestAs(testUserID, http.MethodPost,
 		"/api/issues/preview-trigger?workspace_id="+testWorkspaceID,
 		map[string]any{"is_create": true, "status": "todo"}))
-	if preview.Code != http.StatusBadRequest {
-		t.Fatalf("projectless create preview: expected 400, got %d: %s", preview.Code, preview.Body.String())
+	if preview.Code != http.StatusOK {
+		t.Fatalf("projectless create preview: expected 200, got %d: %s", preview.Code, preview.Body.String())
 	}
 
 	create := httptest.NewRecorder()
 	testHandler.CreateIssue(create, newRequestAs(testUserID, http.MethodPost,
 		"/api/issues?workspace_id="+testWorkspaceID,
-		map[string]any{"title": "Projectless issue permission guard"}))
-	if create.Code != http.StatusBadRequest {
-		t.Fatalf("projectless create: expected 400, got %d: %s", create.Code, create.Body.String())
+		map[string]any{"title": title}))
+	if create.Code != http.StatusCreated {
+		t.Fatalf("projectless create: expected 201, got %d: %s", create.Code, create.Body.String())
 	}
 }

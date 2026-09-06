@@ -694,9 +694,8 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 	}
 	if !projectID.Valid && capture.SourceIssueID.Valid {
 		// 2026-09-06 coder(lq): Source-context sub-issues inherit a
-		// project-bound source issue before the new-task authorization gate.
-		// A genuinely projectless source cannot be used to create an unscoped
-		// task while project permissions are enabled.
+		// project-bound source issue before the new-task authorization gate. A
+		// projectless source remains a valid projectless task target.
 		if sourceIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 			ID:          capture.SourceIssueID,
 			WorkspaceID: workspaceID,
@@ -748,9 +747,8 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Stage: stage,
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
-		ActorID:        util.UUIDToString(userID),
-		RequireProject: h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
-		BeforeCommit:   h.issueAccessBeforeCommit(),
+		ActorID:      util.UUIDToString(userID),
+		BeforeCommit: h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
 			response := issueToResponse(issue, prefix)
 			labelResponses := labelsToResponse(labels)
@@ -928,7 +926,7 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 		message = err.Error()
 	case errors.Is(err, service.ErrProjectRequired):
 		status = http.StatusBadRequest
-		message = "project_id is required when project permissions are enabled"
+		message = "project_id is required for this create operation"
 	case errors.Is(err, errSourceContextBadRequest):
 		status, code = http.StatusBadRequest, "invalid_request"
 		message = err.Error()

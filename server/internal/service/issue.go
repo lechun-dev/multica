@@ -95,13 +95,10 @@ type IssueCreateParams struct {
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
-	// RequireProject makes the project binding a service-layer invariant for
-	// this create path. The HTTP handler validates permissions before entering
-	// the service, but channel, onboarding, and future adapters must not be
-	// able to bypass the same constraint when the project-permission overlay is
-	// enabled.
-	// 2026-09-01 coder(lq): Keep the switch opt-in so PROJECT_PERMISSION_ENABLED=false
-	// preserves the upstream ability to create projectless issues during rollout.
+	// RequireProject is an explicit compatibility guard for callers that have a
+	// separate business rule requiring a project. It is not enabled implicitly
+	// by the project-permission switch: project permissions apply only when the
+	// created issue is actually bound to a project.
 	RequireProject bool
 
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
@@ -181,8 +178,8 @@ var ErrParentProjectMismatch = errors.New("parent issue belongs to a different p
 // having to remember it. Callers translate this into 400.
 var ErrProjectNotFound = errors.New("project not found in this workspace")
 
-// ErrProjectRequired signals that the permission-enabled create path would
-// otherwise persist a task without its mandatory project scope.
+// ErrProjectRequired signals that a caller explicitly requested a project for
+// this create operation but did not provide one.
 var ErrProjectRequired = errors.New("project is required")
 
 // ErrIssueLabelNotFound signals that one of the supplied LabelIDs does not

@@ -675,13 +675,6 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		return fmt.Errorf("refresh autopilot: %w", err)
 	}
 	projectID := currentAutopilot.ProjectID
-	if s.BeforeIssueCommit != nil && !projectID.Valid {
-		// 2026-09-06 coder(lq): create_issue autopilots are a new task
-		// entrypoint. When project authorization is enabled, reject an
-		// unscoped autopilot before allocating numbers or inserting the issue;
-		// historical projectless issues remain compatible elsewhere.
-		return ErrProjectRequired
-	}
 
 	if duplicate, found, err := issueguard.LockAndFindRecentAutopilotDuplicate(
 		ctx, qtx, ap.WorkspaceID, ap.ID, projectID, title, autopilotRecentDuplicateWindow,
