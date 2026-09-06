@@ -33,8 +33,8 @@ var codexCopiedFiles = []string{
 const (
 	codexModelsCacheFile        = "models_cache.json"
 	codexModelsCacheBindingFile = ".models_cache_config.sha256"
-	codexGatewayModelGrok56     = "grok-5.6"
-	codexGatewayModelGrok55     = "grok-5.5"
+	codexGatewayModelGrok46     = "grok-4.6"
+	codexGatewayModelGrok45     = "grok-4.5"
 )
 
 // Files whose contents select the model provider/catalog used by Codex. The
@@ -1167,8 +1167,8 @@ func ensureCodexGatewayModels(cachePath string) error {
 		displayName string
 		description string
 	}{
-		{codexGatewayModelGrok56, "Grok 5.6", "Grok 5.6 routed through the configured Codex API gateway."},
-		{codexGatewayModelGrok55, "Grok 5.5", "Grok 5.5 routed through the configured Codex API gateway."},
+		{codexGatewayModelGrok46, "Grok 4.6", "Grok 4.6 routed through the configured Codex API gateway."},
+		{codexGatewayModelGrok45, "Grok 4.5", "Grok 4.5 routed through the configured Codex API gateway."},
 	} {
 		if seen[spec.slug] {
 			continue

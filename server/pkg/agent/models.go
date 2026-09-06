@@ -661,15 +661,15 @@ func ensureCodexModels(models []Model) []Model {
 		// 2026-09-06 coder(lq): Codex discovery and fallback catalogs use the
 		// same provider namespace. Keep gateway-routed entries there even if a
 		// future Codex CLI reports one with a provider-specific annotation.
-		if model.ID == "grok-5.6" || model.ID == "grok-5.5" {
+		if model.ID == "grok-4.6" || model.ID == "grok-4.5" {
 			model.Provider = "openai"
 		}
 		seen[model.ID] = struct{}{}
 		result = append(result, model)
 	}
 	for _, model := range []Model{
-		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "openai"},
-		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "openai"},
+		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "openai"},
+		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "openai"},
 	} {
 		if _, exists := seen[model.ID]; exists {
 			continue

@@ -356,7 +356,7 @@ echo '{"models":[{"slug":"runtime-model","display_name":"Runtime Model","visibil
 		if got[0].SupportsExplicitStandardServiceTier {
 			t.Fatalf("Codex 0.122.0 must not advertise explicit-standard support: %+v", got[0])
 		}
-		for _, want := range []string{"grok-5.6", "grok-5.5"} {
+		for _, want := range []string{"grok-4.6", "grok-4.5"} {
 			var found *Model
 			for i := range got {
 				if got[i].ID == want {

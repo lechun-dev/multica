@@ -4498,7 +4498,7 @@ func TestEnsureCodexGatewayModelsInjectsGrokEntries(t *testing.T) {
 		slug, _ := model["slug"].(string)
 		seen[slug] = model
 	}
-	for _, slug := range []string{codexGatewayModelGrok56, codexGatewayModelGrok55} {
+	for _, slug := range []string{codexGatewayModelGrok46, codexGatewayModelGrok45} {
 		model, ok := seen[slug]
 		if !ok {
 			t.Fatalf("missing injected model %q", slug)
