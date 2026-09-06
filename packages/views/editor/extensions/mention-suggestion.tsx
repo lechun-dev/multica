@@ -72,6 +72,8 @@ export interface MentionItem {
   id: string;
   label: string;
   type: "member" | "agent" | "squad" | "issue" | "project" | "all";
+  /** 2026-09-06 coder(lq): Preserve imported-member registration status for the picker label. */
+  notRegistered?: boolean;
   /** Optional grouping hint for injected context items. */
   group?: "current" | "recent" | "search";
   /** Secondary text shown beside the label (e.g. issue title) */
@@ -533,6 +535,7 @@ function MentionRow({
 }) {
   const { t } = useT("editor");
   const { t: issuesT } = useT("issues");
+  const { t: settingsT } = useT("settings");
   if (item.type === "issue") {
     // Visually dim closed issues (done/cancelled) so they're distinguishable
     // from active ones in the suggestion list — they're still selectable.
@@ -627,6 +630,9 @@ function MentionRow({
       />
       <span className="truncate font-medium">
         {item.type === "all" ? t(($) => $.mention.all_members) : item.label}
+        {item.type === "member" && item.notRegistered
+          ? settingsT(($) => $.members.not_registered_suffix)
+          : null}
       </span>
       {item.type === "agent" && (
         <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">
@@ -744,6 +750,7 @@ export function createMentionSuggestion(
         id: m.user_id,
         label: m.name,
         type: "member" as const,
+        notRegistered: m.has_logged_in === false,
       }));
 
     const agentItems: MentionItem[] = agents
