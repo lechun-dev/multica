@@ -121,7 +121,9 @@ func (q *Queries) ListMembers(ctx context.Context, workspaceID pgtype.UUID) ([]M
 const listMembersWithUser = `-- name: ListMembersWithUser :many
 SELECT m.id, m.workspace_id, m.user_id, m.role, m.created_at,
        u.name as user_name, u.email as user_email, u.avatar_url as user_avatar_url,
-       (l.user_id IS NOT NULL) AS has_logged_in
+       -- 2026-09-06 coder(lq): Owners/admins are a legacy authenticated-user
+       -- signal for rows created before projectauth_user_logins existed.
+       (l.user_id IS NOT NULL OR u.onboarded_at IS NOT NULL OR m.role IN ('owner', 'admin')) AS has_logged_in
 FROM member m
 JOIN "user" u ON u.id = m.user_id
 LEFT JOIN projectauth_user_logins l ON l.user_id = m.user_id

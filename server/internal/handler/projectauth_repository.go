@@ -567,7 +567,9 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 		SELECT om.organization_id::text, om.user_id::text,
 		       COALESCE(u.name, ''), COALESCE(u.email, ''),
 		       COALESCE(u.avatar_url, ''), m.role,
-		       (l.user_id IS NOT NULL) AS has_logged_in
+		       -- 2026-09-06 coder(lq): Preserve the legacy authenticated-user
+		       -- signal carried by workspace owner/admin roles.
+		       (l.user_id IS NOT NULL OR u.onboarded_at IS NOT NULL OR m.role IN ('owner', 'admin')) AS has_logged_in
 		FROM projectauth_organization_members om
 		JOIN projectauth_organizations o
 		  ON o.id = om.organization_id
