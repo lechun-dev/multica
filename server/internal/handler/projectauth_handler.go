@@ -375,6 +375,7 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 			OR (%s.assignee_type = 'agent' AND EXISTS (
 				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
 			))
+			OR %s
 		))
 	)`, issueAlias, ownerProjectClause, projectAccessPredicate(issueAlias+".project_id", workspaceRef, userRef),
 		issueDirectAccessPredicate(issueAlias+".id", workspaceRef, userRef),
@@ -382,7 +383,44 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
 		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
 		issueAlias, issueAlias, userRef,
-		issueAlias, issueAlias, workspaceRef, userRef)
+		issueAlias, issueAlias, workspaceRef, userRef,
+		projectlessIssueGrantViewPredicate(issueAlias, workspaceRef, userRef))
+}
+
+// 2026-09-05 coder(lq): Projectless task grants are evaluated only against
+// the current issue and only for the role's view permission. A task grant is
+// deliberately absent from projectAccessPredicate so it cannot expose the
+// containing project or sibling tasks.
+func projectlessIssueGrantViewPredicate(issueAlias, workspaceRef, userRef string) string {
+	principal := accessGrantPrincipalPredicate("g")
+	return fmt.Sprintf(`EXISTS (
+		WITH auth_subject AS (
+			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
+		)
+		SELECT 1
+		FROM projectauth_issue_access_grants g
+		CROSS JOIN auth_subject a
+		WHERE g.workspace_id = a.workspace_id
+		  AND g.issue_id = %s.id
+		  AND %s
+		  AND (
+			EXISTS (
+				SELECT 1
+				FROM project_permission_roles rr
+				JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
+				WHERE rr.workspace_id = a.workspace_id
+				  AND rr.role_key = g.role_key
+				  AND rp.permission = 'project.view'
+			)
+			OR (
+				g.role_key IN ('owner', 'manager', 'member', 'viewer')
+				AND NOT EXISTS (
+					SELECT 1 FROM project_permission_roles rr
+					WHERE rr.workspace_id = a.workspace_id AND rr.role_key = g.role_key
+				)
+			)
+		  )
+	)`, workspaceRef, userRef, issueAlias, principal)
 }
 
 // 2026-09-05 coder(lq): Resolve the effective native creator for a task in
@@ -657,6 +695,60 @@ func (h *Handler) projectlessIssueMentionedUser(ctx context.Context, issue db.Is
 	return false, nil
 }
 
+// 2026-09-05 coder(lq): Read persisted task grants before the compatibility
+// mention scan. This makes an @ grant visible from both the list and detail
+// paths, including Agent mentions resolved to their owning human.
+func (h *Handler) projectlessIssueGrantAllowed(ctx context.Context, issue db.Issue, userID string, permission projectauth.Permission) (bool, error) {
+	var allowed bool
+	err := h.DB.QueryRow(ctx, `
+		WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+			SELECT org.id, org.parent_id
+			FROM projectauth_organization_members om
+			JOIN projectauth_organizations org
+			  ON org.id = om.organization_id
+			 AND org.workspace_id = $1
+			 AND org.status = 'active'
+			WHERE om.workspace_id = $1 AND om.user_id = $3::uuid
+			UNION
+			SELECT parent.id, parent.parent_id
+			FROM user_orgs child
+			JOIN projectauth_organizations parent
+			  ON parent.id = child.parent_id
+			 AND parent.workspace_id = $1
+			 AND parent.status = 'active'
+		)
+		SELECT EXISTS (
+			SELECT 1
+			FROM projectauth_issue_access_grants g
+			WHERE g.workspace_id = $1
+			  AND g.issue_id = $2
+			  AND (
+				(g.subject_type = 'user' AND g.subject_id = $3::text)
+				OR (g.subject_type = 'everyone' AND (g.subject_id = '' OR g.subject_id = $1::text))
+				OR (g.subject_type = 'organization' AND g.subject_id IN (SELECT organization_id::text FROM user_orgs))
+			  )
+			  AND (
+				EXISTS (
+					SELECT 1
+					FROM project_permission_roles rr
+					JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
+					WHERE rr.workspace_id = g.workspace_id
+					  AND rr.role_key = g.role_key
+					  AND rp.permission = $4
+				)
+				OR (
+					g.role_key IN ('owner', 'manager', 'member', 'viewer')
+					AND NOT EXISTS (
+						SELECT 1 FROM project_permission_roles rr
+						WHERE rr.workspace_id = g.workspace_id AND rr.role_key = g.role_key
+					)
+					AND ($4 = 'project.view' OR ($4 IN ('project.edit', 'project.issue.comment', 'project.issue.archive', 'project.agent.use') AND g.role_key IN ('owner', 'manager', 'member')) OR ($4 = 'project.issue.manage' AND g.role_key IN ('owner', 'manager')))
+				)
+			  )
+		)`, issue.WorkspaceID, issue.ID, userID, string(permission)).Scan(&allowed)
+	return allowed, err
+}
+
 // 2026-09-05 coder(lq): Keep HTTP and aggregate task entry points on the same
 // projectless owner rule. The unified grant table cannot represent a task with
 // no project, so creator/assignee access is resolved at runtime instead.
@@ -693,13 +785,19 @@ func (h *Handler) projectlessIssueAllowedWithWorkspaceScope(ctx context.Context,
 	if projectlessIssuePermissionAllowedWithOwnersAndBypass(issue, userUUID, projectauth.WorkspaceRole(member.Role), permission, ownerBypassEnabled, creatorOwnerID, assigneeOwnerID) {
 		return true, ""
 	}
+	if granted, grantErr := h.projectlessIssueGrantAllowed(ctx, issue, userID, permission); grantErr != nil {
+		return false, "internal"
+	} else if granted {
+		return true, ""
+	}
 	if mentioned, mentionErr := h.projectlessIssueMentionedUser(ctx, issue, userID); mentionErr != nil {
 		return false, "internal"
 	} else if mentioned {
-		// A mention is equivalent to the task Member role. Do not let it grant
-		// project administration, which is never task-scoped.
+		// A mention is equivalent to the task Member role. Keep this fallback
+		// aligned with the default Member role for tasks created before the
+		// projectless grant migration was applied.
 		switch permission {
-		case projectauth.View, projectauth.Edit, projectauth.IssueComment, projectauth.IssueManage, projectauth.IssueArchive, projectauth.AgentUse:
+		case projectauth.View, projectauth.IssueComment, projectauth.IssueArchive, projectauth.AgentUse:
 			return true, ""
 		}
 	}

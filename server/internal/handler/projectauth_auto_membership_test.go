@@ -53,6 +53,44 @@ func TestCurrentProjectRolesIncludesProjectCreator(t *testing.T) {
 	}
 }
 
+// 2026-09-05 coder(lq): Execute the real revoke statement against PostgreSQL
+// so a future advisory-lock change cannot reintroduce uuid = text inference.
+func TestDeleteAccessGrantRemovesManualMemberGrant(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	projectID := dbfx.Project(t, "Project revoke SQL regression")
+	otherUserID := dbfx.User(t, "Project revoke target", "project-revoke-target@multica.ai")
+	dbfx.Member(t, testWorkspaceID, otherUserID, "member")
+
+	var grantID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO projectauth_access_grants
+			(workspace_id, project_id, subject_type, subject_id, role_key, source, granted_by)
+		VALUES ($1, $2, 'user', $3, 'member', 'manual', $4)
+		RETURNING id::text`, testWorkspaceID, projectID, otherUserID, testUserID).Scan(&grantID); err != nil {
+		t.Fatalf("insert manual member grant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM projectauth_access_grants WHERE id = $1`, grantID)
+	})
+
+	repo := &projectAuthRepository{db: testPool}
+	if err := repo.DeleteAccessGrant(ctx, testWorkspaceID, projectID, "", projectauth.SubjectUser, otherUserID, projectauth.ProjectMember, ""); err != nil {
+		t.Fatalf("DeleteAccessGrant: %v", err)
+	}
+
+	var remaining int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM projectauth_access_grants WHERE id = $1`, grantID).Scan(&remaining); err != nil {
+		t.Fatalf("check revoked grant: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("revoked grant count = %d, want 0", remaining)
+	}
+}
+
 // 2026-09-05 coder(lq): A project created before the creator-owner backfill
 // must still expose its immutable owner in the authorization dialog.
 func TestListAccessGrantsIncludesProjectCreatorWithoutPhysicalGrant(t *testing.T) {
@@ -166,6 +204,19 @@ func issueSystemRoleForTest(t *testing.T, issueID, projectID, userID string) (ro
 		WHERE issue_id = $1 AND project_id = $2 AND subject_type = 'user' AND subject_id = $3
 		  AND source = 'system'`, issueID, projectID, userID).Scan(&role, &permission, &source)
 	return role, permission, source
+}
+
+// 2026-09-05 coder(lq): Projectless tasks use the dedicated task ACL table;
+// keep assertions separate from the project-bound grant helper so a missing
+// project ID can never silently query the wrong authorization store.
+func projectlessIssueSystemRoleForTest(t *testing.T, issueID, userID string) (role, source string) {
+	t.Helper()
+	dbfx.QueryRow(t, `
+		SELECT COALESCE(MAX(role_key), ''), COALESCE(MAX(source), '')
+		FROM projectauth_issue_access_grants
+		WHERE issue_id = $1 AND subject_type = 'user' AND subject_id = $2
+		  AND source = 'system'`, issueID, userID).Scan(&role, &source)
+	return role, source
 }
 
 // 2026-08-27 coder(lq): Project lead updates and project descriptions are
@@ -393,6 +444,62 @@ func TestCreateCommentPromotesMentionedMember(t *testing.T) {
 	if got := projectRoleForTest(t, projectID, viewerID); got != "" {
 		t.Fatalf("comment mention unexpectedly created project grant = %q", got)
 	}
+	// 2026-09-05 coder(lq): Verify the authorization read path, not only the
+	// materialized row. A mention must make the person able to open and comment
+	// on this task while leaving unrelated workspace members denied.
+	repo := &projectAuthRepository{db: testPool}
+	for _, permission := range []projectauth.Permission{projectauth.View, projectauth.IssueComment} {
+		if allowed, err := repo.IssuePermission(context.Background(), issueID, viewerID, permission); err != nil || !allowed {
+			t.Fatalf("mentioned member %s = allowed %v, err %v; want true, nil", permission, allowed, err)
+		}
+	}
+	otherID := dbfx.User(t, "Unmentioned comment member", fmt.Sprintf("unmentioned-comment-member-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, otherID, "member")
+	if allowed, err := repo.IssuePermission(context.Background(), issueID, otherID, projectauth.View); err != nil || allowed {
+		t.Fatalf("unmentioned member view = allowed %v, err %v; want false, nil", allowed, err)
+	}
+}
+
+// 2026-09-05 coder(lq): A comment @mention on a projectless task must be
+// persisted as a task-scoped Member grant. This is the regression case for
+// the empty project_id path that previously had no row to inspect.
+func TestCreateCommentPromotesMentionedMemberForProjectlessIssue(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	viewerID := dbfx.User(t, "Projectless comment viewer", fmt.Sprintf("projectless-comment-viewer-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, viewerID, "member")
+	issueID := dbfx.Issue(t, "Projectless mention task", testutil.Cols{})
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/issues/"+issueID+"/comments?workspace_id="+testWorkspaceID, map[string]any{
+		"content": fmt.Sprintf("Please review [@Viewer](mention://member/%s)", viewerID),
+	})
+	req = withURLParam(req, "id", issueID)
+	testHandler.CreateComment(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment projectless: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	role, source := projectlessIssueSystemRoleForTest(t, issueID, viewerID)
+	if role != "member" || source != "system" {
+		t.Fatalf("projectless comment mention task grant = (%q, %q), want (member, system)", role, source)
+	}
+	// 2026-09-05 coder(lq): Projectless tasks use the dedicated task ACL table,
+	// so verify that the same @ grant is effective when the detail/list reader
+	// asks for task permissions.
+	repo := &projectAuthRepository{db: testPool}
+	for _, permission := range []projectauth.Permission{projectauth.View, projectauth.IssueComment} {
+		if allowed, err := repo.IssuePermission(context.Background(), issueID, viewerID, permission); err != nil || !allowed {
+			t.Fatalf("projectless mentioned member %s = allowed %v, err %v; want true, nil", permission, allowed, err)
+		}
+	}
+	otherID := dbfx.User(t, "Unmentioned projectless member", fmt.Sprintf("unmentioned-projectless-member-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, otherID, "member")
+	if allowed, err := repo.IssuePermission(context.Background(), issueID, otherID, projectauth.View); err != nil || allowed {
+		t.Fatalf("projectless unmentioned member view = allowed %v, err %v; want false, nil", allowed, err)
+	}
 }
 
 // 2026-09-04 coder(lq): Keep Agent mention reconciliation on a single pgx
@@ -483,6 +590,55 @@ func TestUpdateCommentPromotesMentionedMember(t *testing.T) {
 	}
 	if got := projectRoleForTest(t, projectID, viewerID); got != "" {
 		t.Fatalf("edited comment mention unexpectedly created project grant = %q", got)
+	}
+}
+
+// 2026-09-05 coder(lq): Editing a comment on a projectless task follows the
+// same task-only grant path as comment creation, including mention removal.
+func TestUpdateCommentPromotesMentionedMemberForProjectlessIssue(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	viewerID := dbfx.User(t, "Projectless edited comment viewer", fmt.Sprintf("projectless-edited-viewer-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, viewerID, "member")
+	issueID := dbfx.Issue(t, "Projectless edited mention task", testutil.Cols{})
+	commentID := dbfx.Comment(t, issueID, "Review needed")
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPut, "/api/comments/"+commentID+"?workspace_id="+testWorkspaceID, map[string]any{
+		"content": fmt.Sprintf("Please review [@Viewer](mention://member/%s)", viewerID),
+	})
+	req = withURLParam(req, "commentId", commentID)
+	testHandler.UpdateComment(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateComment projectless: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	role, source := projectlessIssueSystemRoleForTest(t, issueID, viewerID)
+	if role != "member" || source != "system" {
+		t.Fatalf("projectless edited comment mention task grant = (%q, %q), want (member, system)", role, source)
+	}
+	repo := &projectAuthRepository{db: testPool}
+	if allowed, err := repo.IssuePermission(context.Background(), issueID, viewerID, projectauth.View); err != nil || !allowed {
+		t.Fatalf("projectless edited mention view = allowed %v, err %v; want true, nil", allowed, err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodPut, "/api/comments/"+commentID+"?workspace_id="+testWorkspaceID, map[string]any{
+		"content": "Mention removed",
+	})
+	req = withURLParam(req, "commentId", commentID)
+	testHandler.UpdateComment(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateComment projectless remove mention: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	role, source = projectlessIssueSystemRoleForTest(t, issueID, viewerID)
+	if role != "" || source != "" {
+		t.Fatalf("removed projectless mention still has automatic grant = (%q, %q)", role, source)
+	}
+	if allowed, err := repo.IssuePermission(context.Background(), issueID, viewerID, projectauth.View); err != nil || allowed {
+		t.Fatalf("removed projectless mention view = allowed %v, err %v; want false, nil", allowed, err)
 	}
 }
 

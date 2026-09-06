@@ -248,7 +248,13 @@ export function ProjectPermissionsDialog({
         // the unified authorization API is available; this keeps organization,
         // role, and everyone grants in one source of truth.
         const grants = (accessGrantsQuery.data?.grants ?? []).filter(
-          (grant) => grant.subject_type === "user" && grant.subject_id === userId,
+          (grant) =>
+            grant.subject_type === "user" &&
+            grant.subject_id === userId &&
+            // 2026-09-05 coder(lq): System/migration creator grants are
+            // immutable; only direct manual grants belong to this legacy
+            // remove-member action.
+            grant.source === "manual",
         );
         await Promise.all(grants.map((grant) => api.revokeProjectAccessGrant(projectId, {
           subject_type: "user",

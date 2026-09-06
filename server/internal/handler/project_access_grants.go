@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -8,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
@@ -39,9 +42,12 @@ func (h *Handler) issueAccessSubject(w http.ResponseWriter, r *http.Request, iss
 		return projectauth.Subject{}, "", false
 	}
 	var issueWorkspaceID, projectID string
+	// 2026-09-05 coder(lq): A task-level grant is valid even before a task is
+	// attached to a project. Keep the project binding empty in that case and
+	// let the narrow issue-grant adapter handle storage and authorization.
 	if err := h.DB.QueryRow(r.Context(), `
-		SELECT workspace_id::text, project_id::text
-		FROM issue WHERE id = $1 AND project_id IS NOT NULL`, issueID).Scan(&issueWorkspaceID, &projectID); err != nil {
+		SELECT workspace_id::text, COALESCE(project_id::text, '')
+		FROM issue WHERE id = $1`, issueID).Scan(&issueWorkspaceID, &projectID); err != nil {
 		writeError(w, http.StatusNotFound, "task not found")
 		return projectauth.Subject{}, "", false
 	}
@@ -61,11 +67,16 @@ func (h *Handler) issueAccessSubject(w http.ResponseWriter, r *http.Request, iss
 // malformed user or organization IDs return 400 instead of reaching a
 // PostgreSQL UUID cast and becoming an opaque 500.
 func normalizeAccessGrantIDs(w http.ResponseWriter, grant *projectauth.AccessGrant) bool {
-	projectUUID, ok := parseUUIDOrBadRequest(w, grant.ProjectID, "project id")
-	if !ok {
-		return false
+	// 2026-09-05 coder(lq): Projectless task grants intentionally omit a
+	// project ID. Validate it only for project-bound grants so the HTTP adapter
+	// can keep the canonical projectauth_access_grants.project_id constraint.
+	if grant.ProjectID != "" {
+		projectUUID, ok := parseUUIDOrBadRequest(w, grant.ProjectID, "project id")
+		if !ok {
+			return false
+		}
+		grant.ProjectID = util.UUIDToString(projectUUID)
 	}
-	grant.ProjectID = util.UUIDToString(projectUUID)
 	if grant.IssueID != "" {
 		issueUUID, valid := parseUUIDOrBadRequest(w, grant.IssueID, "task id")
 		if !valid {
@@ -123,6 +134,15 @@ func (h *Handler) listIssueAccessGrants(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if projectID == "" {
+		grants, err := h.listProjectlessIssueAccessGrants(r.Context(), subject, issueID)
+		if err != nil {
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"grants": grants, "total": len(grants), "project_id": nil})
+		return
+	}
 	issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "task id")
 	if !ok {
 		return
@@ -133,6 +153,102 @@ func (h *Handler) listIssueAccessGrants(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"grants": grants, "total": len(grants), "project_id": projectID})
+}
+
+// 2026-09-05 coder(lq): Projectless tasks use a dedicated grant table because
+// the canonical project grant table intentionally requires project_id. Keep
+// this adapter read-only and synthesize the creator Owner row when an older
+// deployment has not run the backfill migration yet.
+func (h *Handler) listProjectlessIssueAccessGrants(ctx context.Context, subject projectauth.Subject, issueID string) ([]projectauth.AccessGrant, error) {
+	issueUUID, err := util.ParseUUID(issueID)
+	if err != nil {
+		return nil, projectauth.ErrNoProjectAccess
+	}
+	workspaceUUID, err := util.ParseUUID(subject.WorkspaceID)
+	if err != nil {
+		return nil, projectauth.ErrNoProjectAccess
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueUUID, WorkspaceID: workspaceUUID})
+	if err != nil || issue.ProjectID.Valid {
+		return nil, projectauth.ErrNoProjectAccess
+	}
+	member, err := h.getWorkspaceMember(ctx, subject.UserID, subject.WorkspaceID)
+	if err != nil {
+		return nil, projectauth.ErrNotWorkspaceMember
+	}
+	allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(ctx, issue, subject.UserID, member, projectauth.View, true)
+	if !allowed {
+		if reason == "internal" {
+			return nil, projectauth.ErrStorageUnavailable
+		}
+		return nil, projectauth.ErrNoProjectAccess
+	}
+	rows, err := h.DB.Query(ctx, `
+		SELECT id::text, workspace_id::text, issue_id::text,
+		       subject_type, COALESCE(subject_id, ''), role_key, source,
+		       COALESCE(granted_by::text, ''), created_at::text
+		FROM projectauth_issue_access_grants
+		WHERE workspace_id=$1 AND issue_id=$2
+		ORDER BY created_at, id`, subject.WorkspaceID, issueID)
+	if err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	defer rows.Close()
+	grants := make([]projectauth.AccessGrant, 0)
+	for rows.Next() {
+		var grant projectauth.AccessGrant
+		if err := rows.Scan(&grant.ID, &grant.WorkspaceID, &grant.IssueID,
+			&grant.SubjectType, &grant.SubjectID, &grant.Role, &grant.Source,
+			&grant.GrantedBy, &grant.CreatedAt); err != nil {
+			return nil, wrapProjectPermissionRepositoryError(err)
+		}
+		grant.ProjectID = ""
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+
+	// Keep the immutable creator access visible without creating a row as a
+	// side effect of a GET request. Agent-authored tasks resolve to the owning
+	// human, matching IssueCreator in the repository adapter.
+	var creatorID, createdAt string
+	err = h.DB.QueryRow(ctx, `
+		SELECT CASE
+			WHEN i.creator_type = 'member' THEN i.creator_id::text
+			WHEN i.creator_type = 'agent' AND a.kind = 'user' AND a.owner_id IS NOT NULL THEN a.owner_id::text
+			ELSE ''
+		END, COALESCE(i.created_at::text, '')
+		FROM issue i
+		LEFT JOIN agent a
+		  ON a.id=i.creator_id AND a.workspace_id=i.workspace_id AND a.kind='user'
+		WHERE i.id=$1 AND i.workspace_id=$2 AND i.project_id IS NULL`, issueID, subject.WorkspaceID).Scan(&creatorID, &createdAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	if creatorID != "" {
+		var active bool
+		if err := h.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM member WHERE workspace_id=$1 AND user_id=$2::uuid)`, subject.WorkspaceID, creatorID).Scan(&active); err != nil {
+			return nil, wrapProjectPermissionRepositoryError(err)
+		}
+		if active {
+			creatorOwnerExists := false
+			for _, grant := range grants {
+				if grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == creatorID && grant.Role == projectauth.ProjectOwner {
+					creatorOwnerExists = true
+					break
+				}
+			}
+			if !creatorOwnerExists {
+				grants = append(grants, projectauth.AccessGrant{
+					ID: "creator-owner-" + issueID + "-" + creatorID, WorkspaceID: subject.WorkspaceID,
+					IssueID: issueID, SubjectType: projectauth.SubjectUser, SubjectID: creatorID,
+					Role: projectauth.ProjectOwner, Source: projectauth.GrantSourceSystem, CreatedAt: createdAt,
+				})
+			}
+		}
+	}
+	return grants, nil
 }
 
 func (h *Handler) ListIssueAccessGrants(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +292,45 @@ func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		grant.WorkspaceID = workspaceID
+	} else if grant.ProjectID == "" {
+		// 2026-09-05 coder(lq): Projectless tasks are locked by their issue
+		// row and use the dedicated issue grant table. Never fabricate a project
+		// ID just to reuse the project grant schema.
+		if err := tx.QueryRow(r.Context(), `
+			SELECT workspace_id::text, COALESCE(project_id::text, '')
+			FROM issue WHERE id=$1 FOR UPDATE`, issueID).Scan(&grant.WorkspaceID, &grant.ProjectID); err != nil {
+			logProjectAccessGrantFailure("lock_issue", grant, issueID, err)
+			writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+			return
+		}
+		if grant.ProjectID != "" {
+			// The project-bound path below owns this case. Keeping the branch
+			// explicit prevents a projectless request from writing the wrong table.
+			writeProjectAccessGrantError(w, projectauth.ErrCrossWorkspace)
+			return
+		}
+		if err := h.mutateProjectlessIssueAccessGrantTx(r.Context(), tx, grant, issueID, r); err != nil {
+			logProjectAccessGrantFailure("grant_projectless_issue", grant, issueID, err)
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+		// 2026-09-05 coder(lq): Read back the canonical row so projectless
+		// task grants have the same generated ID/timestamp response contract as
+		// project-bound grants. The insert is idempotent, so this also returns
+		// the existing manual row when the caller repeats the request.
+		created, err := readProjectlessIssueAccessGrant(r.Context(), tx, grant)
+		if err != nil {
+			logProjectAccessGrantFailure("readback_projectless_issue", grant, issueID, err)
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			logProjectAccessGrantFailure("commit_projectless_issue", grant, issueID, err)
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+		return
 	} else {
 		var workspaceID, projectID string
 		if err := tx.QueryRow(r.Context(), `SELECT workspace_id::text, project_id::text FROM issue WHERE id=$1 AND project_id IS NOT NULL FOR UPDATE`, issueID).Scan(&workspaceID, &projectID); err != nil || projectID != grant.ProjectID {
@@ -305,6 +460,162 @@ func (h *Handler) CreateIssueAccessGrant(w http.ResponseWriter, r *http.Request)
 	h.createIssueAccessGrant(w, r)
 }
 
+// 2026-09-05 coder(lq): Projectless task grants intentionally support role
+// assignments only. Reuse the same built-in role names as project grants and
+// validate custom roles against the task-safe permission subset.
+func validateProjectlessIssueRole(ctx context.Context, executor dbExecutor, workspaceID string, role projectauth.ProjectRole) error {
+	if role == "" {
+		return projectauth.ErrInvalidRole
+	}
+	if role == projectauth.ProjectOwner || role == projectauth.ProjectManager || role == projectauth.ProjectMember || role == projectauth.ProjectViewer {
+		return nil
+	}
+	var exists bool
+	if err := executor.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM project_permission_roles WHERE workspace_id=$1 AND role_key=$2)`, workspaceID, string(role)).Scan(&exists); err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	if !exists {
+		return projectauth.ErrInvalidRole
+	}
+	var invalid int
+	if err := executor.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM project_permission_role_permissions rp
+		JOIN project_permission_roles rr ON rr.id=rp.role_id
+		WHERE rr.workspace_id=$1 AND rr.role_key=$2
+		  AND rp.permission NOT IN ('project.view', 'project.edit', 'project.issue.comment', 'project.issue.manage', 'project.issue.archive', 'project.agent.use')`, workspaceID, string(role)).Scan(&invalid); err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	if invalid > 0 {
+		return projectauth.ErrInvalidIssuePermission
+	}
+	return nil
+}
+
+// 2026-09-05 coder(lq): Write projectless grants in one transaction so the
+// task boundary, subject membership, ACL row, and audit event are consistent.
+func (h *Handler) mutateProjectlessIssueAccessGrantTx(ctx context.Context, tx dbExecutor, grant projectauth.AccessGrant, issueID string, r *http.Request) error {
+	if grant.Permission != "" || grant.Role == "" {
+		return projectauth.ErrInvalidRole
+	}
+	issueUUID, err := util.ParseUUID(issueID)
+	if err != nil {
+		return projectauth.ErrNoProjectAccess
+	}
+	workspaceUUID, err := util.ParseUUID(grant.WorkspaceID)
+	if err != nil {
+		return projectauth.ErrCrossWorkspace
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueUUID, WorkspaceID: workspaceUUID})
+	if err != nil || issue.ProjectID.Valid {
+		return projectauth.ErrCrossWorkspace
+	}
+	userID, ok := requireUserIDValue(r)
+	if !ok {
+		return projectauth.ErrNotWorkspaceMember
+	}
+	member, err := h.getWorkspaceMember(ctx, userID, grant.WorkspaceID)
+	if err != nil {
+		return projectauth.ErrNotWorkspaceMember
+	}
+	allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(ctx, issue, userID, member, projectauth.IssueManage, true)
+	if !allowed {
+		if reason == "internal" {
+			return projectauth.ErrStorageUnavailable
+		}
+		return projectauth.ErrForbidden
+	}
+	if err := validateProjectlessIssueRole(ctx, tx, grant.WorkspaceID, grant.Role); err != nil {
+		return err
+	}
+	subjectID := strings.TrimSpace(grant.SubjectID)
+	switch grant.SubjectType {
+	case projectauth.SubjectUser:
+		if _, err := util.ParseUUID(subjectID); err != nil {
+			return projectauth.ErrInvalidSubject
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM member WHERE workspace_id=$1 AND user_id=$2::uuid)`, grant.WorkspaceID, subjectID).Scan(&exists); err != nil {
+			return wrapProjectPermissionRepositoryError(err)
+		}
+		if !exists {
+			return projectauth.ErrInvalidSubject
+		}
+	case projectauth.SubjectOrganization:
+		if _, err := util.ParseUUID(subjectID); err != nil {
+			return projectauth.ErrInvalidSubject
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM projectauth_organizations WHERE workspace_id=$1 AND id=$2::uuid AND status='active')`, grant.WorkspaceID, subjectID).Scan(&exists); err != nil {
+			return wrapProjectPermissionRepositoryError(err)
+		}
+		if !exists {
+			return projectauth.ErrInvalidSubject
+		}
+	case projectauth.SubjectEveryone:
+		if subjectID != "" {
+			return projectauth.ErrInvalidSubject
+		}
+		subjectID = ""
+	default:
+		return projectauth.ErrInvalidSubject
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO projectauth_issue_access_grants
+			(workspace_id, issue_id, subject_type, subject_id, role_key, source, granted_by)
+		VALUES ($1,$2,$3,$4,$5,'manual',$6)
+		ON CONFLICT DO NOTHING`, grant.WorkspaceID, issueID, string(grant.SubjectType), subjectID, string(grant.Role), userID)
+	if err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	grant.SubjectID = subjectID
+	grant.IssueID, grant.ProjectID = issueID, ""
+	grant.Source, grant.GrantedBy = projectauth.GrantSourceManual, userID
+	return (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(ctx, projectauth.AuthorizationAuditEvent{
+		WorkspaceID: grant.WorkspaceID,
+		IssueID:     issueID,
+		ActorUserID: userID,
+		Action:      "project_permission_granted",
+		Details: map[string]any{
+			"issue_id": issueID, "subject_type": string(grant.SubjectType), "subject_id": subjectID,
+			"role": string(grant.Role), "permission": "", "source": string(projectauth.GrantSourceManual),
+		},
+	})
+}
+
+// 2026-09-05 coder(lq): Keep the projectless POST response aligned with the
+// project grant response by reading the row generated inside the same
+// transaction. This avoids exposing a partial in-memory grant to clients.
+func readProjectlessIssueAccessGrant(ctx context.Context, tx dbExecutor, grant projectauth.AccessGrant) (projectauth.AccessGrant, error) {
+	var created projectauth.AccessGrant
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, workspace_id::text, issue_id::text,
+		       subject_type, subject_id, role_key, source,
+		       COALESCE(granted_by::text, ''), created_at::text
+		FROM projectauth_issue_access_grants
+		WHERE workspace_id=$1 AND issue_id=$2
+		  AND subject_type=$3 AND subject_id=$4
+		  AND role_key=$5 AND source='manual'
+		LIMIT 1`, grant.WorkspaceID, grant.IssueID, string(grant.SubjectType), grant.SubjectID, string(grant.Role)).
+		Scan(&created.ID, &created.WorkspaceID, &created.IssueID,
+			&created.SubjectType, &created.SubjectID, &created.Role, &created.Source,
+			&created.GrantedBy, &created.CreatedAt)
+	if err != nil {
+		return projectauth.AccessGrant{}, wrapProjectPermissionRepositoryError(err)
+	}
+	created.ProjectID = ""
+	return created, nil
+}
+
+func requireUserIDValue(r *http.Request) (string, bool) {
+	userID := requestUserID(r)
+	if userID == "" {
+		return "", false
+	}
+	return userID, true
+}
+
 func (h *Handler) revokeProjectAccessGrant(w http.ResponseWriter, r *http.Request) {
 	h.revokeAccessGrant(w, r, chi.URLParam(r, "id"), "")
 }
@@ -315,11 +626,197 @@ func (h *Handler) RevokeProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) revokeIssueAccessGrant(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
-	_, projectID, ok := h.issueAccessSubject(w, r, issueID)
+	subject, projectID, ok := h.issueAccessSubject(w, r, issueID)
 	if !ok {
 		return
 	}
+	if projectID == "" {
+		h.revokeProjectlessIssueAccessGrant(w, r, issueID, subject)
+		return
+	}
 	h.revokeAccessGrant(w, r, projectID, issueID)
+}
+
+// 2026-09-05 coder(lq): Projectless tasks have their own ACL table, so they
+// cannot use projectauth.Service.RevokeAccess (which deliberately requires a
+// project_id). Keep this adapter narrow: only manual rows are removable and
+// the immutable task-creator Owner can never be deleted or downgraded.
+func (h *Handler) revokeProjectlessIssueAccessGrant(w http.ResponseWriter, r *http.Request, issueID string, subject projectauth.Subject) {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		writeErrorCode(w, http.StatusNotFound, "project_permission_disabled", "project permissions are disabled")
+		return
+	}
+	grant, err := decodeProjectAccessGrant(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid access grant payload")
+		return
+	}
+	grant.ProjectID = ""
+	grant.IssueID = issueID
+	grant.WorkspaceID = subject.WorkspaceID
+	if !normalizeAccessGrantIDs(w, &grant) {
+		return
+	}
+	if grant.SubjectType == projectauth.SubjectEveryone {
+		grant.SubjectID = ""
+	}
+	if grant.Permission != "" || grant.Role == "" {
+		writeProjectAccessGrantError(w, projectauth.ErrInvalidRole)
+		return
+	}
+	if err := validateProjectlessIssueRole(r.Context(), h.DB, subject.WorkspaceID, grant.Role); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	if h.TxStarter == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "project permission storage is unavailable")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var workspaceID, projectID string
+	if err := tx.QueryRow(r.Context(), `
+		SELECT workspace_id::text, COALESCE(project_id::text, '')
+		FROM issue WHERE id=$1 FOR UPDATE`, issueID).Scan(&workspaceID, &projectID); err != nil {
+		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+		return
+	}
+	if workspaceID != subject.WorkspaceID {
+		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+		return
+	}
+	if projectID != "" {
+		writeProjectAccessGrantError(w, projectauth.ErrCrossWorkspace)
+		return
+	}
+	member, err := h.getWorkspaceMember(r.Context(), subject.UserID, workspaceID)
+	if err != nil {
+		writeProjectAccessGrantError(w, projectauth.ErrNotWorkspaceMember)
+		return
+	}
+	issueUUID, err := util.ParseUUID(issueID)
+	if err != nil {
+		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+		return
+	}
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		writeProjectAccessGrantError(w, projectauth.ErrCrossWorkspace)
+		return
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueUUID, WorkspaceID: workspaceUUID})
+	if err != nil || issue.ProjectID.Valid {
+		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+		return
+	}
+	allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(r.Context(), issue, subject.UserID, member, projectauth.IssueManage, true)
+	if !allowed {
+		if reason == "internal" {
+			writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)
+		} else {
+			writeProjectAccessGrantError(w, projectauth.ErrForbidden)
+		}
+		return
+	}
+	if err := validateProjectlessIssueAccessGrantSubject(r.Context(), tx, workspaceID, issueID, grant); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	result, err := tx.Exec(r.Context(), `
+		DELETE FROM projectauth_issue_access_grants
+		WHERE workspace_id=$1 AND issue_id=$2 AND subject_type=$3
+		  AND subject_id=$4 AND role_key=$5 AND source='manual'`,
+		workspaceID, issueID, string(grant.SubjectType), grant.SubjectID, string(grant.Role))
+	if err != nil {
+		logProjectAccessGrantFailure("delete_projectless_issue", grant, issueID, err)
+		writeProjectAccessGrantError(w, wrapProjectPermissionRepositoryError(err))
+		return
+	}
+	if result.RowsAffected() == 0 {
+		// 2026-09-05 coder(lq): A system grant (assignee/@mention) or a stale
+		// row is not a successful manual revoke. Return not-found so the caller
+		// refreshes instead of showing a false success.
+		logProjectAccessGrantFailure("delete_projectless_issue_noop", grant, issueID, projectauth.ErrNoProjectAccess)
+		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+		return
+	}
+	if err := (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(r.Context(), projectauth.AuthorizationAuditEvent{
+		WorkspaceID: workspaceID,
+		IssueID:     issueID,
+		ActorUserID: subject.UserID,
+		Action:      "project_permission_revoked",
+		Details: map[string]any{
+			"project_id": "", "issue_id": issueID,
+			"subject_type": string(grant.SubjectType), "subject_id": grant.SubjectID,
+			"role": string(grant.Role), "permission": "", "source": string(projectauth.GrantSourceManual),
+		},
+	}); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// 2026-09-05 coder(lq): Validate every projectless subject against the
+// current workspace, not only Owner subjects. Without this check a malformed
+// or cross-workspace user/organization ID could reach the delete predicate and
+// produce inconsistent authorization behavior between grant and revoke.
+func validateProjectlessIssueAccessGrantSubject(ctx context.Context, tx dbExecutor, workspaceID, issueID string, grant projectauth.AccessGrant) error {
+	subjectID := strings.TrimSpace(grant.SubjectID)
+	switch grant.SubjectType {
+	case projectauth.SubjectUser:
+		if _, err := util.ParseUUID(subjectID); err != nil {
+			return projectauth.ErrInvalidSubject
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM member WHERE workspace_id=$1 AND user_id=$2::uuid)`, workspaceID, subjectID).Scan(&exists); err != nil {
+			return wrapProjectPermissionRepositoryError(err)
+		}
+		if !exists {
+			return projectauth.ErrInvalidSubject
+		}
+		if grant.Role == projectauth.ProjectOwner {
+			creatorID, err := (&projectAuthRepository{db: tx}).IssueCreator(ctx, issueID)
+			if err != nil {
+				return err
+			}
+			if creatorID != "" && creatorID == subjectID {
+				return projectauth.ErrLastOwner
+			}
+		}
+	case projectauth.SubjectOrganization:
+		if _, err := util.ParseUUID(subjectID); err != nil {
+			return projectauth.ErrInvalidSubject
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM projectauth_organizations
+				WHERE workspace_id=$1 AND id=$2::uuid AND status='active'
+			)`, workspaceID, subjectID).Scan(&exists); err != nil {
+			return wrapProjectPermissionRepositoryError(err)
+		}
+		if !exists {
+			return projectauth.ErrInvalidSubject
+		}
+	case projectauth.SubjectEveryone:
+		if subjectID != "" {
+			return projectauth.ErrInvalidSubject
+		}
+	default:
+		return projectauth.ErrInvalidSubject
+	}
+	return nil
 }
 
 func (h *Handler) RevokeIssueAccessGrant(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +844,7 @@ func (h *Handler) revokeAccessGrant(w http.ResponseWriter, r *http.Request, proj
 	workspaceID := h.resolveWorkspaceID(r)
 	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
 	if err != nil {
+		logProjectAccessGrantFailure("member", grant, issueID, err)
 		writeProjectAccessGrantError(w, projectauth.ErrNotWorkspaceMember)
 		return
 	}
@@ -355,6 +853,9 @@ func (h *Handler) revokeAccessGrant(w http.ResponseWriter, r *http.Request, proj
 		grant.WorkspaceID = workspaceID
 		return service.RevokeAccess(r.Context(), actor, grant)
 	}); err != nil {
+		// 2026-09-05 coder(lq): Keep revoke failures diagnosable in local and
+		// self-hosted logs while returning the existing stable API error shape.
+		logProjectAccessGrantFailure("revoke", grant, issueID, err)
 		writeProjectAccessGrantError(w, err)
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -30,6 +31,18 @@ func (r *projectAuthRepository) RecordAuthorizationAudit(ctx context.Context, ev
 		INSERT INTO activity_log (workspace_id, issue_id, actor_type, actor_id, action, details)
 		VALUES ($1, NULLIF($2, '')::uuid, 'member', NULLIF($3, '')::uuid, $4, $5::jsonb)`,
 		event.WorkspaceID, event.IssueID, event.ActorUserID, event.Action, details)
+	if err != nil {
+		// 2026-09-05 coder(lq): Surface the underlying audit insert failure;
+		// the service deliberately maps storage errors to a stable 503 response.
+		slog.Error("project permission revoke audit failed",
+			"workspace_id", event.WorkspaceID,
+			"project_id", event.ProjectID,
+			"issue_id", event.IssueID,
+			"action", event.Action,
+			"sqlstate", projectPermissionSQLState(err),
+			"error", err,
+		)
+	}
 	return err
 }
 
@@ -144,19 +157,34 @@ func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, user
 }
 
 func (r *projectAuthRepository) IssuePermission(ctx context.Context, issueID, userID string, permission projectauth.Permission) (bool, error) {
-	// 2026-09-05 coder(lq): Route this legacy compatibility reader through the
-	// canonical task authorization service so creator ownership and project
-	// inheritance cannot drift from HTTP permission checks.
+	// 2026-09-05 coder(lq): Resolve the nullable project binding first. The
+	// historical IssueProject helper intentionally rejects projectless tasks,
+	// but this compatibility reader must still see a task-level @ grant stored
+	// in projectauth_issue_access_grants.
 	if r == nil || r.db == nil {
 		return false, projectauth.ErrStorageUnavailable
 	}
-	workspaceID, projectID, err := r.IssueProject(ctx, issueID)
-	if err != nil {
-		if errors.Is(err, projectauth.ErrNoProjectAccess) || errors.Is(err, projectauth.ErrCrossWorkspace) {
-			return false, nil
-		}
-		return false, err
+	var workspaceID, projectID string
+	err := r.db.QueryRow(ctx, `
+		SELECT workspace_id::text, COALESCE(project_id::text, '')
+		FROM issue
+		WHERE id = $1`, issueID).Scan(&workspaceID, &projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
 	}
+	if err != nil {
+		return false, wrapProjectPermissionRepositoryError(err)
+	}
+	if projectID == "" {
+		return r.projectlessIssuePermission(ctx, issueID, workspaceID, userID, permission)
+	}
+	return r.projectBoundIssuePermission(ctx, issueID, workspaceID, projectID, userID, permission)
+}
+
+func (r *projectAuthRepository) projectBoundIssuePermission(ctx context.Context, issueID, workspaceID, projectID, userID string, permission projectauth.Permission) (bool, error) {
+	// 2026-09-05 coder(lq): Keep project-bound tasks on the canonical service
+	// path so project inheritance and task-only grants remain identical to HTTP
+	// authorization checks.
 	workspaceRole, err := r.WorkspaceRole(ctx, workspaceID, userID)
 	if err != nil {
 		if errors.Is(err, projectauth.ErrNotWorkspaceMember) || errors.Is(err, projectauth.ErrNoProjectAccess) {
@@ -179,6 +207,134 @@ func (r *projectAuthRepository) IssuePermission(ctx context.Context, issueID, us
 		return false, err
 	}
 	return true, nil
+}
+
+// 2026-09-05 coder(lq): Projectless tasks have no project row from which the
+// authorization service can inherit permissions. Evaluate their immutable
+// creator/assignee access and the dedicated task-grant table here instead of
+// treating a missing project as a missing task.
+func (r *projectAuthRepository) projectlessIssuePermission(ctx context.Context, issueID, workspaceID, userID string, permission projectauth.Permission) (bool, error) {
+	if !taskPermissionAllowedForCompatibility(permission) {
+		return false, nil
+	}
+	if _, err := r.WorkspaceRole(ctx, workspaceID, userID); err != nil {
+		if errors.Is(err, projectauth.ErrNotWorkspaceMember) || errors.Is(err, projectauth.ErrNoProjectAccess) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	var creatorID, assigneeID string
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			CASE
+				WHEN i.creator_type = 'member' THEN i.creator_id::text
+				WHEN i.creator_type = 'agent' AND creator_agent.kind = 'user' AND creator_agent.owner_id IS NOT NULL THEN creator_agent.owner_id::text
+				ELSE ''
+			END,
+			CASE
+				WHEN i.assignee_type = 'member' THEN i.assignee_id::text
+				WHEN i.assignee_type = 'agent' AND assignee_agent.kind = 'user' AND assignee_agent.owner_id IS NOT NULL THEN assignee_agent.owner_id::text
+				ELSE ''
+			END
+		FROM issue i
+		LEFT JOIN agent creator_agent
+		  ON creator_agent.id = i.creator_id
+		 AND creator_agent.workspace_id = i.workspace_id
+		 AND creator_agent.kind = 'user'
+		LEFT JOIN agent assignee_agent
+		  ON assignee_agent.id = i.assignee_id
+		 AND assignee_agent.workspace_id = i.workspace_id
+		 AND assignee_agent.kind = 'user'
+		WHERE i.id = $1 AND i.workspace_id = $2 AND i.project_id IS NULL`, issueID, workspaceID).Scan(&creatorID, &assigneeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, wrapProjectPermissionRepositoryError(err)
+	}
+	if userID == creatorID || userID == assigneeID {
+		return true, nil
+	}
+
+	ownerBypass, err := r.WorkspaceOwnerBypassEnabled(ctx, workspaceID)
+	if err != nil {
+		return false, err
+	}
+	if ownerBypass {
+		var isOwner bool
+		if err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM member WHERE workspace_id=$1 AND user_id=$2 AND role='owner')`, workspaceID, userID).Scan(&isOwner); err != nil {
+			return false, wrapProjectPermissionRepositoryError(err)
+		}
+		if isOwner {
+			return true, nil
+		}
+	}
+
+	var allowed bool
+	err = r.db.QueryRow(ctx, `
+		WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
+			SELECT org.id, org.parent_id
+			FROM projectauth_organization_members om
+			JOIN projectauth_organizations org
+			  ON org.id = om.organization_id
+			 AND org.workspace_id = $1
+			 AND org.status = 'active'
+			WHERE om.workspace_id = $1 AND om.user_id = $3::uuid
+			UNION
+			SELECT parent.id, parent.parent_id
+			FROM user_orgs child
+			JOIN projectauth_organizations parent
+			  ON parent.id = child.parent_id
+			 AND parent.workspace_id = $1
+			 AND parent.status = 'active'
+		)
+		SELECT EXISTS (
+			SELECT 1
+			FROM projectauth_issue_access_grants g
+			WHERE g.workspace_id = $1
+			  AND g.issue_id = $2::uuid
+			  AND (
+				(g.subject_type = 'user' AND g.subject_id = $3::text)
+				OR (g.subject_type = 'everyone' AND (g.subject_id = '' OR g.subject_id = $1::text))
+				OR (g.subject_type = 'organization' AND g.subject_id IN (SELECT organization_id::text FROM user_orgs))
+			  )
+			  AND (
+				EXISTS (
+					SELECT 1
+					FROM project_permission_roles rr
+					JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
+					WHERE rr.workspace_id = g.workspace_id
+					  AND rr.role_key = g.role_key
+					  AND rp.permission = $4
+				)
+				OR (
+					g.role_key IN ('owner', 'manager', 'member', 'viewer')
+					AND NOT EXISTS (
+						SELECT 1 FROM project_permission_roles rr
+						WHERE rr.workspace_id = g.workspace_id AND rr.role_key = g.role_key
+					)
+					AND (
+						$4 = 'project.view'
+						OR ($4 IN ('project.edit', 'project.issue.comment', 'project.issue.archive', 'project.agent.use') AND g.role_key IN ('owner', 'manager', 'member'))
+						OR ($4 = 'project.issue.manage' AND g.role_key IN ('owner', 'manager'))
+					)
+				)
+			  )
+		)`, workspaceID, issueID, userID, string(permission)).Scan(&allowed)
+	if err != nil {
+		return false, wrapProjectPermissionRepositoryError(err)
+	}
+	return allowed, nil
+}
+
+func taskPermissionAllowedForCompatibility(permission projectauth.Permission) bool {
+	switch permission {
+	case projectauth.View, projectauth.Edit, projectauth.IssueComment, projectauth.IssueManage, projectauth.IssueArchive, projectauth.AgentUse:
+		return true
+	default:
+		return false
+	}
 }
 
 // 2026-08-31 coder(lq): Unified grant reads are kept in this adapter so the
@@ -496,14 +652,17 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 func (r *projectAuthRepository) DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType projectauth.SubjectType, subjectID string, role projectauth.ProjectRole, permission projectauth.Permission) error {
 	_, err := r.db.Exec(ctx, `
 		WITH project_lock AS (
-			SELECT pg_advisory_xact_lock(hashtextextended($2::text, 0))
+			SELECT pg_advisory_xact_lock(hashtextextended(($2::uuid)::text, 0))
 		)
 		DELETE FROM projectauth_access_grants g
 		USING project p
 		WHERE EXISTS (SELECT 1 FROM project_lock)
 		  AND p.id = g.project_id
-		  AND p.workspace_id = $1
-		  AND g.workspace_id=$1 AND g.project_id=$2 AND g.issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
+		  -- 2026-09-05 coder(lq): Parameter $2 is also used by the advisory
+		  -- lock. Keep that parameter UUID-typed, then cast only the lock key
+		  -- to text, so PostgreSQL never resolves a comparison as uuid = text.
+		  AND p.workspace_id = $1::uuid
+		  AND g.workspace_id=$1::uuid AND g.project_id=$2::uuid AND g.issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
 		  AND g.subject_type=$4 AND COALESCE(g.subject_id, '') = COALESCE($5, '')
 		  AND g.role_key IS NOT DISTINCT FROM NULLIF($6,'')
 		  AND g.permission IS NOT DISTINCT FROM NULLIF($7,'')
@@ -560,6 +719,21 @@ func (r *projectAuthRepository) DeleteAccessGrant(ctx context.Context, workspace
 			)
 		  )`, workspaceID, projectID, issueID,
 		string(subjectType), subjectID, string(role), string(permission))
+	if err != nil {
+		// 2026-09-05 coder(lq): Preserve the database error in local logs so a
+		// generic 503 can be traced to the exact revoke statement and grant key.
+		slog.Error("project permission revoke delete failed",
+			"workspace_id", workspaceID,
+			"project_id", projectID,
+			"issue_id", issueID,
+			"subject_type", string(subjectType),
+			"has_subject_id", strings.TrimSpace(subjectID) != "",
+			"role", string(role),
+			"permission", string(permission),
+			"sqlstate", projectPermissionSQLState(err),
+			"error", err,
+		)
+	}
 	return wrapProjectPermissionRepositoryError(err)
 }
 
@@ -905,7 +1079,7 @@ func (r *projectAuthRepository) IssueCreator(ctx context.Context, issueID string
 		  ON a.id = i.creator_id
 		 AND a.workspace_id = i.workspace_id
 		 AND a.kind = 'user'
-		WHERE i.id = $1 AND i.project_id IS NOT NULL`, issueID).Scan(&creatorID)
+		WHERE i.id = $1`, issueID).Scan(&creatorID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", projectauth.ErrNoProjectAccess
 	}

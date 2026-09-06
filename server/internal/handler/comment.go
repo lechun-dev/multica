@@ -3437,8 +3437,10 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
-	// 2026-08-28 coder(lq): Mentions in comments are task-scoped grants.
-	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid
+	// 2026-09-05 coder(lq): Mentions in comments are task-scoped grants for
+	// both project-bound and projectless tasks. Do not gate reconciliation on a
+	// project ID; the projectless adapter persists to its dedicated ACL table.
+	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.Enabled()
 	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit) || promoteMentionAccess
 	if transactionalEdit {
 		// Strict body edits, attachment-set edits, and cancellation of tasks built
@@ -3483,7 +3485,11 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil && promoteMentionAccess {
-			err = syncIssueMentionAccessWithExecutor(r.Context(), tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), issue.Description.String)
+			projectID := ""
+			if issue.ProjectID.Valid {
+				projectID = uuidToString(issue.ProjectID)
+			}
+			err = syncIssueMentionAccessWithExecutor(r.Context(), tx, uuidToString(issue.ID), projectID, issue.Description.String)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())

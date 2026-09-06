@@ -147,6 +147,12 @@ func resolveIssueCreatorUserWithExecutor(ctx context.Context, executor dbExecuto
 // on the same task. Mentions and assignees both receive the task Member role.
 func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, description string) error {
 	desired := make(map[string]struct{})
+	workspaceID := ""
+	if projectID == "" {
+		if err := executor.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id=$1`, issueID).Scan(&workspaceID); err != nil {
+			return err
+		}
+	}
 	addMentions := func(content string) error {
 		for _, mention := range util.ParseMentions(content) {
 			if mention.Type != "member" && mention.Type != "agent" {
@@ -155,7 +161,11 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 			userID := mention.ID
 			if mention.Type == "agent" {
 				var err error
-				userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+				if projectID != "" {
+					userID, err = resolveAgentOwnerWithExecutor(ctx, executor, projectID, mention.ID)
+				} else {
+					userID, err = resolveAgentOwnerInWorkspaceWithExecutor(ctx, executor, workspaceID, mention.ID)
+				}
 				if err != nil {
 					return err
 				}
@@ -202,23 +212,52 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 	// value supplied by the caller.
 	var assigneeType pgtype.Text
 	var assigneeID pgtype.UUID
-	if err := executor.QueryRow(ctx, `
-		SELECT assignee_type, assignee_id
-		FROM issue
-		WHERE id=$1 AND project_id=$2`, issueID, projectID).Scan(&assigneeType, &assigneeID); err != nil {
+	assigneeQuery := `SELECT assignee_type, assignee_id FROM issue WHERE id=$1`
+	assigneeArgs := []any{issueID}
+	if projectID != "" {
+		assigneeQuery += ` AND project_id=$2`
+		assigneeArgs = append(assigneeArgs, projectID)
+	}
+	if err := executor.QueryRow(ctx, assigneeQuery, assigneeArgs...).Scan(&assigneeType, &assigneeID); err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-	} else if assigneeUserID, err := resolveIssueAssigneeUserWithExecutor(ctx, executor, projectID, assigneeType, assigneeID); err != nil {
-		return err
-	} else if assigneeUserID != "" {
-		desired[assigneeUserID] = struct{}{}
+	} else {
+		var assigneeUserID string
+		var resolveErr error
+		if projectID != "" {
+			assigneeUserID, resolveErr = resolveIssueAssigneeUserWithExecutor(ctx, executor, projectID, assigneeType, assigneeID)
+		} else {
+			switch {
+			case assigneeType.Valid && assigneeType.String == "member":
+				assigneeUserID = uuidToString(assigneeID)
+			case assigneeType.Valid && assigneeType.String == "agent":
+				var workspaceID string
+				if err := executor.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id=$1`, issueID).Scan(&workspaceID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return err
+				}
+				assigneeUserID, resolveErr = resolveAgentOwnerInWorkspaceWithExecutor(ctx, executor, workspaceID, uuidToString(assigneeID))
+			}
+		}
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if assigneeUserID != "" {
+			desired[assigneeUserID] = struct{}{}
+		}
 	}
 
-	currentRows, err := executor.Query(ctx, `
-		SELECT subject_id FROM projectauth_access_grants
-		WHERE issue_id=$1 AND project_id=$2 AND subject_type='user'
-		  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.ProjectMember))
+	var currentRows pgx.Rows
+	if projectID != "" {
+		currentRows, err = executor.Query(ctx, `
+			SELECT subject_id FROM projectauth_access_grants
+			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user'
+			  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.ProjectMember))
+	} else {
+		currentRows, err = executor.Query(ctx, `
+			SELECT subject_id FROM projectauth_issue_access_grants
+			WHERE issue_id=$1 AND subject_type='user' AND role_key=$2 AND source='system'`, issueID, string(projectauth.ProjectMember))
+	}
 	if err != nil {
 		return err
 	}
@@ -240,15 +279,29 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		if _, keep := desired[userID]; keep {
 			continue
 		}
-		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
-			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.ProjectMember)); err != nil {
-			return err
+		var deleteErr error
+		if projectID != "" {
+			_, deleteErr = executor.Exec(ctx, `DELETE FROM projectauth_access_grants
+				WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
+				  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.ProjectMember))
+		} else {
+			_, deleteErr = executor.Exec(ctx, `DELETE FROM projectauth_issue_access_grants
+				WHERE issue_id=$1 AND subject_type='user' AND subject_id=$2
+				  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.ProjectMember))
+		}
+		if deleteErr != nil {
+			return deleteErr
 		}
 	}
 	for userID := range desired {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.ProjectMember); err != nil {
-			return err
+		var upsertErr error
+		if projectID != "" {
+			upsertErr = upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.ProjectMember)
+		} else {
+			upsertErr = upsertProjectlessIssueAccessGrant(ctx, executor, issueID, userID, projectauth.ProjectMember)
+		}
+		if upsertErr != nil {
+			return upsertErr
 		}
 	}
 	return nil
@@ -265,11 +318,27 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 			return err
 		}
 	}
-	if !issue.ProjectID.Valid {
-		return nil
+	issueID := uuidToString(issue.ID)
+	if issue.ProjectID.Valid {
+		// 2026-09-05 coder(lq): A task moved into a project no longer uses the
+		// projectless grant store. Remove only automatic rows; manual grants are
+		// intentionally preserved for the task-level API to reconcile.
+		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_issue_access_grants WHERE issue_id=$1 AND source='system'`, issueID); err != nil {
+			return err
+		}
+	} else {
+		creatorUserID, err := resolveIssueCreatorUserWithExecutor(ctx, executor, issue)
+		if err != nil {
+			return err
+		}
+		if creatorUserID != "" {
+			if err := upsertProjectlessIssueAccessGrant(ctx, executor, issueID, creatorUserID, projectauth.ProjectOwner); err != nil {
+				return err
+			}
+		}
+		return syncIssueMentionAccessWithExecutor(ctx, executor, issueID, "", issue.Description.String)
 	}
 	projectID := uuidToString(issue.ProjectID)
-	issueID := uuidToString(issue.ID)
 	creatorUserID, err := resolveIssueCreatorUserWithExecutor(ctx, executor, issue)
 	if err != nil {
 		return err
@@ -303,6 +372,48 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 		}
 	}
 	return syncIssueMentionAccessWithExecutor(ctx, executor, issueID, projectID, issue.Description.String)
+}
+
+// 2026-09-05 coder(lq): Projectless issues need the same immutable creator,
+// assignee, and mention roles as project-bound issues, but cannot use the
+// project grant table because its project_id is intentionally NOT NULL.
+func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, userID string, role projectauth.ProjectRole) error {
+	var workspaceID string
+	if err := executor.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id=$1`, issueID).Scan(&workspaceID); err != nil {
+		return err
+	}
+	// 2026-09-05 coder(lq): A task creator is always Owner. If the creator is
+	// also mentioned or assigned, normalize that automatic Member upsert to the
+	// immutable Owner row instead of leaving two conflicting system roles.
+	var creatorID string
+	if err := executor.QueryRow(ctx, `
+		SELECT CASE
+			WHEN i.creator_type = 'member' THEN i.creator_id::text
+			WHEN i.creator_type = 'agent' AND a.kind = 'user' AND a.owner_id IS NOT NULL THEN a.owner_id::text
+			ELSE ''
+		END
+		FROM issue i
+		LEFT JOIN agent a
+		  ON a.id=i.creator_id AND a.workspace_id=i.workspace_id AND a.kind='user'
+		WHERE i.id=$1::uuid AND i.project_id IS NULL`, issueID).Scan(&creatorID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if creatorID != "" && creatorID == userID && role == projectauth.ProjectMember {
+		role = projectauth.ProjectOwner
+		if _, err := executor.Exec(ctx, `
+			DELETE FROM projectauth_issue_access_grants
+			WHERE issue_id=$1::uuid AND subject_type='user' AND subject_id=$2
+			  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.ProjectMember)); err != nil {
+			return err
+		}
+	}
+	_, err := executor.Exec(ctx, `
+		INSERT INTO projectauth_issue_access_grants
+			(workspace_id, issue_id, subject_type, subject_id, role_key, source, granted_by)
+		VALUES ($1::uuid, $2::uuid, 'user', $3, $4, 'system', $3::uuid)
+		ON CONFLICT (workspace_id, issue_id, subject_type, subject_id, role_key, source) DO NOTHING`,
+		workspaceID, issueID, userID, string(role))
+	return err
 }
 
 // 2026-08-31 coder(lq): Keep automatic assignee/mention grants mirrored into
@@ -422,7 +533,7 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 // execution; this adapter also maps Agent mentions to their owner's Member
 // grant without creating a separate Agent permission record.
 func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.Issue, params db.CreateCommentParams) (db.CreateCommentRow, error) {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || !issue.ProjectID.Valid {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return h.Queries.CreateComment(ctx, params)
 	}
 	if h.TxStarter == nil {
@@ -438,7 +549,11 @@ func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.I
 	if err != nil {
 		return db.CreateCommentRow{}, err
 	}
-	if err := syncIssueMentionAccessWithExecutor(ctx, tx, uuidToString(issue.ID), uuidToString(issue.ProjectID), issue.Description.String); err != nil {
+	projectID := ""
+	if issue.ProjectID.Valid {
+		projectID = uuidToString(issue.ProjectID)
+	}
+	if err := syncIssueMentionAccessWithExecutor(ctx, tx, uuidToString(issue.ID), projectID, issue.Description.String); err != nil {
 		return db.CreateCommentRow{}, fmt.Errorf("promote comment mention project access: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
