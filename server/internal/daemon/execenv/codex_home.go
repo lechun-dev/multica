@@ -3,6 +3,7 @@ package execenv
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,6 +33,8 @@ var codexCopiedFiles = []string{
 const (
 	codexModelsCacheFile        = "models_cache.json"
 	codexModelsCacheBindingFile = ".models_cache_config.sha256"
+	codexGatewayModelGrok56     = "grok-5.6"
+	codexGatewayModelGrok55     = "grok-5.5"
 )
 
 // Files whose contents select the model provider/catalog used by Codex. The
@@ -1091,7 +1094,7 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 				return fmt.Errorf("remove non-regular codex models cache %s: %w", cachePath, err)
 			}
 		}
-		return nil
+		return ensureCodexGatewayModels(cachePath)
 	}
 
 	if cacheExists {
@@ -1112,6 +1115,93 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 
 	if err := writeCodexModelsCacheBinding(bindingPath, fingerprint); err != nil {
 		return err
+	}
+	return ensureCodexGatewayModels(cachePath)
+}
+
+// ensureCodexGatewayModels adds gateway-routed models to the task-local Codex
+// catalog without changing the provider configuration. Codex validates an
+// explicit model against models_cache.json before sending thread/start; the
+// API gateway still receives the bare Grok ID and is responsible for routing
+// it to xAI. 2026-09-06 coder(lq): Keep this injection local to each task so
+// the user's shared Codex installation and its own catalog remain untouched.
+func ensureCodexGatewayModels(cachePath string) error {
+	data, err := os.ReadFile(cachePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read codex models cache %s: %w", cachePath, err)
+	}
+
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("decode codex models cache %s: %w", cachePath, err)
+	}
+	modelsRaw, ok := document["models"]
+	if !ok {
+		return nil
+	}
+	var models []map[string]any
+	if err := json.Unmarshal(modelsRaw, &models); err != nil {
+		return fmt.Errorf("decode codex models in %s: %w", cachePath, err)
+	}
+
+	seen := make(map[string]bool, len(models)+2)
+	var template map[string]any
+	for _, model := range models {
+		if slug, ok := model["slug"].(string); ok && slug != "" {
+			seen[slug] = true
+			if template == nil {
+				template = model
+			}
+		}
+	}
+	if template == nil {
+		return nil
+	}
+
+	changed := false
+	for _, spec := range []struct {
+		slug        string
+		displayName string
+		description string
+	}{
+		{codexGatewayModelGrok56, "Grok 5.6", "Grok 5.6 routed through the configured Codex API gateway."},
+		{codexGatewayModelGrok55, "Grok 5.5", "Grok 5.5 routed through the configured Codex API gateway."},
+	} {
+		if seen[spec.slug] {
+			continue
+		}
+		model := make(map[string]any, len(template)+5)
+		for key, value := range template {
+			model[key] = value
+		}
+		model["slug"] = spec.slug
+		model["display_name"] = spec.displayName
+		model["description"] = spec.description
+		model["visibility"] = "list"
+		model["supported_in_api"] = true
+		models = append(models, model)
+		seen[spec.slug] = true
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	encodedModels, err := json.Marshal(models)
+	if err != nil {
+		return fmt.Errorf("encode Codex models in %s: %w", cachePath, err)
+	}
+	document["models"] = encodedModels
+	encoded, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Codex models cache %s: %w", cachePath, err)
+	}
+	encoded = append(encoded, '\n')
+	if err := os.WriteFile(cachePath, encoded, 0o644); err != nil {
+		return fmt.Errorf("write Codex models cache %s: %w", cachePath, err)
 	}
 	return nil
 }

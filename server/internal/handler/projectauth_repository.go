@@ -566,7 +566,8 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 	rows, err := r.db.Query(ctx, `
 		SELECT om.organization_id::text, om.user_id::text,
 		       COALESCE(u.name, ''), COALESCE(u.email, ''),
-		       COALESCE(u.avatar_url, ''), m.role
+		       COALESCE(u.avatar_url, ''), m.role,
+		       (l.user_id IS NOT NULL) AS has_logged_in
 		FROM projectauth_organization_members om
 		JOIN projectauth_organizations o
 		  ON o.id = om.organization_id
@@ -576,6 +577,7 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 		  ON m.workspace_id = om.workspace_id
 		 AND m.user_id = om.user_id
 		JOIN "user" u ON u.id = om.user_id
+		LEFT JOIN projectauth_user_logins l ON l.user_id = om.user_id
 		WHERE om.workspace_id = $1
 		ORDER BY u.name, u.email, om.organization_id`, workspaceID)
 	if err != nil {
@@ -586,12 +588,26 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 	for rows.Next() {
 		var member projectauth.OrganizationMember
 		if err := rows.Scan(&member.OrganizationID, &member.UserID, &member.Name,
-			&member.Email, &member.AvatarURL, &member.WorkspaceRole); err != nil {
+			&member.Email, &member.AvatarURL, &member.WorkspaceRole, &member.HasLoggedIn); err != nil {
 			return nil, wrapProjectPermissionRepositoryError(err)
 		}
 		members = append(members, member)
 	}
 	return members, wrapProjectPermissionRepositoryError(rows.Err())
+}
+
+// 2026-09-06 coder(lq): Record only successful interactive logins. The
+// unique user row is updated in place so repeated sign-ins remain cheap and
+// the directory can expose a stable boolean without exposing timestamps.
+func (r *projectAuthRepository) RecordUserLogin(ctx context.Context, userID string) error {
+	if r == nil || r.db == nil {
+		return errors.New("projectauth login repository is unavailable")
+	}
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO projectauth_user_logins (user_id, last_logged_in_at)
+		VALUES ($1::uuid, now())
+		ON CONFLICT (user_id) DO UPDATE SET last_logged_in_at = EXCLUDED.last_logged_in_at`, userID)
+	return wrapProjectPermissionRepositoryError(err)
 }
 
 func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant projectauth.AccessGrant) error {

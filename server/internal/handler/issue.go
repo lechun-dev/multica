@@ -2982,10 +2982,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		projectUUID = pid
 	}
-	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectUUID, projectauth.IssueCreate) {
-		return
-	}
-
 	// Optional parent_issue_id — validate same-workspace membership just like
 	// the regular CreateIssue path. Frontend seeds this from the "Add sub
 	// issue" entry, but the handler re-checks so a forged request can't
@@ -3007,7 +3003,15 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		if !h.requireParentIssueProjectPermission(w, r, parent, projectUUID) {
 			return
 		}
+		// 2026-09-06 coder(lq): Resolve the inherited project before enforcing
+		// the new-task project binding invariant.
+		if !projectUUID.Valid && parent.ProjectID.Valid {
+			projectUUID = parent.ProjectID
+		}
 		parentIssueUUID = pid
+	}
+	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectUUID, projectauth.IssueCreate) {
+		return
 	}
 
 	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, priority, dueDate, projectUUID, parentIssueUUID, attachmentIDs)
@@ -3239,6 +3243,13 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 			return
 		}
+		// 2026-09-06 coder(lq): A child without an explicit project inherits
+		// its parent's project before the create authorization check. This keeps
+		// project-bound sub-issue creation valid while still rejecting genuinely
+		// projectless new tasks when the overlay is enabled.
+		if !projectID.Valid && parentIssue.ProjectID.Valid {
+			projectID = parentIssue.ProjectID
+		}
 	}
 	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
 		return
@@ -3392,11 +3403,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		LabelIDs:       labelIDs,
 		AllowDuplicate: req.AllowDuplicate,
 	}, service.IssueCreateOpts{
-		ActorID: actualCreatorID,
-		// 2026-09-04 coder(lq): Project authorization is additive. A task may
-		// remain projectless, so the overlay must not turn project binding into
-		// a global creation invariant.
-		RequireProject:   false,
+		ActorID:          actualCreatorID,
+		RequireProject:   h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BeforeCommit:     h.issueAccessBeforeCommit(),

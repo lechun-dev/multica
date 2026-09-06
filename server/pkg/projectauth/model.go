@@ -54,6 +54,8 @@ type OrganizationMember struct {
 	Email          string        `json:"email"`
 	AvatarURL      string        `json:"avatar_url,omitempty"`
 	WorkspaceRole  WorkspaceRole `json:"workspace_role"`
+	// 2026-09-06 coder(lq): True only after a real login, not after directory import.
+	HasLoggedIn bool `json:"has_logged_in"`
 }
 
 // 2026-08-31 coder(lq): Grant subjects are independent from external login

@@ -13,6 +13,13 @@ import {
   CommandList,
 } from "@multica/ui/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
+import { useT } from "../../i18n";
+
+function memberLabel(member: MemberWithUser | undefined, notRegisteredSuffix: string): string {
+  if (!member) return "";
+  const name = member.name || member.email;
+  return `${name}${member.has_logged_in ? "" : notRegisteredSuffix}`;
+}
 
 type ProjectMemberMultiSelectProps = {
   members: MemberWithUser[];
@@ -53,6 +60,7 @@ export function ProjectMemberMultiSelect({
   hasError = false,
   ariaLabel,
 }: ProjectMemberMultiSelectProps) {
+  const { t } = useT("settings");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -74,9 +82,9 @@ export function ProjectMemberMultiSelect({
     const membersById = new Map(members.map((member) => [member.user_id, member]));
     return [...selectedIds].map((id) => ({
       id,
-      label: membersById.get(id)?.name || membersById.get(id)?.email || id,
+      label: memberLabel(membersById.get(id), t(($) => $.members.not_registered_suffix)) || id,
     }));
-  }, [members, selectedIds]);
+  }, [members, selectedIds, t]);
   const allFilteredSelected = filteredMembers.length > 0
     && filteredMembers.every((member) => selectedIds.has(member.user_id));
   const triggerLabel = selectedIds.size === 0 ? placeholder : `${selectedLabel} ${selectedIds.size}`;
@@ -171,7 +179,7 @@ export function ProjectMemberMultiSelect({
                 >
                   <Checkbox
                     checked={selected}
-                    aria-label={member.name || member.email}
+                    aria-label={memberLabel(member, t(($) => $.members.not_registered_suffix))}
                     onPointerDown={(event) => {
                       event.stopPropagation();
                     }}
@@ -182,7 +190,7 @@ export function ProjectMemberMultiSelect({
                       onToggle(member.user_id);
                     }}
                   />
-                  <span className="min-w-0 flex-1 truncate">{member.name || member.email}</span>
+                  <span className="min-w-0 flex-1 truncate">{memberLabel(member, t(($) => $.members.not_registered_suffix))}</span>
                   {member.name && member.email ? <span className="max-w-40 truncate text-caption text-muted-foreground">{member.email}</span> : null}
                   {selected ? <Check className="size-3.5 shrink-0 text-primary" aria-hidden="true" /> : null}
                 </CommandItem>

@@ -182,8 +182,27 @@ func (h *Handler) FindOrCreateUserForOAuth(ctx context.Context, email string) (d
 // IssueLoginTokenForOAuth exposes the existing JWT issuance contract to a
 // separately-owned OAuth adapter. It intentionally does not implement a
 // second token format or authentication policy.
-func (h *Handler) IssueLoginTokenForOAuth(user db.User) (string, error) {
+func (h *Handler) IssueLoginTokenForOAuth(ctx context.Context, user db.User) (string, error) {
+	_ = ctx
 	return h.issueJWT(user)
+}
+
+// 2026-09-06 coder(lq): Keep login markers best-effort. A migration or
+// transient database problem must not turn an otherwise successful login into
+// a failed authentication response.
+func (h *Handler) recordUserLogin(ctx context.Context, userID string) {
+	if h == nil || h.DB == nil || strings.TrimSpace(userID) == "" {
+		return
+	}
+	if err := (&projectAuthRepository{db: h.DB}).RecordUserLogin(ctx, userID); err != nil {
+		slog.Warn("failed to record user login", "user_id", userID, "error", err)
+	}
+}
+
+// RecordUserLoginForOAuth lets an external OAuth adapter mark the login only
+// after it has completed account resolution and JWT issuance.
+func (h *Handler) RecordUserLoginForOAuth(ctx context.Context, user db.User) {
+	h.recordUserLogin(ctx, uuidToString(user.ID))
 }
 
 // UserResponseForOAuth uses the same public user shape as the built-in login
@@ -460,6 +479,7 @@ func (h *Handler) VerifyCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
+	h.recordUserLogin(r.Context(), uuidToString(user.ID))
 
 	// Set HttpOnly auth cookie (browser clients) + CSRF cookie.
 	if err := auth.SetAuthCookies(w, tokenString); err != nil {
@@ -717,6 +737,7 @@ func (h *Handler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
+	h.recordUserLogin(r.Context(), uuidToString(user.ID))
 
 	if err := auth.SetAuthCookies(w, tokenString); err != nil {
 		slog.Warn("failed to set auth cookies", "error", err)

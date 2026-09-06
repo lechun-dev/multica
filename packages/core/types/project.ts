@@ -197,6 +197,7 @@ export interface ProjectAuthorizationOrganizationMember {
   email: string;
   avatar_url?: string;
   workspace_role: "owner" | "admin" | "member" | string;
+  has_logged_in?: boolean;
 }
 
 export interface ProjectAuthorizationOrganizationsResponse {

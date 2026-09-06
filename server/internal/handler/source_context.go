@@ -692,6 +692,18 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		}
 		projectID = parsed
 	}
+	if !projectID.Valid && capture.SourceIssueID.Valid {
+		// 2026-09-06 coder(lq): Source-context sub-issues inherit a
+		// project-bound source issue before the new-task authorization gate.
+		// A genuinely projectless source cannot be used to create an unscoped
+		// task while project permissions are enabled.
+		if sourceIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          capture.SourceIssueID,
+			WorkspaceID: workspaceID,
+		}); err == nil && sourceIssue.ProjectID.Valid {
+			projectID = sourceIssue.ProjectID
+		}
+	}
 	if !h.requireNewIssueProjectPermission(w, r, util.UUIDToString(workspaceID), projectID, projectauth.IssueCreate) {
 		return errSourceContextResponseWritten
 	}
@@ -736,11 +748,8 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		AttachmentIDs: attachmentIDs, LabelIDs: labelIDs, Stage: stage,
 		AllowDuplicate: input.AllowDuplicate, SourceContext: &capture,
 	}, service.IssueCreateOpts{
-		ActorID: util.UUIDToString(userID),
-		// 2026-09-04 coder(lq): Source-context tasks preserve Multica's
-		// projectless create capability; project authorization applies only
-		// when a project is actually selected.
-		RequireProject: false,
+		ActorID:        util.UUIDToString(userID),
+		RequireProject: h.ProjectAuth != nil && h.ProjectAuth.Enabled(),
 		BeforeCommit:   h.issueAccessBeforeCommit(),
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, labels []db.IssueLabel) map[string]any {
 			response := issueToResponse(issue, prefix)

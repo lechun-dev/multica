@@ -199,7 +199,10 @@ export function ProjectAuthorizationDirectory({
                       <div className="truncate text-body font-medium">{member.name || member.email}</div>
                       {member.name && member.email ? <div className="truncate text-caption text-muted-foreground">{member.email}</div> : null}
                     </div>
-                    <span className="shrink-0 text-caption text-muted-foreground">{member.workspace_role}</span>
+                    <div className="flex shrink-0 items-center gap-2 text-caption text-muted-foreground">
+                      <span>{member.workspace_role}</span>
+                      <span>{member.has_logged_in ? t(($) => $.project_authorization_organizations.logged_in) : t(($) => $.project_authorization_organizations.not_logged_in)}</span>
+                    </div>
                   </div>
                 ))}
               </div>

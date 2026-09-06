@@ -1090,10 +1090,10 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 	opts := service.IssueCreateOpts{
 		AssignedAgentRunFireAt: assignedRunFireAt,
 		BeforeCommit:           r.beforeIssueCommit,
-		// 2026-09-04 coder(lq): The project-permission overlay must not make
-		// channel-created tasks require a project. Projectless tasks continue
-		// to use the regular workspace/task visibility rules.
-		RequireProject: false,
+		// 2026-09-06 coder(lq): Channel /issue has no project selector, so it
+		// must fail closed when the explicit project-permission switch is enabled
+		// rather than creating a task that cannot be represented by project grants.
+		RequireProject: r.projectPermissionEnabled,
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
 			// Plain IssueToMap is authoritative here: this path always creates
 			// with the built-in "todo" above, and a built-in status IS its own

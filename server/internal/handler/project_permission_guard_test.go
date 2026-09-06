@@ -400,9 +400,10 @@ func TestPreviewIssueTriggerCreateRequiresProjectIssueCreatePermission(t *testin
 	}
 }
 
-// 2026-09-04 coder(lq): Project authorization is additive; enabling it must
-// preserve creation and trigger preview for projectless tasks.
-func TestProjectlessIssueCreateAndTriggerPreviewRemainAvailable(t *testing.T) {
+// 2026-09-06 coder(lq): New tasks must be project-bound while the overlay is
+// enabled; historical projectless tasks remain covered by read compatibility
+// tests elsewhere.
+func TestProjectlessIssueCreateAndTriggerPreviewRejectedWhenPermissionsEnabled(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -414,15 +415,15 @@ func TestProjectlessIssueCreateAndTriggerPreviewRemainAvailable(t *testing.T) {
 	testHandler.PreviewIssueTrigger(preview, newRequestAs(testUserID, http.MethodPost,
 		"/api/issues/preview-trigger?workspace_id="+testWorkspaceID,
 		map[string]any{"is_create": true, "status": "todo"}))
-	if preview.Code != http.StatusOK {
-		t.Fatalf("projectless create preview: expected 200, got %d: %s", preview.Code, preview.Body.String())
+	if preview.Code != http.StatusBadRequest {
+		t.Fatalf("projectless create preview: expected 400, got %d: %s", preview.Code, preview.Body.String())
 	}
 
 	create := httptest.NewRecorder()
 	testHandler.CreateIssue(create, newRequestAs(testUserID, http.MethodPost,
 		"/api/issues?workspace_id="+testWorkspaceID,
 		map[string]any{"title": "Projectless issue permission guard"}))
-	if create.Code != http.StatusCreated {
-		t.Fatalf("projectless create: expected 201, got %d: %s", create.Code, create.Body.String())
+	if create.Code != http.StatusBadRequest {
+		t.Fatalf("projectless create: expected 400, got %d: %s", create.Code, create.Body.String())
 	}
 }

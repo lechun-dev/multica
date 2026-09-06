@@ -1082,9 +1082,10 @@ func TestRouter_IssueCommand_PassesBeforeIssueCommitHook(t *testing.T) {
 	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 43, Title: "Seed owner grant"}}
 	hook := func(context.Context, pgx.Tx, db.Issue) error { return nil }
 	router := NewRouter(h.issues, h.tasks, h.reader, RouterConfig{
-		Logger:            discardLogger(),
-		Lifecycle:         h.lifecycle,
-		BeforeIssueCommit: hook,
+		Logger:                   discardLogger(),
+		Lifecycle:                h.lifecycle,
+		BeforeIssueCommit:        hook,
+		ProjectPermissionEnabled: false,
 	})
 	router.sets = h.router.sets
 	h.router = router
@@ -1094,6 +1095,30 @@ func TestRouter_IssueCommand_PassesBeforeIssueCommitHook(t *testing.T) {
 	}
 	if h.issues.opts.BeforeCommit == nil {
 		t.Fatal("channel issue create must receive the configured BeforeIssueCommit hook")
+	}
+	if h.issues.opts.RequireProject {
+		t.Fatal("channel issue create must not require a project when the permission switch is disabled")
+	}
+}
+
+func TestRouter_IssueCommandRequiresProjectWhenPermissionSwitchEnabled(t *testing.T) {
+	h := newHarness(t)
+	h.binder.appendResult = AppendResult{DedupMarked: true, IssueCommand: &IssueCommand{Title: "Require project"}}
+	h.issues.result = service.IssueCreateResult{Issue: db.Issue{ID: uuidFromString(t, "77777777-7777-7777-7777-777777777777"), Number: 44, Title: "Require project"}}
+	router := NewRouter(h.issues, h.tasks, h.reader, RouterConfig{
+		Logger:                   discardLogger(),
+		Lifecycle:                h.lifecycle,
+		BeforeIssueCommit:        func(context.Context, pgx.Tx, db.Issue) error { return nil },
+		ProjectPermissionEnabled: true,
+	})
+	router.sets = h.router.sets
+	h.router = router
+
+	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !h.issues.opts.RequireProject {
+		t.Fatal("channel issue create must require a project when the permission switch is enabled")
 	}
 }
 

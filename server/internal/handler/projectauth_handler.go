@@ -1673,10 +1673,13 @@ func (h *Handler) requireNewIssueProjectPermission(w http.ResponseWriter, r *htt
 		return true
 	}
 	if !projectID.Valid {
-		// 2026-09-04 coder(lq): Project permissions are additive and must not
-		// disable Multica's existing projectless task flow. There is no project
-		// grant to check here; the normal workspace/task checks apply instead.
-		return true
+		// 2026-09-06 coder(lq): New tasks and new task grants must be scoped to
+		// a project while the authorization overlay is enabled. Historical
+		// projectless tasks remain readable through their compatibility rules,
+		// but allowing a new unscoped task here would create an authorization
+		// object that cannot participate in the project grant model.
+		writeError(w, http.StatusBadRequest, "project_id is required when project permissions are enabled")
+		return false
 	}
 	return h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, permission)
 }

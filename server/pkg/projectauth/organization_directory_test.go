@@ -47,14 +47,36 @@ func TestListOrganizationMembersReturnsDirectorySnapshot(t *testing.T) {
 			Name:           "Alice",
 			Email:          "alice@example.com",
 			WorkspaceRole:  WorkspaceMember,
+			HasLoggedIn:    true,
 		}},
 	}
 	members, err := New(repo, true).ListOrganizationMembers(context.Background(), memberDirectorySubject())
 	if err != nil {
 		t.Fatalf("ListOrganizationMembers returned %v", err)
 	}
-	if len(members) != 1 || members[0].UserID != "u-2" || members[0].OrganizationID != "org-a" {
+	if len(members) != 1 || members[0].UserID != "u-2" || members[0].OrganizationID != "org-a" || !members[0].HasLoggedIn {
 		t.Fatalf("unexpected directory snapshot: %#v", members)
+	}
+}
+
+func TestListOrganizationMembersPreservesNotLoggedInDirectoryMembers(t *testing.T) {
+	repo := &organizationDirectoryRepo{
+		fakeRepo: fakeRepo{workspace: string(WorkspaceMember)},
+		members: []OrganizationMember{{
+			OrganizationID: "org-a",
+			UserID:         "u-3",
+			Name:           "Bob",
+			Email:          "bob@example.com",
+			WorkspaceRole:  WorkspaceMember,
+			HasLoggedIn:    false,
+		}},
+	}
+	members, err := New(repo, true).ListOrganizationMembers(context.Background(), memberDirectorySubject())
+	if err != nil {
+		t.Fatalf("ListOrganizationMembers returned %v", err)
+	}
+	if len(members) != 1 || members[0].UserID != "u-3" || members[0].HasLoggedIn {
+		t.Fatalf("expected imported member without login: %#v", members)
 	}
 }
 

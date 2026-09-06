@@ -3347,6 +3347,7 @@ export const MemberWithUserSchema = z.object({
   name: z.string().optional().default(""),
   email: z.string().optional().default(""),
   avatar_url: z.string().nullable().optional().default(null),
+  has_logged_in: z.boolean().optional().default(false),
 }).loose();
 
 export const ProjectMemberSchema = z.object({
@@ -3427,6 +3428,7 @@ export const ProjectAuthorizationOrganizationMemberSchema = z.object({
   email: z.string().default(""),
   avatar_url: z.string().optional(),
   workspace_role: z.string().default("member"),
+  has_logged_in: z.boolean().optional().default(false),
 }).loose();
 
 export const ProjectAuthorizationOrganizationsResponseSchema = z.object({

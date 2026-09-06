@@ -49,6 +49,7 @@ const members = [
     name: "Alice Zhang",
     email: "alice@example.com",
     workspace_role: "member",
+    has_logged_in: true,
   },
   {
     organization_id: "org-platform",
@@ -63,6 +64,7 @@ const members = [
     name: "Bob Chen",
     email: "bob@example.com",
     workspace_role: "admin",
+    has_logged_in: false,
   },
   {
     organization_id: "org-sales",
@@ -105,6 +107,8 @@ describe("ProjectAuthorizationDirectory", () => {
     expect(screen.getByText("Bob Chen")).toBeInTheDocument();
     expect(screen.getByText("Carol Li")).toBeInTheDocument();
     expect(screen.getAllByText("Alice Zhang")).toHaveLength(1);
+    expect(screen.getAllByText("Logged in")).toHaveLength(1);
+    expect(screen.getAllByText("Not logged in")).toHaveLength(2);
   });
 
   it("includes descendants when a parent department is selected", async () => {
