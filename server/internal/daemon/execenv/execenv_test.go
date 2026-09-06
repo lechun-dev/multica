@@ -4529,6 +4529,25 @@ func TestEnsureCodexGatewayModelsInjectsGrokEntries(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexGatewayModelsPreservesLegacyStringEntries(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "models_cache.json")
+	original := []byte(`{"models":["gpt-test"]}`)
+	if err := os.WriteFile(cachePath, original, 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	if err := ensureCodexGatewayModels(cachePath); err != nil {
+		t.Fatalf("ensure Codex gateway models: %v", err)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("legacy cache changed: got %q, want %q", data, original)
+	}
+}
+
 func TestReusePreservesTaskLocalModelsCacheOverStaleSharedSnapshot(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 

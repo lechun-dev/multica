@@ -1142,9 +1142,19 @@ func ensureCodexGatewayModels(cachePath string) error {
 	if !ok {
 		return nil
 	}
-	var models []map[string]any
-	if err := json.Unmarshal(modelsRaw, &models); err != nil {
+	// Older Codex releases wrote models as a string array. Keep those caches
+	// intact when they cannot be used as templates for gateway entries.
+	var rawModels []json.RawMessage
+	if err := json.Unmarshal(modelsRaw, &rawModels); err != nil {
 		return fmt.Errorf("decode codex models in %s: %w", cachePath, err)
+	}
+	models := make([]map[string]any, 0, len(rawModels))
+	for _, rawModel := range rawModels {
+		var model map[string]any
+		if err := json.Unmarshal(rawModel, &model); err != nil || model == nil {
+			return nil
+		}
+		models = append(models, model)
 	}
 
 	seen := make(map[string]bool, len(models)+2)
