@@ -100,7 +100,29 @@ func TestListModelsCodexAlwaysInjectsGrokModels(t *testing.T) {
 	for _, want := range []string{"grok-5.6", "grok-5.5"} {
 		if !ids[want] {
 			t.Errorf("ListModels(codex) missing %s: %+v", want, got.Models)
+			continue
 		}
+		for _, model := range got.Models {
+			if model.ID == want && model.Provider != "openai" {
+				t.Errorf("ListModels(codex) model %s provider = %q, want openai", want, model.Provider)
+			}
+		}
+	}
+}
+
+func TestEnsureCodexModelsKeepsGatewayModelsInCodexCatalog(t *testing.T) {
+	models := ensureCodexModels([]Model{
+		{ID: "grok-5.6", Label: "Runtime Grok 5.6", Provider: "xai"},
+	})
+
+	if len(models) != 2 {
+		t.Fatalf("model count = %d, want 2: %+v", len(models), models)
+	}
+	if models[0].ID != "grok-5.6" || models[0].Provider != "openai" {
+		t.Fatalf("gateway model = %+v, want Codex catalog provider openai", models[0])
+	}
+	if models[1].ID != "grok-5.5" || models[1].Provider != "openai" {
+		t.Fatalf("injected model = %+v, want Codex catalog provider openai", models[1])
 	}
 }
 

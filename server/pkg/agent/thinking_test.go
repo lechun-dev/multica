@@ -364,8 +364,8 @@ echo '{"models":[{"slug":"runtime-model","display_name":"Runtime Model","visibil
 					break
 				}
 			}
-			if found == nil || found.Provider != "xai" || found.Thinking != nil || found.Default {
-				t.Errorf("Codex supplemental model %q = %+v, want xai model without thinking/default", want, found)
+			if found == nil || found.Provider != "openai" || found.Thinking != nil || found.Default {
+				t.Errorf("Codex supplemental model %q = %+v, want openai model without thinking/default", want, found)
 			}
 		}
 	})

@@ -644,10 +644,10 @@ func codexStaticModels() []Model {
 	return ensureCodexModels(models)
 }
 
-// ensureCodexModels keeps the Codex catalog extensible for models configured
-// through Codex providers that are not part of the bundled OpenAI catalog.
-// 2026-09-06 coder(lq): Expose the configured xAI Grok models inside Codex;
-// keep runtime discovery authoritative when it already returns the same ID.
+// ensureCodexModels keeps the Codex catalog extensible for model IDs accepted
+// by the configured Codex API gateway but not present in the bundled catalog.
+// 2026-09-06 coder(lq): Keep the Grok IDs in the Codex catalog; the API
+// gateway routes them downstream, so they must not become a Grok runtime.
 func ensureCodexModels(models []Model) []Model {
 	result := make([]Model, 0, len(models)+2)
 	seen := make(map[string]struct{}, len(models)+2)
@@ -658,12 +658,18 @@ func ensureCodexModels(models []Model) []Model {
 		if _, exists := seen[model.ID]; exists {
 			continue
 		}
+		// 2026-09-06 coder(lq): Codex discovery and fallback catalogs use the
+		// same provider namespace. Keep gateway-routed entries there even if a
+		// future Codex CLI reports one with a provider-specific annotation.
+		if model.ID == "grok-5.6" || model.ID == "grok-5.5" {
+			model.Provider = "openai"
+		}
 		seen[model.ID] = struct{}{}
 		result = append(result, model)
 	}
 	for _, model := range []Model{
-		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "xai"},
-		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "xai"},
+		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "openai"},
+		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "openai"},
 	} {
 		if _, exists := seen[model.ID]; exists {
 			continue
@@ -2437,8 +2443,6 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 // models remain available even when an installed CLI returns a partial list.
 // 2026-09-04 coder(lq): Keep this provider-local so other runtimes never see
 // models that their own CLI cannot execute.
-// 2026-09-06 coder(lq): Include the newly requested Grok 5.6/5.5 entries in
-// the provider catalog; leave their thinking capabilities to ACP discovery.
 func ensureGrokModels(models []Model) []Model {
 	byID := make(map[string]Model, len(models)+4)
 	for _, model := range models {
@@ -2454,8 +2458,6 @@ func ensureGrokModels(models []Model) []Model {
 	defaults := []Model{
 		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai"},
 		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
-		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "xai"},
-		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "xai"},
 	}
 	annotateGrokThinking(defaults)
 	for _, model := range defaults {
@@ -2483,8 +2485,6 @@ func grokStaticModels() []Model {
 	models := []Model{
 		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai", Default: true},
 		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
-		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "xai"},
-		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "xai"},
 		{ID: "grok-composer-2.5-fast", Label: "Grok Composer 2.5 Fast", Provider: "xai"},
 	}
 	annotateGrokThinking(models)
