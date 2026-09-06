@@ -72,6 +72,10 @@ vi.mock("@multica/core/pins", () => ({
 }));
 
 vi.mock("@multica/core/issues/mutations", () => ({
+  // 2026-09-07 coder(lq): Keep action-menu mocks aligned with the archive and
+  // restore mutations consumed by useIssueActions.
+  useArchiveIssue: () => ({ mutate: vi.fn() }),
+  useRestoreIssue: () => ({ mutate: vi.fn() }),
   useUpdateIssue: () => ({ mutate: vi.fn() }),
 }));
 
