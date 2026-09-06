@@ -496,6 +496,7 @@ func isRuntimeSpecificModelID(model string) bool {
 func modelHasKnownPrefix(model string) bool {
 	return strings.HasPrefix(model, "claude-") ||
 		strings.HasPrefix(model, "gpt-") ||
+		strings.HasPrefix(model, "grok-") ||
 		strings.HasPrefix(model, "gemini-") ||
 		strings.HasPrefix(model, "auto-gemini-") ||
 		isOpenAIReasoningSeriesID(model)
@@ -628,7 +629,7 @@ func codexStaticModels() []Model {
 			},
 		}
 	}
-	return []Model{
+	models := []Model{
 		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai", Default: true, Thinking: standardThinking("low", true, true)},
 		{ID: "gpt-5.6-terra", Label: "GPT-5.6 Terra", Provider: "openai", Thinking: standardThinking("medium", true, true)},
 		{ID: "gpt-5.6-luna", Label: "GPT-5.6 Luna", Provider: "openai", Thinking: standardThinking("medium", true, false)},
@@ -638,6 +639,37 @@ func codexStaticModels() []Model {
 		{ID: "gpt-5.3-codex", Label: "GPT-5.3-Codex", Provider: "openai", Thinking: standardThinking("medium", false, false)},
 		{ID: "gpt-5.2", Label: "GPT-5.2", Provider: "openai", Thinking: gpt52Thinking()},
 	}
+	return ensureCodexModels(models)
+}
+
+// ensureCodexModels keeps the Codex catalog extensible for models configured
+// through Codex providers that are not part of the bundled OpenAI catalog.
+// 2026-09-06 coder(lq): Expose the configured xAI Grok models inside Codex;
+// keep runtime discovery authoritative when it already returns the same ID.
+func ensureCodexModels(models []Model) []Model {
+	result := make([]Model, 0, len(models)+2)
+	seen := make(map[string]struct{}, len(models)+2)
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+		result = append(result, model)
+	}
+	for _, model := range []Model{
+		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "xai"},
+		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "xai"},
+	} {
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+		result = append(result, model)
+	}
+	return result
 }
 
 // discoverTraecliModels spins up a throwaway `traecli acp serve --yolo` process

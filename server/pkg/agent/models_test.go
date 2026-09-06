@@ -548,6 +548,18 @@ func TestModelKnownIncompatibleWithProvider(t *testing.T) {
 			want:     true,
 		},
 		{
+			name:     "grok model is compatible with codex",
+			provider: "codex",
+			model:    "grok-5.6",
+			want:     false,
+		},
+		{
+			name:     "grok model is incompatible with claude",
+			provider: "claude",
+			model:    "grok-5.6",
+			want:     true,
+		},
+		{
 			name:     "unknown custom model is not classified",
 			provider: "codex",
 			model:    "private-lab-model",

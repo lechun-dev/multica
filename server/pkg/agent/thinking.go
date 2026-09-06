@@ -341,7 +341,7 @@ func discoverCodexModels(ctx context.Context, cmd Command) []Model {
 	if err != nil || len(models) == 0 {
 		return annotateCodexExplicitStandardServiceTier(codexStaticModels(), supportsExplicitStandard)
 	}
-	return annotateCodexExplicitStandardServiceTier(models, supportsExplicitStandard)
+	return annotateCodexExplicitStandardServiceTier(ensureCodexModels(models), supportsExplicitStandard)
 }
 
 func codexSupportsDebugModels(version string) bool {
