@@ -1215,6 +1215,40 @@ type ProjectResource struct {
 	CreatedBy    pgtype.UUID        `json:"created_by"`
 }
 
+type ProjectauthAccessGrant struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	SubjectType string             `json:"subject_type"`
+	SubjectID   string             `json:"subject_id"`
+	RoleKey     pgtype.Text        `json:"role_key"`
+	Permission  pgtype.Text        `json:"permission"`
+	Source      string             `json:"source"`
+	GrantedBy   pgtype.UUID        `json:"granted_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectauthOrganization struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Provider    string             `json:"provider"`
+	ExternalID  string             `json:"external_id"`
+	Name        string             `json:"name"`
+	ParentID    pgtype.UUID        `json:"parent_id"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectauthOrganizationMember struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type QuickAction struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -1355,6 +1389,21 @@ type TaskMessage struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskRetryPolicy struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	Name          string             `json:"name"`
+	Enabled       bool               `json:"enabled"`
+	Priority      int32              `json:"priority"`
+	MatchType     string             `json:"match_type"`
+	MatchValue    string             `json:"match_value"`
+	MaxAttempts   int32              `json:"max_attempts"`
+	DelaySchedule []byte             `json:"delay_schedule"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskToken struct {

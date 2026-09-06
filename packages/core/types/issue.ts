@@ -188,6 +188,8 @@ export interface Issue {
   creator_id: string;
   parent_issue_id: string | null;
   project_id: string | null;
+  /** Minimal project identity for task detail when project access is absent. */
+  project_summary?: IssueProjectSummary;
   position: number;
   // Ordered barrier group among sibling sub-issues (null = unstaged). The
   // parent assignee is notified/woken only when every sub-issue in a stage
@@ -218,4 +220,10 @@ export interface Issue {
   last_activity_at?: string | null;
   /** Present only on issue detail responses for issues created from a comment. */
   source_context?: IssueSourceContext;
+}
+
+export interface IssueProjectSummary {
+  id: string;
+  title: string;
+  icon: string | null;
 }

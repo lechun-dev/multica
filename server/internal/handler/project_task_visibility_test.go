@@ -73,6 +73,48 @@ func TestProjectlessVisibilityPredicatesIncludeAgentOwners(t *testing.T) {
 	}
 }
 
+// 2026-09-05 coder(lq): A task creator remains the immutable task Owner even
+// when its project has no historical creator grant. Keep every SQL list path
+// aligned with CheckIssue's runtime creator fallback.
+func TestProjectBoundVisibilityPredicatesIncludeTaskCreatorFallback(t *testing.T) {
+	predicate := issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", false)
+	start := strings.Index(predicate, "i.project_id IS NOT NULL")
+	end := strings.Index(predicate, "i.project_id IS NULL")
+	if start < 0 || end <= start {
+		t.Fatalf("predicate is missing project-bound/projectless branches: %s", predicate)
+	}
+	projectBound := predicate[start:end]
+	for _, fragment := range []string{
+		"i.creator_type = 'member'",
+		"i.creator_type = 'agent'",
+		"a.owner_id = $2::uuid",
+	} {
+		if !strings.Contains(projectBound, fragment) {
+			t.Fatalf("project-bound predicate missing creator fallback %q: %s", fragment, projectBound)
+		}
+	}
+}
+
+// 2026-09-05 coder(lq): Keep the child-progress aggregate covered with both
+// issue aliases used by the handler; project access fragments must not shadow
+// an outer parent-task alias named `p`.
+func TestChildProgressVisibilityPredicateSupportsParentAlias(t *testing.T) {
+	query := fmt.Sprintf(`SELECT i.parent_issue_id
+		FROM issue i
+		JOIN issue p ON p.id = i.parent_issue_id AND p.workspace_id = i.workspace_id
+		WHERE i.workspace_id = $1
+		  AND %s
+		  AND %s
+		GROUP BY i.parent_issue_id`,
+		issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", true),
+		issueProjectVisibilityPredicateWithWorkspaceScope("p", "$1", "$2", true))
+	rows, err := testPool.Query(context.Background(), query, testWorkspaceID, testUserID)
+	if err != nil {
+		t.Fatalf("child progress visibility query failed: %v", err)
+	}
+	rows.Close()
+}
+
 // 2026-09-02 coder(lq): Projectless issues are intentionally narrower than
 // project-bound issues: only the creator, member assignee, or workspace owner
 // may access them, while creators and assignees can still perform normal task
@@ -99,6 +141,7 @@ func TestProjectlessIssuePermission(t *testing.T) {
 		{name: "workspace owner can edit", userID: otherID, workspaceRole: projectauth.WorkspaceOwner, permission: projectauth.Edit, want: true},
 		{name: "creator can view", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: true},
 		{name: "creator can edit", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: true},
+		{name: "creator can manage", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.IssueManage, want: true},
 		{name: "creator can archive", userID: creatorID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.IssueArchive, want: true},
 		{name: "member assignee can view", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.View, want: true},
 		{name: "member assignee can edit", userID: assigneeID, workspaceRole: projectauth.WorkspaceMember, permission: projectauth.Edit, want: true},

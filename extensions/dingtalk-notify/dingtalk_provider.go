@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -84,12 +85,30 @@ func newDingTalkHTTPError(path string, status int, body []byte) *DingTalkHTTPErr
 		return nil
 	}
 	return &DingTalkHTTPError{
-		Path:    path,
+		Path:    sanitizeDingTalkEndpoint(path),
 		Status:  status,
 		Code:    code,
 		Message: message,
-		Body:    strings.TrimSpace(string(body)),
+		Body:    redactDingTalkSecrets(strings.TrimSpace(string(body))),
 	}
+}
+
+// 2026-09-04 coder(lq): DingTalk legacy APIs receive access_token in the URL.
+// Keep endpoint context in diagnostics while removing credentials before an
+// error can reach logs or an HTTP response.
+func sanitizeDingTalkEndpoint(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	query := parsed.Query()
+	for _, key := range []string{"access_token", "appSecret", "clientSecret", "secret", "token"} {
+		if query.Has(key) {
+			query.Set(key, "[redacted]")
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func transientDingTalkError(err error) error {

@@ -93,6 +93,8 @@ export interface MemberWithUser {
   name: string;
   email: string;
   avatar_url: string | null;
+  /** True after the user has completed at least one interactive login. */
+  has_logged_in?: boolean;
 }
 
 export interface Invitation {

@@ -281,6 +281,43 @@ describe("createMentionSuggestion", () => {
     expect(command).not.toHaveBeenCalled();
   });
 
+  it("marks imported members that have not registered", () => {
+    render(
+      <I18nWrapper>
+        <MentionList
+          items={[{
+            id: "u-imported",
+            label: "Imported User",
+            type: "member",
+            notRegistered: true,
+          }]}
+          query=""
+          command={vi.fn()}
+        />
+      </I18nWrapper>,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Imported User (Not registered)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not mark registered members", () => {
+    render(
+      <I18nWrapper>
+        <MentionList
+          items={[{ id: "u-registered", label: "Registered User", type: "member" }]}
+          query=""
+          command={vi.fn()}
+        />
+      </I18nWrapper>,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Registered User" }),
+    ).toBeInTheDocument();
+  });
+
   it("loads server issue matches into the popup when the list cache misses", async () => {
     searchIssuesMock.mockResolvedValue({
       issues: [

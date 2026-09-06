@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { cloneElement, useState } from "react";
 import { FolderKanban } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { UpdateIssueRequest } from "@multica/core/types";
+import type { IssueProjectSummary, UpdateIssueRequest } from "@multica/core/types";
 import { ProjectIcon } from "./project-icon";
 import {
   PropertyPicker,
@@ -25,10 +25,13 @@ export function ProjectPicker({
   open: controlledOpen,
   onOpenChange,
   disabled = false,
+  projectSummary,
 }: {
   projectId: string | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
-  triggerRender?: React.ReactElement;
+  // 2026-09-06 coder(lq): Keep custom trigger props open so disabled state can
+  // be forwarded when a task is visible through a task-only project grant.
+  triggerRender?: React.ReactElement<Record<string, unknown>>;
   align?: "start" | "center" | "end";
   /** Open the dropdown on first mount. Used by progressive-disclosure
    *  sidebars so a newly-added field immediately enters edit state. */
@@ -41,11 +44,25 @@ export function ProjectPicker({
    *  the menu locks clearing too. Callers that must freeze the selection
    *  during a transient window (an in-flight chat send) pass this. */
   disabled?: boolean;
+  /** Minimal project identity returned by task detail when project access is absent. */
+  projectSummary?: IssueProjectSummary;
 }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const {
+    data: projects = [],
+    isPending: projectsPending = false,
+    isFetching: projectsFetching = false,
+  } = useQuery(projectListOptions(wsId));
   const current = projects.find((p) => p.id === projectId);
+  // 2026-09-04 coder(lq): A task can remain visible through a direct task
+  // grant while its project is hidden by project permissions. Keep the stored
+  // relationship visible instead of presenting it as an unassigned task.
+  // While the project list is still loading, retain the normal loading state
+  // so a temporary empty response does not flash the unavailable label.
+  const projectUnavailable =
+    !!projectId && !current && !projectsPending && !projectsFetching;
+  const summaryOnly = projectUnavailable && !!projectSummary;
   const [filter, setFilter] = useState("");
   // Normalize to an always-boolean controlled `open`, matching the other
   // pickers (status/priority/assignee/labels). Base UI latches a controlled
@@ -54,8 +71,9 @@ export function ProjectPicker({
   // leave the popup stuck open after selecting a project.
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   // A disabled picker can never be open, and no interaction may reopen it.
-  const open = disabled ? false : controlledOpen ?? internalOpen;
-  const setOpen = disabled ? () => {} : onOpenChange ?? setInternalOpen;
+  const pickerDisabled = disabled || summaryOnly;
+  const open = pickerDisabled ? false : controlledOpen ?? internalOpen;
+  const setOpen = pickerDisabled ? () => {} : onOpenChange ?? setInternalOpen;
 
   // Client-side filter: substring match plus pinyin so Chinese project names
   // are reachable by latin input (e.g. "sjtmh" → "数据透明化").
@@ -66,9 +84,15 @@ export function ProjectPicker({
 
   // Callers that bring their own trigger (create pill, chat pill, autopilot
   // card, table cell) take over the trigger entirely.
-  const resolvedTriggerRender = triggerRender ?? (
-    <button type="button" disabled={disabled} className={PICKER_TRIGGER_CLASS} />
-  );
+  // 2026-09-06 coder(lq): Preserve custom-trigger disabled state for task-only
+  // grants so the project identity cannot open a picker or be cleared.
+  const resolvedTriggerRender = triggerRender
+    ? pickerDisabled
+      ? cloneElement(triggerRender, { disabled: true })
+      : triggerRender
+    : (
+      <button type="button" disabled={pickerDisabled} className={PICKER_TRIGGER_CLASS} />
+    );
 
   return (
     <div className="inline-flex min-w-0">
@@ -87,6 +111,16 @@ export function ProjectPicker({
               <ProjectIcon project={current} size="sm" />
               <span className="truncate">{current.title}</span>
             </>
+          ) : summaryOnly ? (
+            <>
+              <ProjectIcon project={projectSummary} size="sm" />
+              <span className="truncate">{projectSummary.title}</span>
+            </>
+          ) : projectUnavailable ? (
+            <>
+              <FolderKanban className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{t(($) => $.picker.project_unavailable)}</span>
+            </>
           ) : (
             <>
               <FolderKanban className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -101,6 +135,7 @@ export function ProjectPicker({
         <PickerItem
           emptyValue
           selected={!projectId}
+          disabled={projectUnavailable}
           onClick={() => {
             onUpdate({ project_id: null });
             setOpen(false);

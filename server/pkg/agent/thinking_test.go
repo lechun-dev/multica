@@ -363,11 +363,23 @@ echo '{"models":[{"slug":"runtime-model","display_name":"Runtime Model","visibil
 		writeTestExecutable(t, fake, []byte(script))
 
 		got := discoverCodexModels(context.Background(), Command{Path: fake})
-		if len(got) != 1 || got[0].ID != "runtime-model" || got[0].Thinking == nil || !hasThinkingLevel(got[0].Thinking, "high") {
+		if len(got) != 3 || got[0].ID != "runtime-model" || got[0].Thinking == nil || !hasThinkingLevel(got[0].Thinking, "high") {
 			t.Fatalf("expected runtime catalog, got %+v", got)
 		}
 		if got[0].SupportsExplicitStandardServiceTier {
 			t.Fatalf("Codex 0.122.0 must not advertise explicit-standard support: %+v", got[0])
+		}
+		for _, want := range []string{"grok-4.6", "grok-4.5"} {
+			var found *Model
+			for i := range got {
+				if got[i].ID == want {
+					found = &got[i]
+					break
+				}
+			}
+			if found == nil || found.Provider != "openai" || found.Thinking != nil || found.Default {
+				t.Errorf("Codex supplemental model %q = %+v, want openai model without thinking/default", want, found)
+			}
 		}
 	})
 

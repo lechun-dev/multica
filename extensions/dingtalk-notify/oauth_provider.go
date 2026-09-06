@@ -25,6 +25,8 @@ type DingTalkOAuthProvider struct {
 	UnionLookupURL      string
 	UserDetailURL       string
 	DepartmentDetailURL string
+	DepartmentListURL   string
+	UserListURL         string
 	ClientID            string
 	ClientSecret        string
 	Scope               string
@@ -175,13 +177,8 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		if identity.Name == "" {
 			identity.Name = enterpriseIdentity.Name
 		}
-		// The OAuth `/contact/users/me` mailbox can be a DingTalk account
-		// mailbox that is stale or outside the enterprise domain. When the
-		// enterprise directory returns an email, it is the authoritative
-		// identity for Multica account resolution; retain the OAuth value only
-		// as a fallback for tenants whose directory response omits email.
-		if enterpriseEmail := strings.ToLower(strings.TrimSpace(enterpriseIdentity.Email)); enterpriseEmail != "" {
-			identity.Email = enterpriseEmail
+		if identity.Email == "" {
+			identity.Email = enterpriseIdentity.Email
 		}
 		if identity.AvatarURL == "" {
 			identity.AvatarURL = enterpriseIdentity.AvatarURL
@@ -335,6 +332,38 @@ func (id *dingTalkID) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type dingTalkSubDepartment struct {
+	ID       dingTalkID `json:"dept_id"`
+	Name     string     `json:"name"`
+	ParentID dingTalkID `json:"parent_id"`
+}
+
+// 2026-09-05 coder(lq): DingTalk returns department `result` as an array on
+// some tenant/API versions and as {"list": [...]} on others. Accept both
+// wire shapes so a tenant-specific response does not abort a full sync.
+type dingTalkDepartmentListResult struct {
+	List []dingTalkSubDepartment
+}
+
+func (r *dingTalkDepartmentListResult) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		r.List = nil
+		return nil
+	}
+	if data[0] == '[' {
+		return json.Unmarshal(data, &r.List)
+	}
+	var wrapped struct {
+		List []dingTalkSubDepartment `json:"list"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		return err
+	}
+	r.List = wrapped.List
+	return nil
+}
+
 func (p DingTalkOAuthProvider) loadDepartments(ctx context.Context, accessToken string, departmentIDs []dingTalkID) ([]DingTalkDepartment, error) {
 	endpoint := p.DepartmentDetailURL
 	if endpoint == "" {
@@ -376,6 +405,166 @@ func (p DingTalkOAuthProvider) loadDepartments(ctx context.Context, accessToken 
 		departments = append(departments, DingTalkDepartment{ID: id, Name: name})
 	}
 	return departments, nil
+}
+
+// 2026-09-03 coder(lq): Read the provider snapshot before opening any host
+// transaction, so a DingTalk outage cannot erase the last known directory.
+// LoadDirectory returns a complete DingTalk enterprise directory rooted at
+// department 1. The host persists the snapshot transactionally, so this
+// method never mutates Multica data itself.
+func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirectorySnapshot, error) {
+	tokenURL := p.AppTokenURL
+	if tokenURL == "" {
+		tokenURL = dingtalkAPIBase + "/v1.0/oauth2/accessToken"
+	}
+	payload, _ := json.Marshal(map[string]string{"appKey": p.ClientID, "appSecret": p.ClientSecret})
+	var token struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := p.postJSON(ctx, tokenURL, payload, &token); err != nil {
+		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "", err)
+	}
+	if token.AccessToken == "" {
+		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "DingTalk application token response missing accessToken", nil)
+	}
+
+	departments := make([]DingTalkDirectoryDepartment, 0)
+	seen := map[string]bool{}
+	queue := []string{"1"}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		dept, err := p.loadDingTalkSubDepartments(ctx, token.AccessToken, id)
+		if err != nil {
+			return DingTalkDirectorySnapshot{}, err
+		}
+		for _, d := range dept {
+			if d.ID == "" {
+				continue
+			}
+			departments = append(departments, d)
+			queue = append(queue, d.ID)
+		}
+	}
+
+	membersByID := map[string]DingTalkDirectoryMember{}
+	for _, d := range append([]DingTalkDirectoryDepartment{{ID: "1"}}, departments...) {
+		members, err := p.loadDingTalkDepartmentUsers(ctx, token.AccessToken, d.ID)
+		if err != nil {
+			return DingTalkDirectorySnapshot{}, err
+		}
+		for _, m := range members {
+			if m.DingUserID == "" {
+				continue
+			}
+			if existing, ok := membersByID[m.DingUserID]; ok {
+				seenDept := map[string]bool{}
+				for _, x := range existing.DepartmentIDs {
+					seenDept[x] = true
+				}
+				for _, x := range m.DepartmentIDs {
+					if !seenDept[x] {
+						existing.DepartmentIDs = append(existing.DepartmentIDs, x)
+					}
+				}
+				if existing.Name == "" {
+					existing.Name, existing.Email, existing.UnionID = m.Name, m.Email, m.UnionID
+				}
+				membersByID[m.DingUserID] = existing
+			} else {
+				membersByID[m.DingUserID] = m
+			}
+		}
+	}
+	members := make([]DingTalkDirectoryMember, 0, len(membersByID))
+	for _, m := range membersByID {
+		members = append(members, m)
+	}
+	return DingTalkDirectorySnapshot{Departments: departments, Members: members}, nil
+}
+
+func (p DingTalkOAuthProvider) loadDingTalkSubDepartments(ctx context.Context, token, parentID string) ([]DingTalkDirectoryDepartment, error) {
+	endpoint := p.DepartmentListURL
+	if endpoint == "" {
+		endpoint = "https://oapi.dingtalk.com/topapi/v2/department/listsub"
+	}
+	var id any = parentID
+	if n, err := strconv.ParseInt(parentID, 10, 64); err == nil {
+		id = n
+	}
+	payload, _ := json.Marshal(map[string]any{"dept_id": id, "language": "zh_CN"})
+	var response struct {
+		ErrCode int                          `json:"errcode"`
+		ErrMsg  string                       `json:"errmsg"`
+		Result  dingTalkDepartmentListResult `json:"result"`
+	}
+	if err := p.postAppJSON(ctx, endpoint, token, payload, &response); err != nil {
+		return nil, newDingTalkDirectorySyncError("departments", parentID, 0, "", err)
+	}
+	if response.ErrCode != 0 {
+		return nil, newDingTalkDirectorySyncError("departments", parentID, response.ErrCode, response.ErrMsg, nil)
+	}
+	out := make([]DingTalkDirectoryDepartment, 0, len(response.Result.List))
+	for _, d := range response.Result.List {
+		out = append(out, DingTalkDirectoryDepartment{ID: strings.TrimSpace(string(d.ID)), Name: strings.TrimSpace(d.Name), ParentID: strings.TrimSpace(string(d.ParentID))})
+	}
+	return out, nil
+}
+
+func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, token, departmentID string) ([]DingTalkDirectoryMember, error) {
+	endpoint := p.UserListURL
+	if endpoint == "" {
+		endpoint = "https://oapi.dingtalk.com/topapi/v2/user/list"
+	}
+	var id any = departmentID
+	if n, err := strconv.ParseInt(departmentID, 10, 64); err == nil {
+		id = n
+	}
+	users := make([]DingTalkDirectoryMember, 0)
+	var cursor int64
+	for {
+		payload, _ := json.Marshal(map[string]any{"dept_id": id, "cursor": cursor, "size": 100, "language": "zh_CN"})
+		var response struct {
+			ErrCode int    `json:"errcode"`
+			ErrMsg  string `json:"errmsg"`
+			Result  struct {
+				List []struct {
+					UserID  string       `json:"userid"`
+					UnionID string       `json:"unionid"`
+					Name    string       `json:"name"`
+					Email   string       `json:"email"`
+					DeptIDs []dingTalkID `json:"dept_id_list"`
+				} `json:"list"`
+				NextCursor int64 `json:"next_cursor"`
+				HasMore    bool  `json:"has_more"`
+			} `json:"result"`
+		}
+		if err := p.postAppJSON(ctx, endpoint, token, payload, &response); err != nil {
+			return nil, newDingTalkDirectorySyncError("department_users", departmentID, 0, "", err)
+		}
+		if response.ErrCode != 0 {
+			return nil, newDingTalkDirectorySyncError("department_users", departmentID, response.ErrCode, response.ErrMsg, nil)
+		}
+		for _, u := range response.Result.List {
+			deptIDs := make([]string, 0, len(u.DeptIDs))
+			for _, d := range u.DeptIDs {
+				deptIDs = append(deptIDs, strings.TrimSpace(string(d)))
+			}
+			users = append(users, DingTalkDirectoryMember{DingUserID: strings.TrimSpace(u.UserID), UnionID: strings.TrimSpace(u.UnionID), Name: strings.TrimSpace(u.Name), Email: strings.ToLower(strings.TrimSpace(u.Email)), DepartmentIDs: deptIDs})
+		}
+		if !response.Result.HasMore {
+			break
+		}
+		if response.Result.NextCursor == cursor {
+			return nil, newDingTalkDirectorySyncError("department_users", departmentID, 0, "DingTalk user list cursor did not advance", nil)
+		}
+		cursor = response.Result.NextCursor
+	}
+	return users, nil
 }
 
 func (p DingTalkOAuthProvider) postAppJSON(ctx context.Context, endpoint, accessToken string, payload []byte, out any) error {

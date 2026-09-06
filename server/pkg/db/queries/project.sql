@@ -9,6 +9,13 @@ ORDER BY created_at DESC;
 SELECT * FROM project
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetProjectSummaryInWorkspace :one
+-- Detail views may need to show the task's project even when the viewer has
+-- no project grant. Keep this projection deliberately minimal: project
+-- permissions and project contents remain protected by their own handlers.
+SELECT id, title, icon FROM project
+WHERE id = $1 AND workspace_id = $2;
+
 -- name: LockProjectForChatSessionCreate :one
 -- Conflicts with project deletion so a chat session cannot commit a soft
 -- project reference after the delete transaction has swept existing sessions.

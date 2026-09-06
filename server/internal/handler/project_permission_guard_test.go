@@ -398,18 +398,28 @@ func TestPreviewIssueTriggerCreateRequiresProjectIssueCreatePermission(t *testin
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("unauthorized create preview: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
+	create := httptest.NewRecorder()
+	testHandler.CreateIssue(create, newRequestAs(deniedID, http.MethodPost,
+		"/api/issues?workspace_id="+testWorkspaceID,
+		map[string]any{"title": "Unauthorized project create guard", "project_id": projectID}))
+	if create.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized project create: expected 404, got %d: %s", create.Code, create.Body.String())
+	}
 }
 
-// 2026-08-28 coder(lq): Project selection is optional for issue creation.
-// Workspace membership still gates the projectless path, while project-bound
-// requests continue to use the project IssueCreate permission.
-func TestProjectlessIssueCreateAndTriggerPreviewAreAllowedForWorkspaceMember(t *testing.T) {
+// 2026-09-06 coder(lq): Project permissions gate only project-bound creates;
+// projectless tasks remain valid even when the authorization overlay is on.
+func TestProjectlessIssueCreateAndTriggerPreviewAllowedWhenPermissionsEnabled(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	previous := testHandler.ProjectAuth
 	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
 	t.Cleanup(func() { testHandler.ProjectAuth = previous })
+	title := "Projectless issue permission guard " + t.Name()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
+	})
 
 	preview := httptest.NewRecorder()
 	testHandler.PreviewIssueTrigger(preview, newRequestAs(testUserID, http.MethodPost,
@@ -422,18 +432,8 @@ func TestProjectlessIssueCreateAndTriggerPreviewAreAllowedForWorkspaceMember(t *
 	create := httptest.NewRecorder()
 	testHandler.CreateIssue(create, newRequestAs(testUserID, http.MethodPost,
 		"/api/issues?workspace_id="+testWorkspaceID,
-		map[string]any{"title": "Projectless issue permission guard"}))
+		map[string]any{"title": title}))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("projectless create: expected 201, got %d: %s", create.Code, create.Body.String())
 	}
-	var issue IssueResponse
-	if err := json.NewDecoder(create.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode projectless issue: %v", err)
-	}
-	if issue.ID == "" {
-		t.Fatal("projectless create returned an empty issue id")
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
-	})
 }

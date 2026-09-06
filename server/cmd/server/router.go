@@ -96,6 +96,7 @@ var corsExposedHeaders = []string{
 	"X-Request-ID",
 	handler.HeaderCommentsTruncated,
 	handler.HeaderTimelineTruncated,
+	handler.HeaderActiveRunsTruncated,
 }
 
 func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
@@ -491,6 +492,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		if notifier, ok := opts.DaemonWakeup.(handler.DaemonPendingWorkNotifier); ok {
 			h.DaemonPendingWork = notifier
 		}
+		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeGoneNotifier); ok {
+			h.DaemonRuntimeGone = notifier
+		}
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
@@ -518,7 +522,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// is the single shared inbound handler injected into every Channel.
 	channelRegistry := channel.NewRegistry()
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{
-		Logger: slog.Default(), Lifecycle: h,
+		Logger:    slog.Default(),
+		Lifecycle: h,
+		// 2026-09-05 coder(lq): Keep channel-created task owner grants atomic
+		// with the issue row, matching HTTP, onboarding, and autopilot paths.
+		BeforeIssueCommit:        h.IssueAccessBeforeCommitForChannel(),
+		ProjectPermissionEnabled: signupConfig.ProjectPermissionEnabled,
 	})
 	// Debounce the per-session run trigger so a burst of messages collapses
 	// into one agent run instead of one per message (MUL-2968).
@@ -1582,6 +1591,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
+					r.Get("/projectauth/organizations", h.ListProjectAuthorizationOrganizations)
 					r.Post("/leave", h.LeaveWorkspace)
 					r.Get("/invitations", h.ListWorkspaceInvitations)
 					// Listing GitHub installations is member-visible so the
@@ -1611,10 +1621,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// because opening an issue is what asks for it; executable
 					// bytes stay off the authenticated app/API origin.
 					r.Get("/plugins/{installationId}/surfaces/{surfaceKey}/launch", h.GetPluginSurfaceLaunch)
+					// Retry policy configuration is readable by every workspace member.
+					r.Get("/task-retry-policies", h.ListTaskRetryPolicies)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Get("/projectauth/organizations/template", h.ProjectAuthorizationOrganizationTemplate)
+					r.Post("/projectauth/organizations/import/preview", h.PreviewProjectAuthorizationOrganizationImport)
+					r.Post("/projectauth/organizations/import", h.ImportProjectAuthorizationOrganizations)
+					r.Post("/projectauth/organizations/sync", dingtalkLogin.SyncDingTalkOrganizations)
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
@@ -1666,6 +1682,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/plugins/{installationId}", h.UninstallPlugin)
 				})
 				// Owner-only access
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+					r.Post("/task-retry-policies", h.CreateTaskRetryPolicy)
+					r.Patch("/task-retry-policies/{policyId}", h.UpdateTaskRetryPolicy)
+					r.Put("/task-retry-policies/{policyId}", h.UpdateTaskRetryPolicy)
+					r.Delete("/task-retry-policies/{policyId}", h.DeleteTaskRetryPolicy)
+				})
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
 
 				// GitHub integration — connect / disconnect remain admin-only;
@@ -1865,16 +1888,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
-		r.Use(middleware.RequireWorkspaceMember(queries))
-		r.Get("/api/project-permissions/report", h.ListPermissionReport)
-		r.Route("/api/project-permission-roles", func(r chi.Router) {
-			r.Get("/", h.ListProjectPermissionRoles)
-			r.Post("/", h.CreateProjectPermissionRole)
-			r.Route("/{key}", func(r chi.Router) {
-				r.Patch("/", h.UpdateProjectPermissionRole)
-				r.Delete("/", h.DeleteProjectPermissionRole)
-		})
-		})
+			r.Use(middleware.RequireWorkspaceMember(queries))
+			r.Get("/api/project-permissions/report", h.ListPermissionReport)
+			r.Route("/api/project-permission-roles", func(r chi.Router) {
+				r.Get("/", h.ListProjectPermissionRoles)
+				r.Post("/", h.CreateProjectPermissionRole)
+				r.Route("/{key}", func(r chi.Router) {
+					r.Patch("/", h.UpdateProjectPermissionRole)
+					r.Delete("/", h.DeleteProjectPermissionRole)
+				})
+			})
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
@@ -1900,6 +1923,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/access-grants", h.ListIssueAccessGrants)
+					r.Post("/access-grants", h.CreateIssueAccessGrant)
+					r.Delete("/access-grants", h.RevokeIssueAccessGrant)
 					r.Put("/", h.UpdateIssue)
 					r.Post("/archive", h.ArchiveIssue)
 					r.Post("/restore", h.RestoreIssue)
@@ -1992,6 +2018,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/", h.CreateProject)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetProject)
+					r.Get("/access-grants", h.ListProjectAccessGrants)
+					r.Post("/access-grants", h.CreateProjectAccessGrant)
+					r.Delete("/access-grants", h.RevokeProjectAccessGrant)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
 					r.Get("/members", h.ListProjectMembers)

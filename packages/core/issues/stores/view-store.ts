@@ -250,7 +250,7 @@ export interface IssueViewState {
   tableCollapsedParents: string[];
   tableHierarchy: boolean;
   tableCalculation: TableCalculation;
-  /** 2026-08-28 coder(lq): Display preference; does not change permissions. */
+  /** 2026-09-04 coder(lq): Legacy field retained for persisted-state compatibility. */
   showWorkspaceOwnedItems: boolean;
   setViewMode: (mode: ViewMode) => void;
   setGanttZoom: (zoom: GanttZoom) => void;
@@ -345,7 +345,9 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   tableCollapsedParents: [],
   tableHierarchy: true,
   tableCalculation: "none",
-  showWorkspaceOwnedItems: true,
+  // 2026-09-04 coder(lq): Retained for persisted-state compatibility only;
+  // owner visibility is controlled by the backend deployment policy.
+  showWorkspaceOwnedItems: false,
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setGanttZoom: (zoom) => set({ ganttZoom: zoom }),
@@ -655,8 +657,9 @@ export function mergeViewStatePersisted<T extends IssueViewState>(
   return {
     ...current,
     ...p,
-    showWorkspaceOwnedItems:
-      p.showWorkspaceOwnedItems ?? current.showWorkspaceOwnedItems,
+    // 2026-09-04 coder(lq): Ignore a legacy cached value so hiding the
+    // preference cannot leave an old "on" state behind.
+    showWorkspaceOwnedItems: false,
     cardProperties: {
       ...current.cardProperties,
       ...(p.cardProperties ?? {}),

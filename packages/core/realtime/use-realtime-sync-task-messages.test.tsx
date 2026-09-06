@@ -64,6 +64,7 @@ function msg(taskId: string, seq: number, extra: Partial<TaskMessagePayload> = {
     issue_id: "issue-1",
     seq,
     type: "tool_use",
+    content: "",
     ...extra,
   };
 }

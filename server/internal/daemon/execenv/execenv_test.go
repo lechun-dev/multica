@@ -4503,6 +4503,85 @@ func TestReusePreservesTaskLocalModelsCacheWhenSharedMissing(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexGatewayModelsInjectsGrokEntries(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "models_cache.json")
+	original := []byte(`{"fetched_at":"2026-09-06T00:00:00Z","models":[{"slug":"gpt-5.5","display_name":"GPT-5.5","supported_in_api":true,"custom":{"keep":true}}]}`)
+	if err := os.WriteFile(cachePath, original, 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	if err := ensureCodexGatewayModels(cachePath); err != nil {
+		t.Fatalf("ensure Codex gateway models: %v", err)
+	}
+
+	var document struct {
+		Models []map[string]any `json:"models"`
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode cache: %v", err)
+	}
+	if len(document.Models) != 3 {
+		t.Fatalf("models = %d, want 3", len(document.Models))
+	}
+	seen := map[string]map[string]any{}
+	for _, model := range document.Models {
+		slug, _ := model["slug"].(string)
+		seen[slug] = model
+	}
+	for _, slug := range []string{codexGatewayModelGrok46, codexGatewayModelGrok45} {
+		model, ok := seen[slug]
+		if !ok {
+			t.Fatalf("missing injected model %q", slug)
+		}
+		if model["supported_in_api"] != true || model["visibility"] != "list" {
+			t.Errorf("injected model %q metadata = %#v", slug, model)
+		}
+		if model["custom"] == nil {
+			t.Errorf("injected model %q did not preserve template fields", slug)
+		}
+	}
+
+	if err := ensureCodexGatewayModels(cachePath); err != nil {
+		t.Fatalf("ensure existing models: %v", err)
+	}
+	dataAgain, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache after repeat: %v", err)
+	}
+	var repeated struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(dataAgain, &repeated); err != nil {
+		t.Fatalf("decode repeated cache: %v", err)
+	}
+	if len(repeated.Models) != 3 {
+		t.Fatalf("repeat models = %d, want 3", len(repeated.Models))
+	}
+}
+
+func TestEnsureCodexGatewayModelsPreservesLegacyStringEntries(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "models_cache.json")
+	original := []byte(`{"models":["gpt-test"]}`)
+	if err := os.WriteFile(cachePath, original, 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	if err := ensureCodexGatewayModels(cachePath); err != nil {
+		t.Fatalf("ensure Codex gateway models: %v", err)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("legacy cache changed: got %q, want %q", data, original)
+	}
+}
+
 func TestReusePreservesTaskLocalModelsCacheOverStaleSharedSnapshot(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 

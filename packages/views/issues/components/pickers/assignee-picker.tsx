@@ -101,6 +101,7 @@ function AssigneePickerImpl({
   align,
 }: AssigneePickerProps) {
   const { t } = useT("issues");
+  const { t: settingsT } = useT("settings");
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
@@ -206,7 +207,12 @@ function AssigneePickerImpl({
               }}
             >
               <ActorAvatar actorType="member" actorId={m.user_id} size="sm" />
-              <span className="truncate">{m.name}</span>
+              <span className="truncate">
+                {m.name}
+                {m.has_logged_in === false
+                  ? settingsT(($) => $.members.not_registered_suffix)
+                  : null}
+              </span>
             </PickerItem>
           ))}
         </PickerSection>

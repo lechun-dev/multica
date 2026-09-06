@@ -963,10 +963,9 @@ export function ProjectsPage() {
   const membersQuery = useQuery(memberListOptions(wsId));
   const members = membersQuery.data ?? [];
   const visibilityReady = membersQuery.isSuccess;
-  // 2026-09-02 coder(lq): Every caller is filtered by the backend project ACL;
-  // PROJECT_OWNER_BYPASS_ENABLED only controls the workspace owner's implicit
-  // all-project access. Keep the request scope fixed so a local view preference
-  // cannot be mistaken for an authorization setting.
+  // 2026-09-04 coder(lq): Do not let a hidden local preference decide
+  // authorization. Once membership is ready, the backend applies the
+  // PROJECT_OWNER_BYPASS_ENABLED policy and project grants.
   const includeWorkspaceOwned = visibilityReady;
   const {
     data: projects = [],

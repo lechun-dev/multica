@@ -171,11 +171,12 @@ func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) 
 		writeDingTalkError(w, http.StatusForbidden, "DingTalk account could not be linked to a Multica account")
 		return
 	}
-	token, err := h.host.IssueLoginTokenForOAuth(user)
+	token, err := h.host.IssueLoginTokenForOAuth(r.Context(), user)
 	if err != nil {
 		writeDingTalkError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
+	h.host.RecordUserLoginForOAuth(r.Context(), user)
 	if err := auth.SetAuthCookies(w, token); err != nil {
 		slog.Warn("dingtalk login: failed to set auth cookies", "error", err)
 	}

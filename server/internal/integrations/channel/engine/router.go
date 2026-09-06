@@ -55,7 +55,8 @@ type Router struct {
 	mediaQueues  map[string]*mediaQueueEntry
 	stopping     bool
 
-	logger *slog.Logger
+	logger            *slog.Logger
+	beforeIssueCommit func(context.Context, pgx.Tx, db.Issue) error
 }
 
 // Config tunes the Router. Zero values default.
@@ -77,6 +78,16 @@ type RouterConfig struct {
 	MediaConcurrency int
 	Logger           *slog.Logger
 	Lifecycle        ChannelChatLifecycle
+	// 2026-09-05 coder(lq): BeforeIssueCommit is an optional policy hook run in the same transaction
+	// as a channel-created issue. The server injects projectauth here so a
+	// channel-created task owner receives the same Owner grant as other create
+	// entry points.
+	BeforeIssueCommit func(context.Context, pgx.Tx, db.Issue) error
+	// ProjectPermissionEnabled is retained for configuration compatibility. A
+	// channel /issue command has no project selector, so it creates a
+	// projectless task; project permissions apply only when a task is bound to
+	// a project by an explicit project-aware entry point.
+	ProjectPermissionEnabled bool
 }
 
 // NewRouter builds a Router around the shared (platform-agnostic) services:
@@ -98,18 +109,19 @@ func NewRouter(issues IssueCreator, tasks TaskEnqueuer, reader SessionReader, cf
 	}
 	mediaCtx, mediaCancel := context.WithCancel(context.Background())
 	return &Router{
-		sets:         make(map[channel.Type]ResolverSet),
-		issues:       issues,
-		tasks:        tasks,
-		reader:       reader,
-		lifecycle:    cfg.Lifecycle,
-		replyTimeout: cfg.ReplyTimeout,
-		mediaTimeout: cfg.MediaTimeout,
-		mediaCtx:     mediaCtx,
-		mediaCancel:  mediaCancel,
-		mediaSem:     make(chan struct{}, cfg.MediaConcurrency),
-		logger:       cfg.Logger,
-		mediaQueues:  make(map[string]*mediaQueueEntry),
+		sets:              make(map[channel.Type]ResolverSet),
+		issues:            issues,
+		tasks:             tasks,
+		reader:            reader,
+		lifecycle:         cfg.Lifecycle,
+		replyTimeout:      cfg.ReplyTimeout,
+		mediaTimeout:      cfg.MediaTimeout,
+		mediaCtx:          mediaCtx,
+		mediaCancel:       mediaCancel,
+		mediaSem:          make(chan struct{}, cfg.MediaConcurrency),
+		logger:            cfg.Logger,
+		beforeIssueCommit: cfg.BeforeIssueCommit,
+		mediaQueues:       make(map[string]*mediaQueueEntry),
 	}
 }
 
@@ -1075,6 +1087,7 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 	// shape regardless of which entry point created the issue.
 	opts := service.IssueCreateOpts{
 		AssignedAgentRunFireAt: assignedRunFireAt,
+		BeforeCommit:           r.beforeIssueCommit,
 		BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
 			// Plain IssueToMap is authoritative here: this path always creates
 			// with the built-in "todo" above, and a built-in status IS its own

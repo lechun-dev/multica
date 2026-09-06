@@ -70,7 +70,12 @@ type IssueResponse struct {
 	CreatorID     string  `json:"creator_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
 	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
+	// ProjectSummary is a minimal, read-only projection used by task detail
+	// views. A task can be visible through a task grant while its project is
+	// hidden by project permissions; exposing only identity fields preserves
+	// that distinction without leaking project contents or grants.
+	ProjectSummary *IssueProjectSummary `json:"project_summary,omitempty"`
+	Position       float64              `json:"position"`
 	// Stage groups sub-issues under the same parent into ordered barrier
 	// groups (null = unstaged). See issue_child_done.go for how a closed
 	// stage gates the child-done -> parent wake.
@@ -101,6 +106,12 @@ type IssueResponse struct {
 	// preserves whatever labels are already in cache. nil pointer = "field
 	// absent, do not touch"; non-nil (incl. empty slice) = authoritative list.
 	Labels *[]LabelResponse `json:"labels,omitempty"`
+}
+
+type IssueProjectSummary struct {
+	ID    string  `json:"id"`
+	Title string  `json:"title"`
+	Icon  *string `json:"icon"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -1064,6 +1075,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		resp[i] = sir
 	}
 
+	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
 		"total":  total,
@@ -2368,6 +2380,21 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	if issue.ProjectID.Valid {
+		// The issue permission check above is intentionally independent from the
+		// project permission check. This lookup stays workspace-scoped and only
+		// selects the three fields needed for a read-only relationship display.
+		if project, err := h.Queries.GetProjectSummaryInWorkspace(r.Context(), db.GetProjectSummaryInWorkspaceParams{
+			ID:          issue.ProjectID,
+			WorkspaceID: issue.WorkspaceID,
+		}); err == nil {
+			resp.ProjectSummary = &IssueProjectSummary{
+				ID:    uuidToString(project.ID),
+				Title: project.Title,
+				Icon:  textToPtr(project.Icon),
+			}
+		}
+	}
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {
@@ -2955,10 +2982,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		projectUUID = pid
 	}
-	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectUUID, projectauth.IssueCreate) {
-		return
-	}
-
 	// Optional parent_issue_id — validate same-workspace membership just like
 	// the regular CreateIssue path. Frontend seeds this from the "Add sub
 	// issue" entry, but the handler re-checks so a forged request can't
@@ -2980,7 +3003,15 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		if !h.requireParentIssueProjectPermission(w, r, parent, projectUUID) {
 			return
 		}
+		// 2026-09-06 coder(lq): Resolve the inherited project before enforcing
+		// the new-task project binding invariant.
+		if !projectUUID.Valid && parent.ProjectID.Valid {
+			projectUUID = parent.ProjectID
+		}
 		parentIssueUUID = pid
+	}
+	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectUUID, projectauth.IssueCreate) {
+		return
 	}
 
 	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, priority, dueDate, projectUUID, parentIssueUUID, attachmentIDs)
@@ -3212,6 +3243,13 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 			return
 		}
+		// 2026-09-06 coder(lq): A child without an explicit project inherits
+		// its parent's project before the create authorization check. This keeps
+		// project-bound sub-issue creation subject to project permissions while
+		// still allowing a genuinely projectless task.
+		if !projectID.Valid && parentIssue.ProjectID.Valid {
+			projectID = parentIssue.ProjectID
+		}
 	}
 	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
 		return
@@ -3407,8 +3445,16 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "cannot create a child issue under an archived parent; restore the parent first")
 		return
 	}
+	if errors.Is(err, service.ErrParentProjectMismatch) {
+		writeError(w, http.StatusBadRequest, "parent issue belongs to a different project")
+		return
+	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return
+	}
+	if errors.Is(err, service.ErrProjectRequired) {
+		writeError(w, http.StatusBadRequest, "project_id is required for this create operation")
 		return
 	}
 	if errors.Is(err, service.ErrIssueLabelNotFound) {
@@ -3477,10 +3523,9 @@ type UpdateIssueRequest struct {
 	// the issue can be run later via manual run/rerun. Optional; omitted or
 	// false keeps today's behavior. Mirrors comment suppress_agent_ids.
 	SuppressRun bool `json:"suppress_run,omitempty"`
-	// HandoffNote is an optional free-text instruction injected into the run's
-	// opening context when this write starts an agent/squad run ("交接说明" —
-	// MUL-3375). Only consumed when a run actually starts: SuppressRun=true or
-	// a parked/non-triggering write drops it. Never fabricates a comment.
+	// HandoffNote is retained at the API boundary for installed clients that
+	// predate the handoff UI removal. It is consumed only when this write starts
+	// a run and is never stored on the issue itself.
 	HandoffNote string `json:"handoff_note,omitempty"`
 }
 
@@ -3654,7 +3699,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		}
 	}
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		if err := promoteIssueAccessWithExecutor(ctx, tx, issue.ID, issue.ProjectID, issue.AssigneeType, issue.AssigneeID, issue.Description); err != nil {
+		if err := syncIssueAccessWithExecutor(ctx, tx, &current, issue); err != nil {
 			return db.Issue{}, current, false, fmt.Errorf("promote issue project access: %w", err)
 		}
 	}

@@ -13,11 +13,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enIssues from "../../../locales/en/issues.json";
+import enSettings from "../../../locales/en/settings.json";
 import { AssigneePicker } from "./assignee-picker";
 
 const MEMBERS = [
-  { user_id: "user-1", name: "Ada Lovelace", role: "member" },
-  { user_id: "user-2", name: "Grace Hopper", role: "member" },
+  { user_id: "user-1", name: "Ada Lovelace", role: "member", has_logged_in: true },
+  { user_id: "user-2", name: "Grace Hopper", role: "member", has_logged_in: true },
+  { user_id: "user-3", name: "Imported User", role: "member", has_logged_in: false },
 ];
 
 vi.mock("@tanstack/react-query", () => ({
@@ -50,7 +52,10 @@ const SEARCH_PLACEHOLDER = "Assign to...";
 
 function renderPicker(onUpdate: () => void) {
   return render(
-    <I18nProvider locale="en" resources={{ en: { issues: enIssues } }}>
+    <I18nProvider
+      locale="en"
+      resources={{ en: { issues: enIssues, settings: enSettings } }}
+    >
       {/* Controlled open: the picker is the subject, its trigger is not. */}
       <AssigneePicker
         assigneeType={null}
@@ -89,5 +94,13 @@ describe("AssigneePicker search keyboard defaults", () => {
     await user.keyboard("{Enter}");
 
     expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("marks imported members that have not registered", () => {
+    renderPicker(vi.fn());
+
+    expect(
+      screen.getByText("Imported User (Not registered)"),
+    ).toBeInTheDocument();
   });
 });

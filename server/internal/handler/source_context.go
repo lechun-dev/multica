@@ -692,6 +692,20 @@ func (h *Handler) createManualCommentSubIssue(w http.ResponseWriter, r *http.Req
 		}
 		projectID = parsed
 	}
+	if !projectID.Valid && capture.SourceIssueID.Valid {
+		// 2026-09-06 coder(lq): Source-context sub-issues inherit a
+		// project-bound source issue before the new-task authorization gate. A
+		// projectless source remains a valid projectless task target.
+		if sourceIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          capture.SourceIssueID,
+			WorkspaceID: workspaceID,
+		}); err == nil && sourceIssue.ProjectID.Valid {
+			projectID = sourceIssue.ProjectID
+		}
+	}
+	if !h.requireNewIssueProjectPermission(w, r, util.UUIDToString(workspaceID), projectID, projectauth.IssueCreate) {
+		return errSourceContextResponseWritten
+	}
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, input.AttachmentIDs, "attachment_ids")
 	if !ok {
 		return errSourceContextResponseWritten
@@ -848,6 +862,9 @@ func (h *Handler) prepareAgentCommentSubIssue(w http.ResponseWriter, r *http.Req
 		}
 		projectID = parsed
 	}
+	if !h.requireNewIssueProjectPermission(w, r, util.UUIDToString(workspaceID), projectID, projectauth.IssueCreate) {
+		return nil, errSourceContextResponseWritten
+	}
 	return &preparedAgentCommentSubIssue{
 		agentID: agentID, squadID: squadID, runtimeID: agent.RuntimeID,
 		prompt: prompt, priority: priority, dueDate: dueDate,
@@ -901,12 +918,15 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 	case errors.Is(err, service.ErrActiveDuplicate):
 		status, code = http.StatusConflict, "active_duplicate_issue"
 		message = err.Error()
-	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrProjectNotFound):
+	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrParentProjectMismatch), errors.Is(err, service.ErrProjectNotFound):
 		status = http.StatusBadRequest
 		message = err.Error()
 	case errors.Is(err, service.ErrArchivedParentIssue):
 		status = http.StatusConflict
 		message = err.Error()
+	case errors.Is(err, service.ErrProjectRequired):
+		status = http.StatusBadRequest
+		message = "project_id is required for this create operation"
 	case errors.Is(err, errSourceContextBadRequest):
 		status, code = http.StatusBadRequest, "invalid_request"
 		message = err.Error()

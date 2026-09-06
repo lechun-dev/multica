@@ -64,7 +64,7 @@ export interface ProjectViewState {
   sortDirection: ProjectSortDirection;
   hiddenColumns: ProjectColumnKey[];
   filters: ProjectListFilters;
-  /** 2026-08-28 coder(lq): Display preference for workspace-owned projects. */
+  /** 2026-09-04 coder(lq): Legacy field retained for persisted-state compatibility. */
   showWorkspaceOwnedItems: boolean;
   setViewMode: (mode: ProjectViewMode) => void;
   toggleSort: (field: ProjectSortField) => void;
@@ -82,7 +82,9 @@ const DEFAULTS = {
   sortDirection: PROJECT_SORT_DEFAULT_DIRECTION.created,
   hiddenColumns: PROJECT_DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_PROJECT_FILTERS,
-  showWorkspaceOwnedItems: true,
+  // 2026-09-04 coder(lq): Retained for persisted-state compatibility only;
+  // owner visibility is controlled by the backend deployment policy.
+  showWorkspaceOwnedItems: false,
 };
 
 export const useProjectViewStore = create<ProjectViewState>()(
@@ -147,7 +149,9 @@ export const useProjectViewStore = create<ProjectViewState>()(
           ...current,
           ...p,
           filters: { ...EMPTY_PROJECT_FILTERS, ...(p.filters ?? {}) },
-          showWorkspaceOwnedItems: p.showWorkspaceOwnedItems ?? DEFAULTS.showWorkspaceOwnedItems,
+          // 2026-09-04 coder(lq): Ignore a legacy cached value so hiding the
+          // preference cannot leave an old "on" state behind.
+          showWorkspaceOwnedItems: false,
         };
       },
     }

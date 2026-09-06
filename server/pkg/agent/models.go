@@ -163,7 +163,9 @@ func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (C
 		return Catalog{Models: models}, nil
 	case "codex":
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverCodexModels(ctx, runtimeCmd), nil)
+			// 2026-09-06 coder(lq): Codex always exposes the supplemental
+			// xAI models; their visibility must not depend on CLI discovery.
+			return discovered(ensureCodexModels(discoverCodexModels(ctx, runtimeCmd)), nil)
 		})
 	case "antigravity":
 		// agy 1.0.6 added a `--model` flag plus an `agy models` catalog
@@ -470,6 +472,7 @@ func isRuntimeSpecificModelID(model string) bool {
 func modelHasKnownPrefix(model string) bool {
 	return strings.HasPrefix(model, "claude-") ||
 		strings.HasPrefix(model, "gpt-") ||
+		strings.HasPrefix(model, "grok-") ||
 		strings.HasPrefix(model, "gemini-") ||
 		strings.HasPrefix(model, "auto-gemini-") ||
 		isOpenAIReasoningSeriesID(model)
@@ -597,7 +600,7 @@ func codexStaticModels() []Model {
 			},
 		}
 	}
-	return []Model{
+	models := []Model{
 		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai", Default: true, Thinking: standardThinking("low", true, true)},
 		{ID: "gpt-5.6-terra", Label: "GPT-5.6 Terra", Provider: "openai", Thinking: standardThinking("medium", true, true)},
 		{ID: "gpt-5.6-luna", Label: "GPT-5.6 Luna", Provider: "openai", Thinking: standardThinking("medium", true, false)},
@@ -607,6 +610,43 @@ func codexStaticModels() []Model {
 		{ID: "gpt-5.3-codex", Label: "GPT-5.3-Codex", Provider: "openai", Thinking: standardThinking("medium", false, false)},
 		{ID: "gpt-5.2", Label: "GPT-5.2", Provider: "openai", Thinking: gpt52Thinking()},
 	}
+	return ensureCodexModels(models)
+}
+
+// ensureCodexModels keeps the Codex catalog extensible for model IDs accepted
+// by the configured Codex API gateway but not present in the bundled catalog.
+// 2026-09-06 coder(lq): Keep the Grok IDs in the Codex catalog; the API
+// gateway routes them downstream, so they must not become a Grok runtime.
+func ensureCodexModels(models []Model) []Model {
+	result := make([]Model, 0, len(models)+2)
+	seen := make(map[string]struct{}, len(models)+2)
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		// 2026-09-06 coder(lq): Codex discovery and fallback catalogs use the
+		// same provider namespace. Keep gateway-routed entries there even if a
+		// future Codex CLI reports one with a provider-specific annotation.
+		if model.ID == "grok-4.6" || model.ID == "grok-4.5" {
+			model.Provider = "openai"
+		}
+		seen[model.ID] = struct{}{}
+		result = append(result, model)
+	}
+	for _, model := range []Model{
+		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "openai"},
+		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "openai"},
+	} {
+		if _, exists := seen[model.ID]; exists {
+			continue
+		}
+		seen[model.ID] = struct{}{}
+		result = append(result, model)
+	}
+	return result
 }
 
 // discoverTraecliModels spins up a throwaway `traecli acp serve --yolo` process
@@ -2358,14 +2398,53 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 		if err != nil {
 			slog.Debug("grok model discovery fell back to static catalog", "error", err)
 		}
-		return Catalog{Models: grokStaticModels(), Fallback: true}, nil
+		return Catalog{Models: ensureGrokModels(grokStaticModels()), Fallback: true}, nil
 	}
 	for i := range models {
 		if models[i].Provider == "" {
 			models[i].Provider = "xai"
 		}
 	}
-	return Catalog{Models: models}, nil
+	return Catalog{Models: ensureGrokModels(models)}, nil
+}
+
+// ensureGrokModels normalizes the Grok catalog so the supported flagship
+// models remain available even when an installed CLI returns a partial list.
+// 2026-09-04 coder(lq): Keep this provider-local so other runtimes never see
+// models that their own CLI cannot execute.
+func ensureGrokModels(models []Model) []Model {
+	byID := make(map[string]Model, len(models)+4)
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		if _, exists := byID[model.ID]; !exists {
+			byID[model.ID] = model
+		}
+	}
+
+	result := make([]Model, 0, len(byID)+4)
+	defaults := []Model{
+		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai"},
+		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
+	}
+	annotateGrokThinking(defaults)
+	for _, model := range defaults {
+		if discovered, exists := byID[model.ID]; exists {
+			result = append(result, discovered)
+			delete(byID, model.ID)
+			continue
+		}
+		result = append(result, model)
+	}
+
+	for _, model := range models {
+		if discovered, exists := byID[model.ID]; exists {
+			result = append(result, discovered)
+			delete(byID, model.ID)
+		}
+	}
+	return result
 }
 
 // grokStaticModels is the offline fallback catalog for the Grok Build CLI.
@@ -2373,7 +2452,7 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 // Grok 4.6 is the current Grok Build default (xAI, 2026-08-12).
 func grokStaticModels() []Model {
 	models := []Model{
-		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "xai", Default: true},
+		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai", Default: true},
 		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
 		{ID: "grok-composer-2.5-fast", Label: "Grok Composer 2.5 Fast", Provider: "xai"},
 	}

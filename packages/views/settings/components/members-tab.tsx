@@ -170,6 +170,7 @@ function MemberRow({
   onRemove: () => void;
 }) {
   const { t } = useT("settings");
+  const displayName = member.name || member.email;
   const roleConfig = useRoleLabels();
   const rc = roleConfig[member.role];
   const RoleIcon = rc.icon;
@@ -182,7 +183,10 @@ function MemberRow({
     <div className="flex items-center gap-3 px-4 py-3">
       <ActorAvatar actorType="member" actorId={member.user_id} size="lg" />
       <div className="min-w-0 flex-1">
-        <div className="text-body font-medium truncate">{member.name}</div>
+        <div className="text-body font-medium truncate">
+          {displayName}
+          {!member.has_logged_in ? t(($) => $.members.not_registered_suffix) : null}
+        </div>
         <div className="text-caption text-muted-foreground truncate">{member.email}</div>
       </div>
       {showMenu && (

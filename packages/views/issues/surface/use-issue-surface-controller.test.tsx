@@ -61,9 +61,8 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
-// The controller reads the signed-in user to resolve workspace-owner scope.
-// Keep the fixture explicit so these tests exercise the visibility gate rather
-// than depending on the application boot provider to register auth state.
+// 2026-09-04 coder(lq): Keep the auth fixture explicit for adjacent surface
+// dependencies, without coupling visibility assertions to application boot.
 const mockAuthUser = {
   id: "user-1",
   email: "test@test.com",
@@ -266,9 +265,8 @@ describe("useIssueSurfaceController", () => {
     );
   });
 
-  it("does not keep showing workspace-owned rows while owner visibility is being refreshed", async () => {
+  it("keeps the backend visibility scope after the legacy owner preference changes", async () => {
     const ownerIssue = makeIssue({ id: "owner-only", status: "todo" });
-    const pendingRestrictedRows = vi.fn(() => never<unknown>());
     const tableRows = vi.fn(async (request: any) => {
       if (request.group_key !== "status:todo") {
         return {
@@ -280,9 +278,6 @@ describe("useIssueSurfaceController", () => {
           branch_total: 0,
           next_cursor: null,
         };
-      }
-      if (request.query.filters.include_workspace_owned === false) {
-        return pendingRestrictedRows();
       }
       return {
         query_fingerprint: "test",
@@ -330,8 +325,10 @@ describe("useIssueSurfaceController", () => {
     await waitFor(() => expect(result.current.issues).toHaveLength(1));
     act(() => store.getState().setShowWorkspaceOwnedItems(false));
 
-    expect(result.current.includeWorkspaceOwned).toBe(false);
-    expect(result.current.issues).toEqual([]);
+    // 2026-09-04 coder(lq): The preference is hidden and retained only for
+    // persisted-state compatibility; authorization remains backend-controlled.
+    expect(result.current.includeWorkspaceOwned).toBe(true);
+    expect(result.current.issues).toHaveLength(1);
   });
 
   // MUL-5477. `tableQuerySpec` is the identity every downstream consumer keys

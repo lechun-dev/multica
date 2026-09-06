@@ -178,12 +178,10 @@ type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
 }
 
-// RuntimeRecoveryNotifier republishes the daemon registration lifecycle event
-// after a heartbeat brings an offline runtime back online.
-// 2026-09-05 coder(lq): Keep the notifier contract available to the heartbeat
-// scheduler while the project authorization overlay remains additive.
-type RuntimeRecoveryNotifier interface {
-	NotifyRuntimeRecovered(ctx context.Context, workspaceID string)
+// RuntimeGoneNotifier invalidates a runtime that was deleted while its daemon
+// still has an authenticated WebSocket connection.
+type RuntimeGoneNotifier interface {
+	NotifyRuntimeGone(runtimeID string)
 }
 
 type Handler struct {
@@ -200,6 +198,7 @@ type Handler struct {
 	DaemonHub              *daemonws.Hub
 	DaemonProfileRefresh   RuntimeProfileRefreshNotifier
 	DaemonWorkspaceRefresh WorkspaceSetRefreshNotifier
+	DaemonRuntimeGone      RuntimeGoneNotifier
 	Bus                    *events.Bus
 	TaskService            *service.TaskService
 	PluginService          *service.PluginService
@@ -254,6 +253,8 @@ type Handler struct {
 	InvitationRateLimiters       InvitationRateLimiters
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
 	CloudRuntime                 cloudRuntimeProxy
+	// Test-only HTTP override; nil uses the default client in production.
+	googleOAuthHTTPClient *http.Client
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -429,9 +430,11 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	}
 	var daemonProfileRefresh RuntimeProfileRefreshNotifier
 	var daemonWorkspaceRefresh WorkspaceSetRefreshNotifier
+	var daemonRuntimeGone RuntimeGoneNotifier
 	if daemonHub != nil {
 		daemonProfileRefresh = daemonHub
 		daemonWorkspaceRefresh = daemonHub
+		daemonRuntimeGone = daemonHub
 	}
 
 	llmClient := llm.New(llm.Config{
@@ -472,6 +475,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		DaemonHub:                    daemonHub,
 		DaemonProfileRefresh:         daemonProfileRefresh,
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
+		DaemonRuntimeGone:            daemonRuntimeGone,
 		Bus:                          bus,
 		TaskService:                  taskSvc,
 		PluginService:                service.NewPluginService(queries, txStarter),
@@ -500,6 +504,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	// 2026-09-05 coder(lq): Keep autopilot-created tasks on the same project
+	// authorization path as HTTP and channel-created tasks.
+	h.AutopilotService.BeforeIssueCommit = h.issueAccessBeforeCommit()
+
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key
 	// is unconfigured, so the feature degrades cleanly. main.go calls
@@ -512,17 +520,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
 
 	return h
-}
-
-// NotifyRuntimeRecovered republishes the daemon registration refresh after a
-// heartbeat restores an offline runtime.
-// 2026-09-05 coder(lq): Preserve the scheduler callback expected by the
-// existing heartbeat implementation after syncing upstream main.
-func (h *Handler) NotifyRuntimeRecovered(_ context.Context, workspaceID string) {
-	if h == nil || workspaceID == "" {
-		return
-	}
-	h.PublishRuntimeRefresh(workspaceID, "system", "", "heartbeat_recovery")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -750,6 +747,15 @@ func (h *Handler) notifyDaemonWorkspacesChanged(userIDs ...string) {
 		seen[userID] = struct{}{}
 		h.DaemonWorkspaceRefresh.NotifyWorkspacesChanged(userID)
 	}
+}
+
+// NotifyRuntimeGone emits the post-commit runtime invalidation signal. It is
+// exported so the runtime GC can use the same publisher as request handlers.
+func (h *Handler) NotifyRuntimeGone(runtimeID string) {
+	if h == nil || h.DaemonRuntimeGone == nil || runtimeID == "" {
+		return
+	}
+	h.DaemonRuntimeGone.NotifyRuntimeGone(runtimeID)
 }
 
 // publishTask is publish() plus a TaskID hint so the realtime layer can route
