@@ -2399,12 +2399,14 @@ func discoverGrokModels(ctx context.Context, runtimeCmd Command) (Catalog, error
 	return Catalog{Models: ensureGrokModels(models)}, nil
 }
 
-// ensureGrokModels normalizes the Grok catalog so the two supported flagship
+// ensureGrokModels normalizes the Grok catalog so the supported flagship
 // models remain available even when an installed CLI returns a partial list.
 // 2026-09-04 coder(lq): Keep this provider-local so other runtimes never see
 // models that their own CLI cannot execute.
+// 2026-09-06 coder(lq): Include the newly requested Grok 5.6/5.5 entries in
+// the provider catalog; leave their thinking capabilities to ACP discovery.
 func ensureGrokModels(models []Model) []Model {
-	byID := make(map[string]Model, len(models)+2)
+	byID := make(map[string]Model, len(models)+4)
 	for _, model := range models {
 		if strings.TrimSpace(model.ID) == "" {
 			continue
@@ -2414,10 +2416,12 @@ func ensureGrokModels(models []Model) []Model {
 		}
 	}
 
-	result := make([]Model, 0, len(byID)+2)
+	result := make([]Model, 0, len(byID)+4)
 	defaults := []Model{
 		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai"},
 		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
+		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "xai"},
+		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "xai"},
 	}
 	annotateGrokThinking(defaults)
 	for _, model := range defaults {
@@ -2445,6 +2449,8 @@ func grokStaticModels() []Model {
 	models := []Model{
 		{ID: "grok-4.6", Label: "Grok-4.6", Provider: "xai", Default: true},
 		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "xai"},
+		{ID: "grok-5.6", Label: "Grok 5.6", Provider: "xai"},
+		{ID: "grok-5.5", Label: "Grok 5.5", Provider: "xai"},
 		{ID: "grok-composer-2.5-fast", Label: "Grok Composer 2.5 Fast", Provider: "xai"},
 	}
 	annotateGrokThinking(models)

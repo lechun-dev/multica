@@ -1230,6 +1230,13 @@ export const IssueSchema = z.object({
   creator_id: z.string(),
   parent_issue_id: z.string().nullable(),
   project_id: z.string().nullable(),
+  // Detail-only additive data. Keep it tolerant for mixed-version
+  // self-hosted deployments so an older backend cannot blank the issue.
+  project_summary: z.object({
+    id: z.string(),
+    title: z.string(),
+    icon: z.string().nullable(),
+  }).loose().optional().catch(undefined),
   position: z.number(),
   // Older backends predate `stage`; default to null so a missing field parses
   // cleanly into the non-optional Issue.stage (number | null).

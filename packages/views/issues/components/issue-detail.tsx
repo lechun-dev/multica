@@ -1816,6 +1816,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     ...projectDetailAllowMissingOptions(wsId, issueProjectId ?? ""),
     enabled: !!issueProjectId,
   });
+  const projectSummary = issue?.project_summary;
+  const displayedProject = breadcrumbProject ?? projectSummary ?? null;
   const {
     data: childIssues = [],
     isSuccess: childIssuesLoaded,
@@ -2354,10 +2356,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 )}
               </PropRow>
               <PropRow label={t(($) => $.detail.prop_project)} interactive={false}>
-                {breadcrumbProject ? (
+                {displayedProject ? (
                   <>
-                    <ProjectIcon project={breadcrumbProject} size="sm" />
-                    <span className="truncate">{breadcrumbProject.title}</span>
+                    <ProjectIcon project={displayedProject} size="sm" />
+                    <span className="truncate">{displayedProject.title}</span>
                   </>
                 ) : (
                   <span className="text-muted-foreground">{issue.project_id ?? t(($) => $.table.no_value)}</span>
@@ -2409,7 +2411,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <PropRow label={t(($) => $.detail.prop_project)}>
             <ProjectPicker
               projectId={issue.project_id}
+              projectSummary={issue.project_summary}
               onUpdate={handleUpdateField}
+              disabled={!!issue.project_summary && !breadcrumbProject}
             />
           </PropRow>
 

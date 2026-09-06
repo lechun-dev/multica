@@ -70,7 +70,12 @@ type IssueResponse struct {
 	CreatorID     string  `json:"creator_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
 	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
+	// ProjectSummary is a minimal, read-only projection used by task detail
+	// views. A task can be visible through a task grant while its project is
+	// hidden by project permissions; exposing only identity fields preserves
+	// that distinction without leaking project contents or grants.
+	ProjectSummary *IssueProjectSummary `json:"project_summary,omitempty"`
+	Position       float64              `json:"position"`
 	// Stage groups sub-issues under the same parent into ordered barrier
 	// groups (null = unstaged). See issue_child_done.go for how a closed
 	// stage gates the child-done -> parent wake.
@@ -101,6 +106,12 @@ type IssueResponse struct {
 	// preserves whatever labels are already in cache. nil pointer = "field
 	// absent, do not touch"; non-nil (incl. empty slice) = authoritative list.
 	Labels *[]LabelResponse `json:"labels,omitempty"`
+}
+
+type IssueProjectSummary struct {
+	ID    string  `json:"id"`
+	Title string  `json:"title"`
+	Icon  *string `json:"icon"`
 }
 
 // validIssuePriorities mirrors the CHECK constraint on the issue table. Write
@@ -2369,6 +2380,21 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	if issue.ProjectID.Valid {
+		// The issue permission check above is intentionally independent from the
+		// project permission check. This lookup stays workspace-scoped and only
+		// selects the three fields needed for a read-only relationship display.
+		if project, err := h.Queries.GetProjectSummaryInWorkspace(r.Context(), db.GetProjectSummaryInWorkspaceParams{
+			ID:          issue.ProjectID,
+			WorkspaceID: issue.WorkspaceID,
+		}); err == nil {
+			resp.ProjectSummary = &IssueProjectSummary{
+				ID:    uuidToString(project.ID),
+				Title: project.Title,
+				Icon:  textToPtr(project.Icon),
+			}
+		}
+	}
 	h.fillStatusCategory(r.Context(), issue.WorkspaceID, &resp)
 	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
 	if detailLabels == nil {

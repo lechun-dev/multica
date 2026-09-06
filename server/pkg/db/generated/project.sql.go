@@ -128,6 +128,29 @@ func (q *Queries) GetProjectInWorkspace(ctx context.Context, arg GetProjectInWor
 	return i, err
 }
 
+const getProjectSummaryInWorkspace = `-- name: GetProjectSummaryInWorkspace :one
+SELECT id, title, icon FROM project
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetProjectSummaryInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type GetProjectSummaryInWorkspaceRow struct {
+	ID    pgtype.UUID `json:"id"`
+	Title string      `json:"title"`
+	Icon  pgtype.Text `json:"icon"`
+}
+
+func (q *Queries) GetProjectSummaryInWorkspace(ctx context.Context, arg GetProjectSummaryInWorkspaceParams) (GetProjectSummaryInWorkspaceRow, error) {
+	row := q.db.QueryRow(ctx, getProjectSummaryInWorkspace, arg.ID, arg.WorkspaceID)
+	var i GetProjectSummaryInWorkspaceRow
+	err := row.Scan(&i.ID, &i.Title, &i.Icon)
+	return i, err
+}
+
 const getProjectIssueStats = `-- name: GetProjectIssueStats :many
 SELECT project_id,
        count(*)::bigint AS total_count,

@@ -448,20 +448,6 @@ export function ProjectPermissionsTab() {
                   ))}
                 </tbody>
               </table>
-              {reportRows.length > 0 && <div className="border-t border-surface-border p-3">
-                <div className="mb-2 text-caption font-medium text-muted-foreground">{t(($) => $.permission_report.effective_permissions)}</div>
-                <div className="max-h-56 overflow-auto text-caption">
-                  {reportRows.slice(0, 200).map((row: ProjectPermissionReportRow, index) => (
-                    <div key={`${row.scope}:${row.project_id}:${row.issue_id ?? ""}:${row.user_id}:${row.permission}:${index}`} className="flex gap-3 border-b border-surface-border/50 py-1">
-                      <span className="w-20 shrink-0">{row.scope}</span>
-                      <span className="min-w-32 truncate">{row.project_title}{row.issue_title ? ` / ${row.issue_title}` : ""}</span>
-                      <span className="min-w-28 truncate">{userLabel(row.user_id)}</span>
-                      <span className="min-w-36 truncate">{row.permission}</span>
-                      <span className="min-w-28 truncate text-muted-foreground">{row.source}{row.inherited_from_project ? " · inherited" : ""}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>}
             </div>}
             </>
           )}

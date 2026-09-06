@@ -739,7 +739,7 @@ func TestDiscoverGrokModelsWaitsForAdvertisedAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discover grok models: %v", err)
 	}
-	if len(catalog.Models) != 3 || catalog.Models[0].ID != "grok-4.6" {
+	if len(catalog.Models) != 5 || catalog.Models[0].ID != "grok-4.6" {
 		t.Fatalf("unexpected models: %+v", catalog.Models)
 	}
 	if catalog.Fallback {
@@ -798,7 +798,7 @@ func TestDiscoverGrokModelsStopsOnAuthFailures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("discover grok models: %v", err)
 			}
-			if len(catalog.Models) != 3 || catalog.Models[0].ID != "grok-4.6" {
+			if len(catalog.Models) != 5 || catalog.Models[0].ID != "grok-4.6" {
 				t.Fatalf("expected static fallback, got %+v", catalog.Models)
 			}
 			if !catalog.Fallback {
@@ -821,7 +821,7 @@ func TestDiscoverGrokModelsStopsOnAuthFailures(t *testing.T) {
 
 func TestGrokThinkingCatalogIsPerModel(t *testing.T) {
 	models := grokStaticModels()
-	if len(models) != 3 || models[0].ID != "grok-4.6" || !models[0].Default {
+	if len(models) != 5 || models[0].ID != "grok-4.6" || !models[0].Default {
 		t.Fatalf("static fallback must default to grok-4.6: %+v", models)
 	}
 	want := map[string]string{
@@ -841,6 +841,15 @@ func TestGrokThinkingCatalogIsPerModel(t *testing.T) {
 			t.Fatalf("%s levels = %v, want %s", id, got, levels)
 		}
 	}
+	for _, id := range []string{"grok-5.6", "grok-5.5"} {
+		model := grokMustFindModel(t, models, id)
+		if model.Provider != "xai" {
+			t.Errorf("%s provider = %q, want xai", id, model.Provider)
+		}
+		if model.Thinking != nil {
+			t.Errorf("%s should not advertise unverified thinking levels in static fallback: %+v", id, model.Thinking)
+		}
+	}
 	composer := grokMustFindModel(t, models, "grok-composer-2.5-fast")
 	if composer.Thinking != nil {
 		t.Fatalf("unverified composer model must hide thinking controls: %+v", composer.Thinking)
@@ -857,7 +866,7 @@ func TestEnsureGrokModelsAddsMissingModels(t *testing.T) {
 		{ID: "grok-composer-2.5-fast", Label: "Grok Composer 2.5 Fast", Provider: "xai"},
 	})
 
-	if got := []string{models[0].ID, models[1].ID, models[2].ID}; strings.Join(got, ",") != "grok-4.6,grok-4.5,grok-composer-2.5-fast" {
+	if got := []string{models[0].ID, models[1].ID, models[2].ID, models[3].ID, models[4].ID}; strings.Join(got, ",") != "grok-4.6,grok-4.5,grok-5.6,grok-5.5,grok-composer-2.5-fast" {
 		t.Fatalf("model order = %v, want flagship models first", got)
 	}
 	for _, id := range []string{"grok-4.6", "grok-4.5"} {
@@ -883,8 +892,8 @@ func TestEnsureGrokModelsPreservesDiscoveredEntries(t *testing.T) {
 		{ID: "other", Label: "Duplicate other"},
 	})
 
-	if len(models) != 3 {
-		t.Fatalf("deduplicated model count = %d, want 3: %+v", len(models), models)
+	if len(models) != 5 {
+		t.Fatalf("deduplicated model count = %d, want 5: %+v", len(models), models)
 	}
 	if models[0].ID != "grok-4.6" || models[0].Label != "Runtime Grok 4.6" || models[0].Provider != "custom" || !models[0].Default {
 		t.Fatalf("discovered flagship entry was not preserved: %+v", models[0])
@@ -892,7 +901,7 @@ func TestEnsureGrokModelsPreservesDiscoveredEntries(t *testing.T) {
 	if models[0].Thinking != customThinking {
 		t.Fatal("discovered thinking catalog was replaced")
 	}
-	if models[1].ID != "grok-4.5" || models[2].ID != "other" {
+	if models[1].ID != "grok-4.5" || models[2].ID != "grok-5.6" || models[3].ID != "grok-5.5" || models[4].ID != "other" {
 		t.Fatalf("non-flagship model order changed: %+v", models)
 	}
 }
@@ -909,6 +918,8 @@ func TestGrokValidateThinkingLevelUsesPerModelCatalog(t *testing.T) {
 		{model: "grok-4.5", level: "low", want: true},
 		{model: "grok-4.5", level: "none", want: false},
 		{model: "grok-4.5", level: "xhigh", want: false},
+		{model: "grok-5.6", level: "high", want: false},
+		{model: "grok-5.5", level: "high", want: false},
 		{model: "grok-composer-2.5-fast", level: "low", want: false},
 		{model: "future-grok", level: "high", want: false},
 	} {

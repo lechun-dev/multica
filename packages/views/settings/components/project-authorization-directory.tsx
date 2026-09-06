@@ -162,8 +162,8 @@ export function ProjectAuthorizationDirectory({
         ) : organizations.length === 0 && members.length === 0 ? (
           <div className="px-4 py-10 text-center text-body text-muted-foreground">{t(($) => $.project_authorization_organizations.directory_empty)}</div>
         ) : (
-          <div className="grid min-h-96 md:grid-cols-[minmax(220px,0.8fr)_minmax(320px,1.2fr)]">
-            <aside className="max-h-[32rem] overflow-y-auto border-b border-surface-border p-3 md:border-b-0 md:border-r">
+          <div className="grid min-h-[36rem] md:grid-cols-[minmax(260px,0.85fr)_minmax(420px,1.15fr)]">
+            <aside className="max-h-[36rem] overflow-y-auto border-b border-surface-border p-3 md:border-b-0 md:border-r">
               <button
                 type="button"
                 className={cn("mb-1 flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-body hover:bg-accent/60", selectedId === ALL_PEOPLE && "bg-accent")}
@@ -189,7 +189,7 @@ export function ProjectAuthorizationDirectory({
                 <span>{selectedId === ALL_PEOPLE ? directoryRootLabel : organizations.find((item) => item.id === selectedId)?.name}</span>
                 <span>{t(($) => $.project_authorization_organizations.people_count, { count: visibleMembers.length })}</span>
               </div>
-              <div className="max-h-[26rem] space-y-1 overflow-y-auto">
+              <div className="max-h-[32rem] space-y-1 overflow-y-auto">
                 {visibleMembers.length === 0 ? (
                   <div className="rounded-lg border border-dashed px-4 py-8 text-center text-body text-muted-foreground">{t(($) => $.project_authorization_organizations.no_people)}</div>
                 ) : visibleMembers.map((member) => (
