@@ -30,12 +30,13 @@ import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
+import { useTabSelectionShortcut } from "./hooks/use-tab-selection-shortcut";
+import { DESKTOP_PRODUCT_NAME } from "./desktop-brand";
 import {
   type SessionTeardown,
   tearDownOnLogout,
   tearDownOnSessionExpiry,
 } from "./platform/session-teardown";
-import { DESKTOP_PRODUCT_NAME } from "./desktop-brand";
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -389,6 +390,9 @@ export default function App() {
   // Mounted at the App root for the same reason as Cmd+W: the chord has to
   // work in every renderer state, not only inside the tab shell.
   useOpenSettingsShortcut();
+  // Fixed browser-style tab selection is also owned by main so it remains
+  // available while focus sits inside editors, inputs, menus, or dialogs.
+  useTabSelectionShortcut();
 
   // Flush a freeze/crash breadcrumb the main process parked from a previous
   // session. A true hang or process death can't report itself when it happens
