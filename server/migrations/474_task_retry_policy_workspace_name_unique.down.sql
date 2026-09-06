@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS task_retry_policy_workspace_name_uniq;

@@ -123,5 +123,9 @@
   },
   "navigation": {
     "open_in_new_tab": "新しいタブで開く"
+  },
+  "not_found": {
+    "title": "ページが見つかりません",
+    "description": "お探しのページは存在しないか、移動された可能性があります。"
   }
 }

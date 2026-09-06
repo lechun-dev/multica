@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_task_retry_policy_workspace_priority;

@@ -238,6 +238,7 @@ type CreateSourceContextAttachmentRow struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
+	PendingComment  bool               `json:"pending_comment"`
 }
 
 func (q *Queries) CreateSourceContextAttachment(ctx context.Context, arg CreateSourceContextAttachmentParams) (CreateSourceContextAttachmentRow, error) {
@@ -353,6 +354,7 @@ type DeleteAttachmentsBySourceContextRow struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
+	PendingComment  bool               `json:"pending_comment"`
 }
 
 func (q *Queries) DeleteAttachmentsBySourceContext(ctx context.Context, arg DeleteAttachmentsBySourceContextParams) ([]DeleteAttachmentsBySourceContextRow, error) {

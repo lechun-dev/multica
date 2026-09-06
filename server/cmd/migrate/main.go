@@ -276,6 +276,20 @@ var concurrentIndexCleanups = map[string]string{
 	"443_issue_project_status_index":                            "idx_issue_project_status",
 	"444_github_pr_head_sha_index":                              "idx_github_pull_request_head_sha",
 	"445_comment_delegated_failure_unsettled_index":             "idx_comment_delegated_failure_unsettled",
+	"462_projectauth_access_grants_project_unique":              "projectauth_access_grants_project_uniq",
+	"463_projectauth_access_grants_issue_unique":                "projectauth_access_grants_issue_uniq",
+	"464_projectauth_access_grants_workspace_project_index":     "projectauth_access_grants_workspace_project_idx",
+	"465_projectauth_access_grants_subject_index":               "projectauth_access_grants_subject_idx",
+	"466_projectauth_organizations_unique":                      "projectauth_organizations_workspace_provider_external_uniq",
+	"467_projectauth_organization_members_unique":               "projectauth_organization_members_pkey",
+	"468_projectauth_organization_members_user_index":           "projectauth_organization_members_user_idx",
+	"470_projectauth_access_grants_id_unique":                   "projectauth_access_grants_id_uniq",
+	"471_projectauth_organizations_id_unique":                   "projectauth_organizations_id_uniq",
+	"474_task_retry_policy_workspace_name_unique":               "task_retry_policy_workspace_name_uniq",
+	"475_task_retry_policy_workspace_priority_index":            "idx_task_retry_policy_workspace_priority",
+	"476_projectauth_issue_access_grants_unique":                "projectauth_issue_access_grants_uniq",
+	"477_projectauth_issue_access_grants_issue_index":           "projectauth_issue_access_grants_issue_idx",
+	"478_projectauth_issue_access_grants_subject_index":         "projectauth_issue_access_grants_subject_idx",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
