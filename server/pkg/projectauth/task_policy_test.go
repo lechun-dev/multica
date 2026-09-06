@@ -6,13 +6,69 @@ import (
 	"testing"
 )
 
-type fakeIssuePermissionRepo struct {
-	fakeRepo
-	grants map[string]bool
+// legacyGrantAdapter implements the unified grant contract but intentionally
+// omits ResourceRepository. It is the red test for the enabled fail-closed
+// task binding requirement.
+type legacyGrantAdapter struct {
+	workspace        WorkspaceRole
+	project          ProjectRole
+	projectWorkspace string
 }
 
-func (f *fakeIssuePermissionRepo) IssuePermission(_ context.Context, _, _ string, permission Permission) (bool, error) {
-	return f.grants[string(permission)], nil
+func (r *legacyGrantAdapter) WorkspaceRole(context.Context, string, string) (WorkspaceRole, error) {
+	return r.workspace, nil
+}
+func (r *legacyGrantAdapter) ProjectRole(context.Context, string, string) (ProjectRole, error) {
+	return r.project, nil
+}
+func (r *legacyGrantAdapter) ProjectWorkspace(context.Context, string) (string, error) {
+	return r.projectWorkspace, nil
+}
+func (r *legacyGrantAdapter) VisibleProjectIDs(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+func (r *legacyGrantAdapter) ListAccessGrants(context.Context, string, string, string) ([]AccessGrant, error) {
+	return nil, nil
+}
+func (r *legacyGrantAdapter) ListUserOrganizations(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+func (r *legacyGrantAdapter) UpsertAccessGrant(context.Context, AccessGrant) error { return nil }
+func (r *legacyGrantAdapter) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, ProjectRole, Permission) error {
+	return nil
+}
+
+type fakeLegacyIssuePermissionRepo struct {
+	fakeRepo
+}
+
+// sequencedGrantRepo lets the regression tests model a successful minimum
+// project View check followed by a failing project permission lookup. A task
+// direct grant is returned after that failure to prove it cannot mask the
+// project-level error.
+type sequencedGrantRepo struct {
+	fakeGrantRepo
+	responses []struct {
+		grants []AccessGrant
+		err    error
+	}
+	calls int
+}
+
+func (r *sequencedGrantRepo) ListAccessGrants(context.Context, string, string, string) ([]AccessGrant, error) {
+	index := r.calls
+	r.calls++
+	if index >= len(r.responses) {
+		return nil, nil
+	}
+	return r.responses[index].grants, r.responses[index].err
+}
+
+// 2026-08-27 coder(lq): Model an adapter that still exposes the historical
+// issue grant lookup. CheckIssue must never call it after task permissions
+// became fully inherited from the parent project.
+func (f *fakeLegacyIssuePermissionRepo) IssuePermission(context.Context, string, string, string, Permission) (bool, error) {
+	return true, nil
 }
 
 func TestCheckIssueInheritsProjectPermission(t *testing.T) {
@@ -21,6 +77,7 @@ func TestCheckIssueInheritsProjectPermission(t *testing.T) {
 		workspace:        string(WorkspaceMember),
 		project:          string(ProjectViewer),
 		projectWorkspace: "ws-1",
+		issueProject:     "project-1",
 	}, true)
 
 	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); err != nil {
@@ -59,6 +116,7 @@ func TestCheckIssueDelegatesEveryPermissionToProject(t *testing.T) {
 				workspace:        string(WorkspaceMember),
 				project:          string(tc.role),
 				projectWorkspace: "ws-1",
+				issueProject:     "project-1",
 			}, true)
 			err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", tc.permission)
 			if (err == nil) != tc.want {
@@ -94,11 +152,12 @@ func TestCheckIssueRejectsUserWithoutProjectMembership(t *testing.T) {
 		workspace:        string(WorkspaceMember),
 		projectWorkspace: "ws-1",
 		projectErr:       errors.New("project membership not found"),
+		issueProject:     "project-1",
 	}, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
 
-	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); !errors.Is(err, ErrNoProjectAccess) {
-		t.Fatalf("member without project access got %v, want %v", err, ErrNoProjectAccess)
+	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("member without project access got %v, want %v", err, ErrForbidden)
 	}
 }
 
@@ -122,31 +181,27 @@ func TestCheckIssueRequiresProjectBinding(t *testing.T) {
 	}
 }
 
-func TestCheckIssueAllowsMentionedTaskMember(t *testing.T) {
-	service := New(&fakeIssuePermissionRepo{fakeRepo: fakeRepo{
+func TestCheckIssueDoesNotBypassProjectMembership(t *testing.T) {
+	service := New(&fakeRepo{
 		workspace:        string(WorkspaceMember),
 		projectWorkspace: "ws-1",
 		projectErr:       errors.New("project membership not found"),
-	}, grants: map[string]bool{string(View): true, string(IssueComment): true}}, true)
+		issueProject:     "project-1",
+	}, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
 
-	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); err != nil {
-		t.Fatalf("mentioned task member should view task: %v", err)
-	}
-	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", IssueComment); err != nil {
-		t.Fatalf("mentioned task member should comment: %v", err)
-	}
-	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", Edit); !errors.Is(err, ErrNoProjectAccess) {
-		t.Fatalf("task member must not edit through task grant, got %v", err)
+	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", View); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("task access must inherit project membership, got %v", err)
 	}
 }
 
-func TestCheckIssueRejectsTaskMemberWithoutGrant(t *testing.T) {
-	repo := &fakeIssuePermissionRepo{fakeRepo: fakeRepo{
+func TestCheckIssueIgnoresLegacyDirectGrant(t *testing.T) {
+	repo := &fakeLegacyIssuePermissionRepo{fakeRepo: fakeRepo{
 		workspace:        string(WorkspaceMember),
 		projectWorkspace: "ws-1",
 		projectErr:       errors.New("project membership not found"),
-	}, grants: map[string]bool{}}
+		issueProject:     "project-1",
+	}}
 
 	err := New(repo, true).CheckIssue(
 		context.Background(),
@@ -155,7 +210,54 @@ func TestCheckIssueRejectsTaskMemberWithoutGrant(t *testing.T) {
 		"project-1",
 		View,
 	)
-	if !errors.Is(err, ErrNoProjectAccess) {
+	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("legacy task grant must not bypass project membership, got %v", err)
+	}
+}
+
+func TestCheckIssueFailsClosedWithoutResourceRepository(t *testing.T) {
+	repo := &legacyGrantAdapter{
+		workspace:        WorkspaceMember,
+		project:          ProjectViewer,
+		projectWorkspace: "ws-1",
+	}
+	if err := New(repo, true).CheckIssue(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "issue-1", "project-1", View); !errors.Is(err, ErrMigrationRequired) {
+		t.Fatalf("CheckIssue without resource repository = %v, want %v", err, ErrMigrationRequired)
+	}
+}
+
+func TestCheckIssueDoesNotFallbackOnProjectGrantErrors(t *testing.T) {
+	for _, projectErr := range []error{ErrStorageUnavailable, ErrNotWorkspaceMember, ErrNoProjectAccess} {
+		t.Run(projectErr.Error(), func(t *testing.T) {
+			repo := &sequencedGrantRepo{
+				fakeGrantRepo: fakeGrantRepo{fakeRepo: fakeRepo{
+					workspace:        string(WorkspaceMember),
+					projectWorkspace: "ws-1",
+					issueProject:     "project-1",
+				}},
+				responses: []struct {
+					grants []AccessGrant
+					err    error
+				}{
+					{grants: []AccessGrant{{ProjectID: "project-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: View}}},
+					{err: projectErr},
+					{grants: []AccessGrant{{ProjectID: "project-1", IssueID: "issue-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: Edit}}},
+				},
+			}
+
+			err := New(repo, true).CheckIssue(
+				context.Background(),
+				Subject{UserID: "u-1", WorkspaceID: "ws-1"},
+				"issue-1",
+				"project-1",
+				Edit,
+			)
+			if !errors.Is(err, projectErr) {
+				t.Fatalf("CheckIssue error = %v, want project error %v", err, projectErr)
+			}
+			if repo.calls != 2 {
+				t.Fatalf("task grant lookup ran after project error: %d calls, want 2", repo.calls)
+			}
+		})
 	}
 }

@@ -1113,6 +1113,13 @@ export interface RuntimeModel {
   supports_explicit_standard_service_tier?: boolean;
 }
 
+/** A model named by a runtime but unavailable on the installed host. */
+export interface RuntimeUnavailableModel {
+  id: string;
+  label: string;
+  reason?: string;
+}
+
 export interface RuntimeModelServiceTier {
   /** Catalog ID sent to the provider protocol unchanged. */
   id: string;
@@ -1155,6 +1162,7 @@ export interface RuntimeModelListRequest {
   runtime_id: string;
   status: RuntimeModelListStatus;
   models?: RuntimeModel[];
+  unavailable_models?: RuntimeUnavailableModel[];
   supported: boolean;
   error?: string;
   created_at: string;
@@ -1175,6 +1183,7 @@ export interface RuntimeModelListRequest {
 // from "provider does not honour per-agent model selection".
 export interface RuntimeModelsResult {
   models: RuntimeModel[];
+  unavailableModels?: RuntimeUnavailableModel[];
   supported: boolean;
   /**
    * True when the server answered from its catalog cache rather than a live

@@ -16,10 +16,16 @@ function makeWc(initialLevel = 0) {
 function key(
   k: string,
   mods: Partial<Pick<ShortcutInput, "control" | "meta" | "alt" | "shift">> = {},
+  code = /^[0-9]$/.test(k)
+    ? `Digit${k}`
+    : /^[a-z]$/i.test(k)
+      ? `Key${k.toUpperCase()}`
+      : "",
 ): ShortcutInput {
   return {
     type: "keyDown",
     key: k,
+    code,
     control: false,
     meta: false,
     alt: false,

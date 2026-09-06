@@ -118,6 +118,17 @@ type CreateProjectRequest struct {
 	StartDate   *string                               `json:"start_date"`
 	DueDate     *string                               `json:"due_date"`
 	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
+	// 2026-09-01 coder(lq): Persist creation-time grants in the same
+	// transaction as the project so a failed authorization cannot leave a
+	// project with only a partial or legacy membership state.
+	AccessGrants []CreateProjectAccessGrantRequest `json:"access_grants,omitempty"`
+}
+
+type CreateProjectAccessGrantRequest struct {
+	SubjectType projectauth.SubjectType `json:"subject_type"`
+	SubjectID   string                  `json:"subject_id"`
+	Role        projectauth.ProjectRole `json:"role"`
+	Permission  projectauth.Permission  `json:"permission"`
 }
 
 // CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
@@ -314,6 +325,36 @@ func (h *Handler) ensureProjectOwnerInTx(ctx context.Context, tx pgx.Tx, project
 		return nil
 	}
 	return projectauth.New(newProjectAuthRepository(tx), true).EnsureOwner(ctx, projectID, userID)
+}
+
+// 2026-09-01 coder(lq): Creation-time grants share the project transaction.
+// This keeps the project row, its owner, and every requested user/organization/
+// everyone grant atomic; a bad subject or role rolls back the whole create.
+func (h *Handler) initializeProjectAccessInTx(ctx context.Context, tx pgx.Tx, workspaceID, projectID, userID string, requests []CreateProjectAccessGrantRequest) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(requests) == 0 {
+		return nil
+	}
+	repo := newProjectAuthRepository(tx)
+	workspaceRole, err := repo.WorkspaceRole(ctx, workspaceID, userID)
+	if err != nil {
+		return err
+	}
+	actor := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: workspaceRole}
+	service := projectauth.New(repo, true)
+	for _, request := range requests {
+		grant := projectauth.AccessGrant{
+			WorkspaceID: workspaceID,
+			ProjectID:   projectID,
+			SubjectType: request.SubjectType,
+			SubjectID:   strings.TrimSpace(request.SubjectID),
+			Role:        request.Role,
+			Permission:  request.Permission,
+		}
+		if err := service.GrantAccess(ctx, actor, grant); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {

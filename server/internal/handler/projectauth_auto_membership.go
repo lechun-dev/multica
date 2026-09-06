@@ -21,6 +21,21 @@ func promoteProjectMemberWithExecutor(ctx context.Context, executor dbExecutor, 
 	return projectauth.New(newProjectAuthRepository(executor), true).PromoteMember(ctx, projectID, userID, role)
 }
 
+// 2026-09-07 coder(lq): Preserve the project-description mention behavior
+// used by project create/update. Mentioned human members receive the project
+// Viewer role; task/comment mentions are reconciled separately below.
+func promoteMentionedMembersWithExecutor(ctx context.Context, executor dbExecutor, projectID, content string) error {
+	for _, mention := range util.ParseMentions(content) {
+		if mention.Type != "member" {
+			continue
+		}
+		if err := promoteProjectMemberWithExecutor(ctx, executor, projectID, mention.ID, projectauth.ProjectViewer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // 2026-08-28 coder(lq): Agents are permission aliases for their owning user.
 // Resolve through the project workspace in the same query so an agent from a
 // different workspace can never create a project grant accidentally.

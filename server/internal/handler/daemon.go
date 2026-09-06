@@ -45,6 +45,10 @@ import (
 // state poll interval.
 const claimPollHintMinDelay = time.Second
 
+// HeaderActiveRunsTruncated is reserved for coordination reads that cap the
+// number of active runs returned to callers.
+const HeaderActiveRunsTruncated = "X-Active-Runs-Truncated"
+
 // ---------------------------------------------------------------------------
 // Daemon workspace ownership helpers
 // ---------------------------------------------------------------------------
