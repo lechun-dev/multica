@@ -219,6 +219,28 @@ func projectlessIssueSystemRoleForTest(t *testing.T, issueID, userID string) (ro
 	return role, source
 }
 
+// 2026-09-06 coder(lq): Keep projectless automatic grants covered against
+// PostgreSQL parameter inference: subject_id is text while granted_by is uuid,
+// so these values must not share one positional parameter.
+func TestUpsertProjectlessIssueAccessGrantUsesDistinctSubjectAndGranterParams(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+
+	issueID := dbfx.Issue(t, "Projectless automatic grant SQL regression")
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM projectauth_issue_access_grants WHERE issue_id = $1`, issueID)
+	})
+
+	if err := upsertProjectlessIssueAccessGrant(context.Background(), testPool, issueID, testUserID, projectauth.ProjectOwner); err != nil {
+		t.Fatalf("upsertProjectlessIssueAccessGrant: %v", err)
+	}
+	role, source := projectlessIssueSystemRoleForTest(t, issueID, testUserID)
+	if role != string(projectauth.ProjectOwner) || source != string(projectauth.GrantSourceSystem) {
+		t.Fatalf("projectless creator grant = (%q, %q), want (%q, %q)", role, source, projectauth.ProjectOwner, projectauth.GrantSourceSystem)
+	}
+}
+
 // 2026-08-27 coder(lq): Project lead updates and project descriptions are
 // authorization events, so they must grant owner and viewer roles atomically.
 func TestProjectUpdatePromotesMemberLeadAndMention(t *testing.T) {

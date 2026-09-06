@@ -410,9 +410,9 @@ func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor,
 	_, err := executor.Exec(ctx, `
 		INSERT INTO projectauth_issue_access_grants
 			(workspace_id, issue_id, subject_type, subject_id, role_key, source, granted_by)
-		VALUES ($1::uuid, $2::uuid, 'user', $3, $4, 'system', $3::uuid)
+		VALUES ($1::uuid, $2::uuid, 'user', $3::text, $4, 'system', $5::uuid)
 		ON CONFLICT (workspace_id, issue_id, subject_type, subject_id, role_key, source) DO NOTHING`,
-		workspaceID, issueID, userID, string(role))
+		workspaceID, issueID, userID, string(role), userID)
 	return err
 }
 
