@@ -30,7 +30,6 @@ import { DesktopClientUsageReporter } from "./platform/client-usage-reporter";
 import { DiagnosticRouteReporter } from "./platform/diagnostic-route-reporter";
 import { flushFreezeBreadcrumb } from "./freeze-flush";
 import { DesktopAuthSessionBridge } from "./platform/auth-session-bridge";
-import { useTabSelectionShortcut } from "./hooks/use-tab-selection-shortcut";
 import { DESKTOP_PRODUCT_NAME } from "./desktop-brand";
 import {
   type SessionTeardown,

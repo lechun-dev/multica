@@ -125,11 +125,13 @@ export function LoginPage({
   // Tracks how the existing session was detected so handleCliAuthorize
   // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
-  // 2026-09-05 coder(lq): Keep the session-expired explanation visible after auth redirects.
-  const sessionExpired = useAuthStore((state) => state.expired);
   // CLI authorization still needs the email-code flow as a fallback, even
   // when the surrounding Web login surface is DingTalk-only.
   const dingtalkOnly = hideEmailLogin && !cliCallback;
+  // The last session ended because the server rejected its credential, not
+  // because the user asked to leave. Without saying so, landing here reads as
+  // the app having lost their work for no reason.
+  const sessionExpired = useAuthStore((state) => state.expired);
 
   // Check for existing session when CLI callback is present.
   // Prioritises cookie auth (= current browser session) to avoid authorising

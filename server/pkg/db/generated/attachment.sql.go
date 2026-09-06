@@ -238,7 +238,6 @@ type CreateSourceContextAttachmentRow struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
-	PendingComment  bool               `json:"pending_comment"`
 }
 
 func (q *Queries) CreateSourceContextAttachment(ctx context.Context, arg CreateSourceContextAttachmentParams) (CreateSourceContextAttachmentRow, error) {
@@ -354,7 +353,6 @@ type DeleteAttachmentsBySourceContextRow struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
-	PendingComment  bool               `json:"pending_comment"`
 }
 
 func (q *Queries) DeleteAttachmentsBySourceContext(ctx context.Context, arg DeleteAttachmentsBySourceContextParams) ([]DeleteAttachmentsBySourceContextRow, error) {
@@ -1012,8 +1010,8 @@ type ListAttachmentsByIssueParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-// 2026-09-05 coder(lq): Keep pending_comment in the generated value so sqlc's
-// Attachment model stays complete; the predicate below still hides drafts.
+// Keep the projection explicit: pending_comment is an internal lifecycle flag,
+// not part of the public Attachment model.
 func (q *Queries) ListAttachmentsByIssue(ctx context.Context, arg ListAttachmentsByIssueParams) ([]Attachment, error) {
 	rows, err := q.db.Query(ctx, listAttachmentsByIssue, arg.IssueID, arg.WorkspaceID)
 	if err != nil {
