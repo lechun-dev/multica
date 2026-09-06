@@ -565,7 +565,7 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 			Name:        m.UserName,
 			Email:       m.UserEmail,
 			AvatarURL:   h.resolveAvatarURLPtr(textToPtr(m.UserAvatarUrl)),
-			HasLoggedIn: m.HasLoggedIn,
+			HasLoggedIn: m.HasLoggedIn.Valid && m.HasLoggedIn.Bool,
 		}
 	}
 

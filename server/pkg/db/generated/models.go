@@ -1230,6 +1230,19 @@ type ProjectauthAccessGrant struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ProjectauthIssueAccessGrant struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	SubjectType string             `json:"subject_type"`
+	SubjectID   string             `json:"subject_id"`
+	RoleKey     string             `json:"role_key"`
+	Source      string             `json:"source"`
+	GrantedBy   pgtype.UUID        `json:"granted_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ProjectauthOrganization struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -1247,6 +1260,11 @@ type ProjectauthOrganizationMember struct {
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
 	UserID         pgtype.UUID        `json:"user_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectauthUserLogin struct {
+	UserID         pgtype.UUID        `json:"user_id"`
+	LastLoggedInAt pgtype.Timestamptz `json:"last_logged_in_at"`
 }
 
 type QuickAction struct {

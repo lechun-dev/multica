@@ -153,7 +153,6 @@ type CreateAttachmentRow struct {
 	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
 	SourceContextID pgtype.UUID        `json:"source_context_id"`
-	PendingComment  bool               `json:"pending_comment"`
 	IssueRevision   int64              `json:"issue_revision"`
 	CommentRevision int64              `json:"comment_revision"`
 }
@@ -222,26 +221,7 @@ type CreateSourceContextAttachmentParams struct {
 	SizeBytes       int64       `json:"size_bytes"`
 }
 
-type CreateSourceContextAttachmentRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
-	IssueID         pgtype.UUID        `json:"issue_id"`
-	CommentID       pgtype.UUID        `json:"comment_id"`
-	UploaderType    string             `json:"uploader_type"`
-	UploaderID      pgtype.UUID        `json:"uploader_id"`
-	Filename        string             `json:"filename"`
-	Url             string             `json:"url"`
-	ContentType     string             `json:"content_type"`
-	SizeBytes       int64              `json:"size_bytes"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
-	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
-	TaskID          pgtype.UUID        `json:"task_id"`
-	SourceContextID pgtype.UUID        `json:"source_context_id"`
-	PendingComment  bool               `json:"pending_comment"`
-}
-
-func (q *Queries) CreateSourceContextAttachment(ctx context.Context, arg CreateSourceContextAttachmentParams) (CreateSourceContextAttachmentRow, error) {
+func (q *Queries) CreateSourceContextAttachment(ctx context.Context, arg CreateSourceContextAttachmentParams) (Attachment, error) {
 	row := q.db.QueryRow(ctx, createSourceContextAttachment,
 		arg.ID,
 		arg.WorkspaceID,
@@ -253,7 +233,7 @@ func (q *Queries) CreateSourceContextAttachment(ctx context.Context, arg CreateS
 		arg.ContentType,
 		arg.SizeBytes,
 	)
-	var i CreateSourceContextAttachmentRow
+	var i Attachment
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
@@ -338,34 +318,15 @@ type DeleteAttachmentsBySourceContextParams struct {
 	SourceContextID pgtype.UUID `json:"source_context_id"`
 }
 
-type DeleteAttachmentsBySourceContextRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
-	IssueID         pgtype.UUID        `json:"issue_id"`
-	CommentID       pgtype.UUID        `json:"comment_id"`
-	UploaderType    string             `json:"uploader_type"`
-	UploaderID      pgtype.UUID        `json:"uploader_id"`
-	Filename        string             `json:"filename"`
-	Url             string             `json:"url"`
-	ContentType     string             `json:"content_type"`
-	SizeBytes       int64              `json:"size_bytes"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
-	ChatMessageID   pgtype.UUID        `json:"chat_message_id"`
-	TaskID          pgtype.UUID        `json:"task_id"`
-	SourceContextID pgtype.UUID        `json:"source_context_id"`
-	PendingComment  bool               `json:"pending_comment"`
-}
-
-func (q *Queries) DeleteAttachmentsBySourceContext(ctx context.Context, arg DeleteAttachmentsBySourceContextParams) ([]DeleteAttachmentsBySourceContextRow, error) {
+func (q *Queries) DeleteAttachmentsBySourceContext(ctx context.Context, arg DeleteAttachmentsBySourceContextParams) ([]Attachment, error) {
 	rows, err := q.db.Query(ctx, deleteAttachmentsBySourceContext, arg.WorkspaceID, arg.SourceContextID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []DeleteAttachmentsBySourceContextRow{}
+	items := []Attachment{}
 	for rows.Next() {
-		var i DeleteAttachmentsBySourceContextRow
+		var i Attachment
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
