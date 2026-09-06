@@ -29,7 +29,9 @@ export function ProjectPicker({
 }: {
   projectId: string | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
-  triggerRender?: React.ReactElement;
+  // 2026-09-06 coder(lq): Keep custom trigger props open so disabled state can
+  // be forwarded when a task is visible through a task-only project grant.
+  triggerRender?: React.ReactElement<Record<string, unknown>>;
   align?: "start" | "center" | "end";
   /** Open the dropdown on first mount. Used by progressive-disclosure
    *  sidebars so a newly-added field immediately enters edit state. */
