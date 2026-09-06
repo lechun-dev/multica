@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type httpDoerFunc func(*http.Request) (*http.Response, error)
@@ -171,7 +172,7 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	}
 }
 
-func TestDingTalkOAuthProviderBackfillsMissingNickname(t *testing.T) {
+func TestDingTalkOAuthProviderBackfillsMissingNicknameFromEnterpriseDetail(t *testing.T) {
 	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/oauth-token":
@@ -342,6 +343,41 @@ func TestDingTalkOAuthProviderSurfacesDirectorySyncContext(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "缺少通讯录权限") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestDingTalkOAuthProviderRetriesDirectoryQPSLimit(t *testing.T) {
+	var departmentCalls int32
+	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/token":
+			return jsonResponse(http.StatusOK, `{"accessToken":"app-token"}`), nil
+		case "/departments":
+			if atomic.AddInt32(&departmentCalls, 1) == 1 {
+				return jsonResponse(http.StatusOK, `{"errcode":88,"errmsg":"您的应用调用当前接口次数过多，触发 QPS 流控"}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[]}}`), nil
+		case "/users":
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[],"has_more":false}}`), nil
+		default:
+			return jsonResponse(http.StatusNotFound, `{}`), nil
+		}
+	})
+	p := DingTalkOAuthProvider{
+		Client:                   client,
+		AppTokenURL:              "https://example.test/token",
+		DepartmentListURL:        "https://example.test/departments",
+		UserListURL:              "https://example.test/users",
+		ClientID:                 "id",
+		ClientSecret:             "secret",
+		DirectoryRequestInterval: -1,
+		DirectoryRetryDelays:     []time.Duration{0},
+	}
+	if _, err := p.LoadDirectory(context.Background()); err != nil {
+		t.Fatalf("LoadDirectory() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&departmentCalls); got != 2 {
+		t.Fatalf("department calls = %d, want 2", got)
 	}
 }
 

@@ -12,7 +12,45 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
+
+const defaultDingTalkDirectoryRequestInterval = 100 * time.Millisecond
+
+// 2026-09-07 coder(lq): Keep directory API calls below DingTalk's aggregate
+// QPS limit and make retry timing injectable for fast deterministic tests.
+type dingtalkDirectoryLimiter struct {
+	mu       sync.Mutex
+	next     time.Time
+	interval time.Duration
+}
+
+func (l *dingtalkDirectoryLimiter) wait(ctx context.Context) error {
+	if l == nil || l.interval <= 0 {
+		return nil
+	}
+	now := time.Now()
+	l.mu.Lock()
+	start := l.next
+	if start.Before(now) {
+		start = now
+	}
+	l.next = start.Add(l.interval)
+	delay := start.Sub(now)
+	l.mu.Unlock()
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // DingTalkOAuthProvider implements the standard DingTalk OAuth2 code flow.
 // AuthURL and UserURL are overridable for staging and contract tests.
@@ -31,6 +69,11 @@ type DingTalkOAuthProvider struct {
 	ClientSecret        string
 	Scope               string
 	CorpID              string
+	// DirectoryRequestInterval defaults to 100ms. Set it below zero only for
+	// controlled environments that provide their own QPS protection.
+	DirectoryRequestInterval time.Duration
+	// DirectoryRetryDelays overrides the default 1s/2s/4s rate-limit backoff.
+	DirectoryRetryDelays []time.Duration
 }
 
 func (p DingTalkOAuthProvider) AuthorizationURL(_ context.Context, state, redirectURI string) (string, error) {
@@ -177,7 +220,7 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 		if identity.Name == "" {
 			identity.Name = enterpriseIdentity.Name
 		}
-		if identity.Email == "" {
+		if enterpriseIdentity.Email != "" {
 			identity.Email = enterpriseIdentity.Email
 		}
 		if identity.AvatarURL == "" {
@@ -427,8 +470,16 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 	if token.AccessToken == "" {
 		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "DingTalk application token response missing accessToken", nil)
 	}
+	interval := p.DirectoryRequestInterval
+	if interval < 0 {
+		interval = 0
+	} else if interval == 0 {
+		interval = defaultDingTalkDirectoryRequestInterval
+	}
+	limiter := &dingtalkDirectoryLimiter{interval: interval}
 
 	departments := make([]DingTalkDirectoryDepartment, 0)
+	departmentIDs := make(map[string]struct{})
 	seen := map[string]bool{}
 	queue := []string{"1"}
 	for len(queue) > 0 {
@@ -438,7 +489,7 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 			continue
 		}
 		seen[id] = true
-		dept, err := p.loadDingTalkSubDepartments(ctx, token.AccessToken, id)
+		dept, err := p.loadDingTalkSubDepartments(ctx, token.AccessToken, id, limiter)
 		if err != nil {
 			return DingTalkDirectorySnapshot{}, err
 		}
@@ -446,6 +497,10 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 			if d.ID == "" {
 				continue
 			}
+			if _, exists := departmentIDs[d.ID]; exists {
+				continue
+			}
+			departmentIDs[d.ID] = struct{}{}
 			departments = append(departments, d)
 			queue = append(queue, d.ID)
 		}
@@ -453,7 +508,7 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 
 	membersByID := map[string]DingTalkDirectoryMember{}
 	for _, d := range append([]DingTalkDirectoryDepartment{{ID: "1"}}, departments...) {
-		members, err := p.loadDingTalkDepartmentUsers(ctx, token.AccessToken, d.ID)
+		members, err := p.loadDingTalkDepartmentUsers(ctx, token.AccessToken, d.ID, limiter)
 		if err != nil {
 			return DingTalkDirectorySnapshot{}, err
 		}
@@ -487,7 +542,7 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 	return DingTalkDirectorySnapshot{Departments: departments, Members: members}, nil
 }
 
-func (p DingTalkOAuthProvider) loadDingTalkSubDepartments(ctx context.Context, token, parentID string) ([]DingTalkDirectoryDepartment, error) {
+func (p DingTalkOAuthProvider) loadDingTalkSubDepartments(ctx context.Context, token, parentID string, limiter *dingtalkDirectoryLimiter) ([]DingTalkDirectoryDepartment, error) {
 	endpoint := p.DepartmentListURL
 	if endpoint == "" {
 		endpoint = "https://oapi.dingtalk.com/topapi/v2/department/listsub"
@@ -502,7 +557,7 @@ func (p DingTalkOAuthProvider) loadDingTalkSubDepartments(ctx context.Context, t
 		ErrMsg  string                       `json:"errmsg"`
 		Result  dingTalkDepartmentListResult `json:"result"`
 	}
-	if err := p.postAppJSON(ctx, endpoint, token, payload, &response); err != nil {
+	if err := p.postDirectoryAppJSON(ctx, endpoint, token, payload, &response, limiter); err != nil {
 		return nil, newDingTalkDirectorySyncError("departments", parentID, 0, "", err)
 	}
 	if response.ErrCode != 0 {
@@ -515,7 +570,7 @@ func (p DingTalkOAuthProvider) loadDingTalkSubDepartments(ctx context.Context, t
 	return out, nil
 }
 
-func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, token, departmentID string) ([]DingTalkDirectoryMember, error) {
+func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, token, departmentID string, limiter *dingtalkDirectoryLimiter) ([]DingTalkDirectoryMember, error) {
 	endpoint := p.UserListURL
 	if endpoint == "" {
 		endpoint = "https://oapi.dingtalk.com/topapi/v2/user/list"
@@ -543,7 +598,7 @@ func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, 
 				HasMore    bool  `json:"has_more"`
 			} `json:"result"`
 		}
-		if err := p.postAppJSON(ctx, endpoint, token, payload, &response); err != nil {
+		if err := p.postDirectoryAppJSON(ctx, endpoint, token, payload, &response, limiter); err != nil {
 			return nil, newDingTalkDirectorySyncError("department_users", departmentID, 0, "", err)
 		}
 		if response.ErrCode != 0 {
@@ -565,6 +620,60 @@ func (p DingTalkOAuthProvider) loadDingTalkDepartmentUsers(ctx context.Context, 
 		cursor = response.Result.NextCursor
 	}
 	return users, nil
+}
+
+func (p DingTalkOAuthProvider) postDirectoryAppJSON(ctx context.Context, endpoint, accessToken string, payload []byte, out any, limiter *dingtalkDirectoryLimiter) error {
+	delays := p.DirectoryRetryDelays
+	if delays == nil {
+		delays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	}
+	for attempt := 0; ; attempt++ {
+		if err := limiter.wait(ctx); err != nil {
+			return err
+		}
+		err := p.postAppJSON(ctx, endpoint, accessToken, payload, out)
+		if err == nil || attempt >= len(delays) || !isDingTalkDirectoryRetryable(err) {
+			return err
+		}
+		if err := waitDingTalkDirectoryRetry(ctx, delays[attempt]); err != nil {
+			return err
+		}
+	}
+}
+
+func isDingTalkDirectoryRetryable(err error) bool {
+	var apiErr *DingTalkHTTPError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.Status == http.StatusTooManyRequests || apiErr.Status >= 500 {
+		return true
+	}
+	if apiErr.Code != "errcode:88" {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(apiErr.Message))
+	return message == "" ||
+		strings.Contains(message, "qps") ||
+		strings.Contains(message, "流控") ||
+		strings.Contains(message, "次数过多") ||
+		strings.Contains(message, "rate limit") ||
+		strings.Contains(message, "too many") ||
+		strings.Contains(message, "throttl")
+}
+
+func waitDingTalkDirectoryRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (p DingTalkOAuthProvider) postAppJSON(ctx context.Context, endpoint, accessToken string, payload []byte, out any) error {
