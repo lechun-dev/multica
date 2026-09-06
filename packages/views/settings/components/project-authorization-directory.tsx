@@ -12,6 +12,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { compareMemberRegistration } from "../../common/member-sorting";
 import { SettingsCard, SettingsSection } from "./settings-layout";
 
 const ALL_PEOPLE = "__all_people__";
@@ -97,7 +98,10 @@ export function ProjectAuthorizationDirectory({
       if (needle && !`${member.name} ${member.email}`.toLocaleLowerCase().includes(needle)) return;
       if (!byUser.has(member.user_id)) byUser.set(member.user_id, member);
     });
-    return [...byUser.values()].sort((left, right) => (left.name || left.email).localeCompare(right.name || right.email));
+    return [...byUser.values()].sort((left, right) =>
+      compareMemberRegistration(left, right) ||
+      (left.name || left.email).localeCompare(right.name || right.email),
+    );
   }, [members, search, selectedOrganizationIds]);
   const descendantMemberCounts = useMemo(() => {
     const counts = new Map<string, number>();

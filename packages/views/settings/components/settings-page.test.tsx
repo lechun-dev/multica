@@ -34,6 +34,7 @@ vi.mock("./plugins-tab", stub("PluginsTab"));
 vi.mock("./billing-tab", stub("BillingTab"));
 vi.mock("./project-permissions-tab", stub("ProjectPermissionsTab"));
 vi.mock("./project-permission-roles-tab", stub("ProjectPermissionRolesTab"));
+vi.mock("./project-authorization-organizations-tab", stub("ProjectAuthorizationOrganizationsTab"));
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Acme" }),
@@ -195,6 +196,19 @@ describe("SettingsPage project permissions switch", () => {
     expect(screen.getByRole("tab", { name: "Project Permissions" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Permission Roles" })).toBeInTheDocument();
     expect(screen.getByText("ProjectPermissionRolesTab")).toBeInTheDocument();
+  });
+
+  it("shows and mounts the organization directory when explicitly enabled", () => {
+    navigationState.search = "tab=project-authorization-organizations";
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+    });
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.getByRole("tab", { name: "Organization Directory" })).toBeInTheDocument();
+    expect(screen.getByText("ProjectAuthorizationOrganizationsTab")).toBeInTheDocument();
   });
 
   it("uses the wider content tier for project permission settings", () => {

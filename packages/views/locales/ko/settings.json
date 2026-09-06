@@ -342,7 +342,8 @@
       "mcp": "MCP",
       "billing": "결제 및 요금제",
       "project_permissions": "프로젝트 권한",
-      "project_permission_roles": "권한 역할"
+      "project_permission_roles": "권한 역할",
+      "project_authorization_organizations": "조직 디렉터리"
     }
   },
   "plugins": {

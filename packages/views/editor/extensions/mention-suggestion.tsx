@@ -54,6 +54,7 @@ import {
   sortUserItemsByRecency,
 } from "./mention-recency";
 import { matchesPinyin } from "./pinyin-match";
+import { compareMemberRegistration } from "../../common/member-sorting";
 import {
   createSuggestionPopupRender,
 } from "./suggestion-popup";
@@ -744,8 +745,9 @@ export function createMentionSuggestion(
         ? [{ id: "all", label: "All members", type: "all" as const }]
         : [];
 
-    const memberItems: MentionItem[] = members
+    const memberItems: MentionItem[] = [...members]
       .filter((m) => m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q))
+      .sort(compareMemberRegistration)
       .map((m) => ({
         id: m.user_id,
         label: m.name,
@@ -797,7 +799,11 @@ export function createMentionSuggestion(
     const userItems = sortUserItemsByRecency(
       [...memberItems, ...agentItems, ...squadItems],
       recency,
-    );
+    ).toSorted((left, right) => {
+      const leftUnregistered = left.type === "member" && left.notRegistered;
+      const rightUnregistered = right.type === "member" && right.notRegistered;
+      return Number(leftUnregistered) - Number(rightUnregistered);
+    });
 
     // Cached issues give an instant first paint; MentionList adds server
     // matches for done/cancelled and any other issues not in this cache.

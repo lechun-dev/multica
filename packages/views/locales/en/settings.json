@@ -342,7 +342,8 @@
       "mcp": "MCP",
       "billing": "Billing",
       "project_permissions": "Project Permissions",
-      "project_permission_roles": "Permission Roles"
+      "project_permission_roles": "Permission Roles",
+      "project_authorization_organizations": "Organization Directory"
     }
   },
   "plugins": {

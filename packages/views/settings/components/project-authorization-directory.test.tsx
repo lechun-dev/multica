@@ -134,6 +134,40 @@ describe("ProjectAuthorizationDirectory", () => {
     expect(screen.queryByText("Bob Chen")).not.toBeInTheDocument();
   });
 
+  it("places registered people before unregistered people", async () => {
+    listProjectAuthorizationOrganizations.mockResolvedValueOnce({
+      organizations,
+      members: [
+        {
+          organization_id: "org-engineering",
+          user_id: "registered",
+          name: "Zoe Registered",
+          email: "zoe@example.com",
+          workspace_role: "member",
+          has_logged_in: true,
+        },
+        {
+          organization_id: "org-engineering",
+          user_id: "unregistered",
+          name: "Aaron Unregistered",
+          email: "aaron@example.com",
+          workspace_role: "member",
+          has_logged_in: false,
+        },
+      ],
+      total: organizations.length,
+      member_total: 2,
+    });
+
+    renderDirectory();
+
+    const registered = await screen.findByText("Zoe Registered");
+    const unregistered = screen.getByText("Aaron Unregistered");
+    expect(
+      registered.compareDocumentPosition(unregistered) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows people even when no departments have been imported", async () => {
     listProjectAuthorizationOrganizations.mockResolvedValueOnce({
       organizations: [],

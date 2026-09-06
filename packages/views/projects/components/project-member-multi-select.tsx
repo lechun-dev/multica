@@ -14,6 +14,7 @@ import {
 } from "@multica/ui/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import { useT } from "../../i18n";
+import { compareMemberRegistration } from "../../common/member-sorting";
 
 function memberLabel(member: MemberWithUser | undefined, notRegisteredSuffix: string): string {
   if (!member) return "";
@@ -75,7 +76,9 @@ export function ProjectMemberMultiSelect({
         if (!needle) return true;
         return `${member.name} ${member.email}`.toLocaleLowerCase().includes(needle);
       })
-      .sort((left, right) => left.name.localeCompare(right.name));
+      .sort((left, right) =>
+        compareMemberRegistration(left, right) || left.name.localeCompare(right.name),
+      );
   }, [members, search]);
 
   const selectedMembers = useMemo(() => {

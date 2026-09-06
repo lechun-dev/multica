@@ -90,7 +90,7 @@ import {
 } from "./mention-suggestion";
 
 function fakeQc(data: {
-  members?: Array<{ user_id: string; name: string; role?: string }>;
+  members?: Array<{ user_id: string; name: string; role?: string; has_logged_in?: boolean }>;
   agents?: Array<{
     id: string;
     name: string;
@@ -217,6 +217,21 @@ describe("createMentionSuggestion", () => {
     const items = result as MentionItem[];
     expect(items.some((i) => i.type === "member" && i.label === "Alice")).toBe(true);
     expect(items.some((i) => i.type === "agent" && i.label === "Aegis")).toBe(true);
+  });
+
+  it("places registered members before unregistered members", () => {
+    const qc = fakeQc({
+      members: [
+        { user_id: "u-unregistered", name: "Aaron", role: "member", has_logged_in: false },
+        { user_id: "u-registered", name: "Zoe", role: "member", has_logged_in: true },
+      ],
+    });
+
+    const config = createMentionSuggestion(qc);
+    const members = (config.items!(itemArgs("")) as MentionItem[])
+      .filter((item) => item.type === "member");
+
+    expect(members.map((item) => item.label)).toEqual(["Zoe", "Aaron"]);
   });
 
   it("keeps an unbound agent discoverable but marks it as unselectable", () => {

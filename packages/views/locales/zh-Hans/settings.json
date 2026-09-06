@@ -342,7 +342,8 @@
       "mcp": "MCP",
       "billing": "账单与套餐",
       "project_permissions": "项目权限",
-      "project_permission_roles": "权限角色"
+      "project_permission_roles": "权限角色",
+      "project_authorization_organizations": "组织目录"
     }
   },
   "plugins": {

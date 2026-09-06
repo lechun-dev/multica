@@ -21,6 +21,7 @@ import {
 } from "./property-picker";
 import { useT } from "../../../i18n";
 import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
+import { compareMemberRegistration } from "../../../common/member-sorting";
 
 /**
  * Legacy boolean shape kept around for callers (e.g. `use-issue-actions.ts`)
@@ -131,7 +132,9 @@ function AssigneePickerImpl({
   const query = filter.trim().toLowerCase();
   const filteredMembers = members
     .filter((m) => m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query))
-    .sort((a, b) => getFreq("member", b.user_id) - getFreq("member", a.user_id));
+    .sort((a, b) =>
+      compareMemberRegistration(a, b) || getFreq("member", b.user_id) - getFreq("member", a.user_id),
+    );
   const filteredAgents = agents
     .filter((a) => !a.archived_at && (a.name.toLowerCase().includes(query) || matchesPinyin(a.name, query)))
     .sort((a, b) => getFreq("agent", b.id) - getFreq("agent", a.id));

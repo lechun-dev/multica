@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
   Copy,
@@ -77,6 +77,7 @@ import { api, errorCode } from "@multica/core/api";
 import { useLocale, useT } from "../../i18n";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
 import { formatStripeMinorAmount } from "./billing-format";
+import { compareMemberRegistration } from "../../common/member-sorting";
 import {
   isSingleSeatInvitePreview,
   purchasedSeatIsReadyForInvitation,
@@ -378,6 +379,10 @@ export function MembersTab() {
   const navigation = useOptionalNavigation();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
+  const sortedMembers = useMemo(
+    () => [...members].sort(compareMemberRegistration),
+    [members],
+  );
 
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<MemberRole>("member");
@@ -840,9 +845,9 @@ export function MembersTab() {
           </Card>
         )}
 
-        {members.length > 0 ? (
+        {sortedMembers.length > 0 ? (
           <SettingsCard>
-            {members.map((m) => (
+            {sortedMembers.map((m) => (
               <div key={m.id}>
                 <MemberRow
                   member={m}

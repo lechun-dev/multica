@@ -17,9 +17,9 @@ import enSettings from "../../../locales/en/settings.json";
 import { AssigneePicker } from "./assignee-picker";
 
 const MEMBERS = [
+  { user_id: "user-3", name: "Imported User", role: "member", has_logged_in: false },
   { user_id: "user-1", name: "Ada Lovelace", role: "member", has_logged_in: true },
   { user_id: "user-2", name: "Grace Hopper", role: "member", has_logged_in: true },
-  { user_id: "user-3", name: "Imported User", role: "member", has_logged_in: false },
 ];
 
 vi.mock("@tanstack/react-query", () => ({
@@ -102,5 +102,15 @@ describe("AssigneePicker search keyboard defaults", () => {
     expect(
       screen.getByText("Imported User (Not registered)"),
     ).toBeInTheDocument();
+  });
+
+  it("places registered members before unregistered members", () => {
+    renderPicker(vi.fn());
+
+    const registered = screen.getByText("Ada Lovelace");
+    const unregistered = screen.getByText("Imported User (Not registered)");
+    expect(
+      registered.compareDocumentPosition(unregistered) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

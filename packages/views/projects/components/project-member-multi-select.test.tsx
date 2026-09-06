@@ -56,4 +56,36 @@ describe("ProjectMemberMultiSelect", () => {
     expect(screen.getByText("Alice Zhang")).toBeInTheDocument();
     expect(screen.getByText("Bob Chen (Not registered)")).toBeInTheDocument();
   });
+
+  it("places registered members before unregistered members", async () => {
+    const user = userEvent.setup();
+    renderWithI18n(
+      <ProjectMemberMultiSelect
+        members={[
+          { ...members[1]!, name: "Aaron Chen" },
+          { ...members[0]!, name: "Zoe Zhang" },
+        ]}
+        selectedIds={new Set()}
+        onToggle={() => undefined}
+        onSelectAll={() => undefined}
+        onClear={() => undefined}
+        placeholder="Select people"
+        selectedLabel="Selected"
+        selectAllLabel="Select all"
+        clearLabel="Clear"
+        noResultsLabel="No results"
+        loadingLabel="Loading"
+        errorLabel="Error"
+        removeLabel="Remove"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Select people" }));
+
+    const registered = screen.getByText("Zoe Zhang");
+    const unregistered = screen.getByText("Aaron Chen (Not registered)");
+    expect(
+      registered.compareDocumentPosition(unregistered) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

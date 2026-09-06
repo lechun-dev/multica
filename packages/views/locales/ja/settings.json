@@ -342,7 +342,8 @@
       "mcp": "MCP",
       "billing": "請求とプラン",
       "project_permissions": "プロジェクト権限",
-      "project_permission_roles": "権限ロール"
+      "project_permission_roles": "権限ロール",
+      "project_authorization_organizations": "組織ディレクトリ"
     }
   },
   "plugins": {
