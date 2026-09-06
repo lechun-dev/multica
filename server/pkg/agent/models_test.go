@@ -86,6 +86,24 @@ func TestListModelsCopilotFallsBackToStatic(t *testing.T) {
 	}
 }
 
+func TestListModelsCodexAlwaysInjectsGrokModels(t *testing.T) {
+	// Codex model visibility is an application contract, so it remains stable
+	// when the daemon host has no Codex binary available for discovery.
+	got, err := ListModels(context.Background(), "codex", Command{Path: missingAgentExecutable(t, "codex")})
+	if err != nil {
+		t.Fatalf("ListModels(codex) error: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, model := range got.Models {
+		ids[model.ID] = true
+	}
+	for _, want := range []string{"grok-5.6", "grok-5.5"} {
+		if !ids[want] {
+			t.Errorf("ListModels(codex) missing %s: %+v", want, got.Models)
+		}
+	}
+}
+
 func TestParseKimiProviderThinking(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{

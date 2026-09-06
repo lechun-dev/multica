@@ -189,7 +189,9 @@ func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (C
 		})
 	case "codex":
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			return discovered(discoverCodexModels(ctx, runtimeCmd), nil)
+			// 2026-09-06 coder(lq): Codex always exposes the supplemental
+			// xAI models; their visibility must not depend on CLI discovery.
+			return discovered(ensureCodexModels(discoverCodexModels(ctx, runtimeCmd)), nil)
 		})
 	case "antigravity":
 		// agy 1.0.6 added a `--model` flag plus an `agy models` catalog
