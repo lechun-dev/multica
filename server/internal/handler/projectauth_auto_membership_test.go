@@ -53,6 +53,115 @@ func TestCurrentProjectRolesIncludesProjectCreator(t *testing.T) {
 	}
 }
 
+// 2026-09-07 coder(lq): Project views must expose the same delete capability
+// enforced by DeleteProject. An ordinary workspace member who created the
+// project is its immutable Owner, while a project Viewer must remain denied.
+func TestProjectResponsesExposeEffectiveDeleteCapability(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	creatorID := dbfx.User(t, "Project delete capability creator", fmt.Sprintf("project-delete-capability-creator-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, creatorID, "member")
+
+	createRecorder := httptest.NewRecorder()
+	createRequest := newRequestAs(creatorID, http.MethodPost, "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Project delete capability",
+	})
+	testHandler.CreateProject(createRecorder, createRequest)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created ProjectResponse
+	if err := json.NewDecoder(createRecorder.Body).Decode(&created); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, created.ID)
+	})
+	if created.CurrentUserRole == nil || *created.CurrentUserRole != string(projectauth.ProjectOwner) || !created.CanDelete {
+		t.Fatalf("created project access = role %v, can_delete %v; want owner, true", created.CurrentUserRole, created.CanDelete)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	testHandler.ListProjects(listRecorder, newRequestAs(creatorID, http.MethodGet,
+		"/api/projects?workspace_id="+testWorkspaceID, nil))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("ListProjects: expected 200, got %d: %s", listRecorder.Code, listRecorder.Body.String())
+	}
+	var listResponse struct {
+		Projects []ProjectResponse `json:"projects"`
+	}
+	if err := json.NewDecoder(listRecorder.Body).Decode(&listResponse); err != nil {
+		t.Fatalf("decode ListProjects: %v", err)
+	}
+	foundCreatorProject := false
+	for _, project := range listResponse.Projects {
+		if project.ID == created.ID {
+			foundCreatorProject = true
+			if project.CurrentUserRole == nil || *project.CurrentUserRole != string(projectauth.ProjectOwner) || !project.CanDelete {
+				t.Fatalf("listed creator project access = role %v, can_delete %v; want owner, true", project.CurrentUserRole, project.CanDelete)
+			}
+		}
+	}
+	if !foundCreatorProject {
+		t.Fatalf("creator project %s missing from ListProjects", created.ID)
+	}
+
+	getCreatorRecorder := httptest.NewRecorder()
+	getCreatorRequest := withURLParam(newRequestAs(creatorID, http.MethodGet,
+		"/api/projects/"+created.ID+"?workspace_id="+testWorkspaceID, nil), "id", created.ID)
+	testHandler.GetProject(getCreatorRecorder, getCreatorRequest)
+	if getCreatorRecorder.Code != http.StatusOK {
+		t.Fatalf("creator GetProject: expected 200, got %d: %s", getCreatorRecorder.Code, getCreatorRecorder.Body.String())
+	}
+	var creatorDetail ProjectResponse
+	if err := json.NewDecoder(getCreatorRecorder.Body).Decode(&creatorDetail); err != nil {
+		t.Fatalf("decode creator GetProject: %v", err)
+	}
+	if !creatorDetail.CanDelete {
+		t.Fatal("creator GetProject can_delete = false, want true")
+	}
+
+	viewerID := dbfx.User(t, "Project delete capability viewer", fmt.Sprintf("project-delete-capability-viewer-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, viewerID, "member")
+	if err := (&projectAuthRepository{db: testPool}).AddProjectMember(context.Background(), created.ID, viewerID, projectauth.ProjectViewer); err != nil {
+		t.Fatalf("add project viewer: %v", err)
+	}
+
+	getViewerRecorder := httptest.NewRecorder()
+	getViewerRequest := withURLParam(newRequestAs(viewerID, http.MethodGet,
+		"/api/projects/"+created.ID+"?workspace_id="+testWorkspaceID, nil), "id", created.ID)
+	testHandler.GetProject(getViewerRecorder, getViewerRequest)
+	if getViewerRecorder.Code != http.StatusOK {
+		t.Fatalf("viewer GetProject: expected 200, got %d: %s", getViewerRecorder.Code, getViewerRecorder.Body.String())
+	}
+	var viewerDetail ProjectResponse
+	if err := json.NewDecoder(getViewerRecorder.Body).Decode(&viewerDetail); err != nil {
+		t.Fatalf("decode viewer GetProject: %v", err)
+	}
+	if viewerDetail.CanDelete {
+		t.Fatal("viewer GetProject can_delete = true, want false")
+	}
+
+	viewerDeleteRecorder := httptest.NewRecorder()
+	viewerDeleteRequest := withURLParam(newRequestAs(viewerID, http.MethodDelete,
+		"/api/projects/"+created.ID+"?workspace_id="+testWorkspaceID, nil), "id", created.ID)
+	testHandler.DeleteProject(viewerDeleteRecorder, viewerDeleteRequest)
+	if viewerDeleteRecorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer DeleteProject: expected 403, got %d: %s", viewerDeleteRecorder.Code, viewerDeleteRecorder.Body.String())
+	}
+
+	creatorDeleteRecorder := httptest.NewRecorder()
+	creatorDeleteRequest := withURLParam(newRequestAs(creatorID, http.MethodDelete,
+		"/api/projects/"+created.ID+"?workspace_id="+testWorkspaceID, nil), "id", created.ID)
+	testHandler.DeleteProject(creatorDeleteRecorder, creatorDeleteRequest)
+	if creatorDeleteRecorder.Code != http.StatusNoContent {
+		t.Fatalf("creator DeleteProject: expected 204, got %d: %s", creatorDeleteRecorder.Code, creatorDeleteRecorder.Body.String())
+	}
+}
+
 // 2026-09-05 coder(lq): Execute the real revoke statement against PostgreSQL
 // so a future advisory-lock change cannot reintroduce uuid = text inference.
 func TestDeleteAccessGrantRemovesManualMemberGrant(t *testing.T) {

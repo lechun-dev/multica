@@ -25,6 +25,8 @@ export interface Project {
   resource_count: number;
   /** Explicit role on this project for the signed-in user; omitted by legacy backends. */
   current_user_role?: string | null;
+  /** Whether the signed-in user may delete this project. */
+  can_delete?: boolean;
 }
 
 export interface CreateProjectRequest {

@@ -52,6 +52,10 @@ type ProjectResponse struct {
 	// legacy deployments with permissions disabled.
 	// 2026-08-31 coder(lq): Keep project-role display separate from workspace role.
 	CurrentUserRole *string `json:"current_user_role"`
+	// CanDelete mirrors the SettingsManage check used by DeleteProject so the
+	// client does not infer project permissions from the caller's workspace role.
+	// 2026-09-07 coder(lq): Expose the effective delete capability to project views.
+	CanDelete bool `json:"can_delete"`
 }
 
 func projectToResponse(p db.Project) ProjectResponse {
@@ -71,6 +75,137 @@ func projectToResponse(p db.Project) ProjectResponse {
 		CreatedAt:   timestampToString(p.CreatedAt),
 		UpdatedAt:   timestampToString(p.UpdatedAt),
 	}
+}
+
+// projectRoleAllowsSettingsManage resolves configurable role permissions while
+// keeping the built-in policy available during rolling upgrades or storage
+// failures. Metadata failures must not make an otherwise valid project read fail.
+// 2026-09-07 coder(lq): Keep list annotation batch-friendly and fail closed.
+func (h *Handler) projectRoleAllowsSettingsManage(ctx context.Context, workspaceID string, role projectauth.ProjectRole) bool {
+	if h.DB != nil {
+		permissions, found, err := (&projectAuthRepository{db: h.DB}).RolePermissions(ctx, workspaceID, role)
+		if err == nil && found {
+			for _, permission := range permissions {
+				if permission == projectauth.SettingsManage {
+					return true
+				}
+			}
+			return false
+		}
+		if err != nil {
+			slog.Warn("failed to resolve project role permissions", "workspace_id", workspaceID, "role", role, "error", err)
+		}
+	}
+	return projectauth.DefaultPolicy().Allows(role, projectauth.SettingsManage)
+}
+
+// annotateProjectAccess annotates a project collection without issuing a
+// permission check per row. The role lookup and workspace membership lookup are
+// each performed once, and role capabilities are cached by unique role.
+// 2026-09-07 coder(lq): Align project list actions with backend authorization.
+func (h *Handler) annotateProjectAccess(ctx context.Context, workspaceID, userID string, includeWorkspaceOwned bool, projects []ProjectResponse) {
+	if userID == "" || len(projects) == 0 {
+		return
+	}
+
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		member, err := h.getWorkspaceMember(ctx, userID, workspaceID)
+		if err == nil && (member.Role == "owner" || member.Role == "admin") {
+			for i := range projects {
+				projects[i].CanDelete = true
+			}
+		}
+		return
+	}
+
+	roles, err := h.ProjectAuth.CurrentProjectRoles(ctx, workspaceID, userID)
+	if err != nil {
+		slog.Warn("failed to load current project roles", "workspace_id", workspaceID, "user_id", userID, "error", err)
+		roles = map[string]projectauth.ProjectRole{}
+	}
+
+	workspaceOwnerBypass := false
+	if includeWorkspaceOwned {
+		member, memberErr := h.getWorkspaceMember(ctx, userID, workspaceID)
+		if memberErr == nil && member.Role == "owner" {
+			bypassEnabled, bypassErr := h.ProjectAuth.WorkspaceOwnerBypassEnabled(ctx, workspaceID)
+			if bypassErr != nil {
+				slog.Warn("failed to resolve workspace owner bypass", "workspace_id", workspaceID, "error", bypassErr)
+			} else {
+				workspaceOwnerBypass = bypassEnabled
+			}
+		}
+	}
+
+	roleCanDelete := make(map[projectauth.ProjectRole]bool)
+	for i := range projects {
+		project := &projects[i]
+		if role, ok := roles[project.ID]; ok {
+			value := string(role)
+			project.CurrentUserRole = &value
+			canDelete, cached := roleCanDelete[role]
+			if !cached {
+				canDelete = h.projectRoleAllowsSettingsManage(ctx, workspaceID, role)
+				roleCanDelete[role] = canDelete
+			}
+			project.CanDelete = canDelete
+		}
+		if project.CreatedBy != nil && *project.CreatedBy == userID {
+			project.CanDelete = true
+		}
+		if workspaceOwnerBypass {
+			project.CanDelete = true
+		}
+	}
+}
+
+// annotateOneProjectAccess uses the same authoritative permission check as
+// DeleteProject. It is intended for single-project reads and writes where one
+// check does not introduce an N+1 query pattern.
+// 2026-09-07 coder(lq): Keep detail actions consistent with deletion enforcement.
+func (h *Handler) annotateOneProjectAccess(ctx context.Context, workspaceID, userID string, includeWorkspaceOwned bool, project *ProjectResponse) {
+	if project == nil || userID == "" {
+		return
+	}
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		member, err := h.getWorkspaceMember(ctx, userID, workspaceID)
+		if err == nil && (member.Role == "owner" || member.Role == "admin") {
+			project.CanDelete = true
+		}
+		return
+	}
+
+	if roles, err := h.ProjectAuth.CurrentProjectRoles(ctx, workspaceID, userID); err == nil {
+		if role, ok := roles[project.ID]; ok {
+			value := string(role)
+			project.CurrentUserRole = &value
+		}
+	} else {
+		slog.Warn("failed to load current project role", "workspace_id", workspaceID, "project_id", project.ID, "user_id", userID, "error", err)
+	}
+	project.CanDelete = h.ProjectAuth.CheckWithWorkspaceScope(
+		ctx,
+		projectauth.Subject{UserID: userID, WorkspaceID: workspaceID},
+		project.ID,
+		projectauth.SettingsManage,
+		includeWorkspaceOwned,
+	) == nil
+}
+
+// annotateCreatedProjectAccess avoids re-reading a project immediately after
+// its owner grant has committed. The creator is the immutable project Owner.
+// 2026-09-07 coder(lq): Return creation responses with immediately usable actions.
+func (h *Handler) annotateCreatedProjectAccess(ctx context.Context, workspaceID, userID string, project *ProjectResponse) {
+	if project == nil {
+		return
+	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		role := string(projectauth.ProjectOwner)
+		project.CurrentUserRole = &role
+		project.CanDelete = true
+		return
+	}
+	h.annotateOneProjectAccess(ctx, workspaceID, userID, true, project)
 }
 
 func (h *Handler) loadProjectIssueStats(ctx context.Context, workspaceID, projectID pgtype.UUID) (int64, int64) {
@@ -201,17 +336,6 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		projects = filtered
 	}
-	// 2026-08-28 coder(lq): Resolve roles with one optional batch read so the
-	// additive metadata cannot turn a valid list request into an N+1 query.
-	roleMap := map[string]projectauth.ProjectRole{}
-	if currentUserID != "" {
-		if roles, roleErr := h.ProjectAuth.CurrentProjectRoles(r.Context(), workspaceID, currentUserID); roleErr == nil {
-			roleMap = roles
-		} else {
-			slog.Warn("failed to load current project roles", "workspace_id", workspaceID, "user_id", currentUserID, "error", roleErr)
-		}
-	}
-
 	// Batch-fetch issue stats and resource counts for all projects
 	statsMap := make(map[string]db.GetProjectIssueStatsRow)
 	resourceCountMap := make(map[string]int64)
@@ -247,11 +371,12 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			resp[i].DoneCount = s.DoneCount
 		}
 		resp[i].ResourceCount = resourceCountMap[resp[i].ID]
-		if role, ok := roleMap[resp[i].ID]; ok {
-			value := string(role)
-			resp[i].CurrentUserRole = &value
-		}
 	}
+	annotateUserID := currentUserID
+	if annotateUserID == "" {
+		annotateUserID = requestUserID(r)
+	}
+	h.annotateProjectAccess(r.Context(), workspaceID, annotateUserID, includeWorkspaceOwnedFromRequest(r), resp)
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
 }
 
@@ -279,6 +404,7 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	h.annotateOneProjectAccess(r.Context(), workspaceID, requestUserID(r), includeWorkspaceOwnedFromRequest(r), &resp)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -492,6 +618,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp := projectToResponse(project)
+		h.annotateCreatedProjectAccess(r.Context(), workspaceID, userID, &resp)
 		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
 		writeJSON(w, http.StatusCreated, resp)
 		return
@@ -538,6 +665,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp := projectToResponse(project)
+		h.annotateCreatedProjectAccess(r.Context(), workspaceID, userID, &resp)
 		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
 		writeJSON(w, http.StatusCreated, resp)
 		return
@@ -620,6 +748,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := projectToResponse(project)
 	resp.ResourceCount = int64(len(resourceResp))
+	h.annotateCreatedProjectAccess(r.Context(), workspaceID, userID, &resp)
 	h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
 	for _, rr := range resourceResp {
 		h.publish(protocol.EventProjectResourceCreated, workspaceID, "member", userID, map[string]any{
@@ -797,6 +926,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	resp := projectToResponse(project)
 	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), wsUUID, project.ID)
 	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	h.annotateOneProjectAccess(r.Context(), workspaceID, userID, includeWorkspaceOwnedFromRequest(r), &resp)
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1197,6 +1327,18 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp[i] = spr
+	}
+	projects := make([]ProjectResponse, len(resp))
+	for i := range resp {
+		projects[i] = resp[i].ProjectResponse
+	}
+	annotateUserID := userID
+	if annotateUserID == "" {
+		annotateUserID = requestUserID(r)
+	}
+	h.annotateProjectAccess(ctx, workspaceID, annotateUserID, includeWorkspaceOwnedFromRequest(r), projects)
+	for i := range resp {
+		resp[i].ProjectResponse = projects[i]
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -137,11 +137,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     enabled: !!userId,
   });
   const isPinned = pinnedItems.some((p) => p.item_type === "project" && p.item_id === projectId);
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!userId) return false;
-    const me = members.find((m) => m.user_id === userId);
-    return me?.role === "owner" || me?.role === "admin";
-  }, [members, userId]);
   const createPin = useCreatePin();
   const deletePinMut = useDeletePin();
   const descEditorRef = useRef<ContentEditorRef>(null);
@@ -521,7 +516,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     <Link2 className="h-3.5 w-3.5" />
                     {t(($) => $.detail.copy_link)}
                   </DropdownMenuItem>
-                  {isWorkspaceAdmin && (
+                  {project.can_delete && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -589,7 +584,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       </ResizablePanelGroup>
 
       {/* Delete confirmation */}
-      {isWorkspaceAdmin && (
+      {project.can_delete && (
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>

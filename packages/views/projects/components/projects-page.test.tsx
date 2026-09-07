@@ -229,6 +229,7 @@ const PROJECT: Project = {
   done_count: 1,
   resource_count: 0,
   current_user_role: "viewer",
+  can_delete: true,
 };
 
 function makeAdapter(
@@ -283,6 +284,28 @@ beforeEach(() => {
 });
 
 describe("ProjectsPage compact row navigation", () => {
+  it("shows deletion to a regular workspace member when the project allows it", () => {
+    mocks.members = [
+      { user_id: "user-1", name: "User One", role: "member" },
+    ];
+
+    renderProjects();
+
+    expect(
+      within(projectRow()).getByRole("button", { name: "Delete" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides deletion when the project denies it even for a workspace admin", () => {
+    mocks.projects = [{ ...PROJECT, can_delete: false }];
+
+    renderProjects();
+
+    expect(
+      within(projectRow()).queryByRole("button", { name: "Delete" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("opens project permissions in a dialog", async () => {
     const user = userEvent.setup();
     renderProjects();
@@ -377,7 +400,7 @@ describe("ProjectsPage compact row navigation", () => {
     renderProjects(makeAdapter({ push }));
 
     await user.click(screen.getByRole("button", { name: "Access" }));
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getAllByRole("button", { name: "Close" })[0]!);
 
     expect(push).not.toHaveBeenCalled();
   });

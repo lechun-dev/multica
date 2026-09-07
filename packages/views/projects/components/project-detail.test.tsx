@@ -9,6 +9,7 @@ import { ProjectDetail } from "./project-detail";
 
 const mocks = vi.hoisted(() => ({
   role: "admin",
+  canDelete: true,
   copyText: vi.fn(),
   deleteProject: vi.fn(),
   invalidateQueries: vi.fn(),
@@ -23,7 +24,10 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     switch (options.queryKey?.[0]) {
       case "project-detail":
-        return { data: PROJECT, isLoading: false };
+        return {
+          data: { ...PROJECT, can_delete: mocks.canDelete },
+          isLoading: false,
+        };
       case "members":
         return {
           data: [{ user_id: "user-1", name: "User One", role: mocks.role }],
@@ -307,6 +311,7 @@ function renderProjectDetail() {
 
 beforeEach(() => {
   mocks.role = "admin";
+  mocks.canDelete = true;
   mocks.copyText.mockReset().mockResolvedValue(true);
   mocks.deleteProject.mockReset();
   mocks.getShareableUrl.mockClear();
@@ -332,6 +337,16 @@ describe("ProjectDetail sharing", () => {
 });
 
 describe("ProjectDetail project deletion", () => {
+  it("offers project deletion to a regular member when the project allows it", () => {
+    mocks.role = "member";
+
+    renderProjectDetail();
+
+    expect(
+      screen.getByRole("button", { name: "Delete project" }),
+    ).toBeInTheDocument();
+  });
+
   it("requires confirmation and navigates only after deletion succeeds", async () => {
     const user = userEvent.setup();
     renderProjectDetail();
@@ -358,8 +373,8 @@ describe("ProjectDetail project deletion", () => {
     expect(mocks.push).toHaveBeenCalledWith("/test-workspace/projects");
   });
 
-  it("does not offer project deletion to regular members", () => {
-    mocks.role = "member";
+  it("does not offer project deletion when the project denies it", () => {
+    mocks.canDelete = false;
 
     renderProjectDetail();
 
