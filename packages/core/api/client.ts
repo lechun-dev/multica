@@ -923,6 +923,7 @@ export class ApiClient {
   async listIssues(params?: ListIssuesParams): Promise<ListIssuesResponse> {
     const search = new URLSearchParams();
     if (params?.archive_state) search.set("archive_state", params.archive_state);
+    if (params?.include_total !== undefined) search.set("include_total", String(params.include_total));
     if (params?.limit) search.set("limit", String(params.limit));
     if (params?.offset) search.set("offset", String(params.offset));
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);

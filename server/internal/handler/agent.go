@@ -2828,13 +2828,6 @@ func issueIDsVisibleByProjectPermission(issueIDs []pgtype.UUID, visible map[pgty
 	return true
 }
 
-// 2026-09-07 coder(lq): Keep the production safeguard in code until the
-// expensive agent metrics queries are optimized; this is intentionally not a
-// runtime configuration switch and can be removed when the metrics return.
-func agentMetricsTemporarilyDisabled() bool {
-	return true
-}
-
 // GetWorkspaceAgentRunCounts returns 30-day total run counts for every
 // agent in the workspace. Same single-fetch pattern as live-tasks /
 // activity to keep the Agents list cheap regardless of agent count.
@@ -2844,24 +2837,7 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if agentMetricsTemporarilyDisabled() {
-		// 2026-09-07 coder(lq): Return an empty dataset so clients do not retry a
-		// 5xx while the expensive aggregate is disabled.
-		writeJSON(w, http.StatusOK, []AgentRunCount{})
-		return
-	}
-
-	var rows []db.GetWorkspaceAgentRunCountsRow
-	var err error
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		userID, ok := requireUserID(w, r)
-		if !ok {
-			return
-		}
-		rows, err = h.getCachedWorkspaceAgentRunCountsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
-	} else {
-		rows, err = h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
-	}
+	rows, err := h.getCachedWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get agent run counts")
 		return
@@ -2901,24 +2877,7 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	if agentMetricsTemporarilyDisabled() {
-		// 2026-09-07 coder(lq): Hide only the trend panel and avoid the expensive
-		// PostgreSQL aggregate while the safeguard is active.
-		writeJSON(w, http.StatusOK, []AgentActivityBucket{})
-		return
-	}
-
-	var rows []db.GetWorkspaceAgentActivity30dRow
-	var err error
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		userID, ok := requireUserID(w, r)
-		if !ok {
-			return
-		}
-		rows, err = h.getCachedWorkspaceAgentActivityWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
-	} else {
-		rows, err = h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
-	}
+	rows, err := h.getCachedWorkspaceAgentActivity(r.Context(), parseUUID(workspaceID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get agent activity")
 		return

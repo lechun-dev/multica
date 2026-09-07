@@ -131,6 +131,11 @@ export interface IssueTriggerPreview {
 export interface ListIssuesParams {
   /** Filter archived issues; defaults to active on the server. */
   archive_state?: "active" | "archived" | "all";
+  /**
+   * 2026-09-07 coder(lq): Skip the permission COUNT when the caller only
+   * needs issue rows. Defaults to true on the server for compatibility.
+   */
+  include_total?: boolean;
   /** 2026-08-28 coder(lq): Include workspace-owner-only issues in list results. */
   include_workspace_owned?: boolean;
   limit?: number;

@@ -28,7 +28,7 @@ export const issueListOptions = (wsId: string | null) =>
   queryOptions({
     queryKey: issueKeys.list(wsId),
     queryFn: async ({ signal }) => {
-      const res = await api.listIssues({}, { signal });
+      const res = await api.listIssues({ include_total: false }, { signal });
       return res.issues;
     },
     enabled: !!wsId,

@@ -138,6 +138,21 @@ func TestListIssues_LimitValidation(t *testing.T) {
 			t.Fatalf("total: want 3, got %d", resp.Total)
 		}
 	})
+
+	// 2026-09-07 coder(lq): List-only clients may skip the expensive
+	// permission COUNT, but the visible issue rows must remain unchanged.
+	t.Run("include_total=false skips total without changing rows", func(t *testing.T) {
+		code, resp, body := call("&limit=100&include_total=false")
+		if code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", code, body)
+		}
+		if len(resp.Issues) != 3 {
+			t.Fatalf("issues: want 3, got %d", len(resp.Issues))
+		}
+		if resp.Total != 0 {
+			t.Fatalf("total: want 0 when omitted, got %d", resp.Total)
+		}
+	})
 }
 
 // TestListIssues_LimitClamp proves the upper-bound clamp on `limit` actually

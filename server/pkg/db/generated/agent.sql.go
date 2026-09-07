@@ -4758,17 +4758,15 @@ func (q *Queries) GetLatestTaskRolloutMissing(ctx context.Context, arg GetLatest
 
 const getWorkspaceAgentActivity30d = `-- name: GetWorkspaceAgentActivity30d :many
 SELECT
-    atq.agent_id,
-    DATE_TRUNC('day', atq.completed_at)::timestamptz AS bucket,
-    COUNT(*)::int AS task_count,
-    COUNT(*) FILTER (WHERE atq.status = 'failed')::int AS failed_count
-FROM agent_task_queue atq
-JOIN agent a ON a.id = atq.agent_id
-WHERE a.workspace_id = $1
-  AND atq.completed_at IS NOT NULL
-  AND atq.completed_at > now() - INTERVAL '30 days'
-GROUP BY atq.agent_id, bucket
-ORDER BY atq.agent_id, bucket
+    agent_id,
+    stat_date::timestamp AT TIME ZONE 'UTC' AS bucket,
+    task_count::int,
+    failed_count::int
+FROM agent_daily_stats
+WHERE workspace_id = $1
+  AND stat_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 29
+  AND (task_count > 0 OR failed_count > 0)
+ORDER BY agent_id, stat_date
 `
 
 type GetWorkspaceAgentActivity30dRow struct {
@@ -4791,7 +4789,7 @@ type GetWorkspaceAgentActivity30dRow struct {
 // "what did this agent produce?" not "what was queued at it?". A task that's
 // still in flight has no completed_at and contributes nothing here — that's
 // correct: in-flight tasks are surfaced via the live presence indicator,
-// not the historical trend.
+// not the historical trend. Daily totals come from agent_daily_stats.
 func (q *Queries) GetWorkspaceAgentActivity30d(ctx context.Context, workspaceID pgtype.UUID) ([]GetWorkspaceAgentActivity30dRow, error) {
 	rows, err := q.db.Query(ctx, getWorkspaceAgentActivity30d, workspaceID)
 	if err != nil {
@@ -4819,13 +4817,12 @@ func (q *Queries) GetWorkspaceAgentActivity30d(ctx context.Context, workspaceID 
 
 const getWorkspaceAgentRunCounts = `-- name: GetWorkspaceAgentRunCounts :many
 SELECT
-    atq.agent_id,
-    COUNT(*)::int AS run_count
-FROM agent_task_queue atq
-JOIN agent a ON a.id = atq.agent_id
-WHERE a.workspace_id = $1
-  AND atq.created_at > now() - INTERVAL '30 days'
-GROUP BY atq.agent_id
+    agent_id,
+    COALESCE(SUM(run_count), 0)::int AS run_count
+FROM agent_daily_stats
+WHERE workspace_id = $1
+  AND stat_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 29
+GROUP BY agent_id
 `
 
 type GetWorkspaceAgentRunCountsRow struct {
@@ -4833,10 +4830,9 @@ type GetWorkspaceAgentRunCountsRow struct {
 	RunCount int32       `json:"run_count"`
 }
 
-// Total task runs per agent over the trailing 30 days, used by the Agents
-// list RUNS column. 30-day window keeps the count meaningful (a long-dormant
-// agent shouldn't show "5,420 runs from 2 years ago") and keeps the scan
-// bounded as the workspace ages.
+// Total task runs per agent over the trailing 30 calendar days. The daily
+// summary is maintained by a database trigger, so this query never scans the
+// growing agent_task_queue table.
 func (q *Queries) GetWorkspaceAgentRunCounts(ctx context.Context, workspaceID pgtype.UUID) ([]GetWorkspaceAgentRunCountsRow, error) {
 	rows, err := q.db.Query(ctx, getWorkspaceAgentRunCounts, workspaceID)
 	if err != nil {

@@ -17,7 +17,7 @@ import (
 
 const (
 	agentMetricsCacheTTL    = 30 * time.Second
-	agentMetricsCachePrefix = "mul:agent_metrics:v1:"
+	agentMetricsCachePrefix = "mul:agent_metrics:v2:"
 )
 
 type agentMetricsCacheStore interface {
@@ -37,10 +37,11 @@ func (s redisAgentMetricsCacheStore) Set(ctx context.Context, key, value string,
 	return s.rdb.Set(ctx, key, value, ttl).Err()
 }
 
-// 2026-09-07 coder(lq): AgentMetricsCache keeps the two expensive
-// permission-aware agent aggregates shared across API instances. Redis errors
-// are deliberately treated as cache misses so metrics remain available during
-// a cache outage.
+// 2026-09-07 coder(lq): AgentMetricsCache keeps the two expensive workspace
+// aggregates shared across API instances. Agent visibility is applied after
+// the shared load, so this cache does not vary by user or project permission.
+// Redis errors are deliberately treated as cache misses so metrics remain
+// available during a cache outage.
 type AgentMetricsCache struct {
 	store agentMetricsCacheStore
 	ttl   time.Duration
@@ -61,8 +62,8 @@ func newAgentMetricsCache(store agentMetricsCacheStore, ttl time.Duration) *Agen
 	return &AgentMetricsCache{store: store, ttl: ttl}
 }
 
-func agentMetricsCacheKey(metric, workspaceID, userID string) string {
-	return fmt.Sprintf("%s%s:%s:%s", agentMetricsCachePrefix, metric, workspaceID, userID)
+func agentMetricsCacheKey(metric, workspaceID string) string {
+	return fmt.Sprintf("%s%s:%s", agentMetricsCachePrefix, metric, workspaceID)
 }
 
 func readAgentMetricsCache[T any](ctx context.Context, cache *AgentMetricsCache, key string) ([]T, bool) {
@@ -128,16 +129,16 @@ func loadAgentMetrics[T any](ctx context.Context, cache *AgentMetricsCache, key 
 	}
 }
 
-func (h *Handler) getCachedWorkspaceAgentRunCountsWithProjectPermission(ctx context.Context, workspaceID, userID pgtype.UUID) ([]db.GetWorkspaceAgentRunCountsRow, error) {
-	key := agentMetricsCacheKey("run_counts", uuidToString(workspaceID), uuidToString(userID))
+func (h *Handler) getCachedWorkspaceAgentRunCounts(ctx context.Context, workspaceID pgtype.UUID) ([]db.GetWorkspaceAgentRunCountsRow, error) {
+	key := agentMetricsCacheKey("run_counts", uuidToString(workspaceID))
 	return loadAgentMetrics(ctx, h.AgentMetricsCache, key, func(loadCtx context.Context) ([]db.GetWorkspaceAgentRunCountsRow, error) {
-		return h.getWorkspaceAgentRunCountsWithProjectPermission(loadCtx, workspaceID, userID)
+		return h.Queries.GetWorkspaceAgentRunCounts(loadCtx, workspaceID)
 	})
 }
 
-func (h *Handler) getCachedWorkspaceAgentActivityWithProjectPermission(ctx context.Context, workspaceID, userID pgtype.UUID) ([]db.GetWorkspaceAgentActivity30dRow, error) {
-	key := agentMetricsCacheKey("activity_30d", uuidToString(workspaceID), uuidToString(userID))
+func (h *Handler) getCachedWorkspaceAgentActivity(ctx context.Context, workspaceID pgtype.UUID) ([]db.GetWorkspaceAgentActivity30dRow, error) {
+	key := agentMetricsCacheKey("activity_30d", uuidToString(workspaceID))
 	return loadAgentMetrics(ctx, h.AgentMetricsCache, key, func(loadCtx context.Context) ([]db.GetWorkspaceAgentActivity30dRow, error) {
-		return h.getWorkspaceAgentActivityWithProjectPermission(loadCtx, workspaceID, userID)
+		return h.Queries.GetWorkspaceAgentActivity30d(loadCtx, workspaceID)
 	})
 }
