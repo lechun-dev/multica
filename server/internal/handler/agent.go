@@ -2845,7 +2845,7 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 		if !ok {
 			return
 		}
-		rows, err = h.getWorkspaceAgentRunCountsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
+		rows, err = h.getCachedWorkspaceAgentRunCountsWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
 	} else {
 		rows, err = h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
 	}
@@ -2896,7 +2896,7 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 		if !ok {
 			return
 		}
-		rows, err = h.getWorkspaceAgentActivityWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
+		rows, err = h.getCachedWorkspaceAgentActivityWithProjectPermission(r.Context(), parseUUID(workspaceID), parseUUID(userID))
 	} else {
 		rows, err = h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
 	}

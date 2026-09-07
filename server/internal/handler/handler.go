@@ -247,6 +247,7 @@ type Handler struct {
 	PATCache                     *auth.PATCache
 	DaemonTokenCache             *auth.DaemonTokenCache
 	MembershipCache              *auth.MembershipCache
+	AgentMetricsCache            *AgentMetricsCache
 	WebhookRateLimiter           WebhookRateLimiter
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
