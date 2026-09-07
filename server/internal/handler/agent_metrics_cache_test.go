@@ -72,19 +72,18 @@ func TestLoadAgentMetricsCacheHitSkipsLoader(t *testing.T) {
 	}
 }
 
-func TestLoadAgentMetricsCacheKeysIsolateWorkspaceAndUser(t *testing.T) {
+func TestLoadAgentMetricsCacheKeysIsolateWorkspaceAndMetric(t *testing.T) {
 	store := newFakeAgentMetricsCacheStore()
 	cache := newAgentMetricsCache(store, agentMetricsCacheTTL)
 	ctx := context.Background()
 
-	keyA := agentMetricsCacheKey("run_counts", "workspace-1", "user-1")
-	keyB := agentMetricsCacheKey("run_counts", "workspace-1", "user-2")
-	keyC := agentMetricsCacheKey("run_counts", "workspace-2", "user-1")
-	activityKey := agentMetricsCacheKey("activity_30d", "workspace-1", "user-1")
-	if keyA == keyB || keyA == keyC || keyA == activityKey {
-		t.Fatal("cache keys must differ by user, workspace, and metric")
+	keyA := agentMetricsCacheKey("run_counts", "workspace-1")
+	keyB := agentMetricsCacheKey("run_counts", "workspace-2")
+	keyC := agentMetricsCacheKey("activity_30d", "workspace-1")
+	if keyA == keyB || keyA == keyC {
+		t.Fatal("cache keys must differ by workspace and metric")
 	}
-	for key, count := range map[string]int32{keyA: 3, keyB: 9, keyC: 12, activityKey: 15} {
+	for key, count := range map[string]int32{keyA: 3, keyB: 9, keyC: 15} {
 		rows, err := loadAgentMetrics(ctx, cache, key, func(context.Context) ([]testAgentMetricRow, error) {
 			return []testAgentMetricRow{{AgentID: "agent-1", Count: count}}, nil
 		})
@@ -94,7 +93,7 @@ func TestLoadAgentMetricsCacheKeysIsolateWorkspaceAndUser(t *testing.T) {
 	}
 
 	rows, err := loadAgentMetrics(ctx, cache, keyA, func(context.Context) ([]testAgentMetricRow, error) {
-		t.Fatal("workspace/user-specific entry should be cached")
+		t.Fatal("workspace/metric entry should be cached")
 		return nil, nil
 	})
 	if err != nil || len(rows) != 1 || rows[0].Count != 3 {
@@ -172,7 +171,7 @@ func TestLoadAgentMetricsCollapsesConcurrentMisses(t *testing.T) {
 func TestLoadAgentMetricsRoundTripsDatabaseRows(t *testing.T) {
 	store := newFakeAgentMetricsCacheStore()
 	cache := newAgentMetricsCache(store, agentMetricsCacheTTL)
-	key := agentMetricsCacheKey("activity_30d", "workspace-1", "user-1")
+	key := agentMetricsCacheKey("activity_30d", "workspace-1")
 	want := []db.GetWorkspaceAgentActivity30dRow{{
 		AgentID:     parseUUID("00000000-0000-0000-0000-000000000001"),
 		Bucket:      pgtype.Timestamptz{Time: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC), Valid: true},

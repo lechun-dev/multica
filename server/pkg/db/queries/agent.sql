@@ -2577,21 +2577,19 @@ ORDER BY
 LIMIT @row_limit;
 
 -- name: GetWorkspaceAgentRunCounts :many
--- Total task runs per agent over the trailing 30 days, used by the Agents
--- list RUNS column. 30-day window keeps the count meaningful (a long-dormant
--- agent shouldn't show "5,420 runs from 2 years ago") and keeps the scan
--- bounded as the workspace ages.
+-- Total task runs per agent over the trailing 30 calendar days. The daily
+-- summary is maintained by a database trigger, so this query never scans the
+-- growing agent_task_queue table.
 SELECT
-    atq.agent_id,
-    COUNT(*)::int AS run_count
-FROM agent_task_queue atq
-JOIN agent a ON a.id = atq.agent_id
-WHERE a.workspace_id = $1
-  AND atq.created_at > now() - INTERVAL '30 days'
-GROUP BY atq.agent_id;
+    agent_id,
+    COALESCE(SUM(run_count), 0)::int AS run_count
+FROM agent_daily_stats
+WHERE workspace_id = $1
+  AND stat_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 29
+GROUP BY agent_id;
 
 -- name: GetWorkspaceAgentActivity30d :many
--- Returns per-agent daily activity buckets for the last 30 days. Single
+-- Returns per-agent daily activity buckets for the last 30 calendar days. Single
 -- workspace-wide read backs both surfaces:
 --   - Agents list ACTIVITY column — uses only the trailing 7 buckets
 --   - Agent detail "Last 30 days" panel — uses the full 30
@@ -2605,17 +2603,15 @@ GROUP BY atq.agent_id;
 -- correct: in-flight tasks are surfaced via the live presence indicator,
 -- not the historical trend.
 SELECT
-    atq.agent_id,
-    DATE_TRUNC('day', atq.completed_at)::timestamptz AS bucket,
-    COUNT(*)::int AS task_count,
-    COUNT(*) FILTER (WHERE atq.status = 'failed')::int AS failed_count
-FROM agent_task_queue atq
-JOIN agent a ON a.id = atq.agent_id
-WHERE a.workspace_id = $1
-  AND atq.completed_at IS NOT NULL
-  AND atq.completed_at > now() - INTERVAL '30 days'
-GROUP BY atq.agent_id, bucket
-ORDER BY atq.agent_id, bucket;
+    agent_id,
+    stat_date::timestamp AT TIME ZONE 'UTC' AS bucket,
+    task_count::int,
+    failed_count::int
+FROM agent_daily_stats
+WHERE workspace_id = $1
+  AND stat_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 29
+  AND (task_count > 0 OR failed_count > 0)
+ORDER BY agent_id, stat_date;
 
 -- name: ListWorkspaceAgentTaskSnapshot :many
 -- Returns the tasks the front-end reads off one workspace-wide snapshot:
