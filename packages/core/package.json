@@ -97,6 +97,7 @@
     "./quick-actions": "./quick-actions/index.ts",
     "./quick-actions/queries": "./quick-actions/queries.ts",
     "./quick-actions/mutations": "./quick-actions/mutations.ts",
+    "./task-retry-policies": "./task-retry-policies/index.ts",
     "./autopilots": "./autopilots/index.ts",
     "./autopilots/queries": "./autopilots/queries.ts",
     "./autopilots/mutations": "./autopilots/mutations.ts",

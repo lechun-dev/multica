@@ -35,6 +35,7 @@ vi.mock("./billing-tab", stub("BillingTab"));
 vi.mock("./project-permissions-tab", stub("ProjectPermissionsTab"));
 vi.mock("./project-permission-roles-tab", stub("ProjectPermissionRolesTab"));
 vi.mock("./project-authorization-organizations-tab", stub("ProjectAuthorizationOrganizationsTab"));
+vi.mock("./task-retry-policies-tab", stub("TaskRetryPoliciesTab"));
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ name: "Acme" }),
@@ -221,5 +222,16 @@ describe("SettingsPage project permissions switch", () => {
     renderWithI18n(<SettingsPage />);
 
     expect(screen.getByTestId("settings-content").className).toContain("max-w-5xl");
+  });
+});
+
+describe("SettingsPage retry policies tab", () => {
+  it("keeps the failed-task retry policy menu available", () => {
+    navigationState.search = "tab=task-retry-policies";
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.getByRole("tab", { name: "Retry Policies" })).toBeInTheDocument();
+    expect(screen.getByText("TaskRetryPoliciesTab")).toBeInTheDocument();
   });
 });
