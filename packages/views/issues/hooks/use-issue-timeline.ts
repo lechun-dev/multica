@@ -68,19 +68,6 @@ function commentToTimelineEntry(c: Comment): TimelineEntry {
   };
 }
 
-function hasCompleteActivitySnapshot(
-  entry: Partial<TimelineEntry> | null | undefined,
-): entry is TimelineEntry {
-  return Boolean(
-    entry?.type === "activity" &&
-      entry.id &&
-      entry.actor_type &&
-      entry.actor_id &&
-      entry.created_at &&
-      (Object.prototype.hasOwnProperty.call(entry, "action") ||
-        Object.prototype.hasOwnProperty.call(entry, "details")),
-  );
-}
 function acceptsCommentRevision(
   current: TimelineEntry,
   incoming: Comment,
