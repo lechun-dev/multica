@@ -1380,7 +1380,7 @@ export class ApiClient {
     attachmentIds?: string[],
     suppressAgentIds?: string[],
   ): Promise<Comment> {
-    return this.fetch(`/api/issues/${issueId}/comments`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`, {
       method: "POST",
       body: JSON.stringify({
         content,
@@ -1389,6 +1389,9 @@ export class ApiClient {
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
+    });
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "POST /api/issues/:id/comments",
     });
   }
 

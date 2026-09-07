@@ -213,6 +213,23 @@ describe("useIssueTimeline", () => {
     expect(updated.map((e) => e.id)).toEqual(["new-c"]);
   });
 
+  it("comment:created refetches instead of rendering a partial snapshot", () => {
+    queryState.data = [];
+    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+
+    act(() => {
+      wsHandlers.get("comment:created")!({
+        comment: {
+          id: "partial-c",
+          issue_id: "issue-1",
+        },
+      });
+    });
+
+    expect(cacheUpdates.last).toBeNull();
+    expect(cacheUpdates.invalidations).toBe(1);
+  });
+
   it("comment:created inserts at the correct sorted position by created_at", () => {
     queryState.data = [
       { type: "comment", id: "c1", actor_type: "member", actor_id: "u", created_at: "2026-05-06T01:00:00Z" },

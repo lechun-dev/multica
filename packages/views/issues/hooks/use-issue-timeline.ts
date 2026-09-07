@@ -35,6 +35,7 @@ import {
   type ToggleCommentReactionVars,
 } from "@multica/core/issues/mutations";
 import { sortTimelineEntriesAsc } from "@multica/core/issues/timeline-sort";
+import { isRenderableCommentSnapshot } from "@multica/core/issues/comment-snapshot";
 import {
   unhandledCommentTriggerOutcomes,
   mentionLabelsByTarget,
@@ -65,26 +66,6 @@ function commentToTimelineEntry(c: Comment): TimelineEntry {
     resolved_by_id: c.resolved_by_id,
     source_task_id: c.source_task_id,
   };
-}
-
-// 2026-09-03 coder(lq): Workspace broadcasts may contain only comment IDs and
-// revision hints. Never treat that security projection as a renderable Comment;
-// refetch the permission-filtered timeline instead.
-function hasCompleteCommentSnapshot(
-  comment: Partial<Comment> | null | undefined,
-): comment is Comment {
-  return Boolean(
-    comment?.id &&
-      comment.issue_id &&
-      comment.author_type &&
-      comment.author_id &&
-      Object.prototype.hasOwnProperty.call(comment, "content") &&
-      typeof comment.content === "string" &&
-      Object.prototype.hasOwnProperty.call(comment, "parent_id") &&
-      comment.type &&
-      comment.created_at &&
-      comment.updated_at,
-  );
 }
 
 function hasCompleteActivitySnapshot(
@@ -177,7 +158,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
       (payload: unknown) => {
         const { comment } = payload as CommentCreatedPayload;
         if (!comment?.issue_id || comment.issue_id !== issueId) return;
-        if (!hasCompleteCommentSnapshot(comment)) {
+        if (!isRenderableCommentSnapshot(comment)) {
           qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
           return;
         }
@@ -198,7 +179,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
       (payload: unknown) => {
         const { comment } = payload as CommentUpdatedPayload;
         if (!comment?.issue_id || comment.issue_id !== issueId) return;
-        if (!hasCompleteCommentSnapshot(comment)) {
+        if (!isRenderableCommentSnapshot(comment)) {
           qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
           return;
         }
@@ -220,7 +201,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
       (payload: unknown) => {
         const { comment } = payload as CommentResolvedPayload;
         if (!comment?.issue_id || comment.issue_id !== issueId) return;
-        if (!hasCompleteCommentSnapshot(comment)) {
+        if (!isRenderableCommentSnapshot(comment)) {
           qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
           return;
         }
@@ -236,7 +217,7 @@ export function useIssueTimeline(issueId: string, userId?: string) {
       (payload: unknown) => {
         const { comment } = payload as CommentUnresolvedPayload;
         if (!comment?.issue_id || comment.issue_id !== issueId) return;
-        if (!hasCompleteCommentSnapshot(comment)) {
+        if (!isRenderableCommentSnapshot(comment)) {
           qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
           return;
         }
