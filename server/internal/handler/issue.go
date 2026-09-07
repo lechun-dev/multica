@@ -1114,6 +1114,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 2026-09-07 coder(lq): Preserve the historical exact-total default while
+	// allowing list-only clients to skip the expensive permission COUNT.
+	includeTotal := r.URL.Query().Get("include_total") != "false"
 	windowPolicy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	// Parse optional filter params. Malformed UUIDs in filters return 400 —
@@ -1666,13 +1669,24 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		return
 	}
 
-	// Get the true total count for pagination awareness.
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
-	// Count query uses the same args minus the OFFSET and LIMIT params (last two added).
-	countArgs := args[:len(args)-2]
 	var total int64
-	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		total = int64(len(issues))
+	if includeTotal {
+		// 2026-09-07 coder(lq): A short first page is itself an exact total,
+		// so avoid repeating the permission predicate in a COUNT query for
+		// empty and small result sets. Full pages still use the historical
+		// COUNT path, preserving pagination totals for callers that may have
+		// more rows beyond the current page.
+		if offset == 0 && len(issues) < limit {
+			total = int64(len(issues))
+		} else {
+			// Get the true total count for pagination awareness. Count query uses
+			// the same args minus the OFFSET and LIMIT params (last two added).
+			countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
+			countArgs := args[:len(args)-2]
+			if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+				total = int64(len(issues))
+			}
+		}
 	}
 
 	prefix := h.getIssuePrefix(ctx, wsUUID)

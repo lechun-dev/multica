@@ -186,6 +186,20 @@ describe("ApiClient edit guards", () => {
   });
 });
 
+describe("ApiClient issue list totals", () => {
+  it("serializes include_total=false for list-only callers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ issues: [], total: 0 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new ApiClient("https://api.example.test").listIssues({ include_total: false });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("include_total=false");
+  });
+});
+
 describe("ApiClient DingTalk login response schema", () => {
   it("rejects a successful response without a usable token", async () => {
     vi.stubGlobal(
