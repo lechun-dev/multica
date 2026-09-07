@@ -1094,4 +1094,25 @@ describe("useCreateComment — sibling caches under a shared key prefix", () => 
       qc.getQueryData<TimelineEntry[]>(issueKeys.timeline(ISSUE_ID))?.map((e) => e.id),
     ).toEqual(["comment-1"]);
   });
+
+  it("refetches instead of appending a malformed comment response", async () => {
+    qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(ISSUE_ID), []);
+    setApiInstance({
+      createComment: vi.fn().mockResolvedValue({}),
+    } as unknown as ApiClient);
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    const { result } = renderHook(() => useCreateComment(ISSUE_ID), {
+      wrapper: createWrapper(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ content: "hello @someone" });
+    });
+
+    expect(qc.getQueryData<TimelineEntry[]>(issueKeys.timeline(ISSUE_ID))).toEqual([]);
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: issueKeys.timeline(ISSUE_ID),
+    });
+  });
 });

@@ -37,6 +37,7 @@ import type {
 } from "../types";
 import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
+import { isRenderableCommentSnapshot } from "./comment-snapshot";
 import {
   onIssueAuxiliaryRevision,
   invalidateIssueOwnerProjections,
@@ -807,6 +808,16 @@ export function useCreateComment(issueId: string) {
       suppressAgentIds?: string[];
     }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
     onSuccess: (comment) => {
+      if (!isRenderableCommentSnapshot(comment)) {
+        // 2026-09-07 coder(lq): A malformed success response must never become
+        // a blank System/NaN timeline row. The write may still have succeeded,
+        // so refetch instead of treating the comment as absent.
+        invalidateIssueOwnerProjections(qc, wsId, issueId);
+        invalidateLastActivitySortedIssueLists(qc, wsId);
+        qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+        qc.invalidateQueries({ queryKey: issueKeys.commentTriggerPreview(issueId) });
+        return;
+      }
       if (comment.issue_revision) {
         onIssueAuxiliaryRevision(qc, wsId, issueId, comment.issue_revision);
       } else {

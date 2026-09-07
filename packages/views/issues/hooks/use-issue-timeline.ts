@@ -35,6 +35,7 @@ import {
   type ToggleCommentReactionVars,
 } from "@multica/core/issues/mutations";
 import { sortTimelineEntriesAsc } from "@multica/core/issues/timeline-sort";
+import { isRenderableCommentSnapshot } from "@multica/core/issues/comment-snapshot";
 import {
   unhandledCommentTriggerOutcomes,
   mentionLabelsByTarget,
@@ -67,6 +68,19 @@ function commentToTimelineEntry(c: Comment): TimelineEntry {
   };
 }
 
+function hasCompleteActivitySnapshot(
+  entry: Partial<TimelineEntry> | null | undefined,
+): entry is TimelineEntry {
+  return Boolean(
+    entry?.type === "activity" &&
+      entry.id &&
+      entry.actor_type &&
+      entry.actor_id &&
+      entry.created_at &&
+      (Object.prototype.hasOwnProperty.call(entry, "action") ||
+        Object.prototype.hasOwnProperty.call(entry, "details")),
+  );
+}
 function acceptsCommentRevision(
   current: TimelineEntry,
   incoming: Comment,
@@ -138,7 +152,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentCreatedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!isRenderableCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
           const entry = commentToTimelineEntry(comment);
           if (!old) return [entry];
@@ -155,7 +173,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentUpdatedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!isRenderableCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         applyCommentSnapshot(qc, issueId, comment);
       },
       [qc, issueId],
@@ -173,7 +195,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentResolvedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!isRenderableCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         applyCommentSnapshot(qc, issueId, comment);
       },
       [qc, issueId],
@@ -185,7 +211,11 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     useCallback(
       (payload: unknown) => {
         const { comment } = payload as CommentUnresolvedPayload;
-        if (comment.issue_id !== issueId) return;
+        if (!comment?.issue_id || comment.issue_id !== issueId) return;
+        if (!isRenderableCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
         applyCommentSnapshot(qc, issueId, comment);
       },
       [qc, issueId],

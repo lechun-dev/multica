@@ -5,7 +5,11 @@ import { useT } from "./use-t";
 export function useTimeAgo() {
   const { t } = useT("common");
   return (dateStr: string): string => {
-    const diff = Date.now() - new Date(dateStr).getTime();
+    const timestamp = new Date(dateStr).getTime();
+    // 2026-09-07 coder(lq): Invalid timestamps can arrive in degraded cached
+    // data. Hide the relative-time label instead of rendering "NaN days ago".
+    if (!Number.isFinite(timestamp)) return "";
+    const diff = Date.now() - timestamp;
     const minutes = Math.floor(diff / 60000);
     if (minutes < 1) return t(($) => $.time.just_now);
     if (minutes < 60) return t(($) => $.time.minutes_ago, { count: minutes });
