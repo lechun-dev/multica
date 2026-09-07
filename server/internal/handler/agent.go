@@ -2828,6 +2828,13 @@ func issueIDsVisibleByProjectPermission(issueIDs []pgtype.UUID, visible map[pgty
 	return true
 }
 
+// 2026-09-07 coder(lq): Keep the production safeguard in code until the
+// expensive agent metrics queries are optimized; this is intentionally not a
+// runtime configuration switch and can be removed when the metrics return.
+func agentMetricsTemporarilyDisabled() bool {
+	return true
+}
+
 // GetWorkspaceAgentRunCounts returns 30-day total run counts for every
 // agent in the workspace. Same single-fetch pattern as live-tasks /
 // activity to keep the Agents list cheap regardless of agent count.
@@ -2835,6 +2842,12 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
+		return
+	}
+	if agentMetricsTemporarilyDisabled() {
+		// 2026-09-07 coder(lq): Return an empty dataset so clients do not retry a
+		// 5xx while the expensive aggregate is disabled.
+		writeJSON(w, http.StatusOK, []AgentRunCount{})
 		return
 	}
 
@@ -2886,6 +2899,12 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
+		return
+	}
+	if agentMetricsTemporarilyDisabled() {
+		// 2026-09-07 coder(lq): Hide only the trend panel and avoid the expensive
+		// PostgreSQL aggregate while the safeguard is active.
+		writeJSON(w, http.StatusOK, []AgentActivityBucket{})
 		return
 	}
 
