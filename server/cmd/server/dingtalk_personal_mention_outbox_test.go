@@ -89,8 +89,15 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 
 	selfCommentID := uuid.NewString()
 	emit(selfCommentID, "member", actorID, "self [@Actor](mention://member/"+actorID+")")
-	if count := countForComment(selfCommentID); count != 0 {
-		t.Fatalf("self mention created %d rows", count)
+	if count := countForComment(selfCommentID); count != 1 {
+		t.Fatalf("self mention created %d rows, want 1", count)
+	}
+	fixture.QueryRow(t, `
+		SELECT sender_ding_user_id, recipient_ding_user_id
+		FROM dingtalk_personal_message WHERE comment_id = $1`, selfCommentID).
+		Scan(&senderDingID, &recipientDingID)
+	if senderDingID != actorDingID || recipientDingID != actorDingID {
+		t.Fatalf("unexpected self DingTalk route: sender=%q recipient=%q", senderDingID, recipientDingID)
 	}
 	agentCommentID := uuid.NewString()
 	emit(agentCommentID, "agent", actorID, mention)

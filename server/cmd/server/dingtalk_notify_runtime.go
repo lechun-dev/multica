@@ -430,7 +430,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 	enqueued := 0
 	for _, mention := range mentions {
 		targetID := strings.TrimSpace(mention.ID)
-		if mention.Type != "member" || targetID == "" || targetID == actorID {
+		if mention.Type != "member" || targetID == "" {
 			continue
 		}
 		if _, exists := seen[targetID]; exists {
