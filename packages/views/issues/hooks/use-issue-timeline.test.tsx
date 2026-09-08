@@ -223,21 +223,60 @@ describe("useIssueTimeline", () => {
     expect(updated.map((e) => e.id)).toEqual(["new-c"]);
   });
 
-  it("comment:created refetches instead of rendering a partial snapshot", () => {
+  it.each([
+    "comment:created",
+    "comment:updated",
+    "comment:resolved",
+    "comment:unresolved",
+  ])("%s refetches instead of rendering the permission-safe projection", (event) => {
     queryState.data = [];
     renderHook(() => useIssueTimeline("issue-1", "user-1"));
 
     act(() => {
-      wsHandlers.get("comment:created")!({
+      wsHandlers.get(event)!({
         comment: {
           id: "partial-c",
           issue_id: "issue-1",
+          revision: 1,
+          resolved_at: null,
         },
       });
     });
 
     expect(cacheUpdates.last).toBeNull();
     expect(cacheUpdates.invalidations).toBe(1);
+  });
+
+  it("hides incomplete cached comments while keeping real and attachment-only comments", () => {
+    const valid = {
+      type: "comment",
+      id: "valid",
+      actor_type: "member",
+      actor_id: "u",
+      created_at: "2026-09-08T01:00:00Z",
+      content: "Reply",
+    };
+    const attachmentOnly = {
+      ...valid,
+      id: "attachment",
+      content: "",
+      attachments: [{ id: "file" }],
+    };
+    const system = {
+      ...valid,
+      id: "system",
+      actor_type: "system",
+      content: "Task completed",
+    };
+    queryState.data = [
+      { type: "comment", id: "partial", issue_id: "issue-1", revision: 1 },
+      { ...valid, id: "invalid-date", created_at: "invalid" },
+      valid,
+      attachmentOnly,
+      system,
+    ];
+    const { result } = renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    expect(result.current.timeline).toEqual([valid, attachmentOnly, system]);
   });
 
   it("comment:created inserts at the correct sorted position by created_at", () => {
