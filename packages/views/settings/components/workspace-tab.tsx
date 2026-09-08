@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
+import { useConfigStore } from "@multica/core/config";
 import { useLeaveWorkspace, useDeleteWorkspace } from "@multica/core/workspace/mutations";
 import {
   memberListOptions,
@@ -68,6 +69,8 @@ export function WorkspaceTab() {
   const { t } = useT("settings");
   const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
+  const clientVersion = useConfigStore((state) => state.clientVersion);
+  const serverVersion = useConfigStore((state) => state.serverVersion);
   // Derive the id from useCurrentWorkspace instead of the throwing
   // useWorkspaceId: this component can legitimately render while the
   // workspace is gone from the list cache but the URL slug hasn't changed
@@ -454,6 +457,26 @@ export function WorkspaceTab() {
                 className="font-mono uppercase"
                 placeholder={workspace.issue_prefix}
               />
+          </SettingsRow>
+
+          <SettingsRow
+            label={t(($) => $.workspace.frontend_version_label)}
+            description={t(($) => $.workspace.frontend_version_hint)}
+            size="code"
+          >
+            <span className="font-mono text-caption text-muted-foreground">
+              {clientVersion || t(($) => $.workspace.version_unknown)}
+            </span>
+          </SettingsRow>
+
+          <SettingsRow
+            label={t(($) => $.workspace.backend_version_label)}
+            description={t(($) => $.workspace.backend_version_hint)}
+            size="code"
+          >
+            <span className="font-mono text-caption text-muted-foreground">
+              {serverVersion || t(($) => $.workspace.version_unknown)}
+            </span>
           </SettingsRow>
 
             {!canManageWorkspace && (
