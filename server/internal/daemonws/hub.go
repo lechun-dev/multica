@@ -40,6 +40,7 @@ type ClientIdentity struct {
 	// so RPC handlers can honor the same capability gating as the HTTP path.
 	Capabilities string
 }
+
 // RuntimeLease is the connection-scoped liveness state for one already
 // authenticated runtime. Ownership is immutable after the WebSocket upgrade;
 // only the last DB write and status advance as heartbeats are processed.
@@ -458,6 +459,12 @@ func (h *Hub) NotifyWorkspacesChanged(userID string) {
 	h.notifyWorkspacesChanged(userID, "")
 }
 
+// NotifyDingTalkPersonalMessageAvailable asks a user's connected daemon to
+// claim pending DWS-backed mention notifications immediately.
+func (h *Hub) NotifyDingTalkPersonalMessageAvailable(userID string) {
+	h.notifyDingTalkPersonalMessageAvailable(userID, "")
+}
+
 // NotifyPendingWork tells daemons watching runtimeID that a heartbeat-carried
 // request is queued, so they can heartbeat now instead of waiting for the next
 // scheduled tick (MUL-5444). Best-effort like every other hub notification: the
@@ -506,6 +513,17 @@ func (h *Hub) notifyWorkspacesChanged(userID, eventID string) {
 		return
 	}
 	data, err := workspacesChangedFrame()
+	if err != nil {
+		return
+	}
+	h.notifyUserFrame(userID, data, eventID)
+}
+
+func (h *Hub) notifyDingTalkPersonalMessageAvailable(userID, eventID string) {
+	if h == nil || userID == "" {
+		return
+	}
+	data, err := dingtalkPersonalMessageAvailableFrame()
 	if err != nil {
 		return
 	}
@@ -634,6 +652,13 @@ func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
 			M.WakeupDeliveredMiss.Add(1)
 		}
 	case protocol.EventDaemonWorkspacesChanged:
+		delivered, deduped := h.notifyUserFrame(scopeID, frame, eventID)
+		if delivered {
+			M.WakeupDeliveredHit.Add(1)
+		} else if !deduped {
+			M.WakeupDeliveredMiss.Add(1)
+		}
+	case protocol.EventDaemonDingTalkPersonalMessageAvailable:
 		delivered, deduped := h.notifyUserFrame(scopeID, frame, eventID)
 		if delivered {
 			M.WakeupDeliveredHit.Add(1)
@@ -780,6 +805,13 @@ func workspacesChangedFrame() ([]byte, error) {
 	return json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonWorkspacesChanged,
 		Payload: mustMarshalRaw(protocol.WorkspacesChangedPayload{}),
+	})
+}
+
+func dingtalkPersonalMessageAvailableFrame() ([]byte, error) {
+	return json.Marshal(protocol.Message{
+		Type:    protocol.EventDaemonDingTalkPersonalMessageAvailable,
+		Payload: mustMarshalRaw(protocol.DingTalkPersonalMessageAvailablePayload{}),
 	})
 }
 

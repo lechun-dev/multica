@@ -121,6 +121,22 @@
     "error_not_member": "サインインしている Multica アカウントはこのワークスペースのメンバーではありません。",
     "error_unknown": "問題が発生しました。もう一度試し、それでも解決しない場合はワークスペース管理者にお問い合わせください。"
   },
+  "desktop": {
+    "dws_auth": {
+      "title": "DingTalk に接続",
+      "description": "保留中の Multica 操作で DWS が必要です。自分のアカウントで続行するには DingTalk に接続してください。",
+      "identity_mismatch": "現在の DWS アカウントが Multica にログインしている DingTalk アカウントと一致しません。正しいアカウントを認証してください。",
+      "not_installed": "DWS CLI が見つかりません。DWS をインストールし、PATH から dws コマンドを実行できるようにしてから再試行してください。",
+      "browser_hint": "ブラウザが開きます。DingTalk の認証を完了してから Multica に戻ってください。",
+      "authorizing": "DingTalk の認証を待っています...",
+      "login": "DingTalk に接続",
+      "reauthorize": "別のアカウントを認証",
+      "detect_and_login": "検出して接続",
+      "later": "後で",
+      "success": "DWS で DingTalk に接続しました。",
+      "failed": "DWS の認証を完了できませんでした。"
+    }
+  },
   "navigation": {
     "open_in_new_tab": "新しいタブで開く"
   },

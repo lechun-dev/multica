@@ -898,7 +898,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Member @mentions use the deployment-wide DingTalk login application and
 	// are intentionally independent from the optional per-Agent BYO robot
 	// integration above.
-	registerDingTalkNotifyRuntime(bus, pool)
+	registerDingTalkNotifyRuntime(bus, pool, opts.DaemonWakeup)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
@@ -1459,6 +1459,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/workspaces", h.ListDaemonWorkspaces)
 		r.Get("/workspaces/{workspaceId}/repos", h.GetDaemonWorkspaceRepos)
 		r.Get("/workspaces/{workspaceId}/runtime-profiles", h.DaemonListRuntimeProfiles)
+		r.Post("/dingtalk-personal-messages/claim", h.ClaimDingTalkPersonalMessage)
+		r.Post("/dingtalk-personal-messages/{id}/result", h.ReportDingTalkPersonalMessageResult)
 
 		// Agent-triggered plugin hooks. The daemon's local MCP server calls
 		// this when an agent picks one of its tools; the server makes the

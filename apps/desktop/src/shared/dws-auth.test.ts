@@ -1,0 +1,60 @@
+// @vitest-environment node
+
+import { describe, expect, it } from "vitest";
+import {
+  dwsRequirementFromAuthStatus,
+  dwsRequirementFromPersonalMessage,
+  dwsRequirementKey,
+} from "./dws-auth";
+
+describe("DWS auth requirement mapping", () => {
+  it("lets a reusable DWS action trigger the shared dialog only when needed", () => {
+    const request = { source: "calendar_create" };
+    expect(
+      dwsRequirementFromAuthStatus({ state: "authenticated" }, request),
+    ).toBeNull();
+    expect(
+      dwsRequirementFromAuthStatus({ state: "not_logged_in" }, request),
+    ).toEqual({
+      reason: "not_logged_in",
+      source: "calendar_create",
+      message: undefined,
+    });
+    expect(
+      dwsRequirementFromAuthStatus({ state: "not_installed" }, request),
+    ).toEqual({
+      reason: "not_installed",
+      source: "calendar_create",
+      message: undefined,
+    });
+  });
+
+  it.each([
+    ["dws_not_installed", "not_installed"],
+    ["dws_not_logged_in", "not_logged_in"],
+    ["dws_identity_mismatch", "identity_mismatch"],
+  ] as const)("maps %s to the shared %s dialog reason", (state, reason) => {
+    expect(dwsRequirementFromPersonalMessage(state, "details")).toEqual({
+      reason,
+      source: "dingtalk_personal_message",
+      message: "details",
+    });
+  });
+
+  it("does not turn transient delivery failures into login prompts", () => {
+    expect(
+      dwsRequirementFromPersonalMessage("dws_send_failed", "retrying"),
+    ).toBeNull();
+    expect(dwsRequirementFromPersonalMessage("ready")).toBeNull();
+  });
+
+  it("builds a stable de-duplication key", () => {
+    const requirement = dwsRequirementFromPersonalMessage(
+      "dws_not_logged_in",
+      "sign in",
+    );
+    expect(dwsRequirementKey(requirement)).toBe(
+      "dingtalk_personal_message:not_logged_in:sign in",
+    );
+  });
+});

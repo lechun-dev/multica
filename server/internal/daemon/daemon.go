@@ -521,9 +521,12 @@ type Daemon struct {
 	// milliseconds; without the guard each hint would fire its own out-of-band
 	// heartbeat, and an authenticated caller looping the list-models endpoint
 	// could turn that into a heartbeat amplifier.
-	pendingWorkMu       sync.Mutex
-	pendingWorkInflight map[string]struct{}  // runtime_id -> hint-driven heartbeat in flight
-	pendingWorkLastRun  map[string]time.Time // runtime_id -> when the last hint-driven heartbeat started
+	pendingWorkMu            sync.Mutex
+	pendingWorkInflight      map[string]struct{}  // runtime_id -> hint-driven heartbeat in flight
+	pendingWorkLastRun       map[string]time.Time // runtime_id -> when the last hint-driven heartbeat started
+	dingtalkPersonalMu       sync.Mutex
+	dingtalkPersonalInflight bool
+	dingtalkPersonalHealth   DingTalkPersonalMessageHealth
 
 	cancelFunc context.CancelFunc // set by Run(); called by triggerRestart
 	rootCtx    context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
@@ -2051,6 +2054,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	go d.dingtalkPersonalMessageLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
@@ -2058,7 +2062,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// readiness wait blocks on, so success is reported only after startup
 	// actually completed, not merely because the health port came up.
 	d.ready.Store(true)
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
+	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal, dingtalk-personal-message); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err

@@ -96,6 +96,29 @@ func TestHealthHandlerReportsCLIVersionAndTaskCounts(t *testing.T) {
 	}
 }
 
+func TestDWSRetryHandlerRequiresPostAndMarksChecking(t *testing.T) {
+	t.Parallel()
+
+	d := &Daemon{}
+	handler := d.dwsRetryHandler()
+
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/dws/retry", nil))
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want %d", getRec.Code, http.StatusMethodNotAllowed)
+	}
+
+	postRec := httptest.NewRecorder()
+	handler.ServeHTTP(postRec, httptest.NewRequest(http.MethodPost, "/dws/retry", nil))
+	if postRec.Code != http.StatusAccepted {
+		t.Fatalf("POST status = %d, want %d", postRec.Code, http.StatusAccepted)
+	}
+	got := d.dingtalkPersonalMessageHealthSnapshot()
+	if got == nil || got.State != "checking" {
+		t.Fatalf("DWS health = %+v, want checking", got)
+	}
+}
+
 // TestHealthHandlerReportsDeferredReload covers the "while waiting to restart,
 // the reason and state are visible" criterion. When trySelfReload has confirmed
 // a multica version change but the daemon was busy at the barrier check, the

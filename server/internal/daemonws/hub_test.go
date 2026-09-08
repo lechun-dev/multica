@@ -331,6 +331,62 @@ func TestRelayNotifierPublishesWorkspacesChanged(t *testing.T) {
 	}
 }
 
+func TestNotifyDingTalkPersonalMessageAvailableIsUserScoped(t *testing.T) {
+	M.Reset()
+	defer M.Reset()
+
+	hub := NewHub()
+	target := attachDaemonUserTestClient(hub, "user-target")
+	other := attachDaemonUserTestClient(hub, "user-other")
+
+	hub.NotifyDingTalkPersonalMessageAvailable("user-target")
+
+	select {
+	case raw := <-target.send:
+		var message protocol.Message
+		if err := json.Unmarshal(raw, &message); err != nil {
+			t.Fatalf("unmarshal target frame: %v", err)
+		}
+		if message.Type != protocol.EventDaemonDingTalkPersonalMessageAvailable {
+			t.Fatalf("message type = %q, want %q", message.Type, protocol.EventDaemonDingTalkPersonalMessageAvailable)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(message.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal wakeup payload: %v", err)
+		}
+		if len(payload) != 0 {
+			t.Fatalf("personal-message wakeup leaked data: %#v", payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("target user's daemon did not receive DingTalk wakeup")
+	}
+	select {
+	case raw := <-other.send:
+		t.Fatalf("other user received private DingTalk wakeup: %s", raw)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestRelayNotifierPublishesDingTalkPersonalMessageUserScope(t *testing.T) {
+	M.Reset()
+	defer M.Reset()
+
+	relay := &recordingRelayPublisher{}
+	notifier := NewRelayNotifier(nil, relay)
+	notifier.NotifyDingTalkPersonalMessageAvailable("user-1")
+
+	if relay.scopeType != realtime.ScopeDaemonRuntime || relay.scopeID != "user-1" || relay.eventID == "" {
+		t.Fatalf("unexpected relay scope: type=%q id=%q event=%q", relay.scopeType, relay.scopeID, relay.eventID)
+	}
+	var message protocol.Message
+	if err := json.Unmarshal(relay.frame, &message); err != nil {
+		t.Fatalf("unmarshal relay frame: %v", err)
+	}
+	if message.Type != protocol.EventDaemonDingTalkPersonalMessageAvailable {
+		t.Fatalf("message type = %q, want %q", message.Type, protocol.EventDaemonDingTalkPersonalMessageAvailable)
+	}
+}
+
 func TestRelayNotifierDedupsLocalRedisLoopback(t *testing.T) {
 	M.Reset()
 	defer M.Reset()

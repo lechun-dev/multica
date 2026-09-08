@@ -655,6 +655,12 @@
       "label": "Show system notifications",
       "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
     },
+    "dingtalk_personal": {
+      "title": "DingTalk personal messages",
+      "description": "Use the local DWS CLI to send member mentions in comments as your DingTalk identity. Existing robot notifications are unchanged.",
+      "label": "Send a DingTalk DM when I @mention a member",
+      "hint": "On by default. Install DWS and run dws auth login first; offline messages are retained for 24 hours."
+    },
     "browser": {
       "label": "Browser notifications",
       "hint": "Allow this browser to show notification banners for new inbox items.",

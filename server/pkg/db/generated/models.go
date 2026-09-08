@@ -634,6 +634,33 @@ type DingtalkGroupRoute struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DingtalkPersonalMessage struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	CommentID           pgtype.UUID        `json:"comment_id"`
+	SenderUserID        pgtype.UUID        `json:"sender_user_id"`
+	SenderDingUserID    string             `json:"sender_ding_user_id"`
+	SenderUnionID       pgtype.Text        `json:"sender_union_id"`
+	SenderCorpID        pgtype.Text        `json:"sender_corp_id"`
+	RecipientUserID     pgtype.UUID        `json:"recipient_user_id"`
+	RecipientDingUserID string             `json:"recipient_ding_user_id"`
+	Markdown            string             `json:"markdown"`
+	IdempotencyKey      string             `json:"idempotency_key"`
+	Status              string             `json:"status"`
+	Attempts            int32              `json:"attempts"`
+	AvailableAt         pgtype.Timestamptz `json:"available_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	LeaseOwner          pgtype.Text        `json:"lease_owner"`
+	LeasedUntil         pgtype.Timestamptz `json:"leased_until"`
+	DwsOpenTaskID       pgtype.Text        `json:"dws_open_task_id"`
+	DwsOpenMessageID    pgtype.Text        `json:"dws_open_message_id"`
+	LastErrorCode       pgtype.Text        `json:"last_error_code"`
+	LastErrorMessage    pgtype.Text        `json:"last_error_message"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	DeliveredAt         pgtype.Timestamptz `json:"delivered_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`

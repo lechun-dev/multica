@@ -653,6 +653,12 @@
       "label": "시스템 알림 표시",
       "hint": "앱에 포커스가 없을 때 새 인박스 항목에 대해 운영체제 배너를 표시합니다."
     },
+    "dingtalk_personal": {
+      "title": "DingTalk 개인 메시지",
+      "description": "로컬 DWS CLI를 사용해 댓글의 멤버 멘션을 내 DingTalk 계정으로 보냅니다. 기존 봇 알림은 변경되지 않습니다.",
+      "label": "멤버를 @멘션할 때 DingTalk DM 보내기",
+      "hint": "기본적으로 켜져 있습니다. DWS를 설치하고 dws auth login을 먼저 실행하세요. 오프라인 메시지는 24시간 보관됩니다."
+    },
     "browser": {
       "label": "브라우저 알림",
       "hint": "이 브라우저에서 새 인박스 항목에 대한 알림 배너를 표시하도록 허용합니다.",

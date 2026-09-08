@@ -17,6 +17,7 @@ import { DesktopLoginPage } from "./pages/login";
 import { DesktopAuthRecoveryPage } from "./pages/auth-recovery";
 import { DesktopShell } from "./components/desktop-layout";
 import { UpdateNotification } from "./components/update-notification";
+import { DwsLoginDialog } from "./components/dws-login-dialog";
 import { IssueWindow } from "./components/issue-window";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
@@ -338,7 +339,14 @@ function AppContent() {
     );
   }
 
-  return user ? <DesktopShell /> : <DesktopLoginPage />;
+  return user ? (
+    <>
+      <DesktopShell />
+      <DwsLoginDialog />
+    </>
+  ) : (
+    <DesktopLoginPage />
+  );
 }
 
 function BlockingRuntimeConfigError({ message }: { message: string }) {
