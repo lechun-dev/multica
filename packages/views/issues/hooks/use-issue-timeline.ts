@@ -35,7 +35,10 @@ import {
   type ToggleCommentReactionVars,
 } from "@multica/core/issues/mutations";
 import { sortTimelineEntriesAsc } from "@multica/core/issues/timeline-sort";
-import { isRenderableCommentSnapshot } from "@multica/core/issues/comment-snapshot";
+import {
+  isRenderableCommentSnapshot,
+  isRenderableTimelineSnapshot,
+} from "@multica/core/issues/comment-snapshot";
 import {
   unhandledCommentTriggerOutcomes,
   mentionLabelsByTarget,
@@ -129,7 +132,10 @@ export function useIssueTimeline(issueId: string, userId?: string) {
   const query = useQuery(issueTimelineOptions(issueId));
   const { data, isLoading: loading } = query;
 
-  const timeline = useMemo<TimelineEntry[]>(() => data ?? [], [data]);
+  const timeline = useMemo<TimelineEntry[]>(
+    () => (data ?? []).filter(isRenderableTimelineSnapshot),
+    [data],
+  );
 
   // Stable mutation handles. TanStack v5 returns a fresh result wrapper from
   // useMutation per render, but the inner mutateAsync / mutate functions are
@@ -189,12 +195,9 @@ export function useIssueTimeline(issueId: string, userId?: string) {
     ),
   );
 
-  // Granular handlers for comment:resolved / comment:unresolved. The payload
-  // carries the full Comment with the new resolved_at/resolved_by_* fields,
-  // which `commentToTimelineEntry` already preserves, so the existing
-  // entry can simply be replaced in place. Without these handlers the only
-  // path that updated the cache was `useRealtimeSync`'s global invalidate,
-  // which forces a full timeline refetch and busts every CommentCard memo.
+  // 2026-09-08 coder(lq): Permission-safe resolve notifications require an
+  // active refetch; the global realtime handler only marks this cache stale.
+  // Patch directly only when the event actually contains a full snapshot.
   useWSEvent(
     "comment:resolved",
     useCallback(

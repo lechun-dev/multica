@@ -1,9 +1,26 @@
-import type { Comment } from "../types";
+import type { Comment, TimelineEntry } from "../types";
 
-// 2026-09-07 coder(lq): Comment mutation responses and workspace broadcasts
-// may be partial during mixed-version deployments. Only complete snapshots
-// are safe to render; callers should refetch the authoritative timeline when
-// this predicate returns false.
+// 2026-09-08 coder(lq): Reject incomplete cached comments left by older clients
+// before rendering. Empty text is valid for attachment-only comments.
+export function isRenderableTimelineSnapshot(
+  entry: TimelineEntry | null | undefined,
+): entry is TimelineEntry {
+  if (entry?.type === "activity") return true;
+
+  return Boolean(
+    entry?.type === "comment" &&
+      entry.id &&
+      entry.actor_type &&
+      entry.actor_id &&
+      typeof entry.created_at === "string" &&
+      Number.isFinite(Date.parse(entry.created_at)) &&
+      typeof entry.content === "string",
+  );
+}
+
+// 2026-09-08 coder(lq): Workspace broadcasts intentionally omit protected
+// comment content. Only complete snapshots are safe to render; callers must
+// refetch the permission-checked timeline for metadata-only notifications.
 export function isRenderableCommentSnapshot(
   comment: Partial<Comment> | null | undefined,
 ): comment is Comment {

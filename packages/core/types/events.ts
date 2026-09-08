@@ -218,13 +218,18 @@ export interface InboxBatchArchivedPayload {
   count: number;
 }
 
+// 2026-09-08 coder(lq): Workspace broadcasts contain permission-safe metadata,
+// not necessarily a full comment. Fetch protected content through the HTTP API.
+export type CommentEventSnapshot = Pick<Comment, "id" | "issue_id"> &
+  Partial<Comment>;
+
 export interface CommentCreatedPayload {
-  comment: Comment;
+  comment: CommentEventSnapshot;
   issue_revision?: number;
 }
 
 export interface CommentUpdatedPayload {
-  comment: Comment;
+  comment: CommentEventSnapshot;
   issue_revision?: number;
 }
 
@@ -235,11 +240,11 @@ export interface CommentDeletedPayload {
 }
 
 export interface CommentResolvedPayload {
-  comment: Comment;
+  comment: CommentEventSnapshot;
 }
 
 export interface CommentUnresolvedPayload {
-  comment: Comment;
+  comment: CommentEventSnapshot;
 }
 
 export interface WorkspaceUpdatedPayload {
