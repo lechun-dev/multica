@@ -62,6 +62,11 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	"442": {"442_agent_runtime_offline_last_seen_index", "442_vcs_reference_only_repair"},
 	"443": {"443_issue_project_status_index", "443_project_created_by"},
 	"444": {"444_comment_recovery_settled_at", "444_github_pr_head_sha_index"},
+	// 2026-09-08 coder(lq): Both 462 migrations shipped in the v0.4.76
+	// latest images before this collision was caught by release verification.
+	// Keep their recorded names stable so existing deployments do not replay
+	// agent_daily_stats under a new version and fail on the existing table.
+	"462": {"462_agent_daily_stats", "462_projectauth_access_grants_project_unique"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)
