@@ -96,10 +96,17 @@ func TestHealthHandlerReportsCLIVersionAndTaskCounts(t *testing.T) {
 	}
 }
 
-func TestDWSRetryHandlerRequiresPostAndMarksChecking(t *testing.T) {
-	t.Parallel()
-
-	d := &Daemon{}
+func TestDWSRetryHandlerRequiresPostAndReturnsToReadyWhenQueueIsEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":null}`))
+	}))
+	defer server.Close()
+	d := &Daemon{
+		cfg:    Config{DaemonID: "daemon-test"},
+		client: NewClient(server.URL),
+	}
+	d.setDingTalkPersonalMessageHealth("dws_not_logged_in", "sign in")
 	handler := d.dwsRetryHandler()
 
 	getRec := httptest.NewRecorder()
@@ -113,9 +120,16 @@ func TestDWSRetryHandlerRequiresPostAndMarksChecking(t *testing.T) {
 	if postRec.Code != http.StatusAccepted {
 		t.Fatalf("POST status = %d, want %d", postRec.Code, http.StatusAccepted)
 	}
-	got := d.dingtalkPersonalMessageHealthSnapshot()
-	if got == nil || got.State != "checking" {
-		t.Fatalf("DWS health = %+v, want checking", got)
+	deadline := time.Now().Add(time.Second)
+	for {
+		got := d.dingtalkPersonalMessageHealthSnapshot()
+		if got != nil && got.State == "ready" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("DWS health = %+v, want ready", got)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
