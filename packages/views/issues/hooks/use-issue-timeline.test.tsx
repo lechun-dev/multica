@@ -153,9 +153,9 @@ describe("useIssueTimeline", () => {
 
   it("returns the timeline as a flat array directly from the query cache", () => {
     queryState.data = [
-      { type: "comment", id: "c1", actor_type: "member", actor_id: "u", created_at: "2026-05-06T01:00:00Z" },
-      { type: "comment", id: "c2", actor_type: "member", actor_id: "u", created_at: "2026-05-06T02:00:00Z" },
-      { type: "comment", id: "c3", actor_type: "member", actor_id: "u", created_at: "2026-05-06T03:00:00Z" },
+      { type: "comment", id: "c1", actor_type: "member", actor_id: "u", created_at: "2026-05-06T01:00:00Z", content: "one" },
+      { type: "comment", id: "c2", actor_type: "member", actor_id: "u", created_at: "2026-05-06T02:00:00Z", content: "two" },
+      { type: "comment", id: "c3", actor_type: "member", actor_id: "u", created_at: "2026-05-06T03:00:00Z", content: "three" },
     ];
     const { result } = renderHook(() => useIssueTimeline("issue-1", "user-1"));
     expect(result.current.timeline.map((e) => e.id)).toEqual(["c1", "c2", "c3"]);
