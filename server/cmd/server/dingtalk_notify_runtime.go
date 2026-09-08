@@ -39,6 +39,11 @@ type dingtalkNotifyRuntime struct {
 	agentOwner         func(context.Context, string, string) (string, error)
 	agentDetails       func(context.Context, string, string) (string, string, error)
 	agentOwnerMentions bool
+	personalWakeup     dingtalkPersonalMessageWakeup
+}
+
+type dingtalkPersonalMessageWakeup interface {
+	NotifyDingTalkPersonalMessageAvailable(userID string)
 }
 
 const (
@@ -46,16 +51,10 @@ const (
 	dingtalkNotifyWorkerRetryMax = 30 * time.Second
 )
 
-// registerDingTalkNotifyRuntime wires member mentions and, when enabled,
-// explicit Agent mentions to the Agent owner's existing member binding. The
-// runtime starts automatically once the global DingTalk application credentials
-// are complete; no feature flag or BYO robot encryption key is involved.
-func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
-	config := notify.ConfigFromEnv(os.Getenv)
-	if missing := config.MissingNotificationSettings(); len(missing) > 0 {
-		slog.Info("dingtalk notify disabled: application configuration is incomplete", "missing", strings.Join(missing, ","))
-		return
-	}
+// registerDingTalkNotifyRuntime always wires the local-DWS personal mention
+// outbox. The existing robot worker remains separately gated by its deployment
+// credentials, so adding personal delivery does not change robot behavior.
+func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, wakeup any) {
 	if bus == nil || pool == nil {
 		slog.Warn("dingtalk notify disabled: event bus or database is unavailable")
 		return
@@ -76,6 +75,24 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
 		return
 	}
 
+	runtime := &dingtalkNotifyRuntime{
+		pool:         pool,
+		agentOwner:   dingtalkAgentOwnerResolver(pool),
+		agentDetails: dingtalkAgentDetailsResolver(pool),
+	}
+	if notifier, ok := wakeup.(dingtalkPersonalMessageWakeup); ok {
+		runtime.personalWakeup = notifier
+	}
+	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
+	slog.Info("dingtalk personal mention outbox enabled")
+
+	config := notify.ConfigFromEnv(os.Getenv)
+	if missing := config.MissingNotificationSettings(); len(missing) > 0 {
+		_ = sqlDB.Close()
+		slog.Info("dingtalk robot notify disabled: application configuration is incomplete", "missing", strings.Join(missing, ","))
+		return
+	}
+
 	store := &notify.SQLStore{DB: sqlDB, Lease: 2 * time.Minute}
 	provider := loggingDingTalkNotifyProvider{next: &notify.DingTalkProvider{
 		BaseURL:      strings.TrimSpace(config.DingTalkAPIBaseURL),
@@ -83,19 +100,13 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) {
 		ClientSecret: strings.TrimSpace(config.DingTalkClientSecret),
 		RobotCode:    strings.TrimSpace(config.DingTalkRobotCode),
 	}}
-	runtime := &dingtalkNotifyRuntime{
-		store:              store,
-		resolver:           dingtalkMentionResolver{pool: pool},
-		provider:           provider,
-		audit:              notify.SQLAuditSink{DB: sqlDB},
-		pool:               pool,
-		workerInterval:     config.WorkerInterval,
-		maxAttempts:        config.MaxAttempts,
-		agentOwner:         dingtalkAgentOwnerResolver(pool),
-		agentDetails:       dingtalkAgentDetailsResolver(pool),
-		agentOwnerMentions: config.AgentOwnerMentions,
-	}
-	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
+	runtime.store = store
+	runtime.resolver = dingtalkMentionResolver{pool: pool}
+	runtime.provider = provider
+	runtime.audit = notify.SQLAuditSink{DB: sqlDB}
+	runtime.workerInterval = config.WorkerInterval
+	runtime.maxAttempts = config.MaxAttempts
+	runtime.agentOwnerMentions = config.AgentOwnerMentions
 	bus.Subscribe(protocol.EventTaskCompleted, runtime.handleTaskCompleted)
 	go runtime.run(context.Background())
 	slog.Info("dingtalk member notifications enabled")
@@ -316,6 +327,10 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 		actorID = e.ActorID
 	}
 	mentions := util.ParseMentions(content)
+	r.enqueuePersonalMentions(e.WorkspaceID, commentID, issueID, content, actorType, actorID, mentions)
+	if r.store == nil || r.resolver == nil {
+		return
+	}
 	targets := make([]notify.MentionTarget, 0, len(mentions))
 	actorOwnerID := actorID
 	if actorType == "agent" {
@@ -376,6 +391,105 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 		return
 	}
 	slog.Info("dingtalk notify: mentions enqueued", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
+}
+
+func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, issueID, content, actorType, actorID string, mentions []util.Mention) {
+	if r == nil || r.pool == nil || actorType != "member" || strings.TrimSpace(actorID) == "" {
+		return
+	}
+	var enabled bool
+	if err := r.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(
+		    (SELECT preferences->>'dingtalk_personal_mentions'
+		     FROM notification_preference
+		     WHERE workspace_id = $1 AND user_id = $2),
+		    'all'
+		) <> 'muted'`, workspaceID, actorID).Scan(&enabled); err != nil || !enabled {
+		if err != nil {
+			slog.Warn("dingtalk personal mention: preference lookup failed", "workspace_id", workspaceID, "error", err)
+		}
+		return
+	}
+
+	contextData := r.loadMentionContext(context.Background(), issueID, workspaceID, actorType, actorID, commentID)
+	event := notify.MentionCreated{
+		EventID: commentID, WorkspaceID: workspaceID,
+		Actor: notify.Actor{ID: actorID, Kind: actorType},
+		Text:  content, CreatedAt: time.Now().UTC(),
+	}
+	if contextData != nil {
+		event.WorkspaceName = contextData.workspaceName
+		event.ProjectName = contextData.projectName
+		event.IssueIdentifier = contextData.issueIdentifier
+		event.IssueTitle = contextData.issueTitle
+		event.SourceURL = contextData.sourceURL
+		event.Actor.Name = contextData.actorName
+	}
+	markdown := notify.FormatText(event)
+	seen := make(map[string]struct{}, len(mentions))
+	enqueued := 0
+	for _, mention := range mentions {
+		targetID := strings.TrimSpace(mention.ID)
+		if mention.Type != "member" || targetID == "" || targetID == actorID {
+			continue
+		}
+		if _, exists := seen[targetID]; exists {
+			continue
+		}
+		seen[targetID] = struct{}{}
+		result, err := r.pool.Exec(context.Background(), `
+			INSERT INTO dingtalk_personal_message (
+			    workspace_id, comment_id, sender_user_id, sender_ding_user_id,
+			    sender_union_id, sender_corp_id, recipient_user_id,
+			    recipient_ding_user_id, markdown, idempotency_key
+			)
+			SELECT $1, $2, $3, sender.ding_user_id,
+			       NULLIF(sender.union_id, ''), NULLIF($6, ''), $4,
+			       recipient.ding_user_id, $5,
+			       'dingtalk-personal-mention:' || $2::text || ':' || $4::text
+			FROM LATERAL (
+			    SELECT COALESCE(ding_user_id, '') AS ding_user_id,
+			           COALESCE(union_id, '') AS union_id
+			    FROM dingtalk_notify_identities
+			    WHERE multica_user_id = $3 AND active = true
+			      AND (COALESCE(union_id, '') <> '' OR COALESCE(ding_user_id, '') <> '')
+			    ORDER BY updated_at DESC
+			    LIMIT 1
+			) sender
+			CROSS JOIN LATERAL (
+			    SELECT ding_user_id
+			    FROM dingtalk_notify_identities
+			    WHERE multica_user_id = $4 AND active = true AND login_only = false
+			      AND COALESCE(ding_user_id, '') <> ''
+			    ORDER BY updated_at DESC
+			    LIMIT 1
+			) recipient
+			WHERE EXISTS (
+			    SELECT 1 FROM member
+			    WHERE workspace_id = $1 AND user_id = $3
+			)
+			  AND EXISTS (
+			    SELECT 1 FROM member
+			    WHERE workspace_id = $1 AND user_id = $4
+			)
+			ON CONFLICT (idempotency_key) DO NOTHING`,
+			workspaceID, commentID, actorID, targetID, markdown,
+			strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")))
+		if err != nil {
+			slog.Warn("dingtalk personal mention: enqueue failed", "comment_id", commentID, "target_id", targetID, "error", err)
+			continue
+		}
+		if result.RowsAffected() > 0 {
+			enqueued++
+		}
+	}
+	if enqueued == 0 {
+		return
+	}
+	if r.personalWakeup != nil {
+		r.personalWakeup.NotifyDingTalkPersonalMessageAvailable(actorID)
+	}
+	slog.Info("dingtalk personal mentions enqueued", "comment_id", commentID, "workspace_id", workspaceID, "target_count", enqueued)
 }
 
 func dingtalkAgentOwnerResolver(pool *pgxpool.Pool) func(context.Context, string, string) (string, error) {

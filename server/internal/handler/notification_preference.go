@@ -18,13 +18,14 @@ import (
 // preferences map so a single endpoint covers all user notification
 // preferences.
 var validNotifGroups = map[string]bool{
-	"assignments":          true,
-	"status_changes":       true,
-	"comments":             true,
-	"mentions":             true,
-	"updates":              true,
-	"agent_activity":       true,
-	"system_notifications": true,
+	"assignments":                true,
+	"status_changes":             true,
+	"comments":                   true,
+	"mentions":                   true,
+	"updates":                    true,
+	"agent_activity":             true,
+	"system_notifications":       true,
+	"dingtalk_personal_mentions": true,
 }
 
 // validNotifValues is the set of allowed preference values per group.

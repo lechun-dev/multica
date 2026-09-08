@@ -74,8 +74,9 @@ type HealthResponse struct {
 	// version change on disk but hasn't restarted into it yet — it was busy at
 	// the last barrier check and will retry when idle. Omitted when empty, so
 	// older consumers see no change. Diagnostic only: nothing keys off it.
-	ReloadPendingReason string            `json:"reload_pending_reason,omitempty"`
-	Workspaces          []healthWorkspace `json:"workspaces"`
+	ReloadPendingReason     string                         `json:"reload_pending_reason,omitempty"`
+	DingTalkPersonalMessage *DingTalkPersonalMessageHealth `json:"dingtalk_personal_message,omitempty"`
+	Workspaces              []healthWorkspace              `json:"workspaces"`
 }
 
 type healthWorkspace struct {
@@ -340,8 +341,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			Agents:                agents,
 			SkippedAgents:         d.skippedAgentsSnapshot(),
 
-			ReloadPendingReason: d.reloadPending(),
-			Workspaces:          wsList,
+			ReloadPendingReason:     d.reloadPending(),
+			DingTalkPersonalMessage: d.dingtalkPersonalMessageHealthSnapshot(),
+			Workspaces:              wsList,
 		}
 		if reporter, ok := d.repoCache.(interface{ Activity() repocache.Activity }); ok {
 			activity := reporter.Activity()
@@ -376,12 +378,30 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 	}
 }
 
+// dwsRetryHandler lets the Desktop app nudge queued DWS work immediately
+// after an interactive OAuth login. The listener is loopback-only, and the
+// operation only retries work already authorized and queued by the server.
+func (d *Daemon) dwsRetryHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		d.setDingTalkPersonalMessageHealth("checking", "")
+		go d.drainDingTalkPersonalMessages(context.Background())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "retrying"})
+	}
+}
+
 // serveHealth runs the health HTTP server on the given listener.
 // Blocks until ctx is cancelled.
 func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt time.Time) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
+	mux.HandleFunc("/dws/retry", d.dwsRetryHandler())
 	mux.HandleFunc("/repo/checkout", d.repoCheckoutHandler())
 
 	srv := &http.Server{Handler: mux}

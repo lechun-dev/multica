@@ -100,6 +100,32 @@ func (n *RelayNotifier) NotifyWorkspacesChanged(userID string) {
 	M.WakeupPublishedTotal.Add(1)
 }
 
+// NotifyDingTalkPersonalMessageAvailable fans an account-scoped claim hint to
+// the API node holding the user's daemon WebSocket.
+func (n *RelayNotifier) NotifyDingTalkPersonalMessageAvailable(userID string) {
+	if userID == "" {
+		return
+	}
+	eventID := ulid.Make().String()
+	if n.local != nil {
+		n.local.notifyDingTalkPersonalMessageAvailable(userID, eventID)
+	}
+	if n.relay == nil {
+		return
+	}
+	frame, err := dingtalkPersonalMessageAvailableFrame()
+	if err != nil {
+		M.WakeupPublishErrors.Add(1)
+		return
+	}
+	if err := n.relay.PublishWithID(realtime.ScopeDaemonRuntime, userID, "", frame, eventID); err != nil {
+		M.WakeupPublishErrors.Add(1)
+		slog.Warn("daemon websocket DingTalk personal-message publish failed", "error", err, "user_id", userID)
+		return
+	}
+	M.WakeupPublishedTotal.Add(1)
+}
+
 // NotifyPendingWork fans a runtime-scoped "heartbeat now" hint out to the local
 // hub and, when Redis is configured, through the relay so the API node that
 // actually holds the daemon's WebSocket delivers it (MUL-5444). Shard key is the

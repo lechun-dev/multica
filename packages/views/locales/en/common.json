@@ -121,6 +121,22 @@
     "error_not_member": "You're signed in to a Multica account that isn't a member of this workspace.",
     "error_unknown": "Something went wrong. Try again, and if the problem persists, contact the workspace admin."
   },
+  "desktop": {
+    "dws_auth": {
+      "title": "Connect DingTalk",
+      "description": "A pending Multica action needs DWS. Connect DingTalk to continue with your own account.",
+      "identity_mismatch": "The active DWS account does not match the DingTalk account signed in to Multica. Authorize the correct account to continue.",
+      "not_installed": "DWS CLI was not found. Install DWS and make sure the dws command is available on PATH, then try again.",
+      "browser_hint": "Your browser will open. Complete the DingTalk authorization there, then return to Multica.",
+      "authorizing": "Waiting for DingTalk authorization...",
+      "login": "Connect DingTalk",
+      "reauthorize": "Authorize another account",
+      "detect_and_login": "Detect and connect",
+      "later": "Later",
+      "success": "DingTalk connected through DWS.",
+      "failed": "Couldn't complete DWS authorization."
+    }
+  },
   "navigation": {
     "open_in_new_tab": "Open in new tab"
   },

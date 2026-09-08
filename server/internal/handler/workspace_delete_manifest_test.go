@@ -66,6 +66,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"dingtalk_notify_member_bindings":     workspaceDelete,
 	"dingtalk_notify_oauth_states":        workspaceDeleteKeep,
 	"dingtalk_notify_outbox":              workspaceDelete,
+	"dingtalk_personal_message":           workspaceDelete,
 	"feedback":                            workspaceDeleteDetach,
 	"github_installation":                 workspaceDelete,
 	"github_pending_check_suite":          workspaceDelete,

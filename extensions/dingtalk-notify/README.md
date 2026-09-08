@@ -119,6 +119,37 @@ The host bridge reads `DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS` (default `true`)
 to enable or disable P2P notices when another member explicitly mentions an
 Agent. The Agent owner's own member or Agent comments are suppressed.
 
+## 本机 DWS 个人私信
+
+桌面端登录的成员在评论中使用 `mention://member/<user-id>` 提及另一位成员时，
+服务端除保留原有机器人通知外，还会创建一条独立的个人消息 Outbox。只有人类成员
+撰写的评论会进入该队列；Agent、system、自己提及自己以及同一评论中的重复提及均不
+发送个人私信。用户可在通知设置中关闭“@成员时发送钉钉私信”，该开关默认开启。
+
+个人消息由发送者自己的桌面端 Daemon 领取，并调用本机已登录的 `dws`：
+
+```bash
+dws chat message send --user <recipient-user-id> \
+  --title "MissionOS 通知" --content "<markdown>" \
+  --idempotency-key <stable-key> --ai-tag=false --format json
+```
+
+Daemon 会先运行 `dws auth status --format json` 和
+`dws contact user get-self --format json`。身份优先按 `unionId` 核对；缺少
+`unionId` 时必须同时匹配 `corpId + userId`。DWS 未安装、未登录或身份不一致时
+禁止发送，消息保留在队列中并在桌面端提示处理；电脑离线后上线也会补发。队列默认
+24 小时过期。发送命令返回 `openTaskId` 后，Daemon 会保存该检查点并调用
+`dws chat message query-send-status`，只有拿到 `openMessageId` 才标记已送达。
+WebSocket 仅发送“有待领取消息”的用户级提示，不携带消息正文。
+
+桌面端还暴露统一的 `window.dwsAPI.ensureAuthenticated({ source })` 前置检查。
+后续日历、文档、待办等 DWS 功能应仅在用户实际触发操作时调用它：已登录时直接
+继续，未安装或未登录时复用同一个授权弹窗，不在应用启动或浏览普通页面时打扰用户。
+
+首阶段只支持评论中的成员提及和 Markdown 文本私信；Agent 发言、任务详情等其他
+场景，以及文件、图片、群聊和 DING 均不在本阶段范围内。单元与集成测试使用假 DWS，
+不会真实发送钉钉消息。
+
 The host also publishes terminal `task:completed` events. Each completed Agent
 run is sent as a separate P2P completion notice to the Agent owner and the
 human who initiated that run; duplicate identities are collapsed, and missing

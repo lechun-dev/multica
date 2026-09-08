@@ -121,6 +121,22 @@
     "error_not_member": "로그인한 Multica 계정이 이 워크스페이스의 멤버가 아니에요.",
     "error_unknown": "문제가 발생했어요. 다시 시도해 보고, 계속되면 워크스페이스 관리자에게 문의하세요."
   },
+  "desktop": {
+    "dws_auth": {
+      "title": "DingTalk 연결",
+      "description": "대기 중인 Multica 작업에 DWS가 필요합니다. 본인 계정으로 계속하려면 DingTalk를 연결하세요.",
+      "identity_mismatch": "현재 DWS 계정이 Multica에 로그인한 DingTalk 계정과 일치하지 않습니다. 올바른 계정을 인증하세요.",
+      "not_installed": "DWS CLI를 찾을 수 없습니다. DWS를 설치하고 PATH에서 dws 명령을 실행할 수 있는지 확인한 후 다시 시도하세요.",
+      "browser_hint": "브라우저가 열립니다. DingTalk 인증을 완료한 후 Multica로 돌아오세요.",
+      "authorizing": "DingTalk 인증을 기다리는 중...",
+      "login": "DingTalk 연결",
+      "reauthorize": "다른 계정 인증",
+      "detect_and_login": "감지 후 연결",
+      "later": "나중에",
+      "success": "DWS를 통해 DingTalk에 연결했습니다.",
+      "failed": "DWS 인증을 완료하지 못했습니다."
+    }
+  },
   "navigation": {
     "open_in_new_tab": "새 탭에서 열기"
   },

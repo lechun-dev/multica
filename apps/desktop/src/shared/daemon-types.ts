@@ -35,6 +35,11 @@ export interface DaemonStatus {
    * never disables the toggles for a normally-managed native daemon. See #3916.
    */
   externallyManaged?: boolean;
+  /** Local DWS delivery state for member-authored DingTalk mentions. */
+  dingtalkPersonalMessage?: {
+    state: string;
+    message?: string;
+  };
 }
 
 export interface DaemonPrefs {
