@@ -120,7 +120,7 @@ func (d *Daemon) deliverDingTalkPersonalMessage(ctx context.Context, message *Di
 		return
 	}
 	switch result.Status {
-	case "waiting_for_dws_login", "waiting_for_identity", "failed":
+	case "retry", "waiting_for_dws_login", "waiting_for_identity", "failed":
 		d.setDingTalkPersonalMessageHealth(result.ErrorCode, result.ErrorMessage)
 	case "delivered":
 		d.setDingTalkPersonalMessageHealth("ready", "")
@@ -172,18 +172,14 @@ func (d *Daemon) runDWSMessageDelivery(ctx context.Context, message *DingTalkPer
 
 	openTaskID := strings.TrimSpace(message.DWSOpenTaskID)
 	if openTaskID == "" {
-		sendOutput, sendErr := runDWSCommand(ctx, path,
-			"chat", "message", "send",
-			"--user", message.RecipientDingUserID,
-			"--title", "MissionOS 通知",
-			"--content", message.Markdown,
-			"--idempotency-key", message.IdempotencyKey,
-			"--ai-tag=false",
-			"--format", "json",
-		)
+		sendOutput, sendErr := runDWSMessageSend(ctx, path, message)
 		if sendErr != nil {
 			if dwsLooksUnauthenticated(sendErr.Error()) {
 				return dwsWaitingResult("waiting_for_dws_login", "dws_not_logged_in", "DWS 登录已失效。请在终端执行 dws auth login。", sendErr)
+			}
+			var resolutionErr *dwsRecipientResolutionError
+			if errors.As(sendErr, &resolutionErr) {
+				return dwsWaitingResult("retry", "dws_recipient_identity_unresolved", "无法将接收人的钉钉 userId 解析为个人消息身份，将自动重试。", sendErr)
 			}
 			return dwsWaitingResult("retry", "dws_send_failed", "DWS 私信发送失败，将自动重试。", sendErr)
 		}
@@ -228,6 +224,102 @@ func (d *Daemon) runDWSMessageDelivery(ctx context.Context, message *DingTalkPer
 		}
 	}
 	return DingTalkPersonalMessageResult{Status: "retry", DWSOpenTaskID: openTaskID, ErrorCode: "dws_delivery_pending", ErrorMessage: "DWS 消息仍在投递，将自动继续查询。"}
+}
+
+type dwsRecipientResolutionError struct {
+	err error
+}
+
+func (e *dwsRecipientResolutionError) Error() string {
+	if e == nil || e.err == nil {
+		return "DWS recipient identity is unavailable"
+	}
+	return e.err.Error()
+}
+
+func (e *dwsRecipientResolutionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func runDWSMessageSend(ctx context.Context, path string, message *DingTalkPersonalMessage) ([]byte, error) {
+	if message == nil {
+		return nil, errors.New("DWS personal message is missing")
+	}
+	send := func(recipientFlag, recipientID string) ([]byte, error) {
+		return runDWSCommand(ctx, path,
+			"chat", "message", "send",
+			recipientFlag, recipientID,
+			"--title", "MissionOS 通知",
+			"--content", message.Markdown,
+			"--idempotency-key", message.IdempotencyKey,
+			"--ai-tag=false",
+			"--format", "json",
+		)
+	}
+
+	output, err := send("--user", message.RecipientDingUserID)
+	if err == nil || !dwsNeedsOpenDingTalkID(err) {
+		return output, err
+	}
+
+	openDingTalkID, resolveErr := resolveDWSOpenDingTalkID(ctx, path, message.RecipientDingUserID)
+	if resolveErr != nil {
+		return nil, &dwsRecipientResolutionError{err: resolveErr}
+	}
+	return send("--open-dingtalk-id", openDingTalkID)
+}
+
+func dwsNeedsOpenDingTalkID(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "cannot resolve --user") && strings.Contains(message, "opendingtalkid")
+}
+
+func resolveDWSOpenDingTalkID(ctx context.Context, path, userID string) (string, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "", errors.New("DWS recipient userId is empty")
+	}
+	output, err := runDWSCommand(ctx, path,
+		"contact", "user", "search",
+		"--keyword", userID,
+		"--format", "json",
+	)
+	if err != nil {
+		return "", fmt.Errorf("search DWS recipient identity: %w", err)
+	}
+	var response struct {
+		Result []struct {
+			UserID         string `json:"userId"`
+			OpenDingTalkID string `json:"openDingTalkId"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", fmt.Errorf("decode DWS recipient search: %w", err)
+	}
+	openDingTalkID := ""
+	for _, candidate := range response.Result {
+		if strings.TrimSpace(candidate.UserID) != userID {
+			continue
+		}
+		candidateID := strings.TrimSpace(candidate.OpenDingTalkID)
+		if candidateID == "" {
+			continue
+		}
+		if openDingTalkID != "" && openDingTalkID != candidateID {
+			return "", fmt.Errorf("DWS recipient userId %q matched multiple openDingTalkIds", userID)
+		}
+		openDingTalkID = candidateID
+	}
+	if openDingTalkID == "" {
+		return "", fmt.Errorf("DWS recipient userId %q has no exact openDingTalkId match", userID)
+	}
+	return openDingTalkID, nil
 }
 
 func dwsExecutablePath() (string, error) {

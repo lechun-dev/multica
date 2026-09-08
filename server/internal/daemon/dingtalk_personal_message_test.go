@@ -141,6 +141,150 @@ esac
 	}
 }
 
+func TestRunDWSMessageDeliveryFallsBackToExactOpenDingTalkID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	temp := t.TempDir()
+	logPath := filepath.Join(temp, "commands.log")
+	fakePath := filepath.Join(temp, "dws")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$DWS_FAKE_LOG"
+case "$1 $2 $3" in
+  "auth status --format")
+    printf '%s\n' '{"success":true,"authenticated":true}'
+    ;;
+  "contact user get-self")
+    printf '%s\n' '{"success":true,"result":{"unionId":"union-author","userId":"user-author","corpId":"corp-a"}}'
+    ;;
+  "contact user search")
+    printf '%s\n' '{"success":true,"result":[{"userId":"decoy","openDingTalkId":"open-decoy"},{"userId":"user-recipient","openDingTalkId":"open-recipient"}]}'
+    ;;
+  "chat message send")
+    case " $* " in
+      *" --user user-recipient "*)
+        printf '%s\n' '{"error":{"message":"cannot resolve --user user-recipient to openDingTalkId"}}'
+        exit 1
+        ;;
+      *" --open-dingtalk-id open-recipient "*)
+        printf '%s\n' '{"success":true,"result":{"openTaskId":"task-fallback"}}'
+        ;;
+      *)
+        printf '%s\n' '{"error":{"message":"unexpected recipient"}}'
+        exit 1
+        ;;
+    esac
+    ;;
+  "chat message query-send-status")
+    printf '%s\n' '{"success":true,"result":{"status":"SUCCESS","openMessageId":"message-fallback"}}'
+    ;;
+  *)
+    printf '%s\n' '{"error":{"message":"unexpected fake command"}}'
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(fakePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTICA_DWS_PATH", fakePath)
+	t.Setenv("DWS_FAKE_LOG", logPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	d := &Daemon{
+		cfg:    Config{DaemonID: "daemon-test"},
+		client: NewClient(server.URL),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	result := d.runDWSMessageDelivery(context.Background(), &DingTalkPersonalMessage{
+		ID:                  "message-row",
+		SenderUnionID:       "union-author",
+		SenderDingUserID:    "user-author",
+		SenderCorpID:        "corp-a",
+		RecipientDingUserID: "user-recipient",
+		Markdown:            "## hello\n\nbody",
+		IdempotencyKey:      "mention-key",
+	})
+	if result.Status != "delivered" || result.DWSOpenTaskID != "task-fallback" || result.DWSOpenMessageID != "message-fallback" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	commands, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandText := string(commands)
+	for _, required := range []string{
+		"chat message send --user user-recipient",
+		"contact user search --keyword user-recipient --format json",
+		"chat message send --open-dingtalk-id open-recipient",
+	} {
+		if !strings.Contains(commandText, required) {
+			t.Errorf("fake DWS command log missing %q:\n%s", required, commandText)
+		}
+	}
+	if count := strings.Count(commandText, "--idempotency-key mention-key"); count != 2 {
+		t.Fatalf("idempotency key appeared %d times, want once per send attempt:\n%s", count, commandText)
+	}
+}
+
+func TestRunDWSMessageDeliveryDoesNotUseInexactRecipientMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	temp := t.TempDir()
+	logPath := filepath.Join(temp, "commands.log")
+	fakePath := filepath.Join(temp, "dws")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$DWS_FAKE_LOG"
+case "$1 $2 $3" in
+  "auth status --format")
+    printf '%s\n' '{"success":true,"authenticated":true}'
+    ;;
+  "contact user get-self")
+    printf '%s\n' '{"success":true,"result":{"unionId":"union-author"}}'
+    ;;
+  "contact user search")
+    printf '%s\n' '{"success":true,"result":[{"userId":"different-user","openDingTalkId":"open-wrong"}]}'
+    ;;
+  "chat message send")
+    printf '%s\n' '{"error":{"message":"cannot resolve --user user-recipient to openDingTalkId"}}'
+    exit 1
+    ;;
+  *)
+    printf '%s\n' '{"error":{"message":"unexpected fake command"}}'
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(fakePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTICA_DWS_PATH", fakePath)
+	t.Setenv("DWS_FAKE_LOG", logPath)
+
+	d := &Daemon{}
+	result := d.runDWSMessageDelivery(context.Background(), &DingTalkPersonalMessage{
+		SenderUnionID:       "union-author",
+		RecipientDingUserID: "user-recipient",
+		IdempotencyKey:      "mention-key",
+	})
+	if result.Status != "retry" || result.ErrorCode != "dws_recipient_identity_unresolved" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	commands, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(commands), "--open-dingtalk-id") {
+		t.Fatalf("inexact recipient identity was used:\n%s", commands)
+	}
+}
+
 func TestRunDWSMessageDeliveryQueuesWhenFakeDWSIsLoggedOut(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake executable")

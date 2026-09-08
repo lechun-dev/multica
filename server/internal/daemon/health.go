@@ -388,7 +388,14 @@ func (d *Daemon) dwsRetryHandler() http.HandlerFunc {
 			return
 		}
 		d.setDingTalkPersonalMessageHealth("checking", "")
-		go d.drainDingTalkPersonalMessages(context.Background())
+		go func() {
+			d.drainDingTalkPersonalMessages(context.Background())
+			d.dingtalkPersonalMu.Lock()
+			if d.dingtalkPersonalHealth.State == "checking" {
+				d.dingtalkPersonalHealth = DingTalkPersonalMessageHealth{State: "ready"}
+			}
+			d.dingtalkPersonalMu.Unlock()
+		}()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "retrying"})
