@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
@@ -155,6 +156,60 @@ func resolveIssueCreatorUserWithExecutor(ctx context.Context, executor dbExecuto
 	}
 }
 
+// 2026-09-09 coder(lq): A human who delegates work to an Agent receives native
+// notifications for tasks that Agent creates. Mirror that same delegated-human
+// decision into task Member access so the subsequent inbox REST refresh can
+// show and open the notification without granting project-wide permissions.
+func resolveDelegatedIssueMemberWithExecutor(
+	ctx context.Context,
+	executor dbExecutor,
+	workspaceID pgtype.UUID,
+	creatorType string,
+	originType pgtype.Text,
+	originID pgtype.UUID,
+) (string, error) {
+	if executor == nil || creatorType != "agent" || !workspaceID.Valid || !originType.Valid || !originID.Valid {
+		return "", nil
+	}
+
+	facts, err := db.New(executor).GetDelegatedSubscriptionFacts(ctx, db.GetDelegatedSubscriptionFactsParams{
+		OriginTaskID: originID,
+		WorkspaceID:  workspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	human, _, ok := attribution.DelegatedSubscriber(attribution.SubscriptionFacts{
+		CreatorType:      creatorType,
+		OriginType:       originType.String,
+		OriginOriginator: facts.OriginatorUserID,
+		OriginRootSource: attribution.Source(facts.RootSource.String),
+	})
+	if !ok {
+		return "", nil
+	}
+
+	// 2026-09-09 coder(lq): The originator is stamped when the Agent task is
+	// queued. Re-check current workspace membership before materializing access
+	// so a removed user cannot regain task visibility through a still-running
+	// delegated task.
+	var activeMember bool
+	if err := executor.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM member WHERE workspace_id=$1 AND user_id=$2
+		)`, workspaceID, human).Scan(&activeMember); err != nil {
+		return "", err
+	}
+	if !activeMember {
+		return "", nil
+	}
+	return uuidToString(human), nil
+}
+
 // 2026-09-01 coder(lq): Reconcile mention grants from the complete issue
 // surface (description plus every comment). Grants are source=system, so a
 // removed mention can be revoked safely without touching manual task shares;
@@ -162,12 +217,20 @@ func resolveIssueCreatorUserWithExecutor(ctx context.Context, executor dbExecuto
 // on the same task. Mentions and assignees both receive the task Member role.
 func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor, issueID, projectID, description string) error {
 	desired := make(map[string]struct{})
-	workspaceID := ""
-	if projectID == "" {
-		if err := executor.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id=$1`, issueID).Scan(&workspaceID); err != nil {
-			return err
-		}
+	var workspaceUUID pgtype.UUID
+	var creatorType string
+	var originType pgtype.Text
+	var originID pgtype.UUID
+	issueQuery := `SELECT workspace_id, creator_type, origin_type, origin_id FROM issue WHERE id=$1`
+	issueArgs := []any{issueID}
+	if projectID != "" {
+		issueQuery += ` AND project_id=$2`
+		issueArgs = append(issueArgs, projectID)
 	}
+	if err := executor.QueryRow(ctx, issueQuery, issueArgs...).Scan(&workspaceUUID, &creatorType, &originType, &originID); err != nil {
+		return err
+	}
+	workspaceID := uuidToString(workspaceUUID)
 	addMentions := func(content string) error {
 		for _, mention := range util.ParseMentions(content) {
 			if mention.Type != "member" && mention.Type != "agent" {
@@ -260,6 +323,16 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		if assigneeUserID != "" {
 			desired[assigneeUserID] = struct{}{}
 		}
+	}
+
+	delegatedUserID, err := resolveDelegatedIssueMemberWithExecutor(
+		ctx, executor, workspaceUUID, creatorType, originType, originID,
+	)
+	if err != nil {
+		return err
+	}
+	if delegatedUserID != "" {
+		desired[delegatedUserID] = struct{}{}
 	}
 
 	var currentRows pgx.Rows

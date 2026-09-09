@@ -541,6 +541,94 @@ func TestCreateIssuePromotesAssigneeAndMentionedMember(t *testing.T) {
 	}
 }
 
+// 2026-09-09 coder(lq): A task filed by an Agent on behalf of a direct human
+// must give that human task-level Member access. Otherwise the websocket can
+// raise a native notification that the inbox REST refresh immediately hides.
+func TestSyncIssueAccessGrantsDelegatedOriginatorTaskMember(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	originatorID := dbfx.User(t, "Delegated task originator", fmt.Sprintf("delegated-task-originator-%s@multica.test", t.Name()))
+	dbfx.Member(t, testWorkspaceID, originatorID, "member")
+	runtimeID := dbfx.Runtime(t, "Delegated task runtime")
+	agentID := dbfx.Agent(t, "Delegated task agent", runtimeID)
+	originTaskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id":          runtimeID,
+		"originator_user_id":  originatorID,
+		"accountable_user_id": originatorID,
+		"originator_source":   "direct_human",
+	})
+
+	cases := []struct {
+		name        string
+		withProject bool
+	}{
+		{name: "project task", withProject: true},
+		{name: "projectless task", withProject: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cols := testutil.Cols{
+				"creator_type": "agent",
+				"creator_id":   agentID,
+				"origin_type":  "agent_create",
+				"origin_id":    originTaskID,
+			}
+			projectID := ""
+			if tc.withProject {
+				projectID = dbfx.Project(t, "Delegated task project "+tc.name)
+				cols["project_id"] = projectID
+			}
+
+			issueID := dbfx.Issue(t, "Delegated task "+tc.name, cols)
+			dbfx.Cleanup(t, `DELETE FROM issue_permissions WHERE issue_id=$1`, issueID)
+			dbfx.Cleanup(t, `DELETE FROM projectauth_access_grants WHERE issue_id=$1`, issueID)
+			dbfx.Cleanup(t, `DELETE FROM projectauth_issue_access_grants WHERE issue_id=$1`, issueID)
+
+			issue, err := testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+			if err != nil {
+				t.Fatalf("load delegated issue: %v", err)
+			}
+			if err := syncIssueAccessWithExecutor(ctx, testPool, nil, issue); err != nil {
+				t.Fatalf("sync delegated issue access: %v", err)
+			}
+
+			if tc.withProject {
+				role, permission, source := issueSystemRoleForTest(t, issueID, projectID, originatorID)
+				if role != "member" || permission != "" || source != "system" {
+					t.Fatalf("delegated task grant = (%q, %q, %q), want (member, empty, system)", role, permission, source)
+				}
+				if got := dbfx.Count(t, `SELECT count(*) FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, originatorID); got != 0 {
+					t.Fatalf("delegated originator project membership count = %d, want 0", got)
+				}
+			} else {
+				role, source := projectlessIssueSystemRoleForTest(t, issueID, originatorID)
+				if role != "member" || source != "system" {
+					t.Fatalf("projectless delegated task grant = (%q, %q), want (member, system)", role, source)
+				}
+			}
+
+			repo := &projectAuthRepository{db: testPool}
+			for _, permission := range []projectauth.Permission{projectauth.View, projectauth.IssueComment} {
+				if allowed, err := repo.IssuePermission(ctx, issueID, originatorID, permission); err != nil || !allowed {
+					t.Fatalf("delegated originator %s = allowed %v, err %v; want true, nil", permission, allowed, err)
+				}
+			}
+
+			siblingCols := testutil.Cols{"creator_type": "agent", "creator_id": agentID}
+			if tc.withProject {
+				siblingCols["project_id"] = projectID
+			}
+			siblingID := dbfx.Issue(t, "Unrelated sibling "+tc.name, siblingCols)
+			if allowed, err := repo.IssuePermission(ctx, siblingID, originatorID, projectauth.View); err != nil || allowed {
+				t.Fatalf("unrelated sibling view = allowed %v, err %v; want false, nil", allowed, err)
+			}
+		})
+	}
+}
+
 // 2026-08-27 coder(lq): A human mentioned in a task comment receives Member
 // access on that task only, before the comment becomes visible downstream.
 func TestCreateCommentPromotesMentionedMember(t *testing.T) {
