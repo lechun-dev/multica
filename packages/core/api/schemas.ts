@@ -3277,6 +3277,8 @@ export const DingTalkProfileSchema = z.object({
   email: z.string().optional(),
   avatar_url: z.string().optional(),
   departments: z.array(z.string()).optional().catch(undefined),
+  personal_message_capable: z.boolean().optional().catch(undefined),
+  personal_message_issue: z.string().optional().catch(undefined),
 });
 
 export const EMPTY_DINGTALK_PROFILE: DingTalkProfile = {

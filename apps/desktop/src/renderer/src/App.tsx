@@ -340,10 +340,7 @@ function AppContent() {
   }
 
   return user ? (
-    <>
-      <DesktopShell />
-      <DwsLoginDialog />
-    </>
+    <DesktopShell />
   ) : (
     <DesktopLoginPage />
   );
@@ -492,6 +489,7 @@ export default function App() {
           ) : (
             <AppContent />
           )}
+          <DwsLoginDialog />
         </CoreProvider>
       ) : (
         <BlockingRuntimeConfigError message={runtimeConfigResult.error.message} />

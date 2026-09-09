@@ -487,6 +487,7 @@ describe("ApiClient schema fallback", () => {
         bound: true,
         name: "Alice",
         departments: ["Engineering", "Product"],
+        personal_message_capable: true,
         ding_user_id: "private-staff-id",
         union_id: "private-union-id",
         open_id: "private-open-id",
@@ -497,16 +498,24 @@ describe("ApiClient schema fallback", () => {
         bound: true,
         name: "Alice",
         departments: ["Engineering", "Product"],
+        personal_message_capable: true,
       });
     });
 
     it("tolerates an old server and malformed optional departments", async () => {
-      stubFetchJson({ bound: true, departments: "Engineering" });
+      stubFetchJson({
+        bound: true,
+        departments: "Engineering",
+        personal_message_capable: "yes",
+        personal_message_issue: 7,
+      });
       const client = new ApiClient("https://api.example.test");
 
       await expect(client.getDingTalkProfile()).resolves.toEqual({
         bound: true,
         departments: undefined,
+        personal_message_capable: undefined,
+        personal_message_issue: undefined,
       });
     });
 

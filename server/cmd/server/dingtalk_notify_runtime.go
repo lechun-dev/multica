@@ -481,7 +481,18 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 		}
 		if result.RowsAffected() > 0 {
 			enqueued++
+			continue
 		}
+		reason, reasonErr := r.personalMentionEnqueueSkipReason(workspaceID, commentID, actorID, targetID)
+		if reasonErr != nil {
+			slog.Warn("dingtalk personal mention: enqueue produced no row and diagnosis failed", "comment_id", commentID, "target_id", targetID, "error", reasonErr)
+			continue
+		}
+		if reason == "duplicate" {
+			slog.Info("dingtalk personal mention: duplicate ignored", "comment_id", commentID, "target_id", targetID)
+			continue
+		}
+		slog.Warn("dingtalk personal mention: enqueue skipped", "comment_id", commentID, "target_id", targetID, "reason", reason)
 	}
 	if enqueued == 0 {
 		return
@@ -490,6 +501,39 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 		r.personalWakeup.NotifyDingTalkPersonalMessageAvailable(actorID)
 	}
 	slog.Info("dingtalk personal mentions enqueued", "comment_id", commentID, "workspace_id", workspaceID, "target_count", enqueued)
+}
+
+func (r *dingtalkNotifyRuntime) personalMentionEnqueueSkipReason(workspaceID, commentID, senderUserID, recipientUserID string) (string, error) {
+	var reason string
+	err := r.pool.QueryRow(context.Background(), `
+		SELECT CASE
+		    WHEN EXISTS (
+		        SELECT 1 FROM dingtalk_personal_message
+		        WHERE idempotency_key = 'dingtalk-personal-mention:' || $2::text || ':' || $4::text
+		    ) THEN 'duplicate'
+		    WHEN NOT EXISTS (
+		        SELECT 1 FROM member WHERE workspace_id = $1 AND user_id = $3
+		    ) THEN 'sender_not_in_workspace'
+		    WHEN NOT EXISTS (
+		        SELECT 1 FROM dingtalk_notify_identities
+		        WHERE multica_user_id = $3 AND active = true
+		          AND (COALESCE(union_id, '') <> '' OR COALESCE(ding_user_id, '') <> '')
+		    ) THEN 'sender_identity_unavailable'
+		    WHEN NOT EXISTS (
+		        SELECT 1 FROM member WHERE workspace_id = $1 AND user_id = $4
+		    ) THEN 'recipient_not_in_workspace'
+		    WHEN NOT EXISTS (
+		        SELECT 1 FROM dingtalk_notify_identities
+		        WHERE multica_user_id = $4 AND active = true
+		    ) THEN 'recipient_identity_unavailable'
+		    WHEN NOT EXISTS (
+		        SELECT 1 FROM dingtalk_notify_identities
+		        WHERE multica_user_id = $4 AND active = true AND login_only = false
+		          AND COALESCE(ding_user_id, '') <> ''
+		    ) THEN 'recipient_identity_not_send_capable'
+		    ELSE 'unknown'
+		END`, workspaceID, commentID, senderUserID, recipientUserID).Scan(&reason)
+	return reason, err
 }
 
 func dingtalkAgentOwnerResolver(pool *pgxpool.Pool) func(context.Context, string, string) (string, error) {

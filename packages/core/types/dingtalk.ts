@@ -43,6 +43,10 @@ export interface DingTalkProfile {
   email?: string;
   avatar_url?: string;
   departments?: string[];
+  /** Whether this identity can receive a user-authored DWS personal message. */
+  personal_message_capable?: boolean;
+  /** Machine-readable reason personal delivery is unavailable. */
+  personal_message_issue?: string;
 }
 
 /** One connected Multica bot observed in a DingTalk group. */

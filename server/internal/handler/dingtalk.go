@@ -730,11 +730,13 @@ type RedeemDingTalkBindingTokenResponse struct {
 // identity. It is intentionally separate from UserResponse so the public user
 // model does not become coupled to the optional DingTalk module.
 type DingTalkProfileResponse struct {
-	Bound       bool      `json:"bound"`
-	Name        string    `json:"name,omitempty"`
-	Email       string    `json:"email,omitempty"`
-	AvatarURL   string    `json:"avatar_url,omitempty"`
-	Departments *[]string `json:"departments,omitempty"`
+	Bound                  bool      `json:"bound"`
+	Name                   string    `json:"name,omitempty"`
+	Email                  string    `json:"email,omitempty"`
+	AvatarURL              string    `json:"avatar_url,omitempty"`
+	Departments            *[]string `json:"departments,omitempty"`
+	PersonalMessageCapable bool      `json:"personal_message_capable"`
+	PersonalMessageIssue   string    `json:"personal_message_issue,omitempty"`
 }
 
 type storedDingTalkDepartment struct {
@@ -774,13 +776,26 @@ func (h *Handler) GetDingTalkProfile(w http.ResponseWriter, r *http.Request) {
 	var departmentsSyncedAt pgtype.Timestamptz
 	err := h.DB.QueryRow(r.Context(), `
 		SELECT COALESCE(name, ''), COALESCE(email, ''), COALESCE(avatar_url, ''),
-		       departments, departments_synced_at
+		       departments, departments_synced_at,
+		       EXISTS (
+		           SELECT 1 FROM dingtalk_notify_identities send_identity
+		           WHERE send_identity.multica_user_id = $1
+		             AND send_identity.active = true
+		             AND send_identity.login_only = false
+		             AND COALESCE(send_identity.ding_user_id, '') <> ''
+		       ),
+		       CASE
+		           WHEN login_only THEN 'login_only'
+		           WHEN COALESCE(ding_user_id, '') = '' THEN 'missing_ding_user_id'
+		           ELSE ''
+		       END
 		FROM dingtalk_notify_identities
 		WHERE multica_user_id = $1 AND active = true
 		ORDER BY updated_at DESC
 		LIMIT 1`, userID).Scan(
 		&profile.Name, &profile.Email, &profile.AvatarURL,
 		&departmentsJSON, &departmentsSyncedAt,
+		&profile.PersonalMessageCapable, &profile.PersonalMessageIssue,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, profile)
@@ -789,6 +804,9 @@ func (h *Handler) GetDingTalkProfile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DingTalk profile is unavailable")
 		return
+	}
+	if profile.PersonalMessageCapable {
+		profile.PersonalMessageIssue = ""
 	}
 	profile.Bound = true
 	if departmentsSyncedAt.Valid {

@@ -181,7 +181,11 @@ function clearDwsAuthRequirement(source?: string): void {
   if (source && currentDwsAuthRequirement.source !== source) return;
   currentDwsAuthRequirement = null;
   lastDwsAuthAlertKey = "";
-  getMainWindow()?.webContents.send(DWS_AUTH_RESOLVED_CHANNEL);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(DWS_AUTH_RESOLVED_CHANNEL);
+    }
+  }
 }
 
 function showDwsAuthRequirement(requirement: DwsAuthRequirement): void {
@@ -189,7 +193,11 @@ function showDwsAuthRequirement(requirement: DwsAuthRequirement): void {
   if (key === dwsRequirementKey(currentDwsAuthRequirement)) return;
   currentDwsAuthRequirement = requirement;
   const win = getMainWindow();
-  win?.webContents.send(DWS_AUTH_REQUIRED_CHANNEL, requirement);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(DWS_AUTH_REQUIRED_CHANNEL, requirement);
+    }
+  }
   if (
     key === lastDwsAuthAlertKey ||
     !Notification.isSupported() ||
