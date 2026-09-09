@@ -16,6 +16,9 @@ import { useT } from "../../i18n";
 const NO_ACCESS = "__no_project_access__";
 const ALL_FILTER = "__all__";
 const BUILTIN_ROLES = ["owner", "manager", "member", "viewer"];
+const PERSON_COLUMN_WIDTH = 224;
+const WORKSPACE_ROLE_COLUMN_WIDTH = 144;
+const PROJECT_COLUMN_WIDTH = 160;
 
 // 2026-08-28 coder(lq): Project cells represent explicit project membership;
 // workspace-level roles are shown separately and must not be copied here.
@@ -151,14 +154,14 @@ export function ProjectPermissionsTab() {
       <SettingsSection>
         <SettingsCard>
           {loading ? (
-            <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.loading)}</p>
+            <p className="px-4 py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.loading)}</p>
           ) : hasError ? (
-            <p className="py-6 text-caption text-destructive">{t(($) => $.permission_report.load_failed)}</p>
+            <p className="px-4 py-6 text-caption text-destructive">{t(($) => $.permission_report.load_failed)}</p>
           ) : members.length === 0 || projects.length === 0 ? (
-            <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
+            <p className="px-4 py-6 text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
           ) : (
             <>
-              <div className="flex flex-wrap items-end gap-3 border-b border-surface-border px-4 py-3">
+              <div className="flex flex-wrap items-end gap-3 px-4 py-4">
                 <div className="flex min-w-44 flex-1 flex-col gap-1">
                   <span className="text-caption text-muted-foreground">{t(($) => $.permission_report.project_filter)}</span>
                   <Select
@@ -210,60 +213,70 @@ export function ProjectPermissionsTab() {
                 </div>
               </div>
               {filteredProjects.length === 0 || filteredMembers.length === 0 ? (
-                <p className="py-6 text-center text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
-              ) : <div className="max-h-[60vh] overflow-auto">
-              {/* 2026-09-01 coder(lq): Keep filters and dialog chrome static while
-                  the permission matrix scrolls independently. */}
-              <table className="w-full min-w-[64rem] border-separate border-spacing-0 text-body">
-                <thead>
-                  <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
-                    <th className="sticky left-0 top-0 z-30 min-w-56 border-r border-surface-border bg-surface p-2">{t(($) => $.permission_report.person_column)}</th>
-                    <th className="sticky top-0 z-20 min-w-32 bg-surface p-2">{t(($) => $.permission_report.workspace_role_column)}</th>
-                    {filteredProjects.map((project) => <th key={project.id} className="sticky top-0 z-20 min-w-36 bg-surface p-2" title={project.title}>{project.title}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredMembers.map((member) => (
-                    <tr key={member.user_id} className="border-b border-surface-border/60">
-                      <td className="sticky left-0 z-10 min-w-56 border-r border-surface-border bg-surface p-2">
-                        <div>{userLabel(member.user_id)}</div>
-                        {member.email && <div className="text-caption text-muted-foreground">{member.email}</div>}
-                      </td>
-                      <td className="min-w-32 p-2">{roleLabel(member.role)}</td>
-                      {filteredProjects.map((project) => {
-                        const projectMembers = projectMembersByProject.get(project.id) ?? [];
-                        const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
-                        const value = projectPermissionCellValue(explicit?.role);
-                        const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
-                        const cellKey = `${project.id}:${member.user_id}`;
-                        const disabled = !canManage || savingCell === cellKey;
-                        return (
-                          <td key={project.id} className="p-2 align-middle">
-                            <Select
-                              items={[{ value: NO_ACCESS, label: t(($) => $.permission_report.no_access) }, ...roles.map((role) => ({ value: role.key, label: roleLabel(role.key) }))]}
-                              value={value}
-                              onValueChange={(next) => next && void saveCell(project.id, member.user_id, next)}
-                              disabled={disabled}
-                            >
-                              <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`}>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={NO_ACCESS}>{t(($) => $.permission_report.no_access)}</SelectItem>
-                                {roles.map((role) => <SelectItem key={role.key} value={role.key}>{roleLabel(role.key)}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>}
+                <p className="px-4 py-8 text-center text-caption text-muted-foreground">{t(($) => $.permission_report.empty)}</p>
+              ) : (
+                <div className="max-h-[60vh] overflow-auto">
+                  {/* 2026-09-01 coder(lq): Keep filters and dialog chrome static while
+                      the permission matrix scrolls independently. */}
+                  <table
+                    className="w-full table-fixed border-separate border-spacing-0 text-body"
+                    style={{ minWidth: PERSON_COLUMN_WIDTH + WORKSPACE_ROLE_COLUMN_WIDTH + filteredProjects.length * PROJECT_COLUMN_WIDTH }}
+                  >
+                      <colgroup>
+                        <col style={{ width: PERSON_COLUMN_WIDTH }} />
+                        <col style={{ width: WORKSPACE_ROLE_COLUMN_WIDTH }} />
+                        {filteredProjects.map((project) => <col key={project.id} />)}
+                      </colgroup>
+                      <thead>
+                        <tr className="border-b border-surface-border text-left text-caption text-muted-foreground">
+                          <th className="sticky left-0 top-0 z-30 border-r border-surface-border bg-surface px-3 py-2.5">{t(($) => $.permission_report.person_column)}</th>
+                          <th className="sticky top-0 z-20 bg-surface px-3 py-2.5">{t(($) => $.permission_report.workspace_role_column)}</th>
+                          {filteredProjects.map((project) => <th key={project.id} className="sticky top-0 z-20 truncate bg-surface px-3 py-2.5" title={project.title}>{project.title}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMembers.map((member) => (
+                          <tr key={member.user_id} className="border-b border-surface-border/60">
+                            <td className="sticky left-0 z-10 overflow-hidden border-r border-surface-border bg-surface px-3 py-2.5">
+                              <div className="truncate" title={userLabel(member.user_id)}>{userLabel(member.user_id)}</div>
+                              {member.email && <div className="truncate text-caption text-muted-foreground" title={member.email}>{member.email}</div>}
+                            </td>
+                            <td className="truncate px-3 py-2.5" title={roleLabel(member.role)}>{roleLabel(member.role)}</td>
+                            {filteredProjects.map((project) => {
+                              const projectMembers = projectMembersByProject.get(project.id) ?? [];
+                              const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
+                              const value = projectPermissionCellValue(explicit?.role);
+                              const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
+                              const cellKey = `${project.id}:${member.user_id}`;
+                              const disabled = !canManage || savingCell === cellKey;
+                              return (
+                                <td key={project.id} className="px-3 py-2.5 align-middle">
+                                  <Select
+                                    items={[{ value: NO_ACCESS, label: t(($) => $.permission_report.no_access) }, ...roles.map((role) => ({ value: role.key, label: roleLabel(role.key) }))]}
+                                    value={value}
+                                    onValueChange={(next) => next && void saveCell(project.id, member.user_id, next)}
+                                    disabled={disabled}
+                                  >
+                                    <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value={NO_ACCESS}>{t(($) => $.permission_report.no_access)}</SelectItem>
+                                      {roles.map((role) => <SelectItem key={role.key} value={role.key}>{roleLabel(role.key)}</SelectItem>)}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                  </table>
+                </div>
+              )}
             </>
           )}
-          <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
+          <div className="flex items-center gap-2 px-4 py-3 text-caption text-muted-foreground">
             <span>{t(($) => $.permission_report.people_projects)}</span>
             <span>·</span>
             <span>{t(($) => $.permission_report.read_only_hint)}</span>
