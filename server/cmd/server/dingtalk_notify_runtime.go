@@ -443,15 +443,15 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			    sender_union_id, sender_corp_id, recipient_user_id,
 			    recipient_ding_user_id, markdown, idempotency_key
 			)
-			SELECT $1, $2, $3, sender.ding_user_id,
-			       NULLIF(sender.union_id, ''), NULLIF($6, ''), $4,
+			SELECT $1::uuid, $2::uuid, $3::uuid, sender.ding_user_id,
+			       NULLIF(sender.union_id, ''), NULLIF($6, ''), $4::uuid,
 			       recipient.ding_user_id, $5,
 			       'dingtalk-personal-mention:' || $2::text || ':' || $4::text
 			FROM LATERAL (
 			    SELECT COALESCE(ding_user_id, '') AS ding_user_id,
 			           COALESCE(union_id, '') AS union_id
 			    FROM dingtalk_notify_identities
-			    WHERE multica_user_id = $3 AND active = true
+			    WHERE multica_user_id = $3::text AND active = true
 			      AND (COALESCE(union_id, '') <> '' OR COALESCE(ding_user_id, '') <> '')
 			    ORDER BY updated_at DESC
 			    LIMIT 1
@@ -459,18 +459,18 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			CROSS JOIN LATERAL (
 			    SELECT ding_user_id
 			    FROM dingtalk_notify_identities
-			    WHERE multica_user_id = $4 AND active = true AND login_only = false
+			    WHERE multica_user_id = $4::text AND active = true AND login_only = false
 			      AND COALESCE(ding_user_id, '') <> ''
 			    ORDER BY updated_at DESC
 			    LIMIT 1
 			) recipient
 			WHERE EXISTS (
 			    SELECT 1 FROM member
-			    WHERE workspace_id = $1 AND user_id = $3
+			    WHERE workspace_id = $1::uuid AND user_id = $3::uuid
 			)
 			  AND EXISTS (
 			    SELECT 1 FROM member
-			    WHERE workspace_id = $1 AND user_id = $4
+			    WHERE workspace_id = $1::uuid AND user_id = $4::uuid
 			)
 			ON CONFLICT (idempotency_key) DO NOTHING`,
 			workspaceID, commentID, actorID, targetID, markdown,
@@ -512,23 +512,23 @@ func (r *dingtalkNotifyRuntime) personalMentionEnqueueSkipReason(workspaceID, co
 		        WHERE idempotency_key = 'dingtalk-personal-mention:' || $2::text || ':' || $4::text
 		    ) THEN 'duplicate'
 		    WHEN NOT EXISTS (
-		        SELECT 1 FROM member WHERE workspace_id = $1 AND user_id = $3
+		        SELECT 1 FROM member WHERE workspace_id = $1::uuid AND user_id = $3::uuid
 		    ) THEN 'sender_not_in_workspace'
 		    WHEN NOT EXISTS (
 		        SELECT 1 FROM dingtalk_notify_identities
-		        WHERE multica_user_id = $3 AND active = true
+		        WHERE multica_user_id = $3::text AND active = true
 		          AND (COALESCE(union_id, '') <> '' OR COALESCE(ding_user_id, '') <> '')
 		    ) THEN 'sender_identity_unavailable'
 		    WHEN NOT EXISTS (
-		        SELECT 1 FROM member WHERE workspace_id = $1 AND user_id = $4
+		        SELECT 1 FROM member WHERE workspace_id = $1::uuid AND user_id = $4::uuid
 		    ) THEN 'recipient_not_in_workspace'
 		    WHEN NOT EXISTS (
 		        SELECT 1 FROM dingtalk_notify_identities
-		        WHERE multica_user_id = $4 AND active = true
+		        WHERE multica_user_id = $4::text AND active = true
 		    ) THEN 'recipient_identity_unavailable'
 		    WHEN NOT EXISTS (
 		        SELECT 1 FROM dingtalk_notify_identities
-		        WHERE multica_user_id = $4 AND active = true AND login_only = false
+		        WHERE multica_user_id = $4::text AND active = true AND login_only = false
 		          AND COALESCE(ding_user_id, '') <> ''
 		    ) THEN 'recipient_identity_not_send_capable'
 		    ELSE 'unknown'

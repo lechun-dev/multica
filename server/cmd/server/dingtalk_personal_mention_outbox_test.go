@@ -72,6 +72,10 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 	if count := countForComment(memberCommentID); count != 1 {
 		t.Fatalf("member comment duplicate mentions created %d rows, want 1", count)
 	}
+	emit(memberCommentID, "member", actorID, "请确认 "+mention+"，重复 "+mention)
+	if count := countForComment(memberCommentID); count != 1 {
+		t.Fatalf("replayed member comment created %d rows, want 1", count)
+	}
 	var senderDingID, recipientDingID, markdown string
 	fixture.QueryRow(t, `
 		SELECT sender_ding_user_id, recipient_ding_user_id, markdown
