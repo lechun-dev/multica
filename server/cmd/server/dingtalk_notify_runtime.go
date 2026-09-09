@@ -425,7 +425,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 		event.SourceURL = contextData.sourceURL
 		event.Actor.Name = contextData.actorName
 	}
-	markdown := notify.FormatText(event)
+	markdown := notify.FormatPersonalMentionText(event)
 	seen := make(map[string]struct{}, len(mentions))
 	enqueued := 0
 	for _, mention := range mentions {

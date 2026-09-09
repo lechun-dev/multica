@@ -92,14 +92,14 @@ func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
 	if messages[0].ChannelType != "p2p" || messages[0].DingUserID != "ding-user-1" {
 		t.Fatalf("unexpected completion routing: %+v", messages[0])
 	}
-	if got := messages[0].Text; got != "✅ 智能体「销售分析」已完成执行\n\n任务已完成，可查看本次执行结果。" || strings.Contains(got, "提到了你") {
+	if got := messages[0].Text; got != "✅ **销售分析 已完成执行**" || strings.Contains(got, "提到了你") {
 		t.Fatalf("completion text=%q", got)
 	}
 }
 
 func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
 	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
-	want := "✅ 智能体「A\\*gent」已完成执行\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.test/task-1)***\n\n任务已完成，可查看本次执行结果。\n\n**[打开任务并回复](https://multica.test/task-1)**"
+	want := "✅ **A\\*gent 已完成执行**\n\nMUL-67 · 优化成员通知\n\n来源：乐纯工作区 / 钉钉通知\n\n[打开任务并回复](https://multica.test/task-1)"
 	if got != want {
 		t.Fatalf("formatted completion = %q, want %q", got, want)
 	}
@@ -125,7 +125,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 	}
 
 	got := FormatText(event)
-	want := "🔔 **张畅 在 MissionOS 中提到了你**\n\n***来源：乐纯工作区 / 钉钉通知***\n\n***任务：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)***\n\n> 请 @李群 周五前确认\n\n**[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)**"
+	want := "🔔 **张畅提到了你**\n\n请 周五前确认\n\n---\n\n来源：乐纯工作区 / 钉钉通知 / [MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}
@@ -133,7 +133,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 
 func TestFormatTextStripsInternalMentionLinksButKeepsRegularLinks(t *testing.T) {
 	got := FormatText(MentionCreated{Text: "请 [@Agent](mention://agent/agent-id) 查看 [文档](https://example.test/doc)"})
-	want := "🔔 **一位 MissionOS 成员 在 MissionOS 中提到了你**\n\n> 请 @Agent 查看 [文档](https://example.test/doc)"
+	want := "🔔 **一位 MissionOS 成员提到了你**\n\n请 查看 [文档](https://example.test/doc)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}
@@ -141,17 +141,17 @@ func TestFormatTextStripsInternalMentionLinksButKeepsRegularLinks(t *testing.T) 
 
 func TestFormatTextDoesNotExposeActorIDWhenNameMissing(t *testing.T) {
 	got := FormatText(MentionCreated{Actor: Actor{ID: "secret-user-id", Kind: "member"}, Text: "hello"})
-	if got != "🔔 **一位 MissionOS 成员 在 MissionOS 中提到了你**\n\n> hello" {
+	if got != "🔔 **一位 MissionOS 成员提到了你**\n\nhello" {
 		t.Fatalf("formatted notification exposed an opaque actor id or changed fallback: %q", got)
 	}
 }
 
 func TestFormatTextTruncatesLongMentionPreview(t *testing.T) {
 	got := FormatText(MentionCreated{Actor: Actor{Name: "张畅"}, Text: "第一行\n第二行\n第三行\n第四行\n第五行\n第六行"})
-	if strings.Contains(got, "> 第五行") || strings.Contains(got, "> 第六行") {
+	if strings.Contains(got, "第三行") || strings.Contains(got, "第四行") {
 		t.Fatalf("long mention preview leaked lines beyond the compact limit: %q", got)
 	}
-	if !strings.Contains(got, "> …") {
+	if !strings.Contains(got, "…") {
 		t.Fatalf("long mention preview should end with an ellipsis: %q", got)
 	}
 }
@@ -165,6 +165,10 @@ func TestFormatTextTruncatesLongSingleLineByRunes(t *testing.T) {
 	if strings.Contains(got, "Multica") {
 		t.Fatalf("legacy brand leaked into notification: %q", got)
 	}
+	preview := truncateMentionPreview(text)
+	if gotRunes := len([]rune(strings.TrimSuffix(preview, "…"))); gotRunes != mentionPreviewMaxRunes {
+		t.Fatalf("truncated preview has %d runes, want %d: %q", gotRunes, mentionPreviewMaxRunes, preview)
+	}
 }
 
 func TestFormatTextEscapesDisplayContext(t *testing.T) {
@@ -175,8 +179,44 @@ func TestFormatTextEscapesDisplayContext(t *testing.T) {
 		IssueTitle:      "Fix `notify`",
 		Text:            "done",
 	})
-	if got != "🔔 **A\\*lice 在 MissionOS 中提到了你**\n\n***来源：Acme\\_\\[研发\\]***\n\n***任务：MUL-1 · Fix \\`notify\\`***\n\n> done" {
+	if got != "🔔 **A\\*lice提到了你**\n\ndone\n\n---\n\n来源：Acme\\_\\[研发\\] / MUL-1 · Fix \\`notify\\`" {
 		t.Fatalf("formatted notification did not escape display fields: %q", got)
+	}
+}
+
+func TestFormatPersonalMentionTextHidesRoutingMentionsAndKeepsSourceAtEnd(t *testing.T) {
+	got := FormatPersonalMentionText(MentionCreated{
+		Actor:           Actor{Name: "张畅", Kind: "member"},
+		Text:            "[@张畅](mention://member/member-a) [@李群](mention://member/member-b) 测试私发消息，看看能不能收到",
+		WorkspaceName:   "lechun-test",
+		IssueIdentifier: "LECH-15",
+		IssueTitle:      "连接运行时，和 Mika 开始",
+		SourceURL:       "https://multica.test/issues/LECH-15",
+	})
+	want := "测试私发消息，看看能不能收到\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：lechun-test / [LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
+	if got != want {
+		t.Fatalf("formatted personal notification = %q, want %q", got, want)
+	}
+	for _, hidden := range []string{"@张畅", "@李群", "MissionOS 中提到了你"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("personal notification exposed %q: %q", hidden, got)
+		}
+	}
+}
+
+func TestFormatPersonalMentionTextFallsBackWhenCommentOnlyContainsMentions(t *testing.T) {
+	got := FormatPersonalMentionText(MentionCreated{Text: "[@张畅](mention://member/member-a) [@李群](mention://member/member-b)"})
+	if got != "在任务评论中提到了你" {
+		t.Fatalf("personal mention-only fallback = %q", got)
+	}
+}
+
+func TestFormatPersonalMentionTextHandlesPartialFooterContext(t *testing.T) {
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test"}); got != "hello\n\n（来源：lechun-test）" {
+		t.Fatalf("source-only personal footer = %q", got)
+	}
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", SourceURL: "https://multica.test/task"}); got != "hello\n\n[打开任务并回复](https://multica.test/task)" {
+		t.Fatalf("link-only personal footer = %q", got)
 	}
 }
 

@@ -255,7 +255,6 @@ func runDWSMessageSend(ctx context.Context, path string, message *DingTalkPerson
 			"--title", "MissionOS 通知",
 			"--content", message.Markdown,
 			"--idempotency-key", message.IdempotencyKey,
-			"--ai-tag=false",
 			"--format", "json",
 		)
 	}
@@ -351,8 +350,10 @@ func dwsIdentityMatches(message *DingTalkPersonalMessage, unionID, userID, corpI
 	if message == nil {
 		return false
 	}
-	if expectedUnionID := strings.TrimSpace(message.SenderUnionID); expectedUnionID != "" {
-		return unionID != "" && unionID == expectedUnionID
+	expectedUnionID := strings.TrimSpace(message.SenderUnionID)
+	actualUnionID := strings.TrimSpace(unionID)
+	if expectedUnionID != "" && actualUnionID != "" {
+		return actualUnionID == expectedUnionID
 	}
 	expectedUserID := strings.TrimSpace(message.SenderDingUserID)
 	expectedCorpID := strings.TrimSpace(message.SenderCorpID)

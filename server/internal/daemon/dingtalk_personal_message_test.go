@@ -27,6 +27,20 @@ func TestDWSIdentityMatchesPrefersUnionID(t *testing.T) {
 	}
 }
 
+func TestDWSIdentityMatchesFallsBackWhenDWSOmitsUnionID(t *testing.T) {
+	message := &DingTalkPersonalMessage{
+		SenderUnionID:    "union-author",
+		SenderDingUserID: "user-author",
+		SenderCorpID:     "corp-a",
+	}
+	if !dwsIdentityMatches(message, "", "user-author", "corp-a") {
+		t.Fatal("missing DWS unionId should fall back to matching corp-scoped userId")
+	}
+	if dwsIdentityMatches(message, "", "user-author", "corp-b") {
+		t.Fatal("fallback must still reject a different corporation")
+	}
+}
+
 func TestDWSIdentityMatchesFallsBackToCorpAndUser(t *testing.T) {
 	message := &DingTalkPersonalMessage{SenderDingUserID: "user-author", SenderCorpID: "corp-a"}
 	if !dwsIdentityMatches(message, "", "user-author", "corp-a") {
@@ -132,12 +146,14 @@ esac
 		"--user user-recipient",
 		"--title MissionOS 通知",
 		"--idempotency-key mention-key",
-		"--ai-tag=false",
 		"chat message query-send-status --open-task-id task-123",
 	} {
 		if !strings.Contains(commandText, required) {
 			t.Errorf("fake DWS command log missing %q:\n%s", required, commandText)
 		}
+	}
+	if strings.Contains(commandText, "--ai-tag") {
+		t.Fatalf("personal message must use DWS's default AI tag: %s", commandText)
 	}
 }
 

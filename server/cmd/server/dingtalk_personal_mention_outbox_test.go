@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,9 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 	}
 	if markdown == "" || markdown == mention {
 		t.Fatalf("personal mention did not use the notification formatter: %q", markdown)
+	}
+	if strings.Contains(markdown, "@Target") || strings.Contains(markdown, "mention://") {
+		t.Fatalf("personal mention exposed routing markup: %q", markdown)
 	}
 	if len(wakeup.users) != 1 || wakeup.users[0] != actorID {
 		t.Fatalf("unexpected personal-message wakeups: %#v", wakeup.users)

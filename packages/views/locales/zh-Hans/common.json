@@ -124,14 +124,17 @@
   "desktop": {
     "dws_auth": {
       "title": "连接钉钉",
-      "description": "有一项待处理的 Multica 操作需要使用 DWS。连接后将以你的钉钉账号继续操作。",
-      "identity_mismatch": "当前 DWS 账号与 Multica 登录的钉钉账号不一致。请授权正确的账号后继续。",
+      "not_logged_in_title": "登录钉钉",
+      "identity_mismatch_title": "切换钉钉账号",
+      "not_installed_title": "安装 DWS",
+      "description": "DWS 当前未登录或登录已失效。请完成钉钉授权后继续处理待发送消息。",
+      "identity_mismatch": "DWS 已登录，但当前账号与 Multica 登录的钉钉账号不一致。请切换为正确账号后继续。",
       "not_installed": "未找到 DWS CLI。请先安装 DWS，确保终端可以运行 dws 命令，然后重试。",
       "browser_hint": "即将打开浏览器。请在浏览器完成钉钉授权，然后返回 Multica。",
       "authorizing": "正在等待钉钉授权...",
-      "login": "连接钉钉",
-      "reauthorize": "授权其他账号",
-      "detect_and_login": "检测并连接",
+      "login": "去授权登录",
+      "reauthorize": "切换并重新授权",
+      "detect_and_login": "重新检测并连接",
       "later": "稍后处理",
       "success": "已通过 DWS 连接钉钉。",
       "failed": "DWS 授权未完成。"

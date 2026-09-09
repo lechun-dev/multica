@@ -45,6 +45,12 @@ export function DwsLoginDialog() {
   }, []);
 
   const authorizing = phase === "authorizing";
+  const title =
+    requirement?.reason === "not_installed"
+      ? t(($) => $.desktop.dws_auth.not_installed_title)
+      : requirement?.reason === "identity_mismatch"
+        ? t(($) => $.desktop.dws_auth.identity_mismatch_title)
+        : t(($) => $.desktop.dws_auth.not_logged_in_title);
   const description =
     requirement?.reason === "not_installed"
       ? t(($) => $.desktop.dws_auth.not_installed)
@@ -103,7 +109,7 @@ export function DwsLoginDialog() {
               )}
             </div>
             <div className="min-w-0 space-y-2">
-              <DialogTitle>{t(($) => $.desktop.dws_auth.title)}</DialogTitle>
+              <DialogTitle>{title}</DialogTitle>
               <DialogDescription>{description}</DialogDescription>
             </div>
           </div>
