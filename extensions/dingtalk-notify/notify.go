@@ -271,7 +271,7 @@ func FormatPersonalMentionText(event MentionCreated) string {
 	if text == "" {
 		text = "在任务评论中提到了你"
 	}
-	sections := []string{text}
+	sections := []string{boldPersonalMentionText(text)}
 	footer := ""
 	if sourceURL := strings.TrimSpace(event.SourceURL); sourceURL != "" {
 		footer = "[打开任务并回复](" + sourceURL + ")"
@@ -287,9 +287,19 @@ func FormatPersonalMentionText(event MentionCreated) string {
 		footer += "（" + strings.Join(details, " / ") + "）"
 	}
 	if footer != "" {
-		sections = append(sections, footer)
+		sections = append(sections, "---", footer)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func boldPersonalMentionText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			lines[i] = "**" + line + "**"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // BuildCompletionMessages resolves each requested human recipient to their

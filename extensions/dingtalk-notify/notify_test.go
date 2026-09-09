@@ -193,7 +193,7 @@ func TestFormatPersonalMentionTextHidesRoutingMentionsAndKeepsSourceAtEnd(t *tes
 		IssueTitle:      "连接运行时，和 Mika 开始",
 		SourceURL:       "https://multica.test/issues/LECH-15",
 	})
-	want := "测试私发消息，看看能不能收到\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：lechun-test / [LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
+	want := "**测试私发消息，看看能不能收到**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：lechun-test / [LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
 	if got != want {
 		t.Fatalf("formatted personal notification = %q, want %q", got, want)
 	}
@@ -206,17 +206,24 @@ func TestFormatPersonalMentionTextHidesRoutingMentionsAndKeepsSourceAtEnd(t *tes
 
 func TestFormatPersonalMentionTextFallsBackWhenCommentOnlyContainsMentions(t *testing.T) {
 	got := FormatPersonalMentionText(MentionCreated{Text: "[@张畅](mention://member/member-a) [@李群](mention://member/member-b)"})
-	if got != "在任务评论中提到了你" {
+	if got != "**在任务评论中提到了你**" {
 		t.Fatalf("personal mention-only fallback = %q", got)
 	}
 }
 
 func TestFormatPersonalMentionTextHandlesPartialFooterContext(t *testing.T) {
-	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test"}); got != "hello\n\n（来源：lechun-test）" {
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test"}); got != "**hello**\n\n---\n\n（来源：lechun-test）" {
 		t.Fatalf("source-only personal footer = %q", got)
 	}
-	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", SourceURL: "https://multica.test/task"}); got != "hello\n\n[打开任务并回复](https://multica.test/task)" {
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", SourceURL: "https://multica.test/task"}); got != "**hello**\n\n---\n\n[打开任务并回复](https://multica.test/task)" {
 		t.Fatalf("link-only personal footer = %q", got)
+	}
+}
+
+func TestFormatPersonalMentionTextBoldsEachNonEmptyLine(t *testing.T) {
+	got := FormatPersonalMentionText(MentionCreated{Text: "第一段\n第二段"})
+	if got != "**第一段**\n**第二段**" {
+		t.Fatalf("multiline personal notification = %q", got)
 	}
 }
 

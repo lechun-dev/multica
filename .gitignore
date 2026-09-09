@@ -59,6 +59,7 @@ apps/web/test-results/
 # local settings
 .claude/
 .tool-versions
+.local-artifacts/
 
 # feature tracking
 _features/

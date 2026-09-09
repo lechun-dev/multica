@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Crown, Shield, UserRound } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects";
 import { useAuthStore } from "@multica/core/auth";
 import type { ProjectPermissionRole } from "@multica/core/types";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { toast } from "sonner";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
@@ -16,8 +18,8 @@ import { useT } from "../../i18n";
 const NO_ACCESS = "__no_project_access__";
 const ALL_FILTER = "__all__";
 const BUILTIN_ROLES = ["owner", "manager", "member", "viewer"];
-const PERSON_COLUMN_WIDTH = 224;
-const WORKSPACE_ROLE_COLUMN_WIDTH = 144;
+const PERSON_COLUMN_WIDTH = 280;
+const WORKSPACE_ROLE_COLUMN_WIDTH = 112;
 const PROJECT_COLUMN_WIDTH = 160;
 
 // 2026-08-28 coder(lq): Project cells represent explicit project membership;
@@ -129,6 +131,12 @@ export function ProjectPermissionsTab() {
     }
     return key;
   };
+  const workspaceRoleLabel = (key: string) => {
+    if (["owner", "admin", "member"].includes(key)) {
+      return t(($) => $.permission_report.roles[key as "owner" | "admin" | "member"]);
+    }
+    return key;
+  };
   const userLabel = (userId: string) => {
     const member = workspaceMemberByUser.get(userId);
     return member?.name || member?.email || userId;
@@ -235,41 +243,53 @@ export function ProjectPermissionsTab() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredMembers.map((member) => (
-                          <tr key={member.user_id} className="border-b border-surface-border/60">
-                            <td className="sticky left-0 z-10 overflow-hidden border-r border-surface-border bg-surface px-3 py-2.5">
-                              <div className="truncate" title={userLabel(member.user_id)}>{userLabel(member.user_id)}</div>
-                              {member.email && <div className="truncate text-caption text-muted-foreground" title={member.email}>{member.email}</div>}
-                            </td>
-                            <td className="truncate px-3 py-2.5" title={roleLabel(member.role)}>{roleLabel(member.role)}</td>
-                            {filteredProjects.map((project) => {
-                              const projectMembers = projectMembersByProject.get(project.id) ?? [];
-                              const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
-                              const value = projectPermissionCellValue(explicit?.role);
-                              const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
-                              const cellKey = `${project.id}:${member.user_id}`;
-                              const disabled = !canManage || savingCell === cellKey;
-                              return (
-                                <td key={project.id} className="px-3 py-2.5 align-middle">
-                                  <Select
-                                    items={[{ value: NO_ACCESS, label: t(($) => $.permission_report.no_access) }, ...roles.map((role) => ({ value: role.key, label: roleLabel(role.key) }))]}
-                                    value={value}
-                                    onValueChange={(next) => next && void saveCell(project.id, member.user_id, next)}
-                                    disabled={disabled}
-                                  >
-                                    <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`}>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value={NO_ACCESS}>{t(($) => $.permission_report.no_access)}</SelectItem>
-                                      {roles.map((role) => <SelectItem key={role.key} value={role.key}>{roleLabel(role.key)}</SelectItem>)}
-                                    </SelectContent>
-                                  </Select>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
+                        {filteredMembers.map((member) => {
+                          const WorkspaceRoleIcon = member.role === "owner"
+                            ? Crown
+                            : member.role === "admin"
+                              ? Shield
+                              : UserRound;
+                          return (
+                            <tr key={member.user_id} className="border-b border-surface-border/60">
+                              <td className="sticky left-0 z-10 overflow-hidden border-r border-surface-border bg-surface px-3 py-2.5">
+                                <div className="truncate" title={userLabel(member.user_id)}>{userLabel(member.user_id)}</div>
+                                {member.email && <div className="truncate text-caption text-muted-foreground" title={member.email}>{member.email}</div>}
+                              </td>
+                              <td className="px-3 py-2.5 align-middle">
+                                <Badge variant="secondary" className="h-5 gap-1 px-2 text-micro font-medium text-muted-foreground">
+                                  <WorkspaceRoleIcon aria-hidden="true" />
+                                  {workspaceRoleLabel(member.role)}
+                                </Badge>
+                              </td>
+                              {filteredProjects.map((project) => {
+                                const projectMembers = projectMembersByProject.get(project.id) ?? [];
+                                const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
+                                const value = projectPermissionCellValue(explicit?.role);
+                                const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
+                                const cellKey = `${project.id}:${member.user_id}`;
+                                const disabled = !canManage || savingCell === cellKey;
+                                return (
+                                  <td key={project.id} className="px-3 py-2.5 align-middle">
+                                    <Select
+                                      items={[{ value: NO_ACCESS, label: t(($) => $.permission_report.no_access) }, ...roles.map((role) => ({ value: role.key, label: roleLabel(role.key) }))]}
+                                      value={value}
+                                      onValueChange={(next) => next && void saveCell(project.id, member.user_id, next)}
+                                      disabled={disabled}
+                                    >
+                                      <SelectTrigger className="w-32" aria-label={`${userLabel(member.user_id)} / ${project.title}`}>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value={NO_ACCESS}>{t(($) => $.permission_report.no_access)}</SelectItem>
+                                        {roles.map((role) => <SelectItem key={role.key} value={role.key}>{roleLabel(role.key)}</SelectItem>)}
+                                      </SelectContent>
+                                    </Select>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                   </table>
                 </div>
