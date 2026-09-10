@@ -270,6 +270,20 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.81",
+          date: "2026-09-11",
+          title: "チャット返信、プレビュー版の表示、DingTalk メッセージの信頼性向上",
+          changes: [],
+          improvements: [
+            "MissionOS Preview に専用の名前と BETA バッジが戻り、製品版と明確に区別できます。",
+          ],
+          fixes: [
+            "チャットに返信時間だけでなく、サーバーに保存された完全な AI 返信が表示されます。",
+            "DingTalk の個人メッセージ用 JSON に認証処理中のテキストが混ざらなくなりました。",
+            "デスクトップ版が DWS のログイン状態を再確認し、古い状態で個人メッセージ処理が止まらなくなりました。",
+          ],
+        },
+        {
           version: "0.4.37",
           date: "2026-08-31",
           title: "より速い Issue 一覧、より安定した長時間タスク、より充実した多言語表示",

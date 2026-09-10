@@ -3,9 +3,11 @@ import { AlertCircle, ArrowDownToLine, Check, Loader2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { useT } from "@multica/views/i18n";
+import { openExternal } from "@multica/views/platform";
 import { SettingsCard, SettingsRow, SettingsTab } from "@multica/views/settings";
 import { toast } from "sonner";
 import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
+import { changelogUrl } from "../changelog-url";
 
 type CheckState =
   | { status: "idle" }
@@ -125,6 +127,19 @@ export function UpdatesSettingsTab() {
           <span className="font-mono text-caption text-muted-foreground">
             v{currentVersion}
           </span>
+        </SettingsRow>
+
+        <SettingsRow
+          label={t(($) => $.desktop.updates.changelog_title)}
+          description={t(($) => $.desktop.updates.changelog_description)}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openExternal(changelogUrl(currentVersion))}
+          >
+            {t(($) => $.desktop.updates.view_changelog)}
+          </Button>
         </SettingsRow>
 
         <SettingsRow

@@ -112,6 +112,14 @@ describe("HelpLauncher", () => {
     expect(link).toHaveAttribute("href", "https://multica.ai/download");
   });
 
+  it("links to the current site's changelog on web", () => {
+    render(<HelpLauncher />);
+    expect(screen.getByRole("link", { name: /Change log/ })).toHaveAttribute(
+      "href",
+      "/changelog",
+    );
+  });
+
   // AppSidebar is shared: apps/desktop renders the same component tree. Without
   // this gate the desktop app would offer to download the desktop app.
   it("hides the download entry inside the desktop shell", () => {
@@ -120,5 +128,9 @@ describe("HelpLauncher", () => {
     expect(screen.queryByText("Desktop app")).not.toBeInTheDocument();
     // The rest of the menu is unaffected by the gate.
     expect(screen.getByText("Docs")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Change log/ })).toHaveAttribute(
+      "href",
+      "https://mission.lechun.cc/changelog",
+    );
   });
 });

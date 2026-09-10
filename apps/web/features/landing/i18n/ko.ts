@@ -269,6 +269,20 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.81",
+          date: "2026-09-11",
+          title: "더 안정적인 채팅 답변, 프리뷰 표시 및 DingTalk 메시지",
+          changes: [],
+          improvements: [
+            "MissionOS Preview에 전용 이름과 BETA 배지가 다시 적용되어 정식 버전과 쉽게 구분할 수 있습니다.",
+          ],
+          fixes: [
+            "채팅에 답변 시간만 남지 않고 서버에 저장된 AI의 전체 답변이 표시됩니다.",
+            "DingTalk 개인 메시지 JSON 출력에 인증 과정의 텍스트가 섞이지 않습니다.",
+            "데스크톱 앱이 DWS 로그인 상태를 다시 확인하여 오래된 상태가 개인 메시지 처리를 막지 않습니다.",
+          ],
+        },
+        {
           version: "0.4.37",
           date: "2026-08-31",
           title: "더 빠른 Issue 목록, 더 안정적인 장시간 태스크, 더 완전한 다국어 표시",

@@ -294,6 +294,20 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.81",
+        date: "2026-09-11",
+        title: "聊天回复、预览版标识和钉钉消息更可靠",
+        changes: [],
+        improvements: [
+          "MissionOS Preview 重新使用独立名称和 BETA 角标，可以与正式版清楚区分。",
+        ],
+        fixes: [
+          "聊天收到 AI 回复后会显示服务端保存的完整内容，不再只剩回复耗时。",
+          "钉钉私人消息的 JSON 输出不再混入认证过程文本，消息处理更稳定。",
+          "桌面端会重新核验 DWS 登录状态，避免旧状态阻塞私人消息处理。",
+        ],
+      },
+      {
         version: "0.4.37",
         date: "2026-08-31",
         title: "Issue 列表更快、长任务更稳、多语言文案更全",

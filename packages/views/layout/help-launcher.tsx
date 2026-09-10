@@ -24,7 +24,8 @@ import { DISCORD_URL, DiscordIcon } from "./discord";
 import { useT } from "../i18n";
 
 const DOCS_URL = "https://multica.ai/docs";
-const CHANGELOG_URL = "https://multica.ai/changelog";
+const WEB_CHANGELOG_URL = "/changelog";
+const DESKTOP_CHANGELOG_URL = "https://mission.lechun.cc/changelog";
 // Absolute, including on self-hosted deployments: the installers we ship are
 // the same binaries either way, and the desktop client can point at a
 // self-hosted backend once installed. A self-host-relative /download would
@@ -89,7 +90,7 @@ export function HelpLauncher() {
         <DropdownMenuItem
           render={
             <a
-              href={CHANGELOG_URL}
+              href={desktop ? DESKTOP_CHANGELOG_URL : WEB_CHANGELOG_URL}
               target="_blank"
               rel="noopener noreferrer"
             />
