@@ -54,6 +54,7 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  configureDesktopUpdateChannel,
   configureMacX64UpdateChannel,
   formatUpdaterError,
   setupAutoUpdater,
@@ -124,6 +125,32 @@ describe("macOS x64 update channel", () => {
       channel: "latest-lechun-x64",
       allowDowngrade: false,
     });
+  });
+});
+
+describe("desktop update channel", () => {
+  it("keeps Preview clients on the Preview feed", () => {
+    const updater = { channel: null, allowDowngrade: false };
+
+    configureDesktopUpdateChannel(
+      updater,
+      "lechun-preview",
+      "darwin",
+      "arm64",
+    );
+
+    expect(updater).toEqual({
+      channel: "latest-lechun-preview",
+      allowDowngrade: false,
+    });
+  });
+
+  it("keeps stable clients on the stable feed", () => {
+    const updater = { channel: null, allowDowngrade: false };
+
+    configureDesktopUpdateChannel(updater, "lechun", "win32", "x64");
+
+    expect(updater.channel).toBe("latest-lechun");
   });
 });
 

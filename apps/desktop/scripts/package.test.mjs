@@ -372,6 +372,27 @@ describe("builderArgsForTarget", () => {
     );
   });
 
+  it("maps Preview packages to their own update feed", () => {
+    expect(
+      updateChannelForTarget(
+        { platform: "mac", arch: "arm64" },
+        "lechun-preview",
+      ),
+    ).toBe("latest-lechun-preview");
+    expect(
+      updateChannelForTarget(
+        { platform: "mac", arch: "x64" },
+        "lechun-preview",
+      ),
+    ).toBe("latest-lechun-preview-x64");
+    expect(
+      updateChannelForTarget(
+        { platform: "win", arch: "arm64" },
+        "lechun-preview",
+      ),
+    ).toBe("latest-lechun-preview-arm64");
+  });
+
   it("uses a separate Lechun update namespace", () => {
     expect(
       builderArgsForTarget(
@@ -623,5 +644,26 @@ describe("electron-builder.yml packaging config", () => {
     expect(config).toContain("rpm:\n  packageName: multica-lechun");
     expect(config).toContain("channel: latest-lechun");
     expect(config).toContain("multica-lechun");
+  });
+
+  it("keeps Preview branding and identity separate from stable MissionOS", () => {
+    const previewConfigPath = [
+      resolve(process.cwd(), "electron-builder.lechun-preview.yml"),
+      resolve(
+        process.cwd(),
+        "apps/desktop/electron-builder.lechun-preview.yml",
+      ),
+    ].find((candidate) => existsSync(candidate));
+    expect(
+      previewConfigPath,
+      "Lechun Preview electron-builder config not found",
+    ).toBeTruthy();
+    if (!previewConfigPath) return;
+    const config = readFileSync(previewConfigPath, "utf-8");
+    expect(config).toContain("productName: MissionOS Preview");
+    expect(config).toContain("appId: ai.multica.desktop.lechun.preview");
+    expect(config).toContain("icon: build-beta/icon.icns");
+    expect(config).toContain("channel: latest-lechun-preview");
+    expect(config).toContain("multica-lechun-preview");
   });
 });

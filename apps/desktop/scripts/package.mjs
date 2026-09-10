@@ -336,14 +336,16 @@ export function updateChannelForTarget(
   target,
   variant = process.env.VITE_MULTICA_DESKTOP_VARIANT,
 ) {
-  if (variant !== "lechun") return null;
+  if (variant !== "lechun" && variant !== "lechun-preview") return null;
+  const channelPrefix =
+    variant === "lechun-preview" ? "latest-lechun-preview" : "latest-lechun";
   if (target.platform === "mac" && target.arch === "x64") {
-    return "latest-lechun-x64";
+    return `${channelPrefix}-x64`;
   }
   if (target.platform === "win" && target.arch === "arm64") {
-    return "latest-lechun-arm64";
+    return `${channelPrefix}-arm64`;
   }
-  return "latest-lechun";
+  return channelPrefix;
 }
 
 export function builderArgsForTarget(
