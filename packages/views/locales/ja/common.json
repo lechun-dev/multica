@@ -137,7 +137,14 @@
       "detect_and_login": "検出して接続",
       "later": "後で",
       "success": "DWS で DingTalk に接続しました。",
-      "failed": "DWS の認証を完了できませんでした。"
+      "resuming": "DWS で DingTalk に接続しました。保留中のダイレクトメッセージを再送しています。",
+      "failed": "DWS の認証を完了できませんでした。",
+      "auth_check_failed": "DWS のログイン状態を一時的に確認できません。メッセージを保留し、自動的に再試行します。",
+      "identity_check_failed": "DWS アカウントを一時的に確認できません。メッセージを保留し、自動的に再試行します。",
+      "recipient_identity_unresolved": "DingTalk の受信者を特定できません。メッセージを保留し、自動的に再試行します。",
+      "send_failed": "DingTalk のダイレクトメッセージを送信できませんでした。メッセージを保留し、自動的に再試行します。",
+      "delivery_tracking_failed": "DingTalk の送信処理は開始されましたが、配信結果を確認できません。自動的に再試行します。",
+      "delivery_failed": "DingTalk でダイレクトメッセージの配信に失敗しました。メッセージを保留し、自動的に再試行します。"
     }
   },
   "navigation": {

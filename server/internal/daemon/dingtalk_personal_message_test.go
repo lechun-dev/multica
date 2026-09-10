@@ -316,3 +316,19 @@ func TestRunDWSMessageDeliveryQueuesWhenFakeDWSIsLoggedOut(t *testing.T) {
 		t.Fatalf("unexpected logged-out result: %+v", result)
 	}
 }
+
+func TestRunDWSMessageDeliveryRetriesTransientAuthStatusFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	fakePath := filepath.Join(t.TempDir(), "dws")
+	if err := os.WriteFile(fakePath, []byte("#!/bin/sh\nprintf '%s\\n' 'acquiring file lock: timeout'\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTICA_DWS_PATH", fakePath)
+	d := &Daemon{}
+	result := d.runDWSMessageDelivery(context.Background(), &DingTalkPersonalMessage{})
+	if result.Status != "retry" || result.ErrorCode != "dws_auth_check_failed" {
+		t.Fatalf("transient auth status failure was misclassified: %+v", result)
+	}
+}

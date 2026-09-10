@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link2, LoaderCircle, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
@@ -11,7 +11,10 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { useT } from "@multica/views/i18n";
-import type { DwsAuthRequirement } from "../../../shared/dws-auth";
+import type {
+  DwsAuthRequirement,
+  DwsStatusNotice,
+} from "../../../shared/dws-auth";
 
 type LoginPhase = "idle" | "authorizing" | "error";
 
@@ -22,10 +25,36 @@ export function DwsLoginDialog() {
   const [phase, setPhase] = useState<LoginPhase>("idle");
   const [error, setError] = useState<string | null>(null);
 
+  const showStatusNotice = useCallback(
+    (notice: DwsStatusNotice) => {
+      const message = (() => {
+        switch (notice.code) {
+          case "auth_check_failed":
+            return t(($) => $.desktop.dws_auth.auth_check_failed);
+          case "identity_check_failed":
+            return t(($) => $.desktop.dws_auth.identity_check_failed);
+          case "recipient_identity_unresolved":
+            return t(($) => $.desktop.dws_auth.recipient_identity_unresolved);
+          case "send_failed":
+            return t(($) => $.desktop.dws_auth.send_failed);
+          case "delivery_tracking_failed":
+            return t(($) => $.desktop.dws_auth.delivery_tracking_failed);
+          case "delivery_failed":
+            return t(($) => $.desktop.dws_auth.delivery_failed);
+        }
+      })();
+      toast.warning(message);
+    },
+    [t],
+  );
+
   useEffect(() => {
     let active = true;
     void window.dwsAPI.getAuthRequirement().then((pending) => {
       if (active && pending) setRequirement(pending);
+    });
+    void window.dwsAPI.getStatusNotice().then((notice) => {
+      if (active && notice) showStatusNotice(notice);
     });
     const stopRequired = window.dwsAPI.onAuthRequired((next) => {
       setRequirement(next);
@@ -37,12 +66,14 @@ export function DwsLoginDialog() {
       setPhase("idle");
       setError(null);
     });
+    const stopStatusNotice = window.dwsAPI.onStatusNotice(showStatusNotice);
     return () => {
       active = false;
       stopRequired();
       stopResolved();
+      stopStatusNotice();
     };
-  }, []);
+  }, [showStatusNotice]);
 
   const authorizing = phase === "authorizing";
   const title =
@@ -65,6 +96,7 @@ export function DwsLoginDialog() {
         : t(($) => $.desktop.dws_auth.login);
 
   const handleLogin = async () => {
+    const source = requirement?.source;
     setPhase("authorizing");
     setError(null);
     try {
@@ -74,7 +106,11 @@ export function DwsLoginDialog() {
         setError(result.message || t(($) => $.desktop.dws_auth.failed));
         return;
       }
-      toast.success(t(($) => $.desktop.dws_auth.success));
+      toast.success(
+        source === "dingtalk_personal_message"
+          ? t(($) => $.desktop.dws_auth.resuming)
+          : t(($) => $.desktop.dws_auth.success),
+      );
       setRequirement(null);
       setPhase("idle");
     } catch (loginError) {

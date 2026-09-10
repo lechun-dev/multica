@@ -5,6 +5,8 @@ import {
   dwsRequirementFromAuthStatus,
   dwsRequirementFromPersonalMessage,
   dwsRequirementKey,
+  dwsStatusNoticeFromPersonalMessage,
+  dwsStatusNoticeKey,
 } from "./dws-auth";
 
 describe("DWS auth requirement mapping", () => {
@@ -27,6 +29,12 @@ describe("DWS auth requirement mapping", () => {
       source: "calendar_create",
       message: undefined,
     });
+    expect(
+      dwsRequirementFromAuthStatus(
+        { state: "error", message: "DWS status check timed out" },
+        request,
+      ),
+    ).toBeNull();
   });
 
   it.each([
@@ -48,6 +56,16 @@ describe("DWS auth requirement mapping", () => {
     expect(dwsRequirementFromPersonalMessage("ready")).toBeNull();
   });
 
+  it("de-duplicates transient notices by category instead of raw details", () => {
+    expect(
+      dwsStatusNoticeKey({
+        code: "send_failed",
+        source: "dingtalk_personal_message",
+        message: "first attempt",
+      }),
+    ).toBe("dingtalk_personal_message:send_failed");
+  });
+
   it("builds a stable de-duplication key", () => {
     const requirement = dwsRequirementFromPersonalMessage(
       "dws_not_logged_in",
@@ -56,5 +74,34 @@ describe("DWS auth requirement mapping", () => {
     expect(dwsRequirementKey(requirement)).toBe(
       "dingtalk_personal_message:not_logged_in:sign in",
     );
+  });
+});
+
+describe("DWS status notice mapping", () => {
+  it.each([
+    ["dws_auth_check_failed", "auth_check_failed"],
+    ["dws_identity_check_failed", "identity_check_failed"],
+    ["dws_recipient_identity_unresolved", "recipient_identity_unresolved"],
+    ["dws_send_failed", "send_failed"],
+    ["dws_missing_open_task_id", "delivery_tracking_failed"],
+    ["submit_checkpoint_failed", "delivery_tracking_failed"],
+    ["dws_status_query_failed", "delivery_tracking_failed"],
+    ["dws_delivery_failed", "delivery_failed"],
+  ] as const)("maps %s to %s", (state, code) => {
+    expect(dwsStatusNoticeFromPersonalMessage(state, "details")).toEqual({
+      code,
+      source: "dingtalk_personal_message",
+      message: "details",
+    });
+  });
+
+  it.each([
+    "dws_not_installed",
+    "dws_not_logged_in",
+    "dws_identity_mismatch",
+    "dws_delivery_pending",
+    "ready",
+  ])("does not turn %s into a transient error notice", (state) => {
+    expect(dwsStatusNoticeFromPersonalMessage(state)).toBeNull();
   });
 });

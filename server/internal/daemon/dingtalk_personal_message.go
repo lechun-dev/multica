@@ -44,12 +44,13 @@ type DingTalkPersonalMessageHealth struct {
 	Message string `json:"message,omitempty"`
 }
 
-func (c *Client) ClaimDingTalkPersonalMessage(ctx context.Context, daemonID string) (*DingTalkPersonalMessage, error) {
+func (c *Client) ClaimDingTalkPersonalMessage(ctx context.Context, daemonID string, retryWaiting bool) (*DingTalkPersonalMessage, error) {
 	var response struct {
 		Message *DingTalkPersonalMessage `json:"message"`
 	}
-	if err := c.postJSON(ctx, "/api/daemon/dingtalk-personal-messages/claim", map[string]string{
-		"daemon_id": daemonID,
+	if err := c.postJSON(ctx, "/api/daemon/dingtalk-personal-messages/claim", map[string]any{
+		"daemon_id":     daemonID,
+		"retry_waiting": retryWaiting,
 	}, &response); err != nil {
 		return nil, err
 	}
@@ -78,24 +79,50 @@ func (d *Daemon) dingtalkPersonalMessageLoop(ctx context.Context) {
 }
 
 func (d *Daemon) drainDingTalkPersonalMessages(ctx context.Context) {
+	d.drainDingTalkPersonalMessagesWithRetry(ctx, false)
+}
+
+func (d *Daemon) retryDingTalkPersonalMessages(ctx context.Context) {
+	d.drainDingTalkPersonalMessagesWithRetry(ctx, true)
+}
+
+func (d *Daemon) drainDingTalkPersonalMessagesWithRetry(ctx context.Context, retryWaiting bool) {
 	if d == nil || d.client == nil {
 		return
 	}
 	d.dingtalkPersonalMu.Lock()
+	if retryWaiting {
+		d.dingtalkPersonalRetryNow = true
+	}
 	if d.dingtalkPersonalInflight {
 		d.dingtalkPersonalMu.Unlock()
 		return
 	}
 	d.dingtalkPersonalInflight = true
+	retryWaiting = d.dingtalkPersonalRetryNow
+	d.dingtalkPersonalRetryNow = false
 	d.dingtalkPersonalMu.Unlock()
-	defer func() {
+
+	for {
+		d.drainDingTalkPersonalMessageBatch(ctx, retryWaiting)
+
 		d.dingtalkPersonalMu.Lock()
+		if d.dingtalkPersonalRetryNow && ctx.Err() == nil {
+			retryWaiting = true
+			d.dingtalkPersonalRetryNow = false
+			d.dingtalkPersonalMu.Unlock()
+			continue
+		}
 		d.dingtalkPersonalInflight = false
 		d.dingtalkPersonalMu.Unlock()
-	}()
+		return
+	}
+}
 
+func (d *Daemon) drainDingTalkPersonalMessageBatch(ctx context.Context, retryWaiting bool) {
 	for i := 0; i < dingtalkPersonalMessageBatchLimit && ctx.Err() == nil; i++ {
-		message, err := d.client.ClaimDingTalkPersonalMessage(ctx, d.cfg.DaemonID)
+		message, err := d.client.ClaimDingTalkPersonalMessage(ctx, d.cfg.DaemonID, retryWaiting)
+		retryWaiting = false
 		if err != nil {
 			var requestErr *requestError
 			if errors.As(err, &requestErr) && (requestErr.StatusCode == 404 || requestErr.StatusCode == 403 || requestErr.StatusCode == 426) {
@@ -149,7 +176,13 @@ func (d *Daemon) runDWSMessageDelivery(ctx context.Context, message *DingTalkPer
 		return dwsWaitingResult("waiting_for_dws_login", "dws_not_installed", "未找到 dws CLI。请先安装 DWS，并执行 dws auth login。", err)
 	}
 	authOutput, err := runDWSCommand(ctx, path, "auth", "status", "--format", "json")
-	if err != nil || !jsonBoolean(authOutput, "authenticated") {
+	if err != nil {
+		if dwsLooksUnauthenticated(err.Error()) {
+			return dwsWaitingResult("waiting_for_dws_login", "dws_not_logged_in", "DWS 登录已失效。请重新授权后重试。", err)
+		}
+		return dwsWaitingResult("retry", "dws_auth_check_failed", "暂时无法检查 DWS 登录状态，将自动重试。", err)
+	}
+	if !jsonBoolean(authOutput, "authenticated") {
 		return dwsWaitingResult("waiting_for_dws_login", "dws_not_logged_in", "DWS 尚未登录。请在终端执行 dws auth login 后重试。", err)
 	}
 	selfOutput, err := runDWSCommand(ctx, path, "contact", "user", "get-self", "--format", "json")

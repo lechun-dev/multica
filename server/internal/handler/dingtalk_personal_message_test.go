@@ -20,12 +20,16 @@ func personalMessageRequest(method, path string, body any) *http.Request {
 }
 
 func claimPersonalMessage(t *testing.T, daemonID string) *dingtalkPersonalMessageClaim {
+	return claimPersonalMessageWithRetry(t, daemonID, false)
+}
+
+func claimPersonalMessageWithRetry(t *testing.T, daemonID string, retryWaiting bool) *dingtalkPersonalMessageClaim {
 	t.Helper()
 	var response dingtalkPersonalMessageClaimResponse
 	testutil.Call(t, testHandler.ClaimDingTalkPersonalMessage, personalMessageRequest(
 		http.MethodPost,
 		"/api/daemon/dingtalk-personal-messages/claim",
-		map[string]string{"daemon_id": daemonID},
+		map[string]any{"daemon_id": daemonID, "retry_waiting": retryWaiting},
 	)).Want(http.StatusOK).JSON(&response)
 	return response.Message
 }
@@ -90,6 +94,32 @@ func TestDingTalkPersonalMessageClaimLeaseAndWaitingState(t *testing.T) {
 		FROM dingtalk_personal_message WHERE id = $1`, messageID).Scan(&state, &availableAt, &leaseOwner)
 	if state != "waiting_for_dws_login" || leaseOwner != nil || !availableAt.After(time.Now().Add(30*time.Second)) {
 		t.Fatalf("unexpected waiting state: status=%s available_at=%s lease_owner=%v", state, availableAt, leaseOwner)
+	}
+}
+
+func TestDingTalkPersonalMessageClaimRetryWaitingBypassesBackoff(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	messageID := dbfx.Insert(t, "dingtalk_personal_message", testutil.Cols{
+		"workspace_id":           testWorkspaceID,
+		"comment_id":             testutil.Raw("gen_random_uuid()"),
+		"sender_user_id":         testUserID,
+		"sender_ding_user_id":    "sender-ding",
+		"recipient_user_id":      testUserID,
+		"recipient_ding_user_id": "recipient-ding",
+		"markdown":               "## retry after login",
+		"idempotency_key":        "handler-personal-auth-retry-" + time.Now().Format("20060102150405.000000000"),
+		"status":                 "waiting_for_dws_login",
+		"available_at":           testutil.Raw("now() + interval '1 minute'"),
+	})
+
+	if claimed := claimPersonalMessage(t, "daemon-before-login"); claimed != nil {
+		t.Fatalf("waiting message was claimable before its backoff elapsed: %+v", claimed)
+	}
+	claimed := claimPersonalMessageWithRetry(t, "daemon-after-login", true)
+	if claimed == nil || claimed.ID != messageID {
+		t.Fatalf("forced post-login claim = %+v, want id %s", claimed, messageID)
 	}
 }
 

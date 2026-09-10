@@ -97,7 +97,15 @@ func TestHealthHandlerReportsCLIVersionAndTaskCounts(t *testing.T) {
 }
 
 func TestDWSRetryHandlerRequiresPostAndReturnsToReadyWhenQueueIsEmpty(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	retryWaiting := make(chan bool, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RetryWaiting bool `json:"retry_waiting"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode claim request: %v", err)
+		}
+		retryWaiting <- body.RetryWaiting
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"message":null}`))
 	}))
@@ -130,6 +138,14 @@ func TestDWSRetryHandlerRequiresPostAndReturnsToReadyWhenQueueIsEmpty(t *testing
 			t.Fatalf("DWS health = %+v, want ready", got)
 		}
 		time.Sleep(time.Millisecond)
+	}
+	select {
+	case got := <-retryWaiting:
+		if !got {
+			t.Fatal("post-login retry did not release waiting messages")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("post-login retry did not claim messages")
 	}
 }
 

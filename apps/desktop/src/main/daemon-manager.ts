@@ -25,11 +25,15 @@ import { daemonStatusAlive } from "../shared/daemon-types";
 import {
   DWS_AUTH_REQUIRED_CHANNEL,
   DWS_AUTH_RESOLVED_CHANNEL,
+  DWS_STATUS_NOTICE_CHANNEL,
   dwsRequirementFromAuthStatus,
   dwsRequirementFromPersonalMessage,
   dwsRequirementKey,
+  dwsStatusNoticeFromPersonalMessage,
+  dwsStatusNoticeKey,
   type DwsAuthRequest,
   type DwsAuthRequirement,
+  type DwsStatusNotice,
 } from "../shared/dws-auth";
 import { ensureManagedCli, managedCliPath } from "./cli-bootstrap";
 import { getDwsAuthStatus, loginDws } from "./dws-auth-manager";
@@ -175,6 +179,8 @@ function urlsMatch(a: string, b: string): boolean {
 
 let currentDwsAuthRequirement: DwsAuthRequirement | null = null;
 let lastDwsAuthAlertKey = "";
+let currentDwsStatusNotice: DwsStatusNotice | null = null;
+let lastDwsStatusNoticeKey = "";
 
 function clearDwsAuthRequirement(source?: string): void {
   if (!currentDwsAuthRequirement) return;
@@ -221,18 +227,50 @@ function showDwsAuthRequirement(requirement: DwsAuthRequirement): void {
   notification.show();
 }
 
+function clearDwsStatusNotice(source?: string): void {
+  if (!currentDwsStatusNotice) return;
+  if (source && currentDwsStatusNotice.source !== source) return;
+  currentDwsStatusNotice = null;
+  lastDwsStatusNoticeKey = "";
+}
+
+function showDwsStatusNotice(notice: DwsStatusNotice): void {
+  const key = dwsStatusNoticeKey(notice);
+  currentDwsStatusNotice = notice;
+  if (key === lastDwsStatusNoticeKey) return;
+  lastDwsStatusNoticeKey = key;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(DWS_STATUS_NOTICE_CHANNEL, notice);
+    }
+  }
+}
+
 function updateDwsAuthRequirement(status: DaemonStatus): void {
   const personalMessage = status.dingtalkPersonalMessage;
-  if (!personalMessage) return;
+  if (!personalMessage) {
+    clearDwsStatusNotice("dingtalk_personal_message");
+    return;
+  }
   const requirement = dwsRequirementFromPersonalMessage(
     personalMessage.state,
     personalMessage.message,
   );
   if (requirement) {
+    clearDwsStatusNotice("dingtalk_personal_message");
     showDwsAuthRequirement(requirement);
     return;
   }
   clearDwsAuthRequirement("dingtalk_personal_message");
+  const notice = dwsStatusNoticeFromPersonalMessage(
+    personalMessage.state,
+    personalMessage.message,
+  );
+  if (notice) {
+    showDwsStatusNotice(notice);
+    return;
+  }
+  clearDwsStatusNotice("dingtalk_personal_message");
 }
 
 function sendStatus(status: DaemonStatus): void {
@@ -1481,6 +1519,7 @@ export function setupDaemonManager(
   });
   ipcMain.handle("daemon:get-status", () => fetchHealth());
   ipcMain.handle("dws:get-auth-requirement", () => currentDwsAuthRequirement);
+  ipcMain.handle("dws:get-status-notice", () => currentDwsStatusNotice);
   ipcMain.handle("dws:get-auth-status", () => getDwsAuthStatus());
   ipcMain.handle(
     "dws:ensure-authenticated",
@@ -1501,9 +1540,18 @@ export function setupDaemonManager(
         normalizedRequest,
       );
       if (requirement) {
+        clearDwsStatusNotice(normalizedRequest.source);
         showDwsAuthRequirement(requirement);
+      } else if (status.state === "error") {
+        clearDwsAuthRequirement(normalizedRequest.source);
+        showDwsStatusNotice({
+          code: "auth_check_failed",
+          source: normalizedRequest.source,
+          message: status.message,
+        });
       } else {
         clearDwsAuthRequirement(normalizedRequest.source);
+        clearDwsStatusNotice(normalizedRequest.source);
       }
       return status;
     },

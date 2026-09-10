@@ -137,7 +137,14 @@
       "detect_and_login": "重新检测并连接",
       "later": "稍后处理",
       "success": "已通过 DWS 连接钉钉。",
-      "failed": "DWS 授权未完成。"
+      "resuming": "已通过 DWS 连接钉钉，正在补发待发送的钉钉私信。",
+      "failed": "DWS 授权未完成。",
+      "auth_check_failed": "暂时无法检查 DWS 登录状态，消息已保留并将自动重试。",
+      "identity_check_failed": "暂时无法核对 DWS 账号，消息已保留并将自动重试。",
+      "recipient_identity_unresolved": "暂时无法识别钉钉私信接收人，消息已保留并将自动重试。",
+      "send_failed": "钉钉私信暂时未发送成功，消息已保留并将自动重试。",
+      "delivery_tracking_failed": "钉钉私信已进入发送流程，但暂时无法确认投递结果，系统将自动重试。",
+      "delivery_failed": "钉钉报告私信投递失败，消息已保留并将自动重试。"
     }
   },
   "navigation": {

@@ -389,7 +389,7 @@ func (d *Daemon) dwsRetryHandler() http.HandlerFunc {
 		}
 		d.setDingTalkPersonalMessageHealth("checking", "")
 		go func() {
-			d.drainDingTalkPersonalMessages(context.Background())
+			d.retryDingTalkPersonalMessages(context.Background())
 			d.dingtalkPersonalMu.Lock()
 			if d.dingtalkPersonalHealth.State == "checking" {
 				d.dingtalkPersonalHealth = DingTalkPersonalMessageHealth{State: "ready"}

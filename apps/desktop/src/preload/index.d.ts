@@ -22,6 +22,7 @@ import type {
   DwsAuthRequirement,
   DwsAuthStatus,
   DwsLoginResult,
+  DwsStatusNotice,
 } from "../shared/dws-auth";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 
@@ -162,6 +163,7 @@ interface DaemonAPI {
 
 interface DwsAPI {
   getAuthRequirement: () => Promise<DwsAuthRequirement | null>;
+  getStatusNotice: () => Promise<DwsStatusNotice | null>;
   getAuthStatus: () => Promise<DwsAuthStatus>;
   ensureAuthenticated: (request: DwsAuthRequest) => Promise<DwsAuthStatus>;
   login: () => Promise<DwsLoginResult>;
@@ -169,6 +171,7 @@ interface DwsAPI {
     callback: (requirement: DwsAuthRequirement) => void,
   ) => () => void;
   onAuthResolved: (callback: () => void) => () => void;
+  onStatusNotice: (callback: (notice: DwsStatusNotice) => void) => () => void;
 }
 
 interface UpdaterAPI {

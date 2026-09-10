@@ -1,5 +1,6 @@
 export const DWS_AUTH_REQUIRED_CHANNEL = "dws:auth-required";
 export const DWS_AUTH_RESOLVED_CHANNEL = "dws:auth-resolved";
+export const DWS_STATUS_NOTICE_CHANNEL = "dws:status-notice";
 
 export type DwsAuthReason =
   | "not_installed"
@@ -13,6 +14,20 @@ export interface DwsAuthRequirement {
 }
 
 export interface DwsAuthRequest {
+  source: string;
+  message?: string;
+}
+
+export type DwsStatusNoticeCode =
+  | "auth_check_failed"
+  | "identity_check_failed"
+  | "recipient_identity_unresolved"
+  | "send_failed"
+  | "delivery_tracking_failed"
+  | "delivery_failed";
+
+export interface DwsStatusNotice {
+  code: DwsStatusNoticeCode;
   source: string;
   message?: string;
 }
@@ -59,11 +74,7 @@ export function dwsRequirementFromAuthStatus(
         message: request.message,
       };
     case "error":
-      return {
-        reason: "not_logged_in",
-        source: request.source,
-        message: request.message || status.message,
-      };
+      return null;
   }
 }
 
@@ -100,4 +111,45 @@ export function dwsRequirementKey(
 ): string {
   if (!requirement) return "";
   return `${requirement.source}:${requirement.reason}:${requirement.message ?? ""}`;
+}
+
+export function dwsStatusNoticeFromPersonalMessage(
+  state: string | undefined,
+  message?: string,
+): DwsStatusNotice | null {
+  let code: DwsStatusNoticeCode;
+  switch (state) {
+    case "dws_auth_check_failed":
+      code = "auth_check_failed";
+      break;
+    case "dws_identity_check_failed":
+      code = "identity_check_failed";
+      break;
+    case "dws_recipient_identity_unresolved":
+      code = "recipient_identity_unresolved";
+      break;
+    case "dws_send_failed":
+      code = "send_failed";
+      break;
+    case "dws_missing_open_task_id":
+    case "submit_checkpoint_failed":
+    case "dws_status_query_failed":
+      code = "delivery_tracking_failed";
+      break;
+    case "dws_delivery_failed":
+      code = "delivery_failed";
+      break;
+    default:
+      return null;
+  }
+  return {
+    code,
+    source: "dingtalk_personal_message",
+    message,
+  };
+}
+
+export function dwsStatusNoticeKey(notice: DwsStatusNotice | null): string {
+  if (!notice) return "";
+  return `${notice.source}:${notice.code}`;
 }

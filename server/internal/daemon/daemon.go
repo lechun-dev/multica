@@ -526,6 +526,7 @@ type Daemon struct {
 	pendingWorkLastRun       map[string]time.Time // runtime_id -> when the last hint-driven heartbeat started
 	dingtalkPersonalMu       sync.Mutex
 	dingtalkPersonalInflight bool
+	dingtalkPersonalRetryNow bool
 	dingtalkPersonalHealth   DingTalkPersonalMessageHealth
 
 	cancelFunc context.CancelFunc // set by Run(); called by triggerRestart

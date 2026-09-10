@@ -15,7 +15,9 @@ function stripANSI(value: string): string {
   return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-export function parseTrailingDwsJSON(output: string): Record<string, unknown> | null {
+export function parseTrailingDwsJSON(
+  output: string,
+): Record<string, unknown> | null {
   const text = stripANSI(output).trim();
   let start = text.indexOf("{");
   while (start >= 0) {
@@ -30,6 +32,17 @@ export function parseTrailingDwsJSON(output: string): Record<string, unknown> | 
     start = text.indexOf("{", start + 1);
   }
   return null;
+}
+
+export function dwsErrorIsUnauthenticated(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("未登录") ||
+    normalized.includes("not logged") ||
+    normalized.includes("auth_token_expired") ||
+    normalized.includes("user_token_illegal") ||
+    normalized.includes("token验证失败")
+  );
 }
 
 function readString(
@@ -154,9 +167,13 @@ export async function getDwsAuthStatus(): Promise<DwsAuthStatus> {
       corpName: readString(payload, "corp_name", "corpName"),
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (dwsErrorIsUnauthenticated(message)) {
+      return { state: "not_logged_in" };
+    }
     return {
       state: "error",
-      message: error instanceof Error ? error.message : String(error),
+      message,
     };
   }
 }
@@ -191,7 +208,11 @@ async function performDwsLogin(): Promise<DwsLoginResult> {
       return {
         ok: false,
         reason:
-          status.state === "not_installed" ? "not_installed" : "not_logged_in",
+          status.state === "not_installed"
+            ? "not_installed"
+            : status.state === "not_logged_in"
+              ? "not_logged_in"
+              : "failed",
         message:
           status.state === "error"
             ? status.message

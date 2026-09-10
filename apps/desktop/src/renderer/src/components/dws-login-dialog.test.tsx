@@ -1,6 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DwsAuthRequirement } from "../../../shared/dws-auth";
+import type {
+  DwsAuthRequirement,
+  DwsStatusNotice,
+} from "../../../shared/dws-auth";
 
 const translations = {
   desktop: {
@@ -19,7 +22,14 @@ const translations = {
       detect_and_login: "重新检测并连接",
       later: "稍后处理",
       success: "已连接。",
+      resuming: "已连接，正在补发。",
       failed: "授权未完成。",
+      auth_check_failed: "暂时无法检查登录状态，将自动重试。",
+      identity_check_failed: "暂时无法核对账号，将自动重试。",
+      recipient_identity_unresolved: "暂时无法识别接收人，将自动重试。",
+      send_failed: "私信暂时未发送成功，将自动重试。",
+      delivery_tracking_failed: "暂时无法确认投递结果，将自动重试。",
+      delivery_failed: "私信投递失败，将自动重试。",
     },
   },
 };
@@ -27,6 +37,7 @@ const translations = {
 const mocks = vi.hoisted(() => ({
   login: vi.fn(),
   success: vi.fn(),
+  warning: vi.fn(),
 }));
 
 vi.mock("@multica/views/i18n", () => ({
@@ -35,21 +46,26 @@ vi.mock("@multica/views/i18n", () => ({
       selector(translations),
   }),
 }));
-vi.mock("sonner", () => ({ toast: { success: mocks.success } }));
+vi.mock("sonner", () => ({
+  toast: { success: mocks.success, warning: mocks.warning },
+}));
 
 import { DwsLoginDialog } from "./dws-login-dialog";
 
 describe("DwsLoginDialog", () => {
   let requireAuth: (requirement: DwsAuthRequirement) => void;
   let resolveAuth: () => void;
+  let showStatusNotice: (notice: DwsStatusNotice) => void;
 
   beforeEach(() => {
     mocks.login.mockReset().mockResolvedValue({ ok: true });
     mocks.success.mockReset();
+    mocks.warning.mockReset();
     Object.defineProperty(window, "dwsAPI", {
       configurable: true,
       value: {
         getAuthRequirement: vi.fn().mockResolvedValue(null),
+        getStatusNotice: vi.fn().mockResolvedValue(null),
         getAuthStatus: vi.fn(),
         ensureAuthenticated: vi.fn(),
         login: mocks.login,
@@ -59,6 +75,10 @@ describe("DwsLoginDialog", () => {
         },
         onAuthResolved: (listener: typeof resolveAuth) => {
           resolveAuth = listener;
+          return vi.fn();
+        },
+        onStatusNotice: (listener: typeof showStatusNotice) => {
+          showStatusNotice = listener;
           return vi.fn();
         },
       },
@@ -110,6 +130,37 @@ describe("DwsLoginDialog", () => {
     expect(
       screen.getByRole("button", { name: "切换并重新授权" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a transient auth-check warning without opening the login dialog", () => {
+    render(<DwsLoginDialog />);
+    act(() =>
+      showStatusNotice({
+        code: "auth_check_failed",
+        source: "dingtalk_personal_message",
+      }),
+    );
+
+    expect(mocks.warning).toHaveBeenCalledWith(
+      "暂时无法检查登录状态，将自动重试。",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("reports that pending personal messages are resuming after login", async () => {
+    render(<DwsLoginDialog />);
+    act(() =>
+      requireAuth({
+        reason: "not_logged_in",
+        source: "dingtalk_personal_message",
+      }),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "去授权登录" }));
+    });
+
+    expect(mocks.success).toHaveBeenCalledWith("已连接，正在补发。");
   });
 
   it("closes when the main process reports that auth is resolved", () => {

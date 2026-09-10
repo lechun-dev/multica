@@ -15,7 +15,8 @@ import (
 )
 
 type dingtalkPersonalMessageClaimRequest struct {
-	DaemonID string `json:"daemon_id"`
+	DaemonID     string `json:"daemon_id"`
+	RetryWaiting bool   `json:"retry_waiting"`
 }
 
 type dingtalkPersonalMessageClaim struct {
@@ -70,6 +71,18 @@ func (h *Handler) ClaimDingTalkPersonalMessage(w http.ResponseWriter, r *http.Re
 		slog.Warn("expire DingTalk personal messages failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to claim DingTalk personal message")
 		return
+	}
+	if req.RetryWaiting {
+		if _, err := h.DB.Exec(r.Context(), `
+			UPDATE dingtalk_personal_message
+			SET available_at = now(), updated_at = now()
+			WHERE sender_user_id = $1
+			  AND status IN ('waiting_for_dws_login', 'waiting_for_identity')
+			  AND expires_at > now()`, userID); err != nil {
+			slog.Warn("release DingTalk personal messages after DWS login failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to retry DingTalk personal messages")
+			return
+		}
 	}
 
 	var message dingtalkPersonalMessageClaim
