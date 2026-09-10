@@ -24,6 +24,7 @@ const translations = {
       success: "已连接。",
       resuming: "已连接，正在补发。",
       failed: "授权未完成。",
+      invalid_client_credentials: "DWS 应用凭证无效，请检查配置后重新授权。",
       auth_check_failed: "暂时无法检查登录状态，将自动重试。",
       identity_check_failed: "暂时无法核对账号，将自动重试。",
       recipient_identity_unresolved: "暂时无法识别接收人，将自动重试。",
@@ -114,6 +115,26 @@ describe("DwsLoginDialog", () => {
     expect(mocks.login).toHaveBeenCalledOnce();
     expect(mocks.success).toHaveBeenCalledWith("已连接。");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a specific recovery message for invalid application credentials", async () => {
+    mocks.login.mockResolvedValueOnce({
+      ok: false,
+      reason: "invalid_client_credentials",
+      message: "DWS OAuth application credentials are invalid.",
+    });
+    render(<DwsLoginDialog />);
+    act(() =>
+      requireAuth({ reason: "not_logged_in", source: "future_dws_action" }),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "去授权登录" }));
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "DWS 应用凭证无效，请检查配置后重新授权。",
+    );
   });
 
   it("uses the account-switch action for an identity mismatch", () => {

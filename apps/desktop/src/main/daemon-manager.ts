@@ -181,6 +181,8 @@ let currentDwsAuthRequirement: DwsAuthRequirement | null = null;
 let lastDwsAuthAlertKey = "";
 let currentDwsStatusNotice: DwsStatusNotice | null = null;
 let lastDwsStatusNoticeKey = "";
+let dwsAuthRecheckInFlight: Promise<void> | null = null;
+let dwsAuthRecheckRevision = 0;
 
 function clearDwsAuthRequirement(source?: string): void {
   if (!currentDwsAuthRequirement) return;
@@ -246,9 +248,66 @@ function showDwsStatusNotice(notice: DwsStatusNotice): void {
   }
 }
 
+function invalidateDwsAuthRecheck(): void {
+  dwsAuthRecheckRevision += 1;
+}
+
+function recheckDwsAuthRequirement(requirement: DwsAuthRequirement): void {
+  if (dwsAuthRecheckInFlight) return;
+  const revision = ++dwsAuthRecheckRevision;
+
+  // 2026-09-10 coder(lq): Recheck the live DWS session before showing a
+  // login prompt from potentially stale daemon health.
+  const check = (async () => {
+    const status = await getDwsAuthStatus();
+    if (revision !== dwsAuthRecheckRevision) return;
+
+    const confirmedRequirement = dwsRequirementFromAuthStatus(status, {
+      source: requirement.source,
+      message: requirement.message,
+    });
+    if (confirmedRequirement) {
+      clearDwsStatusNotice(requirement.source);
+      showDwsAuthRequirement(confirmedRequirement);
+      return;
+    }
+
+    clearDwsAuthRequirement(requirement.source);
+    if (status.state === "error") {
+      showDwsStatusNotice({
+        code: "auth_check_failed",
+        source: requirement.source,
+        message: status.message,
+      });
+      return;
+    }
+
+    clearDwsStatusNotice(requirement.source);
+    await retryDwsWorkNow();
+  })();
+  dwsAuthRecheckInFlight = check;
+  void check.then(
+    () => {
+      if (dwsAuthRecheckInFlight === check) dwsAuthRecheckInFlight = null;
+    },
+    (error: unknown) => {
+      if (dwsAuthRecheckInFlight === check) dwsAuthRecheckInFlight = null;
+      if (revision !== dwsAuthRecheckRevision) return;
+      clearDwsAuthRequirement(requirement.source);
+      showDwsStatusNotice({
+        code: "auth_check_failed",
+        source: requirement.source,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
+}
+
 function updateDwsAuthRequirement(status: DaemonStatus): void {
   const personalMessage = status.dingtalkPersonalMessage;
   if (!personalMessage) {
+    invalidateDwsAuthRecheck();
+    clearDwsAuthRequirement("dingtalk_personal_message");
     clearDwsStatusNotice("dingtalk_personal_message");
     return;
   }
@@ -258,9 +317,15 @@ function updateDwsAuthRequirement(status: DaemonStatus): void {
   );
   if (requirement) {
     clearDwsStatusNotice("dingtalk_personal_message");
+    if (requirement.reason === "not_logged_in") {
+      recheckDwsAuthRequirement(requirement);
+      return;
+    }
+    invalidateDwsAuthRecheck();
     showDwsAuthRequirement(requirement);
     return;
   }
+  invalidateDwsAuthRecheck();
   clearDwsAuthRequirement("dingtalk_personal_message");
   const notice = dwsStatusNoticeFromPersonalMessage(
     personalMessage.state,

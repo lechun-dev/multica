@@ -139,6 +139,7 @@
       "success": "DWS で DingTalk に接続しました。",
       "resuming": "DWS で DingTalk に接続しました。保留中のダイレクトメッセージを再送しています。",
       "failed": "DWS の認証を完了できませんでした。",
+      "invalid_client_credentials": "DWS が使用する DingTalk アプリの認証情報が無効または期限切れです。DWS_CLIENT_ID、DWS_CLIENT_SECRET、またはローカルの DWS アプリ設定を確認してから、再度認証してください。",
       "auth_check_failed": "DWS のログイン状態を一時的に確認できません。メッセージを保留し、自動的に再試行します。",
       "identity_check_failed": "DWS アカウントを一時的に確認できません。メッセージを保留し、自動的に再試行します。",
       "recipient_identity_unresolved": "DingTalk の受信者を特定できません。メッセージを保留し、自動的に再試行します。",

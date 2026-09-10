@@ -139,6 +139,7 @@
       "success": "已通过 DWS 连接钉钉。",
       "resuming": "已通过 DWS 连接钉钉，正在补发待发送的钉钉私信。",
       "failed": "DWS 授权未完成。",
+      "invalid_client_credentials": "DWS 使用的钉钉应用凭证无效或已失效。请检查 DWS_CLIENT_ID、DWS_CLIENT_SECRET 或本机 DWS 应用配置，更新后重新授权。",
       "auth_check_failed": "暂时无法检查 DWS 登录状态，消息已保留并将自动重试。",
       "identity_check_failed": "暂时无法核对 DWS 账号，消息已保留并将自动重试。",
       "recipient_identity_unresolved": "暂时无法识别钉钉私信接收人，消息已保留并将自动重试。",

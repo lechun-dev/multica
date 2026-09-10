@@ -50,7 +50,11 @@ export type DwsLoginResult =
     }
   | {
       ok: false;
-      reason: "not_installed" | "not_logged_in" | "failed";
+      reason:
+        | "not_installed"
+        | "not_logged_in"
+        | "invalid_client_credentials"
+        | "failed";
       message: string;
     };
 

@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  dwsErrorIsInvalidClientCredentials,
   dwsErrorIsUnauthenticated,
   parseTrailingDwsJSON,
 } from "./dws-auth-manager";
@@ -43,5 +44,24 @@ describe("dwsErrorIsUnauthenticated", () => {
     "DWS returned an invalid response",
   ])("keeps a transient failure separate: %s", (message) => {
     expect(dwsErrorIsUnauthenticated(message)).toBe(false);
+  });
+});
+
+describe("dwsErrorIsInvalidClientCredentials", () => {
+  it.each([
+    "invalidParameter.idOrSecret.notFound",
+    "ClientId或者ClientSecret错误",
+    "ClientId or ClientSecret is invalid",
+    "DWS OAuth application credentials are invalid or no longer available.",
+  ])("recognizes an invalid OAuth application credential: %s", (message) => {
+    expect(dwsErrorIsInvalidClientCredentials(message)).toBe(true);
+  });
+
+  it.each([
+    "network request failed",
+    "DWS is not logged in",
+    "token验证失败",
+  ])("does not misclassify an unrelated error: %s", (message) => {
+    expect(dwsErrorIsInvalidClientCredentials(message)).toBe(false);
   });
 });

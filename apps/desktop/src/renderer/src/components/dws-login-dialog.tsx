@@ -103,7 +103,11 @@ export function DwsLoginDialog() {
       const result = await window.dwsAPI.login();
       if (!result.ok) {
         setPhase("error");
-        setError(result.message || t(($) => $.desktop.dws_auth.failed));
+        setError(
+          result.reason === "invalid_client_credentials"
+            ? t(($) => $.desktop.dws_auth.invalid_client_credentials)
+            : result.message || t(($) => $.desktop.dws_auth.failed),
+        );
         return;
       }
       toast.success(

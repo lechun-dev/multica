@@ -11,6 +11,9 @@ const DWS_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
 let loginInFlight: Promise<DwsLoginResult> | null = null;
 
+const DWS_INVALID_CLIENT_CREDENTIALS_MESSAGE =
+  "DWS OAuth application credentials are invalid or no longer available.";
+
 function stripANSI(value: string): string {
   return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }
@@ -45,6 +48,16 @@ export function dwsErrorIsUnauthenticated(message: string): boolean {
   );
 }
 
+export function dwsErrorIsInvalidClientCredentials(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalidparameter.idorsecret.notfound") ||
+    normalized.includes("clientid或者clientsecret错误") ||
+    normalized.includes("clientid or clientsecret") ||
+    normalized.includes(DWS_INVALID_CLIENT_CREDENTIALS_MESSAGE.toLowerCase())
+  );
+}
+
 function readString(
   value: Record<string, unknown>,
   ...keys: string[]
@@ -61,6 +74,9 @@ function readString(
 function compactDwsError(output: string): string {
   const text = stripANSI(output).trim();
   if (!text) return "DWS command failed";
+  if (dwsErrorIsInvalidClientCredentials(text)) {
+    return DWS_INVALID_CLIENT_CREDENTIALS_MESSAGE;
+  }
   const lower = text.toLowerCase();
   if (
     lower.includes("access_token") ||
@@ -225,10 +241,13 @@ async function performDwsLogin(): Promise<DwsLoginResult> {
       corpName: status.corpName,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       ok: false,
-      reason: "failed",
-      message: error instanceof Error ? error.message : String(error),
+      reason: dwsErrorIsInvalidClientCredentials(message)
+        ? "invalid_client_credentials"
+        : "failed",
+      message,
     };
   }
 }

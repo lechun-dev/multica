@@ -139,6 +139,7 @@
       "success": "DingTalk connected through DWS.",
       "resuming": "DingTalk connected through DWS. Resuming pending direct messages.",
       "failed": "Couldn't complete DWS authorization.",
+      "invalid_client_credentials": "The DingTalk application credentials used by DWS are invalid or expired. Check DWS_CLIENT_ID, DWS_CLIENT_SECRET, or the local DWS application configuration, then authorize again.",
       "auth_check_failed": "DWS sign-in status is temporarily unavailable. The message is queued and will retry automatically.",
       "identity_check_failed": "The DWS account could not be verified. The message is queued and will retry automatically.",
       "recipient_identity_unresolved": "The DingTalk recipient could not be resolved. The message is queued and will retry automatically.",
