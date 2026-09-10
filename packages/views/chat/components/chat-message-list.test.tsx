@@ -265,6 +265,76 @@ describe("ChatMessageList footer spacing", () => {
   });
 });
 
+describe("ChatMessageList persisted reply fallback", () => {
+  it("shows the saved reply when the realtime timeline contains a projected text stub", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(chatKeys.taskMessages(TASK_ID), [
+      // Workspace-safe realtime events identify the timeline row but omit its
+      // private content; the persisted chat message remains authoritative.
+      taskMsg(0, "text"),
+    ]);
+
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <ChatMessageList
+            messages={[
+              {
+                id: "assistant-projected-timeline",
+                chat_session_id: "session-projected-timeline",
+                role: "assistant",
+                content: "Hello, Li Qun! How can I help you?",
+                task_id: TASK_ID,
+                created_at: "2026-09-10T12:00:00Z",
+                elapsed_ms: 117_000,
+              },
+            ]}
+            pendingTask={null}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+
+    expect(
+      await screen.findByText("Hello, Li Qun! How can I help you?"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the saved reply when only an earlier progress message has content", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(chatKeys.taskMessages(TASK_ID), [
+      taskMsg(0, "text", { content: "Looking into it." }),
+      taskMsg(1, "tool_use", { tool: "Search" }),
+      taskMsg(2, "text"),
+    ]);
+
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <ChatMessageList
+            messages={[
+              {
+                id: "assistant-partial-projected-timeline",
+                chat_session_id: "session-partial-projected-timeline",
+                role: "assistant",
+                content: "The final answer is ready.",
+                task_id: TASK_ID,
+                created_at: "2026-09-10T12:00:00Z",
+              },
+            ]}
+            pendingTask={null}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText("Looking into it.")).toBeInTheDocument();
+    expect(screen.getByText("The final answer is ready.")).toBeInTheDocument();
+  });
+});
+
 describe("ChatMessageList quick actions", () => {
   it("renders up to three suggestions and sends the hidden prompt", async () => {
     const qc = new QueryClient();
