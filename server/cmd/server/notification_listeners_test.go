@@ -72,7 +72,7 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	t.Helper()
 	bus := events.New()
 	registerSubscriberListeners(bus, testPool)
-	registerNotificationListeners(bus, queries)
+	registerNotificationListeners(bus, queries, nil)
 	return bus
 }
 
@@ -971,6 +971,82 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 	if util.UUIDToString(items[0].IssueID) != subID {
 		t.Fatalf("expected inbox item issue_id=%s (sub-issue), got %s",
 			subID, util.UUIDToString(items[0].IssueID))
+	}
+}
+
+// TestNotification_ParentBubble_InaccessibleTargetSuppressed verifies that a
+// parent subscription cannot create an inbox row or WebSocket event pointing
+// to a child the recipient is not allowed to open.
+func TestNotification_ParentBubble_InaccessibleTargetSuppressed(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+	registerSubscriberListeners(bus, testPool)
+
+	directSubEmail := "notif-child-authorized-status@multica.ai"
+	directSubID := createTestUser(t, directSubEmail)
+	t.Cleanup(func() { cleanupTestUser(t, directSubEmail) })
+	parentSubEmail := "notif-parent-unauthorized-status@multica.ai"
+	parentSubID := createTestUser(t, parentSubEmail)
+	t.Cleanup(func() { cleanupTestUser(t, parentSubEmail) })
+
+	parentID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, parentID)
+		cleanupTestIssue(t, parentID)
+	})
+	childID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, childID)
+		cleanupTestIssue(t, childID)
+	})
+
+	addTestSubscriber(t, childID, "member", directSubID, "manual")
+	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
+
+	registerNotificationListeners(bus, queries, func(_ context.Context, workspaceID, userID, issueID string) (bool, error) {
+		if workspaceID != testWorkspaceID {
+			t.Fatalf("expected workspace_id=%s, got %s", testWorkspaceID, workspaceID)
+		}
+		if issueID != childID {
+			t.Fatalf("expected authorization for child issue %s, got %s", childID, issueID)
+		}
+		return userID == directSubID, nil
+	})
+
+	var inboxEvents []events.Event
+	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
+		inboxEvents = append(inboxEvents, e)
+	})
+
+	bus.Publish(events.Event{
+		Type:        protocol.EventIssueUpdated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID:          childID,
+				WorkspaceID: testWorkspaceID,
+				Title:       "permission-filtered child status",
+				Status:      "done",
+				Priority:    "medium",
+				CreatorType: "member",
+				CreatorID:   testUserID,
+			},
+			"assignee_changed": false,
+			"status_changed":   true,
+			"prev_status":      "in_progress",
+		},
+	})
+
+	if items := inboxItemsForRecipient(t, queries, directSubID); len(items) != 1 {
+		t.Fatalf("expected authorized child subscriber to receive 1 inbox item, got %d", len(items))
+	}
+	if items := inboxItemsForRecipient(t, queries, parentSubID); len(items) != 0 {
+		t.Fatalf("expected inaccessible parent subscriber to receive 0 inbox items, got %d", len(items))
+	}
+	if len(inboxEvents) != 1 {
+		t.Fatalf("expected only the authorized recipient to receive inbox:new, got %d events", len(inboxEvents))
 	}
 }
 
