@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -369,9 +370,19 @@ func runDWSCommand(ctx context.Context, path string, args ...string) ([]byte, er
 	commandCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, path, args...)
-	output, err := cmd.CombinedOutput()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	output := stdout.Bytes()
 	if err != nil {
-		return output, fmt.Errorf("dws command failed: %s", compactDWSOutput(output))
+		// 2026-09-10 coder(lq): Keep DWS diagnostic warnings separate from machine-readable JSON output.
+		diagnostic := bytes.TrimSpace(stderr.Bytes())
+		if len(output) > 0 {
+			diagnostic = bytes.Join([][]byte{diagnostic, bytes.TrimSpace(output)}, []byte("\n"))
+		}
+		return output, fmt.Errorf("dws command failed: %s", compactDWSOutput(diagnostic))
 	}
 	if apiError := dwsJSONError(output); apiError != "" {
 		return output, fmt.Errorf("dws command failed: %s", apiError)

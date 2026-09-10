@@ -71,6 +71,27 @@ func TestRunDWSCommandRejectsJSONErrorWithZeroExitStatus(t *testing.T) {
 	}
 }
 
+func TestRunDWSCommandIgnoresStderrWarningsWhenStdoutContainsJSON(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	fakePath := filepath.Join(t.TempDir(), "dws")
+	script := `#!/bin/sh
+printf '%s\n' 'warning: legacy skill migration is recommended' >&2
+printf '%s\n' '{"success":true,"authenticated":true}'
+`
+	if err := os.WriteFile(fakePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runDWSCommand(context.Background(), fakePath, "auth", "status", "--format", "json")
+	if err != nil {
+		t.Fatalf("stderr warning should not fail a successful JSON command: %v", err)
+	}
+	if !jsonBoolean(output, "authenticated") {
+		t.Fatalf("stdout JSON was corrupted by stderr warning: %q", output)
+	}
+}
+
 func TestRunDWSMessageDeliveryUsesFakeExecutableAndConfirmsStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake executable")
