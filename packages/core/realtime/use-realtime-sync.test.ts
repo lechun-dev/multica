@@ -688,6 +688,77 @@ describe("applyChatDoneToCache paged messages", () => {
     expect(paged?.pages[0]?.messages.map((m) => m.id)).toEqual(["msg-latest", "msg-assistant"]);
     expect(paged?.pages[1]?.messages.map((m) => m.id)).toEqual(["msg-user"]);
   });
+
+  // 2026-09-10 coder(lq): Keep a pre-completion response from rolling the
+  // inline assistant row out of the active paged transcript.
+  it("keeps the assistant reply when an older messages request resolves later", async () => {
+    const qc = createQueryClient();
+    const pageKey = chatKeys.messagesPage(sessionId);
+    const staleData: InfiniteData<ChatMessagesPage> = {
+      pages: [
+        {
+          messages: [userMessage()],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
+      ],
+      pageParams: [null],
+    };
+    qc.setQueryData(pageKey, staleData);
+
+    const assistant = {
+      ...userMessage(),
+      id: "msg-assistant",
+      role: "assistant" as const,
+      content: "done",
+      task_id: taskId,
+      created_at: "2026-05-13T05:00:02Z",
+      elapsed_ms: 1234,
+      message_kind: "message" as const,
+    };
+    const freshData: InfiniteData<ChatMessagesPage> = {
+      ...staleData,
+      pages: [{ ...staleData.pages[0]!, messages: [userMessage(), assistant] }],
+    };
+    let requestCount = 0;
+    let releaseStaleRefetch:
+      | ((data: InfiniteData<ChatMessagesPage>) => void)
+      | undefined;
+    const observer = new QueryObserver<InfiniteData<ChatMessagesPage>>(qc, {
+      queryKey: pageKey,
+      queryFn: () => {
+        requestCount += 1;
+        if (requestCount > 1) return Promise.resolve(freshData);
+        return new Promise<InfiniteData<ChatMessagesPage>>((resolve) => {
+          releaseStaleRefetch = resolve;
+        });
+      },
+      staleTime: Infinity,
+      gcTime: Infinity,
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+
+    void qc.invalidateQueries({ queryKey: pageKey });
+    await vi.waitFor(() => {
+      expect(qc.getQueryState(pageKey)?.fetchStatus).toBe("fetching");
+      expect(typeof releaseStaleRefetch).toBe("function");
+    });
+
+    applyChatDoneToCache(qc, donePayload());
+    releaseStaleRefetch?.(staleData);
+    await vi.waitFor(() => {
+      expect(qc.getQueryState(pageKey)?.fetchStatus).toBe("idle");
+    });
+
+    expect(
+      qc
+        .getQueryData<InfiniteData<ChatMessagesPage>>(pageKey)
+        ?.pages[0]?.messages.map((message) => message.id),
+    ).toEqual(["msg-user", "msg-assistant"]);
+    unsubscribe();
+  });
 });
 describe("resolveInboxSourceSlug", () => {
   function workspace(overrides: Partial<Workspace> = {}): Workspace {
