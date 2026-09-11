@@ -25,9 +25,12 @@ import (
 func issueUpdatedPayload() map[string]any {
 	return map[string]any{
 		"issue": map[string]any{
-			"id":          "issue-1",
-			"title":       "New title",
-			"description": strings.Repeat("new body ", 1024),
+			"id":           "issue-1",
+			"workspace_id": "ws-1",
+			"project_id":   "project-1",
+			"revision":     2,
+			"title":        "New title",
+			"description":  strings.Repeat("new body ", 1024),
 		},
 		"description_changed": true,
 		"title_changed":       true,
@@ -37,7 +40,7 @@ func issueUpdatedPayload() map[string]any {
 	}
 }
 
-func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
+func TestIssueUpdatedBroadcast_UsesSafeProjectionWithoutMutatingInternalPayload(t *testing.T) {
 	bus := events.New()
 	fb := &fakeBroadcaster{}
 
@@ -67,14 +70,12 @@ func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
 	}
 	raw := fb.workspaceCalls[0].msg
 
-	// Half 1: the internal-only keys must not be on the wire at all. Assert on
-	// the raw bytes too — a nested copy would still cost the bandwidth this fix
-	// is about, even if the top-level key were gone.
-	if strings.Contains(string(raw), "prev_description") {
-		t.Error("broadcast frame still contains prev_description")
-	}
-	if strings.Contains(string(raw), "prev_title") {
-		t.Error("broadcast frame still contains prev_title")
+	// 2026-09-11 coder(lq): Workspace WebSocket fanout is only an invalidation
+	// signal. Business content must be fetched through the permission-aware API.
+	for _, privateKey := range []string{"prev_description", "prev_title", "prev_status", "description", "title"} {
+		if strings.Contains(string(raw), privateKey) {
+			t.Errorf("broadcast frame still contains private key %q", privateKey)
+		}
 	}
 
 	var frame struct {
@@ -87,22 +88,32 @@ func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
 	if frame.Type != protocol.EventIssueUpdated {
 		t.Errorf("frame type = %q, want %q", frame.Type, protocol.EventIssueUpdated)
 	}
-	if _, present := frame.Payload["prev_description"]; present {
-		t.Error("payload still carries prev_description")
-	}
-	if _, present := frame.Payload["prev_title"]; present {
-		t.Error("payload still carries prev_title")
+	for _, privateKey := range []string{"prev_description", "prev_title", "prev_status"} {
+		if _, present := frame.Payload[privateKey]; present {
+			t.Errorf("payload still carries %s", privateKey)
+		}
 	}
 
-	// Everything clients actually consume must survive untouched. The issue
-	// object keeps its description: clients apply it to their cache, and
-	// stripping it would just trade fanout bytes for N refetches.
+	// Routing fields and change flags survive so clients can invalidate and
+	// refetch the authoritative record without receiving its private content.
 	issue, ok := frame.Payload["issue"].(map[string]any)
 	if !ok {
 		t.Fatal("payload lost the issue object")
 	}
-	if issue["description"] == "" || issue["description"] == nil {
-		t.Error("issue.description was stripped; clients need it for cache updates")
+	if issue["id"] != "issue-1" || issue["workspace_id"] != "ws-1" || issue["project_id"] != "project-1" {
+		t.Fatalf("issue routing projection is incomplete: %#v", issue)
+	}
+	if issue["revision"] != float64(2) {
+		t.Errorf("issue revision = %#v, want 2", issue["revision"])
+	}
+	if _, present := issue["description"]; present {
+		t.Error("issue.description reached the workspace broadcast")
+	}
+	if _, present := issue["title"]; present {
+		t.Error("issue.title reached the workspace broadcast")
+	}
+	if frame.Payload["issue_id"] != "issue-1" {
+		t.Errorf("issue_id = %#v, want issue-1", frame.Payload["issue_id"])
 	}
 	if frame.Payload["description_changed"] != true {
 		t.Error("description_changed flag was lost")
@@ -110,11 +121,6 @@ func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
 	if frame.Payload["title_changed"] != true {
 		t.Error("title_changed flag was lost")
 	}
-	// Cheap scalar prev_* fields are deliberately kept.
-	if frame.Payload["prev_status"] != "todo" {
-		t.Error("prev_status should be preserved; only the large fields are internal-only")
-	}
-
 	// Half 2: the in-process listener still received the full payload.
 	if seenByListener == nil {
 		t.Fatal("in-process listener did not run")
@@ -124,6 +130,13 @@ func TestIssueUpdatedBroadcast_OmitsFullPreviousDescription(t *testing.T) {
 	}
 	if _, present := seenByListener["prev_title"]; !present {
 		t.Error("in-process listener lost prev_title; the title-change activity would break")
+	}
+	if seenByListener["prev_status"] != "todo" {
+		t.Error("in-process listener lost prev_status")
+	}
+	internalIssue, ok := seenByListener["issue"].(map[string]any)
+	if !ok || internalIssue["description"] == nil || internalIssue["title"] != "New title" {
+		t.Error("in-process listener lost full issue content")
 	}
 }
 
@@ -145,8 +158,19 @@ func TestProjectOutbound_DoesNotMutateProducerPayload(t *testing.T) {
 	if _, present := pm["prev_description"]; present {
 		t.Error("projected payload still has prev_description")
 	}
-	if len(pm) != len(original)-2 {
-		t.Errorf("projected key count = %d, want %d (exactly two keys removed)", len(pm), len(original)-2)
+	if _, present := pm["prev_status"]; present {
+		t.Error("projected payload still has prev_status")
+	}
+	projectedIssue, ok := pm["issue"].(map[string]any)
+	if !ok {
+		t.Fatal("projected payload lost issue routing fields")
+	}
+	if _, present := projectedIssue["description"]; present {
+		t.Error("projected issue still has description")
+	}
+	originalIssue, ok := original["issue"].(map[string]any)
+	if !ok || originalIssue["description"] == nil {
+		t.Error("projectOutbound mutated the producer's nested issue payload")
 	}
 }
 
@@ -265,8 +289,9 @@ func TestAutopilotBroadcast_StripsPrivatePayload(t *testing.T) {
 // becoming a general-purpose payload filter: an event type with no entry in the
 // table must be forwarded byte-for-byte, and a non-map payload must survive.
 func TestProjectOutbound_PassesThroughUnlistedEvents(t *testing.T) {
+	const unlistedEvent = "test:unlisted"
 	payload := map[string]any{"prev_description": "kept"}
-	if got := projectOutbound(protocol.EventIssueCreated, payload); got == nil {
+	if got := projectOutbound(unlistedEvent, payload); got == nil {
 		t.Fatal("unlisted event type returned nil payload")
 	} else if m, ok := got.(map[string]any); !ok || m["prev_description"] != "kept" {
 		t.Error("unlisted event type must pass through untouched")
@@ -275,7 +300,7 @@ func TestProjectOutbound_PassesThroughUnlistedEvents(t *testing.T) {
 	// Typed (non-map) payloads are common elsewhere in the bus.
 	type typedPayload struct{ ID string }
 	tp := typedPayload{ID: "x"}
-	if got := projectOutbound(protocol.EventIssueUpdated, tp); got != any(tp) {
+	if got := projectOutbound(unlistedEvent, tp); got != any(tp) {
 		t.Errorf("non-map payload was altered: got %#v, want %#v", got, tp)
 	}
 }

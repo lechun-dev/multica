@@ -216,7 +216,7 @@ func TestAutopilotVisibility_DeleteRoutesCannotBypassBoundary(t *testing.T) {
 	var triggerID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO autopilot_trigger (autopilot_id, kind, enabled)
-		VALUES ($1, 'manual', TRUE)
+		VALUES ($1, 'api', TRUE)
 		RETURNING id
 	`, autopilotID).Scan(&triggerID); err != nil {
 		t.Fatalf("insert trigger: %v", err)

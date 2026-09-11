@@ -98,14 +98,20 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		"issue_id":       mentionedIssueID,
 		"title":          "You were mentioned",
 	})
-	for _, permission := range []string{"project.view", "project.issue.comment"} {
-		dbfx.InsertNoID(t, "issue_permissions", testutil.Cols{
-			"issue_id":   mentionedIssueID,
-			"project_id": projectID,
-			"user_id":     recipientID,
-			"permission":  permission,
-			"granted_by":  testUserID,
-		}, "issue_id = $1 AND user_id = $2 AND permission = $3", mentionedIssueID, recipientID, permission)
+	// 2026-09-11 coder(lq): Model the production @mention rule with the
+	// canonical task-scoped Member grant. This must not create project membership.
+	if err := upsertIssueAccessGrant(ctx, testPool, mentionedIssueID, projectID, recipientID, projectauth.ProjectMember); err != nil {
+		t.Fatalf("grant mentioned recipient task membership: %v", err)
+	}
+	var projectMemberCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM project_members
+		WHERE project_id = $1::uuid AND user_id = $2::uuid`, projectID, recipientID).Scan(&projectMemberCount); err != nil {
+		t.Fatalf("check project membership: %v", err)
+	}
+	if projectMemberCount != 0 {
+		t.Fatalf("task mention created %d project membership rows, want 0", projectMemberCount)
 	}
 	dbfx.Insert(t, "inbox_item", testutil.Cols{
 		"workspace_id":   testWorkspaceID,
@@ -145,7 +151,7 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 	}
 
 	// 2026-09-05 coder(lq): The notification is only the inbox surface; task
-	// access comes from the explicit task-member grants above.
+	// access comes from the explicit task-member grant above.
 	view := httptest.NewRecorder()
 	get := newRequestAs(recipientID, http.MethodGet, "/api/issues/"+mentionedIssueID, nil)
 	get.Header.Set("X-Workspace-ID", testWorkspaceID)

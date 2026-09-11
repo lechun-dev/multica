@@ -32,8 +32,22 @@ env:
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
+  verify:
+    name: Verify release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Require matching changelog entry
+        run: node scripts/check-release-changelog.mjs "$RELEASE_TAG"
+
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: verify
     strategy:
       fail-fast: false
       matrix:

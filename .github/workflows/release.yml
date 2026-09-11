@@ -45,6 +45,9 @@ jobs:
             echo "is_stable=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Require matching changelog entry
+        run: node scripts/check-release-changelog.mjs "$GITHUB_REF_NAME"
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:

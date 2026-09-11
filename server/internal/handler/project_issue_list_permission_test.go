@@ -84,10 +84,8 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = ANY($1::uuid[])`, projectlessIssueIDs)
 	})
 
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role)
-		VALUES ($1, $2, 'viewer')
-	`, projectIDs[0], memberID); err != nil {
+	repository := &projectAuthRepository{db: testPool}
+	if err := repository.AddProjectMember(ctx, projectIDs[0], memberID, projectauth.ProjectViewer); err != nil {
 		t.Fatalf("grant visible project: %v", err)
 	}
 	// 2026-09-05 coder(lq): A task-member grant is intentionally limited to the
@@ -176,10 +174,7 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 	if len(adminIssues) != 0 {
 		t.Fatalf("workspace admin without project grant can see issues = %v; want none", adminIssues)
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role)
-		VALUES ($1, $2, 'viewer')
-	`, projectIDs[1], adminID); err != nil {
+	if err := repository.AddProjectMember(ctx, projectIDs[1], adminID, projectauth.ProjectViewer); err != nil {
 		t.Fatalf("grant admin visible project: %v", err)
 	}
 	adminProjects = projectIDsFor(t, adminID)
@@ -214,10 +209,7 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 			t.Fatalf("workspace owner can see projectless issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
 		}
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role)
-		VALUES ($1, $2, 'viewer')
-	`, projectIDs[0], testUserID); err != nil {
+	if err := repository.AddProjectMember(ctx, projectIDs[0], testUserID, projectauth.ProjectViewer); err != nil {
 		t.Fatalf("grant owner explicit visible project: %v", err)
 	}
 	ownerProjectsWithoutWorkspaceScope = projectIDsFor(t, testUserID, false)

@@ -20,6 +20,15 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   useCurrentWorkspace: () => ws.current,
 }));
 
+// 2026-09-11 coder(lq): Keep presentation tests focused on cached tab metadata;
+// workspace member loading is covered by the visibility-context tests.
+vi.mock("../issues/surface/visibility-context", () => ({
+  useWorkspaceTaskVisibility: () => ({
+    ready: true,
+    includeWorkspaceOwned: true,
+  }),
+}));
+
 vi.mock("../i18n", async () => {
   const layout = (await import("../locales/en/layout.json")).default;
   const chat = (await import("../locales/en/chat.json")).default;

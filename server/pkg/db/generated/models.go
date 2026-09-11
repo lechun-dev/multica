@@ -62,6 +62,15 @@ type AgentBuilderDraft struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentDailyStat struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	StatDate    pgtype.Date `json:"stat_date"`
+	RunCount    int64       `json:"run_count"`
+	TaskCount   int64       `json:"task_count"`
+	FailedCount int64       `json:"failed_count"`
+}
+
 // Allow-list of who may invoke a public_to agent (MUL-3963). One row per (agent, target_type, target); targets stack and canInvokeAgent OR-matches. workspace rows store the agent workspace_id in target_id; member rows store the user id; team rows are reserved and inert in V1. Rows only matter when agent.permission_mode = public_to. No DB foreign keys: agent_id / created_by / member target_id relationships are maintained in the application layer (see migration comment).
 type AgentInvocationTarget struct {
 	ID         pgtype.UUID        `json:"id"`

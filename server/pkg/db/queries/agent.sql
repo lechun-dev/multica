@@ -2582,7 +2582,7 @@ GROUP BY agent_id;
 -- not the historical trend.
 SELECT
     agent_id,
-    stat_date::timestamp AT TIME ZONE 'UTC' AS bucket,
+    (stat_date::timestamp AT TIME ZONE 'UTC')::timestamptz AS bucket,
     task_count::int,
     failed_count::int
 FROM agent_daily_stats

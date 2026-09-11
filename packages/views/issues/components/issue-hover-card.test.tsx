@@ -5,12 +5,22 @@ import { useQuery } from "@tanstack/react-query";
 import { renderWithI18n } from "../../test/i18n";
 import { IssueHoverCard } from "./issue-hover-card";
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: vi.fn(),
 }));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
+}));
+
+// 2026-09-11 coder(lq): Visibility is covered by its own suite; keep this
+// component test focused on hover-card rendering as the shared hook evolves.
+vi.mock("../surface/visibility-context", () => ({
+  useWorkspaceTaskVisibility: () => ({
+    ready: true,
+    includeWorkspaceOwned: true,
+  }),
 }));
 
 vi.mock("@multica/core/issue-statuses/hooks", () => ({

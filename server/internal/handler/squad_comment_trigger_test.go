@@ -547,10 +547,10 @@ func TestCreateComment_SquadLeaderMentionTaskDoesNotSelfTriggerAssignedFallback(
 }
 
 // TestCreateComment_SquadLeaderThreadParentTaskDoesNotSelfTriggerAssignedFallback
-// pins MUL-4024's thread-parent gap: a member reply to the leader's earlier
-// comment queues L through EnqueueTaskForThreadParent (is_leader_task=false,
-// squad_id=NULL). L's reply from that generic task must not queue L again as
-// the assigned squad leader.
+// pins MUL-4024/MUL-7006: a member reply to a comment written by the leader in
+// the coordinator role must preserve that role and squad context. The leader's
+// reply from the continued task must not queue the same leader again through
+// the assigned-squad fallback.
 func TestCreateComment_SquadLeaderThreadParentTaskDoesNotSelfTriggerAssignedFallback(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -637,10 +637,10 @@ func TestCreateComment_SquadLeaderThreadParentTaskDoesNotSelfTriggerAssignedFall
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent_task_queue
 		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
-		  AND is_leader_task = FALSE AND squad_id IS NULL
+		  AND is_leader_task = TRUE AND squad_id = $3
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, issueID, fx.LeaderID).Scan(&threadParentTaskID); err != nil {
+	`, issueID, fx.LeaderID, fx.SquadID).Scan(&threadParentTaskID); err != nil {
 		t.Fatalf("load leader thread-parent task: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'running' WHERE id = $1`, threadParentTaskID); err != nil {

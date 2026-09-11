@@ -4759,7 +4759,7 @@ func (q *Queries) GetLatestTaskRolloutMissing(ctx context.Context, arg GetLatest
 const getWorkspaceAgentActivity30d = `-- name: GetWorkspaceAgentActivity30d :many
 SELECT
     agent_id,
-    stat_date::timestamp AT TIME ZONE 'UTC' AS bucket,
+    (stat_date::timestamp AT TIME ZONE 'UTC')::timestamptz AS bucket,
     task_count::int,
     failed_count::int
 FROM agent_daily_stats
@@ -4776,7 +4776,7 @@ type GetWorkspaceAgentActivity30dRow struct {
 	FailedCount int32              `json:"failed_count"`
 }
 
-// Returns per-agent daily activity buckets for the last 30 days. Single
+// Returns per-agent daily activity buckets for the last 30 calendar days. Single
 // workspace-wide read backs both surfaces:
 //   - Agents list ACTIVITY column — uses only the trailing 7 buckets
 //   - Agent detail "Last 30 days" panel — uses the full 30
@@ -4789,7 +4789,7 @@ type GetWorkspaceAgentActivity30dRow struct {
 // "what did this agent produce?" not "what was queued at it?". A task that's
 // still in flight has no completed_at and contributes nothing here — that's
 // correct: in-flight tasks are surfaced via the live presence indicator,
-// not the historical trend. Daily totals come from agent_daily_stats.
+// not the historical trend.
 func (q *Queries) GetWorkspaceAgentActivity30d(ctx context.Context, workspaceID pgtype.UUID) ([]GetWorkspaceAgentActivity30dRow, error) {
 	rows, err := q.db.Query(ctx, getWorkspaceAgentActivity30d, workspaceID)
 	if err != nil {

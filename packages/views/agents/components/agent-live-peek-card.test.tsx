@@ -16,16 +16,34 @@ vi.mock("@multica/core/hooks", () => ({
 
 // Paths only needs issueDetail for the "Now on" link. A simple stub keeps the
 // test free of WorkspaceSlugProvider wiring.
-vi.mock("@multica/core/paths", () => ({
-  useWorkspacePaths: () => ({
-    issueDetail: (id: string) => `/test/issues/${id}`,
-  }),
-}));
+vi.mock("@multica/core/paths", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
+    "@multica/core/paths",
+  );
+  return {
+    ...actual,
+    // 2026-09-11 coder(lq): The shared visibility hook also consumes the
+    // workspace slug; expose it without requiring a router in this unit test.
+    useWorkspaceSlug: () => "test",
+    useWorkspacePaths: () => ({
+      issueDetail: (id: string) => `/test/issues/${id}`,
+    }),
+  };
+});
 
 vi.mock("@multica/core/api", () => ({
   api: {
     getBaseUrl: () => "http://127.0.0.1:8080",
   },
+}));
+
+vi.mock("../../issues/surface/visibility-context", () => ({
+  // 2026-09-11 coder(lq): Visibility filtering is covered independently; the
+  // live-peek suite needs a ready catalog to exercise its issue-detail query.
+  useWorkspaceTaskVisibility: () => ({
+    ready: true,
+    includeWorkspaceOwned: true,
+  }),
 }));
 
 // AppLink is just a plain anchor here — wiring the navigation adapter would

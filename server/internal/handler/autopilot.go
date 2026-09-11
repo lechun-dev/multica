@@ -433,6 +433,16 @@ func (h *Handler) ListAutopilots(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list autopilots")
 		return
 	}
+	// 2026-09-11 coder(lq): Keep collection visibility identical to the detail
+	// endpoint. The SQL query applies project authorization, but projectless
+	// rows still need the creator/executor/owner boundary enforced here.
+	visibleAutopilots := make([]db.ListAutopilotsRow, 0, len(autopilots))
+	for _, row := range autopilots {
+		if h.memberCanViewAutopilot(r.Context(), row.Autopilot, caller) {
+			visibleAutopilots = append(visibleAutopilots, row)
+		}
+	}
+	autopilots = visibleAutopilots
 	// 2026-08-27 coder(lq): A project-bound Autopilot is a project resource;
 	// filter it with the same project visibility boundary as issues and task
 	// history. Projectless legacy rows remain visible for native compatibility.

@@ -51,7 +51,19 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-query")>();
   return {
     ...actual,
-    useQuery: () => ({ data: { tasks: [] } }),
+    // 2026-09-11 coder(lq): The list now shares workspace visibility queries
+    // with Inbox. Preserve each query's response shape instead of returning the
+    // pending-task payload for every useQuery call.
+    useQuery: (options: { queryKey?: readonly unknown[] }) => {
+      switch (options.queryKey?.[0]) {
+        case "visibility-workspaces":
+          return { data: [{ id: "ws-1", slug: "test" }], isSuccess: true };
+        case "visibility-members":
+          return { data: [], isSuccess: true };
+        default:
+          return { data: { tasks: [] }, isSuccess: true };
+      }
+    },
     useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
   };
 });

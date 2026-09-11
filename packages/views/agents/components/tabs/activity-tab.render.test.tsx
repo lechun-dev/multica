@@ -23,6 +23,15 @@ vi.mock("@multica/core/hooks", () => ({
 // resolves without dragging in platform wiring.
 vi.mock("@multica/core/api", () => ({ api: {} }));
 
+vi.mock("../../../issues/surface/visibility-context", () => ({
+  // 2026-09-11 coder(lq): Visibility behavior has its own coverage; this suite
+  // needs a ready catalog so it can isolate the activity loading state.
+  useWorkspaceTaskVisibility: () => ({
+    ready: true,
+    includeWorkspaceOwned: true,
+  }),
+}));
+
 // The tab reads three data sources. Snapshot ("Now") and the activity map
 // ("Last 30 days") stay empty; the per-agent task list is the one under test,
 // its queryFn swapped per test to stay pending or resolve.

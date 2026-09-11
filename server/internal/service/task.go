@@ -691,6 +691,16 @@ func pendingSlotTakenErr(err error) bool {
 	return isDuplicatePendingTaskErr(err) || errors.Is(err, ErrDuplicatePendingTask)
 }
 
+// 2026-09-11 coder(lq): rerunEnqueueRaceErr reports transient enqueue races
+// that are safe for RerunIssue to retry after reclaiming the pending slot.
+func rerunEnqueueRaceErr(err error) bool {
+	if pendingSlotTakenErr(err) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
+}
+
 // applyAttributionFallback applies the workspace's degraded-attribution policy to a
 // resolved attribution whose source came back unattributed (no precise human). A
 // PRECISE attribution passes through untouched (no policy read at all). For an
@@ -5609,23 +5619,27 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 	// sourceTaskID is the rerun lineage: it rides the CreateAgentTask insert
 	// (rerun_of_task_id) so the queued event / daemon claim never sees a NULL
 	// lineage, and it stays distinct from system-retry's retry_of_task_id (§5).
-	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, actorUserID, sourceTaskID)
-	if pendingSlotTakenErr(err) {
+	const maxRerunEnqueueAttempts = 3
+	var task db.AgentTaskQueue
+	for attempt := 1; attempt <= maxRerunEnqueueAttempts; attempt++ {
+		task, err = s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, actorUserID, sourceTaskID)
+		if err == nil || !rerunEnqueueRaceErr(err) || attempt == maxRerunEnqueueAttempts {
+			break
+		}
+
 		// The clear above and this enqueue are separate commits, so a system
-		// retry created by a concurrent FailTask can take the pending slot in
-		// between. CreateRetryTask yields the slot when it is already occupied,
-		// but it cannot yield to a row that does not exist yet, so a retry
-		// committing inside this window gets there first. Clear once more and
-		// retry: the deliberate human action is the one that should hold the
-		// slot. Bounded to a single extra attempt — a second collision would mean
-		// something is enqueueing in a loop, which is worth surfacing rather than
-		// spinning on.
-		slog.Info("issue rerun: pending slot taken concurrently, reclaiming",
+		// retry created by a concurrent FailTask can take the pending slot or
+		// deadlock with this insert while both lock the same owner rows. PostgreSQL
+		// rolls the losing statement back completely, so reclaiming and retrying
+		// is safe. The deliberate human action should hold the slot.
+		// 2026-09-11 coder(lq): Keep this retry local and bounded so unrelated
+		// transaction failures are never replayed and a persistent fault surfaces.
+		slog.Info("issue rerun: concurrent enqueue race, reclaiming",
 			"issue_id", util.UUIDToString(issueID),
 			"agent_id", util.UUIDToString(agentID),
+			"attempt", attempt,
 		)
 		cancelledCount += clearPendingSlot()
-		task, err = s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, actorUserID, sourceTaskID)
 	}
 	if err != nil {
 		return nil, err

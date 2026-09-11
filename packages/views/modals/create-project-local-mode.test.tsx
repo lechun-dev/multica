@@ -95,6 +95,13 @@ vi.mock("@multica/core/config", () => ({
     selector({ localWorktreeSupported: serverValidatesWorktree }),
 }));
 
+vi.mock("@multica/core/auth", () => ({
+  // 2026-09-11 coder(lq): Project creation now derives its default lead from
+  // auth state; local-mode tests do not need a registered global auth store.
+  useAuthStore: (selector: (state: { user: null }) => unknown) =>
+    selector({ user: null }),
+}));
+
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => ({ id: "workspace-1", slug: "ws", repos: [] }),

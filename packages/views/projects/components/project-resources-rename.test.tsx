@@ -26,7 +26,8 @@ const RESOURCE = {
   created_by: "u1",
 };
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: (options: { queryKey?: unknown[] }) => {
     const key = options?.queryKey?.[0];
     if (key === "project-resources") return { data: [RESOURCE] };

@@ -381,10 +381,12 @@ func TestPluginCommentRequiresProjectIssueCommentPermission(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner'), ($1, $3, 'viewer')
-	`, projectID, testUserID, viewerID); err != nil {
-		t.Fatalf("seed project members: %v", err)
+	repository := &projectAuthRepository{db: testPool}
+	if err := repository.AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
+		t.Fatalf("seed project owner: %v", err)
+	}
+	if err := repository.AddProjectMember(ctx, projectID, viewerID, projectauth.ProjectViewer); err != nil {
+		t.Fatalf("seed project viewer: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, project_id, title, status, priority, creator_type, creator_id, number, position)

@@ -21,7 +21,8 @@ vi.mock("@multica/core/issues/queries", () => ({
     queryKey: ["issues", "children", issueId],
   }),
 }));
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: ({ queryKey }: { queryKey: string[] }) =>
     queryKey[1] === "detail"
       ? { data: { id: queryKey[2], revision: 7, parent_issue_id: null } }

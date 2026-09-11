@@ -286,8 +286,9 @@ func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if !strings.Contains(compiled.where, "i.creator_type = 'member'") || !strings.Contains(compiled.where, "i.assignee_type = 'member'") {
 		t.Fatalf("projectless visibility must restrict creator and assignee identities: %q", compiled.where)
 	}
-	if !strings.Contains(compiled.where, "FROM project_members pm") {
-		t.Fatalf("project visibility membership predicate missing: %q", compiled.where)
+	if !strings.Contains(compiled.where, "FROM projectauth_access_grants pag") ||
+		!strings.Contains(compiled.where, "pag.scope_kind = 'project'") {
+		t.Fatalf("canonical project visibility grant predicate missing: %q", compiled.where)
 	}
 	if len(compiled.args) != 2 {
 		t.Fatalf("project visibility must bind the authenticated user, args=%#v", compiled.args)

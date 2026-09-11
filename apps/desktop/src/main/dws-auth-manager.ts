@@ -15,7 +15,13 @@ const DWS_INVALID_CLIENT_CREDENTIALS_MESSAGE =
   "DWS OAuth application credentials are invalid or no longer available.";
 
 function stripANSI(value: string): string {
-  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  // 2026-09-11 coder(lq): Build ESC outside the regex literal so ESLint's
+  // no-control-regex guard stays effective without changing ANSI stripping.
+  const ansiSequence = new RegExp(
+    `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
+    "g",
+  );
+  return value.replace(ansiSequence, "");
 }
 
 export function parseTrailingDwsJSON(

@@ -44,8 +44,8 @@ func TestCreateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	}
 }
 
-// TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked verifies that a
-// plain member cannot update an autopilot to point at a private-leader squad.
+// TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked verifies that an
+// unrelated member cannot discover or update an owner's hidden autopilot.
 func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -97,8 +97,10 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	})
 	r = withURLParam(r, "id", ap.ID)
 	testHandler.UpdateAutopilot(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	// 2026-09-11 coder(lq): Detail routes intentionally hide an Autopilot from
+	// callers outside its creator/executor audience before evaluating writes.
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected hidden resource 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

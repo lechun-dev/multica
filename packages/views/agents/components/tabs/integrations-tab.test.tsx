@@ -36,7 +36,8 @@ const groupsRef = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: (opts: { queryKey: unknown[]; enabled?: boolean }) => {
     if (opts.enabled === false) return { data: undefined };
     const key = JSON.stringify(opts.queryKey);

@@ -188,7 +188,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		before := countQuickCreateTasks(t)
 		var issueCount int
 		if err := testPool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM issue WHERE workspace_id = $1`,
+			`SELECT COUNT(*) FROM issue WHERE workspace_id = $1 AND archived_at IS NULL`,
 			testWorkspaceID,
 		).Scan(&issueCount); err != nil {
 			t.Fatalf("count workspace issues: %v", err)

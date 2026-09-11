@@ -204,6 +204,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   // Spread the real module so pure helpers (resolveRouteIconName, used to
   // derive each nav page's icon from its href) stay intact.
   ...(await importOriginal<typeof import("@multica/core/paths")>()),
+  useWorkspaceSlug: () => "ws-test",
   useWorkspacePaths: () => ({
     inbox: () => "/ws-test/inbox",
     chat: () => "/ws-test/chat",
@@ -255,9 +256,16 @@ function resolveIssue(key: readonly unknown[]) {
   return undefined;
 }
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: (opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
     const key = opts.queryKey;
+    if (key[0] === "visibility-workspaces") {
+      return { data: [{ id: "ws-test", slug: "ws-test" }], isSuccess: true };
+    }
+    if (key[0] === "visibility-members") {
+      return { data: mockMembers.current, isSuccess: true };
+    }
     if (key[0] === "workspaces" && key[2] === "members") {
       return { data: mockMembers.current };
     }

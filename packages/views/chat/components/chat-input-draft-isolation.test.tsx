@@ -46,7 +46,8 @@ const latestEditorOptions = vi.hoisted<{
 }>(() => ({}));
 const mockSetContent = vi.hoisted(() => vi.fn());
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQueryClient: () => ({}),
 }));
 // Captures what ContentEditor wires into its extensions. `onSubmitRef` is the
