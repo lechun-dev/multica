@@ -127,6 +127,29 @@ func TestDingTalkNotifyRuntimeNotifiesAgentOwnerOnlyForOtherActors(t *testing.T)
 	}
 }
 
+func TestPersonalMentionSenderUsesMemberOrOwnedAgentIdentity(t *testing.T) {
+	const (
+		workspaceID = "workspace-personal-sender"
+		ownerID     = "11111111-1111-1111-1111-111111111111"
+		agentID     = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	)
+	runtime := &dingtalkNotifyRuntime{
+		agentOwner: agentOwnerStub(map[string]string{agentID: ownerID}),
+	}
+	if got := runtime.personalMentionSenderUserID(workspaceID, "member", ownerID); got != ownerID {
+		t.Fatalf("member sender = %q, want %q", got, ownerID)
+	}
+	if got := runtime.personalMentionSenderUserID(workspaceID, "agent", agentID); got != ownerID {
+		t.Fatalf("owned Agent sender = %q, want owner %q", got, ownerID)
+	}
+	if got := runtime.personalMentionSenderUserID(workspaceID, "agent", "unowned-agent"); got != "" {
+		t.Fatalf("unowned Agent sender = %q, want empty", got)
+	}
+	if got := runtime.personalMentionSenderUserID(workspaceID, "system", agentID); got != "" {
+		t.Fatalf("system sender = %q, want empty", got)
+	}
+}
+
 func TestDingTalkNotifyRuntimeDeduplicatesDirectAndAgentOwnerMention(t *testing.T) {
 	const ownerID = "11111111-1111-1111-1111-111111111111"
 	store := notify.NewMemoryStore()

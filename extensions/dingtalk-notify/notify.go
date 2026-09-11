@@ -243,18 +243,15 @@ func FormatText(event MentionCreated) string {
 	if text != "" {
 		sections = append(sections, text)
 	}
-	footer := make([]string, 0, 2)
-	if source := notificationSource(event); source != "" {
-		footer = append(footer, "来源："+source)
-	}
+	footer := ""
 	if task := notificationTask(event); task != "" {
-		footer = append(footer, task)
+		footer = "来源：" + task
 	}
-	if len(footer) > 0 {
+	if footer != "" {
 		if text != "" {
 			sections = append(sections, "---")
 		}
-		sections = append(sections, strings.Join(footer, " / "))
+		sections = append(sections, footer)
 	}
 	if event.SourceURL != "" {
 		sections = append(sections, "[打开任务并回复]("+event.SourceURL+")")
@@ -271,20 +268,21 @@ func FormatPersonalMentionText(event MentionCreated) string {
 	if text == "" {
 		text = "在任务评论中提到了你"
 	}
-	sections := []string{boldPersonalMentionText(text)}
+	sections := make([]string, 0, 4)
+	if event.Actor.Kind == "agent" {
+		agent := strings.TrimSpace(event.Actor.Name)
+		if agent == "" {
+			agent = "MissionOS Agent"
+		}
+		sections = append(sections, fmt.Sprintf("**你的 Agent %s 提到了你：**", escapeMarkdown(agent)))
+	}
+	sections = append(sections, boldPersonalMentionText(text))
 	footer := ""
 	if sourceURL := strings.TrimSpace(event.SourceURL); sourceURL != "" {
 		footer = "[打开任务并回复](" + sourceURL + ")"
 	}
-	details := make([]string, 0, 2)
-	if source := notificationSource(event); source != "" {
-		details = append(details, "来源："+source)
-	}
 	if task := notificationTask(event); task != "" {
-		details = append(details, task)
-	}
-	if len(details) > 0 {
-		footer += "（" + strings.Join(details, " / ") + "）"
+		footer += "（来源：" + task + "）"
 	}
 	if footer != "" {
 		sections = append(sections, "---", footer)
@@ -357,27 +355,12 @@ func FormatAgentCompletionText(event AgentCompleted) string {
 	}
 	sections := []string{fmt.Sprintf("✅ **%s 已完成执行**", escapeMarkdown(agent))}
 	if task := notificationTaskFromCompletion(event); task != "" {
-		sections = append(sections, task)
-	}
-	if source := notificationSourceFromCompletion(event); source != "" {
-		sections = append(sections, "来源："+source)
+		sections = append(sections, "来源："+task)
 	}
 	if source := strings.TrimSpace(event.SourceURL); source != "" {
 		sections = append(sections, "[打开任务并回复]("+source+")")
 	}
 	return strings.Join(sections, "\n\n")
-}
-
-func notificationSourceFromCompletion(event AgentCompleted) string {
-	workspace := strings.TrimSpace(event.WorkspaceName)
-	project := strings.TrimSpace(event.ProjectName)
-	if workspace == "" {
-		return escapeMarkdown(project)
-	}
-	if project == "" {
-		return escapeMarkdown(workspace)
-	}
-	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
 }
 
 func notificationTaskFromCompletion(event AgentCompleted) string {
@@ -391,18 +374,6 @@ func notificationTaskFromCompletion(event AgentCompleted) string {
 		label += " · " + escapeMarkdown(title)
 	}
 	return label
-}
-
-func notificationSource(event MentionCreated) string {
-	workspace := strings.TrimSpace(event.WorkspaceName)
-	project := strings.TrimSpace(event.ProjectName)
-	if workspace == "" {
-		return escapeMarkdown(project)
-	}
-	if project == "" {
-		return escapeMarkdown(workspace)
-	}
-	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
 }
 
 func notificationTask(event MentionCreated) string {

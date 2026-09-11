@@ -107,10 +107,28 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 	if senderDingID != actorDingID || recipientDingID != actorDingID {
 		t.Fatalf("unexpected self DingTalk route: sender=%q recipient=%q", senderDingID, recipientDingID)
 	}
+	agentID := fixture.Agent(t, "Owned Test Agent", "", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"owner_id":     actorID,
+		"kind":         "user",
+	})
 	agentCommentID := uuid.NewString()
-	emit(agentCommentID, "agent", actorID, mention)
-	if count := countForComment(agentCommentID); count != 0 {
-		t.Fatalf("Agent-authored mention created %d rows", count)
+	emit(agentCommentID, "agent", agentID, mention)
+	if count := countForComment(agentCommentID); count != 1 {
+		t.Fatalf("owned Agent-authored mention created %d rows, want 1", count)
+	}
+	fixture.QueryRow(t, `
+		SELECT sender_ding_user_id, recipient_ding_user_id, markdown
+		FROM dingtalk_personal_message WHERE comment_id = $1`, agentCommentID).
+		Scan(&senderDingID, &recipientDingID, &markdown)
+	if senderDingID != actorDingID || recipientDingID != targetDingID {
+		t.Fatalf("owned Agent did not route through its owner: sender=%q recipient=%q", senderDingID, recipientDingID)
+	}
+	if !strings.Contains(markdown, "你的 Agent") {
+		t.Fatalf("owned Agent personal message did not disclose Agent authorship: %q", markdown)
+	}
+	if len(wakeup.users) != 3 || wakeup.users[2] != actorID {
+		t.Fatalf("owned Agent did not wake its owner's queue: %#v", wakeup.users)
 	}
 	systemCommentID := uuid.NewString()
 	emit(systemCommentID, "system", actorID, mention)

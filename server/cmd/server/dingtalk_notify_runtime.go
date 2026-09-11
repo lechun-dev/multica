@@ -430,7 +430,14 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 }
 
 func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, issueID, content, actorType, actorID string, mentions []util.Mention) {
-	if r == nil || r.pool == nil || actorType != "member" || strings.TrimSpace(actorID) == "" {
+	if r == nil || r.pool == nil || strings.TrimSpace(actorID) == "" {
+		return
+	}
+	senderUserID := r.personalMentionSenderUserID(workspaceID, actorType, actorID)
+	if senderUserID == "" {
+		if actorType == "agent" {
+			slog.Info("dingtalk personal mention: Agent owner unavailable", "workspace_id", workspaceID, "agent_id", actorID)
+		}
 		return
 	}
 	var enabled bool
@@ -440,7 +447,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 		     FROM notification_preference
 		     WHERE workspace_id = $1 AND user_id = $2),
 		    'all'
-		) <> 'muted'`, workspaceID, actorID).Scan(&enabled); err != nil || !enabled {
+		) <> 'muted'`, workspaceID, senderUserID).Scan(&enabled); err != nil || !enabled {
 		if err != nil {
 			slog.Warn("dingtalk personal mention: preference lookup failed", "workspace_id", workspaceID, "error", err)
 		}
@@ -509,7 +516,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			    WHERE workspace_id = $1::uuid AND user_id = $4::uuid
 			)
 			ON CONFLICT (idempotency_key) DO NOTHING`,
-			workspaceID, commentID, actorID, targetID, markdown,
+			workspaceID, commentID, senderUserID, targetID, markdown,
 			strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")))
 		if err != nil {
 			slog.Warn("dingtalk personal mention: enqueue failed", "comment_id", commentID, "target_id", targetID, "error", err)
@@ -519,7 +526,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			enqueued++
 			continue
 		}
-		reason, reasonErr := r.personalMentionEnqueueSkipReason(workspaceID, commentID, actorID, targetID)
+		reason, reasonErr := r.personalMentionEnqueueSkipReason(workspaceID, commentID, senderUserID, targetID)
 		if reasonErr != nil {
 			slog.Warn("dingtalk personal mention: enqueue produced no row and diagnosis failed", "comment_id", commentID, "target_id", targetID, "error", reasonErr)
 			continue
@@ -534,9 +541,21 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 		return
 	}
 	if r.personalWakeup != nil {
-		r.personalWakeup.NotifyDingTalkPersonalMessageAvailable(actorID)
+		r.personalWakeup.NotifyDingTalkPersonalMessageAvailable(senderUserID)
 	}
-	slog.Info("dingtalk personal mentions enqueued", "comment_id", commentID, "workspace_id", workspaceID, "target_count", enqueued)
+	slog.Info("dingtalk personal mentions enqueued", "comment_id", commentID, "workspace_id", workspaceID, "actor_type", actorType, "actor_id", actorID, "sender_user_id", senderUserID, "target_count", enqueued)
+}
+
+func (r *dingtalkNotifyRuntime) personalMentionSenderUserID(workspaceID, actorType, actorID string) string {
+	actorID = strings.TrimSpace(actorID)
+	switch actorType {
+	case "member":
+		return actorID
+	case "agent":
+		return r.resolveAgentOwner(workspaceID, actorID)
+	default:
+		return ""
+	}
 }
 
 func (r *dingtalkNotifyRuntime) personalMentionEnqueueSkipReason(workspaceID, commentID, senderUserID, recipientUserID string) (string, error) {

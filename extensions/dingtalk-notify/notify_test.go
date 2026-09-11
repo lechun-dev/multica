@@ -99,7 +99,7 @@ func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
 
 func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
 	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
-	want := "✅ **A\\*gent 已完成执行**\n\nMUL-67 · 优化成员通知\n\n来源：乐纯工作区 / 钉钉通知\n\n[打开任务并回复](https://multica.test/task-1)"
+	want := "✅ **A\\*gent 已完成执行**\n\n来源：MUL-67 · 优化成员通知\n\n[打开任务并回复](https://multica.test/task-1)"
 	if got != want {
 		t.Fatalf("formatted completion = %q, want %q", got, want)
 	}
@@ -125,7 +125,7 @@ func TestFormatTextIncludesReadableContextAndReplyLink(t *testing.T) {
 	}
 
 	got := FormatText(event)
-	want := "🔔 **张畅提到了你**\n\n请 周五前确认\n\n---\n\n来源：乐纯工作区 / 钉钉通知 / [MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
+	want := "🔔 **张畅提到了你**\n\n请 周五前确认\n\n---\n\n来源：[MUL-67 · 优化成员通知](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)\n\n[打开任务并回复](https://multica.lechun.cc/acme/issues/MUL-67#comment-comment-1)"
 	if got != want {
 		t.Fatalf("formatted notification = %q, want %q", got, want)
 	}
@@ -179,7 +179,7 @@ func TestFormatTextEscapesDisplayContext(t *testing.T) {
 		IssueTitle:      "Fix `notify`",
 		Text:            "done",
 	})
-	if got != "🔔 **A\\*lice提到了你**\n\ndone\n\n---\n\n来源：Acme\\_\\[研发\\] / MUL-1 · Fix \\`notify\\`" {
+	if got != "🔔 **A\\*lice提到了你**\n\ndone\n\n---\n\n来源：MUL-1 · Fix \\`notify\\`" {
 		t.Fatalf("formatted notification did not escape display fields: %q", got)
 	}
 }
@@ -193,7 +193,7 @@ func TestFormatPersonalMentionTextHidesRoutingMentionsAndKeepsSourceAtEnd(t *tes
 		IssueTitle:      "连接运行时，和 Mika 开始",
 		SourceURL:       "https://multica.test/issues/LECH-15",
 	})
-	want := "**测试私发消息，看看能不能收到**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：lechun-test / [LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
+	want := "**测试私发消息，看看能不能收到**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：[LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
 	if got != want {
 		t.Fatalf("formatted personal notification = %q, want %q", got, want)
 	}
@@ -212,11 +212,32 @@ func TestFormatPersonalMentionTextFallsBackWhenCommentOnlyContainsMentions(t *te
 }
 
 func TestFormatPersonalMentionTextHandlesPartialFooterContext(t *testing.T) {
-	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test"}); got != "**hello**\n\n---\n\n（来源：lechun-test）" {
-		t.Fatalf("source-only personal footer = %q", got)
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test", ProjectName: "project"}); got != "**hello**" {
+		t.Fatalf("workspace and project should stay hidden without a task: %q", got)
 	}
 	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", SourceURL: "https://multica.test/task"}); got != "**hello**\n\n---\n\n[打开任务并回复](https://multica.test/task)" {
 		t.Fatalf("link-only personal footer = %q", got)
+	}
+}
+
+func TestFormatPersonalMentionTextIdentifiesAgentButUsesTaskOnlyAsSource(t *testing.T) {
+	got := FormatPersonalMentionText(MentionCreated{
+		Actor:           Actor{Name: "Mika", Kind: "agent"},
+		Text:            "[@李群](mention://member/member-b) 请检查结果",
+		WorkspaceName:   "乐纯「私有」",
+		ProjectName:     "迁移临时项目",
+		IssueIdentifier: "LC-71",
+		IssueTitle:      "子任务测试",
+		SourceURL:       "https://multica.test/issues/LC-71",
+	})
+	want := "**你的 Agent Mika 提到了你：**\n\n**请检查结果**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：[LC-71 · 子任务测试](https://multica.test/issues/LC-71)）"
+	if got != want {
+		t.Fatalf("formatted Agent personal notification = %q, want %q", got, want)
+	}
+	for _, hidden := range []string{"乐纯", "迁移临时项目", "@李群", "mention://"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("Agent personal notification exposed %q: %q", hidden, got)
+		}
 	}
 }
 
