@@ -192,13 +192,22 @@ vi.mock("../navigation/context", () => ({
   useNavigation: () => ({ push: mockPush }),
 }));
 
-vi.mock("@multica/core/paths", () => ({
-  useCurrentWorkspace: () => ({ name: "Test Workspace" }),
-  useWorkspacePaths: () => ({
-    issueDetail: (id: string) => `/ws-test/issues/${id}`,
-    settings: () => "/ws-test/settings",
-  }),
-}));
+vi.mock("@multica/core/paths", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
+    "@multica/core/paths",
+  );
+  return {
+    ...actual,
+    // 2026-09-11 coder(lq): Preserve newly added path hooks while keeping this
+    // modal suite independent from workspace routing providers.
+    useCurrentWorkspace: () => ({ name: "Test Workspace" }),
+    useWorkspaceSlug: () => "ws-test",
+    useWorkspacePaths: () => ({
+      issueDetail: (id: string) => `/ws-test/issues/${id}`,
+      settings: () => "/ws-test/settings",
+    }),
+  };
+});
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-test",

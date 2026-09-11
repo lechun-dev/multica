@@ -187,13 +187,15 @@ func TestRevisionConflictsPreserveLatestIssueAndComment(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO attachment (
 			workspace_id, issue_id, uploader_type, uploader_id,
-			filename, url, content_type, size_bytes
+			filename, url, content_type, size_bytes, pending_comment
 		)
-		VALUES ($1, $2, 'member', $3, 'revision.txt', '/revision.txt', 'text/plain', 1)
+		VALUES ($1, $2, 'member', $3, 'revision.txt', '/revision.txt', 'text/plain', 1, TRUE)
 		RETURNING id
 	`, testWorkspaceID, issueID, testUserID).Scan(&attachmentID); err != nil {
 		t.Fatalf("insert revision attachment: %v", err)
 	}
+	// 2026-09-11 coder(lq): Comment attachment replacement only claims uploads
+	// created for a pending comment, matching the production upload lifecycle.
 	updateAttachments := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		req := withURLParam(newRequest(http.MethodPut, "/api/comments/"+commentID, map[string]any{

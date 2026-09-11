@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   checkForUpdates: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  openExternal: vi.fn(),
 }));
 
 const translations = {
@@ -16,6 +17,9 @@ const translations = {
       title: "Updates",
       description: "Update preferences",
       current_version: "Current version",
+      changelog_title: "Changelog",
+      changelog_description: "See what changed",
+      view_changelog: "View changelog",
       automatic_updates_title: "Automatic background updates",
       automatic_updates_description: "Download updates in the background",
       automatic_updates_save_failed: "Failed to save update settings",
@@ -52,6 +56,10 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@multica/views/platform", () => ({
+  openExternal: mocks.openExternal,
+}));
+
 import { UpdatesSettingsTab } from "./updates-settings-tab";
 
 describe("UpdatesSettingsTab", () => {
@@ -63,10 +71,17 @@ describe("UpdatesSettingsTab", () => {
     mocks.checkForUpdates.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
+    mocks.openExternal.mockReset();
 
     Object.defineProperty(window, "desktopAPI", {
       configurable: true,
-      value: { appInfo: { version: "1.2.3" } },
+      value: {
+        appInfo: { version: "1.2.3" },
+        runtimeConfig: {
+          ok: true,
+          config: { appUrl: "https://mission.example" },
+        },
+      },
     });
     Object.defineProperty(window, "updater", {
       configurable: true,
@@ -98,6 +113,16 @@ describe("UpdatesSettingsTab", () => {
   let updateProgress: (progress: { percent: number }) => void;
   let updateDownloaded: (info: { version: string }) => void;
   let updateError: (error: { message: string }) => void;
+
+  it("opens the changelog for the installed version", () => {
+    render(<UpdatesSettingsTab />);
+
+    fireEvent.click(screen.getByRole("button", { name: "View changelog" }));
+
+    expect(mocks.openExternal).toHaveBeenCalledWith(
+      "https://mission.example/changelog#release-1-2-3",
+    );
+  });
 
   it("loads the persisted preference and saves changes from the switch", async () => {
     mocks.getPreferences.mockResolvedValue({ automaticUpdates: false });

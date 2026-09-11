@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Info, Plus, Trash2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -150,28 +150,52 @@ export function ProjectPermissionRolesTab() {
     }
   };
   return (
-    <SettingsTab title={t(($) => $.permission_roles.title)} description={t(($) => $.permission_roles.description)}>
+    <SettingsTab
+      title={t(($) => $.permission_roles.title)}
+      description={t(($) => $.permission_roles.description)}
+      action={canManage ? (
+        <Button size="sm" onClick={openCreate}>
+          <Plus className="size-4" />
+          {t(($) => $.permission_roles.add)}
+        </Button>
+      ) : null}
+    >
       <SettingsSection>
         <SettingsCard>
-          <div className="flex items-center justify-between border-b border-surface-border pb-4">
-            <div className="text-caption text-muted-foreground">{t(($) => $.permission_roles.system_hint)}</div>
-            {canManage ? <Button size="sm" onClick={openCreate}><Plus className="mr-1 size-4" />{t(($) => $.permission_roles.add)}</Button> : null}
+          <div className="flex items-start gap-2.5 bg-surface-hover/45 px-4 py-3 text-caption leading-5 text-muted-foreground">
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <p>{t(($) => $.permission_roles.system_hint)}</p>
           </div>
-          {rolesQuery.isLoading ? <p className="py-6 text-caption text-muted-foreground">{t(($) => $.permission_roles.loading)}</p> : (
+          {rolesQuery.isLoading ? <p className="px-4 py-6 text-caption text-muted-foreground">{t(($) => $.permission_roles.loading)}</p> : (
             <div className="divide-y divide-surface-border">
               {roles.map((role) => (
-                <div key={role.key} className="flex min-w-0 items-start gap-3 py-3 sm:items-center">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium">
-                      {roleLabel(role)} {role.is_system ? <span className="text-caption text-muted-foreground">({t(($) => $.permission_roles.system)})</span> : null}
+                <div
+                  key={role.key}
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-3 px-4 py-4 md:grid-cols-[minmax(10rem,13rem)_minmax(0,1fr)_auto] md:items-center md:gap-x-5"
+                >
+                  <div className="col-start-1 row-start-1 min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="truncate font-medium">{roleLabel(role)}</span>
+                      {role.is_system ? (
+                        <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-surface-border bg-surface-hover px-2 text-caption font-medium text-muted-foreground">
+                          {t(($) => $.permission_roles.system)}
+                        </span>
+                      ) : null}
                     </div>
-                    <div className="text-caption text-muted-foreground">{role.description || role.key}</div>
+                    <div className="mt-0.5 truncate font-mono text-caption text-muted-foreground">{role.description || role.key}</div>
                   </div>
-                  <div className="hidden min-w-0 flex-1 flex-wrap justify-end gap-1 md:flex">
-                    {role.permissions.map((permission) => <span key={permission} className="rounded bg-muted px-1.5 py-0.5 text-caption">{permissionLabel(permission)}</span>)}
+                  <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-1.5 md:col-span-1 md:col-start-2 md:row-start-1">
+                    {role.permissions.map((permission) => (
+                      <span
+                        key={permission}
+                        className="inline-flex min-h-6 items-center rounded-md border border-surface-border bg-muted/60 px-2 py-0.5 text-caption leading-4 text-foreground"
+                      >
+                        {permissionLabel(permission)}
+                      </span>
+                    ))}
                   </div>
                   {canManage ? (
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-1.5 md:col-start-3">
                       <Button variant="outline" size="sm" onClick={() => openEdit(role)}>{t(($) => $.permission_roles.edit)}</Button>
                       <Button variant="ghost" size="icon-sm" disabled={role.is_system} aria-label={t(($) => $.permission_roles.delete)} onClick={() => void remove(role)}><Trash2 className="size-4" /></Button>
                     </div>

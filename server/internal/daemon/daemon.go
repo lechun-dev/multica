@@ -521,9 +521,13 @@ type Daemon struct {
 	// milliseconds; without the guard each hint would fire its own out-of-band
 	// heartbeat, and an authenticated caller looping the list-models endpoint
 	// could turn that into a heartbeat amplifier.
-	pendingWorkMu       sync.Mutex
-	pendingWorkInflight map[string]struct{}  // runtime_id -> hint-driven heartbeat in flight
-	pendingWorkLastRun  map[string]time.Time // runtime_id -> when the last hint-driven heartbeat started
+	pendingWorkMu            sync.Mutex
+	pendingWorkInflight      map[string]struct{}  // runtime_id -> hint-driven heartbeat in flight
+	pendingWorkLastRun       map[string]time.Time // runtime_id -> when the last hint-driven heartbeat started
+	dingtalkPersonalMu       sync.Mutex
+	dingtalkPersonalInflight bool
+	dingtalkPersonalRetryNow bool
+	dingtalkPersonalHealth   DingTalkPersonalMessageHealth
 
 	cancelFunc context.CancelFunc // set by Run(); called by triggerRestart
 	rootCtx    context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation

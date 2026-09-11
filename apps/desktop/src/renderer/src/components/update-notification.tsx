@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
+import { openExternal } from "@multica/views/platform";
 import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
+import { changelogUrl } from "../changelog-url";
 
 // Downloads run silently in the background (main process has
 // autoDownload=true). The renderer only renders UI once the package is fully
@@ -87,6 +89,13 @@ export function UpdateNotification() {
                 className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-caption font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
               >
                 {installing ? "Restarting…" : "Restart now"}
+              </button>
+              <button
+                type="button"
+                onClick={() => openExternal(changelogUrl(state.version))}
+                className="inline-flex items-center rounded-md px-2 py-1.5 text-caption font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              >
+                See changelog
               </button>
             </div>
           )}

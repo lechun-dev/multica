@@ -73,8 +73,8 @@ describe("IssueAccessGrantsDialog", () => {
       members: [], total: 1, member_total: 0,
     });
     listMembers.mockResolvedValue([
-      { id: "membership-li", workspace_id: "workspace-1", user_id: "li-4", role: "member", created_at: "2026-09-03T00:00:00Z", name: "李四", email: "li4@example.com", avatar_url: null },
-      { id: "membership-wang", workspace_id: "workspace-1", user_id: "wang-5", role: "member", created_at: "2026-09-03T00:00:00Z", name: "王五", email: "wang5@example.com", avatar_url: null },
+      { id: "membership-li", workspace_id: "workspace-1", user_id: "li-4", role: "member", created_at: "2026-09-03T00:00:00Z", name: "李四", email: "li4@example.com", avatar_url: null, has_logged_in: true },
+      { id: "membership-wang", workspace_id: "workspace-1", user_id: "wang-5", role: "member", created_at: "2026-09-03T00:00:00Z", name: "王五", email: "wang5@example.com", avatar_url: null, has_logged_in: true },
     ]);
     createIssueAccessGrant.mockResolvedValue({ id: "grant-new" });
     revokeIssueAccessGrant.mockResolvedValue(undefined);

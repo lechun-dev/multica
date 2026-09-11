@@ -60,6 +60,8 @@ export function NotificationsTab() {
   };
 
   const systemEnabled = preferences.system_notifications !== "muted";
+  const dingtalkPersonalMentionsEnabled =
+    preferences.dingtalk_personal_mentions !== "muted";
 
   return (
     <SettingsTab title={t(($) => $.page.tabs.notifications)}>
@@ -84,6 +86,26 @@ export function NotificationsTab() {
                 </SettingsRow>
               );
             })}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t(($) => $.notifications.dingtalk_personal.title)}
+        description={t(($) => $.notifications.dingtalk_personal.description)}
+      >
+        <SettingsCard>
+          <SettingsRow
+            label={t(($) => $.notifications.dingtalk_personal.label)}
+            description={t(($) => $.notifications.dingtalk_personal.hint)}
+          >
+            <Switch
+              checked={dingtalkPersonalMentionsEnabled}
+              aria-label={t(($) => $.notifications.dingtalk_personal.label)}
+              onCheckedChange={(checked) =>
+                handleToggle("dingtalk_personal_mentions", checked)
+              }
+            />
+          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
 

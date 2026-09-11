@@ -267,8 +267,11 @@ describe("CreateProjectModal", () => {
 
     await user.type(screen.getByPlaceholderText("Project title"), "Private project");
     await user.click(screen.getByRole("button", { name: "Access" }));
-    await user.click(screen.getByRole("checkbox", { name: "Alice Owner" }));
-    expect(screen.getByRole("checkbox", { name: "Alice Owner" })).toBeChecked();
+    // 2026-09-11 coder(lq): Member selection now lives in a searchable nested
+    // picker so large workspaces do not render every person up front.
+    await user.click(screen.getByRole("button", { name: "Search by name or email" }));
+    await user.click(screen.getByRole("checkbox", { name: /Alice Owner/ }));
+    expect(screen.getByRole("checkbox", { name: /Alice Owner/ })).toBeChecked();
 
     await user.click(screen.getByRole("button", { name: "Manager" }));
     await user.click(screen.getByRole("button", { name: "Add members" }));
@@ -298,7 +301,9 @@ describe("CreateProjectModal", () => {
     renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText("Project title"), "Partially shared project");
-    await user.click(screen.getByRole("checkbox", { name: "Alice Owner" }));
+    await user.click(screen.getByRole("button", { name: "Access" }));
+    await user.click(screen.getByRole("button", { name: "Search by name or email" }));
+    await user.click(screen.getByRole("checkbox", { name: /Alice Owner/ }));
     await user.click(screen.getByRole("button", { name: "Add members" }));
     await user.click(screen.getByRole("button", { name: "Create Project" }));
 

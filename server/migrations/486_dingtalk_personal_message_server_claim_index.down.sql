@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_dingtalk_personal_message_server_claim;

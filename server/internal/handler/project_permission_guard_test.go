@@ -32,10 +32,12 @@ func TestCreateCommentRequiresProjectIssueCommentPermission(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner'), ($1, $3, 'viewer')
-	`, projectID, testUserID, viewerID); err != nil {
-		t.Fatalf("add project members: %v", err)
+	repository := &projectAuthRepository{db: testPool}
+	if err := repository.AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
+		t.Fatalf("add project owner: %v", err)
+	}
+	if err := repository.AddProjectMember(ctx, projectID, viewerID, projectauth.ProjectViewer); err != nil {
+		t.Fatalf("add project viewer: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, project_id, title, status, priority, creator_type, creator_id, number, position)
@@ -54,8 +56,8 @@ func TestCreateCommentRequiresProjectIssueCommentPermission(t *testing.T) {
 	req := newRequestAs(viewerID, http.MethodPost, "/api/issues/"+issueID+"/comments?workspace_id="+testWorkspaceID, map[string]any{"content": "should be rejected"})
 	req = withURLParam(req, "id", issueID)
 	testHandler.CreateComment(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("viewer CreateComment: expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("viewer CreateComment: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -74,9 +76,7 @@ func TestCommentReactionRequiresProjectEditPermission(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')
-	`, projectID, testUserID); err != nil {
+	if err := (&projectAuthRepository{db: testPool}).AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
 		t.Fatalf("seed project owner: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -115,8 +115,8 @@ func TestCommentReactionRequiresProjectEditPermission(t *testing.T) {
 		"/api/comments/"+commentID+"/reactions?workspace_id="+testWorkspaceID,
 		map[string]any{"emoji": "heart"}), "commentId", commentID)
 	testHandler.AddReaction(deniedAdd, deniedAddReq)
-	if deniedAdd.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized AddReaction: expected 404, got %d: %s", deniedAdd.Code, deniedAdd.Body.String())
+	if deniedAdd.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized AddReaction: expected 403, got %d: %s", deniedAdd.Code, deniedAdd.Body.String())
 	}
 
 	deniedRemove := httptest.NewRecorder()
@@ -124,8 +124,8 @@ func TestCommentReactionRequiresProjectEditPermission(t *testing.T) {
 		"/api/comments/"+commentID+"/reactions?workspace_id="+testWorkspaceID,
 		map[string]any{"emoji": "thumbs_up"}), "commentId", commentID)
 	testHandler.RemoveReaction(deniedRemove, deniedRemoveReq)
-	if deniedRemove.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized RemoveReaction: expected 404, got %d: %s", deniedRemove.Code, deniedRemove.Body.String())
+	if deniedRemove.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized RemoveReaction: expected 403, got %d: %s", deniedRemove.Code, deniedRemove.Body.String())
 	}
 
 	var reactionCount int
@@ -151,9 +151,7 @@ func TestProjectScopedIssueViewInheritsProjectViewPermission(t *testing.T) {
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')
-	`, projectID, testUserID); err != nil {
+	if err := (&projectAuthRepository{db: testPool}).AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
 		t.Fatalf("seed project owner: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -181,8 +179,8 @@ func TestProjectScopedIssueViewInheritsProjectViewPermission(t *testing.T) {
 		"scope_id":   projectID,
 		"query":      map[string]any{},
 	}))
-	if create.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized project view create: expected 404, got %d: %s", create.Code, create.Body.String())
+	if create.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized project view create: expected 403, got %d: %s", create.Code, create.Body.String())
 	}
 
 	list := httptest.NewRecorder()
@@ -257,9 +255,7 @@ func TestProjectScopedIssueViewPreferenceInheritsProjectViewPermission(t *testin
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')
-	`, projectID, testUserID); err != nil {
+	if err := (&projectAuthRepository{db: testPool}).AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
 		t.Fatalf("seed project owner: %v", err)
 	}
 	t.Cleanup(func() {
@@ -285,8 +281,8 @@ func TestProjectScopedIssueViewPreferenceInheritsProjectViewPermission(t *testin
 	deniedGet := httptest.NewRecorder()
 	testHandler.GetIssueViewPreference(deniedGet, newRequestAs(deniedID, http.MethodGet,
 		"/api/issue-view-preferences?scope_type=project&scope_id="+projectID, nil))
-	if deniedGet.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized project preference get: expected 404, got %d: %s", deniedGet.Code, deniedGet.Body.String())
+	if deniedGet.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized project preference get: expected 403, got %d: %s", deniedGet.Code, deniedGet.Body.String())
 	}
 
 	deniedPut := httptest.NewRecorder()
@@ -295,8 +291,8 @@ func TestProjectScopedIssueViewPreferenceInheritsProjectViewPermission(t *testin
 		"scope_id":   projectID,
 		"prefs":      map[string]any{"hidden": []string{}},
 	}))
-	if deniedPut.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized project preference put: expected 404, got %d: %s", deniedPut.Code, deniedPut.Body.String())
+	if deniedPut.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized project preference put: expected 403, got %d: %s", deniedPut.Code, deniedPut.Body.String())
 	}
 }
 
@@ -314,9 +310,8 @@ func TestMoveIssueRequiresProjectEditPermissionBeforeValidation(t *testing.T) {
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')
-	`, projectID, testUserID); err != nil {
+	repository := &projectAuthRepository{db: testPool}
+	if err := repository.AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
 		t.Fatalf("seed project owner: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -339,9 +334,7 @@ func TestMoveIssueRequiresProjectEditPermissionBeforeValidation(t *testing.T) {
 	testHandler.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
 	t.Cleanup(func() { testHandler.ProjectAuth = previous })
 	viewerID := createSecondWorkspaceMember(t)
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'viewer')
-	`, projectID, viewerID); err != nil {
+	if err := repository.AddProjectMember(ctx, projectID, viewerID, projectauth.ProjectViewer); err != nil {
 		t.Fatalf("seed project viewer: %v", err)
 	}
 
@@ -351,8 +344,8 @@ func TestMoveIssueRequiresProjectEditPermissionBeforeValidation(t *testing.T) {
 	})
 	req = withURLParam(req, "id", issueID)
 	testHandler.MoveIssue(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("viewer MoveIssue: expected 404 before validation, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("viewer MoveIssue: expected 403 before validation, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -370,9 +363,7 @@ func TestPreviewIssueTriggerCreateRequiresProjectIssueCreatePermission(t *testin
 	`, testWorkspaceID).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')
-	`, projectID, testUserID); err != nil {
+	if err := (&projectAuthRepository{db: testPool}).AddProjectMember(ctx, projectID, testUserID, projectauth.ProjectOwner); err != nil {
 		t.Fatalf("seed project owner: %v", err)
 	}
 	t.Cleanup(func() {
@@ -395,15 +386,15 @@ func TestPreviewIssueTriggerCreateRequiresProjectIssueCreatePermission(t *testin
 			"status":        "todo",
 		})
 	testHandler.PreviewIssueTrigger(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized create preview: expected 404, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized create preview: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 	create := httptest.NewRecorder()
 	testHandler.CreateIssue(create, newRequestAs(deniedID, http.MethodPost,
 		"/api/issues?workspace_id="+testWorkspaceID,
 		map[string]any{"title": "Unauthorized project create guard", "project_id": projectID}))
-	if create.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized project create: expected 404, got %d: %s", create.Code, create.Body.String())
+	if create.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized project create: expected 403, got %d: %s", create.Code, create.Body.String())
 	}
 }
 
@@ -427,6 +418,19 @@ func TestProjectlessIssueCreateAndTriggerPreviewAllowedWhenPermissionsEnabled(t 
 		map[string]any{"is_create": true, "status": "todo"}))
 	if preview.Code != http.StatusOK {
 		t.Fatalf("projectless create preview: expected 200, got %d: %s", preview.Code, preview.Body.String())
+	}
+
+	// 2026-09-11 coder(lq): Earlier fixtures insert issue numbers directly;
+	// align the workspace allocator before exercising the real create path.
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE workspace
+		SET issue_counter = GREATEST(
+			issue_counter,
+			(SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)
+		)
+		WHERE id = $1
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("synchronize issue counter: %v", err)
 	}
 
 	create := httptest.NewRecorder()

@@ -576,6 +576,21 @@ function AssistantMessage({
     [taskMessages, transformContent],
   );
 
+  const timelineContainsPersistedReply = useMemo(() => {
+    const { preface, final } = splitTimeline(timeline);
+    const visibleTimelineContent = [...preface, ...final]
+      .map((item) => item.content ?? "")
+      .join("")
+      .trim();
+    const persistedReply = transformContent
+      ? transformContent(message?.content ?? "").trim()
+      : (message?.content ?? "").trim();
+
+    return (
+      persistedReply.length > 0 && visibleTimelineContent.includes(persistedReply)
+    );
+  }, [message?.content, timeline, transformContent]);
+
   // Content is settled once the persisted message exists; until then text is
   // still arriving and a trailing fence may be half-written.
   const phase: "streaming" | "settled" = message ? "settled" : "streaming";
@@ -612,7 +627,10 @@ function AssistantMessage({
       )}
       {isNoResponse ? (
         <NoResponseNotice />
-      ) : message && timeline.length === 0 ? (
+      ) : message && !timelineContainsPersistedReply ? (
+        // 2026-09-10 coder(lq): Workspace-safe realtime projections retain
+        // timeline identity but omit private text. Never let those empty stubs
+        // suppress the authoritative reply persisted on chat_message.
         <RichContent
           content={message.content}
           attachments={message.attachments}

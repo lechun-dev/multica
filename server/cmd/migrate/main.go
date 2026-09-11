@@ -290,6 +290,10 @@ var concurrentIndexCleanups = map[string]string{
 	"476_projectauth_issue_access_grants_unique":                "projectauth_issue_access_grants_uniq",
 	"477_projectauth_issue_access_grants_issue_index":           "projectauth_issue_access_grants_issue_idx",
 	"478_projectauth_issue_access_grants_subject_index":         "projectauth_issue_access_grants_subject_idx",
+	"480_dingtalk_personal_message_id_unique":                   "dingtalk_personal_message_id_uniq",
+	"482_dingtalk_personal_message_idempotency_unique":          "dingtalk_personal_message_idempotency_uniq",
+	"483_dingtalk_personal_message_claim_index":                 "idx_dingtalk_personal_message_claim",
+	"486_dingtalk_personal_message_server_claim_index":          "idx_dingtalk_personal_message_server_claim",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

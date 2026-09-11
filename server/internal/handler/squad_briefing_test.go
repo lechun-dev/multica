@@ -448,23 +448,28 @@ func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-
-	var leaderID, runtimeID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&leaderID, &runtimeID); err != nil {
-		t.Fatalf("get leader agent: %v", err)
+	// 2026-09-11 coder(lq): Give this claim its own runtime. Reusing the
+	// workspace's first runtime lets another parallel integration test enqueue a
+	// task ahead of this one, so the claim can legitimately return the wrong
+	// fixture and make the briefing assertion flaky.
+	fx := newSquadBriefingClaimFixture(t, ctx, "Briefing Claim")
+	if _, err := testPool.Exec(ctx, `UPDATE squad SET instructions = 'Be terse.' WHERE id = $1`, fx.SquadID); err != nil {
+		t.Fatalf("set squad instructions: %v", err)
 	}
-
-	squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
+	squad, err := testHandler.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          util.MustParseUUID(fx.SquadID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load squad: %v", err)
+	}
 
 	helper := createHandlerTestAgent(t, "Briefing Helper", []byte("[]"))
 	addAgentMember(t, squad.ID, helper, "implementer")
 
-	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), leaderID, runtimeID, 95001)
+	enqueueClaimTask(t, ctx, fx, true /*isLeader*/, true /*withSquadID*/)
 
-	agent := claimAndDecodeAgent(t, runtimeID)
+	agent := claimAndDecodeAgent(t, fx.RuntimeID)
 	for _, want := range []string{
 		"## Squad Operating Protocol",
 		"## Squad Roster",

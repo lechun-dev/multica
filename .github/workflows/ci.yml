@@ -60,6 +60,8 @@ jobs:
               - 'server/internal/handler/reserved_slugs.json'
               - 'scripts/check-ui-wildcard-exports.mjs'
               - 'scripts/check-ui-wildcard-exports.test.sh'
+              - 'scripts/check-release-changelog.mjs'
+              - 'scripts/check-release-changelog.test.mjs'
               - 'scripts/selfhost-config.test.sh'
               - 'scripts/drop-database.sh'
               - 'scripts/remove-worktree.sh'
@@ -292,6 +294,10 @@ jobs:
         run: |
           bash scripts/check-ui-wildcard-exports.test.sh
           node scripts/check-ui-wildcard-exports.mjs
+
+      - name: Test release changelog policy
+        if: ${{ needs.changes.outputs.frontend == 'true' }}
+        run: node --test scripts/check-release-changelog.test.mjs
 
       # WARN PHASE — reports, never blocks. `shamefully-hoist=true` in .npmrc
       # hides both halves of the drift this catches: an undeclared import still

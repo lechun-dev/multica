@@ -534,12 +534,12 @@ describe("McpTab", () => {
     expect(screen.getByText("No shared MCP servers")).toBeInTheDocument();
   });
 
-  // The document is write-only, so the screen must never imply it is showing
-  // a saved configuration: it says an edit replaces the entry.
-  it("states that saved configurations are write-only", () => {
+  // 2026-09-11 coder(lq): Assert the user-facing security promise instead of
+  // an internal implementation term that is no longer present in the copy.
+  it("states that saved configurations are not shown again", () => {
     render(<McpTab />, { wrapper: Wrapper });
 
-    expect(screen.getByText(/write-only/)).toBeInTheDocument();
+    expect(screen.getByText(/saved URLs, commands, headers, and environment values aren't shown again/i)).toBeInTheDocument();
   });
 
   it("survives a payload that is not an array", () => {

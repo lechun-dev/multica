@@ -48,6 +48,10 @@ const (
 	// ships a redirect stub under the old name; when it is present it ships
 	// nothing extra, so the stub retires itself as daemons update.
 	DaemonCapabilityPlatformSkillV1 = "platform-skill-v1"
+	// DaemonCapabilityDingTalkPersonalMessageV1 advertises that the daemon can
+	// claim member-authored mention notifications and deliver them through the
+	// locally authenticated DWS CLI.
+	DaemonCapabilityDingTalkPersonalMessageV1 = "dws-personal-message-v1"
 
 	// AppCapabilityChatDraftRestoreV1 is advertised (X-Client-Capabilities) by
 	// app clients that understand the durable draft-restore recovery path:
@@ -129,6 +133,11 @@ type RuntimeProfilesChangedPayload struct {
 // reconcile its workspace membership set. The server remains authoritative;
 // no workspace data is embedded in the event.
 type WorkspacesChangedPayload struct{}
+
+// DingTalkPersonalMessageAvailablePayload is an account-scoped wakeup hint.
+// The message body remains server-side and is atomically claimed over the
+// authenticated daemon API, so this frame is safe to lose or duplicate.
+type DingTalkPersonalMessageAvailablePayload struct{}
 
 // PendingWorkKind values carried by PendingWorkPayload.Kind. The kind is
 // advisory only — the daemon reacts identically to every kind (one immediate

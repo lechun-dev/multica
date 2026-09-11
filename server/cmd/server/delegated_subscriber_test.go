@@ -553,14 +553,14 @@ func TestDelegatedTier_ChildCompletionDeliversExactlyOnce(t *testing.T) {
 	// Routine progress on the child stays suppressed for the delegate, and the
 	// parent bubble must not smuggle it back in.
 	notifySubscribers(ctx, queries, bus, childID, "in_progress", testWorkspaceID,
-		agentEvent, nil, "status_changed", "info", "child", "", emptyDetails)
+		agentEvent, nil, "status_changed", "info", "child", "", emptyDetails, nil)
 	if n := countInbox(); n != 0 {
 		t.Fatalf("routine child progress reached the inbox %d time(s) — the parent bubble bypassed the tier", n)
 	}
 
 	// Completion delivers, exactly once despite two paths to the same person.
 	notifySubscribers(ctx, queries, bus, childID, "in_review", testWorkspaceID,
-		agentEvent, nil, "status_changed", "info", "child", "", emptyDetails)
+		agentEvent, nil, "status_changed", "info", "child", "", emptyDetails, nil)
 	if n := countInbox(); n != 1 {
 		t.Fatalf("expected exactly 1 inbox row for the child completion, got %d", n)
 	}

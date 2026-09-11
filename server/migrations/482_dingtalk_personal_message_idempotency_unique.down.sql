@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS dingtalk_personal_message_idempotency_uniq;

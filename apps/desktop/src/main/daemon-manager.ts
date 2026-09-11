@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow, shell } from "electron";
+import { app, ipcMain, BrowserWindow, Notification, shell } from "electron";
 import { execFile } from "child_process";
 import {
   readFile,
@@ -22,7 +22,21 @@ import type {
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
 import { daemonStatusAlive } from "../shared/daemon-types";
+import {
+  DWS_AUTH_REQUIRED_CHANNEL,
+  DWS_AUTH_RESOLVED_CHANNEL,
+  DWS_STATUS_NOTICE_CHANNEL,
+  dwsRequirementFromAuthStatus,
+  dwsRequirementFromPersonalMessage,
+  dwsRequirementKey,
+  dwsStatusNoticeFromPersonalMessage,
+  dwsStatusNoticeKey,
+  type DwsAuthRequest,
+  type DwsAuthRequirement,
+  type DwsStatusNotice,
+} from "../shared/dws-auth";
 import { ensureManagedCli, managedCliPath } from "./cli-bootstrap";
+import { getDwsAuthStatus, loginDws } from "./dws-auth-manager";
 import { decideVersionAction } from "./version-decision";
 import {
   deriveProfileName,
@@ -163,9 +177,171 @@ function urlsMatch(a: string, b: string): boolean {
   return na.length > 0 && na === nb;
 }
 
+let currentDwsAuthRequirement: DwsAuthRequirement | null = null;
+let lastDwsAuthAlertKey = "";
+let currentDwsStatusNotice: DwsStatusNotice | null = null;
+let lastDwsStatusNoticeKey = "";
+let dwsAuthRecheckInFlight: Promise<void> | null = null;
+let dwsAuthRecheckRevision = 0;
+
+function clearDwsAuthRequirement(source?: string): void {
+  if (!currentDwsAuthRequirement) return;
+  if (source && currentDwsAuthRequirement.source !== source) return;
+  currentDwsAuthRequirement = null;
+  lastDwsAuthAlertKey = "";
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(DWS_AUTH_RESOLVED_CHANNEL);
+    }
+  }
+}
+
+function showDwsAuthRequirement(requirement: DwsAuthRequirement): void {
+  const key = dwsRequirementKey(requirement);
+  if (key === dwsRequirementKey(currentDwsAuthRequirement)) return;
+  currentDwsAuthRequirement = requirement;
+  const win = getMainWindow();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(DWS_AUTH_REQUIRED_CHANNEL, requirement);
+    }
+  }
+  if (
+    key === lastDwsAuthAlertKey ||
+    !Notification.isSupported() ||
+    (win?.isVisible() && win.isFocused())
+  ) {
+    return;
+  }
+  lastDwsAuthAlertKey = key;
+  const notification = new Notification({
+    title: "DWS 需要登录",
+    body: requirement.message || "打开 Multica 完成钉钉授权。",
+  });
+  notification.on("click", () => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send(DWS_AUTH_REQUIRED_CHANNEL, requirement);
+  });
+  notification.show();
+}
+
+function clearDwsStatusNotice(source?: string): void {
+  if (!currentDwsStatusNotice) return;
+  if (source && currentDwsStatusNotice.source !== source) return;
+  currentDwsStatusNotice = null;
+  lastDwsStatusNoticeKey = "";
+}
+
+function showDwsStatusNotice(notice: DwsStatusNotice): void {
+  const key = dwsStatusNoticeKey(notice);
+  currentDwsStatusNotice = notice;
+  if (key === lastDwsStatusNoticeKey) return;
+  lastDwsStatusNoticeKey = key;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(DWS_STATUS_NOTICE_CHANNEL, notice);
+    }
+  }
+}
+
+function invalidateDwsAuthRecheck(): void {
+  dwsAuthRecheckRevision += 1;
+}
+
+function recheckDwsAuthRequirement(requirement: DwsAuthRequirement): void {
+  if (dwsAuthRecheckInFlight) return;
+  const revision = ++dwsAuthRecheckRevision;
+
+  // 2026-09-10 coder(lq): Recheck the live DWS session before showing a
+  // login prompt from potentially stale daemon health.
+  const check = (async () => {
+    const status = await getDwsAuthStatus();
+    if (revision !== dwsAuthRecheckRevision) return;
+
+    const confirmedRequirement = dwsRequirementFromAuthStatus(status, {
+      source: requirement.source,
+      message: requirement.message,
+    });
+    if (confirmedRequirement) {
+      clearDwsStatusNotice(requirement.source);
+      showDwsAuthRequirement(confirmedRequirement);
+      return;
+    }
+
+    clearDwsAuthRequirement(requirement.source);
+    if (status.state === "error") {
+      showDwsStatusNotice({
+        code: "auth_check_failed",
+        source: requirement.source,
+        message: status.message,
+      });
+      return;
+    }
+
+    clearDwsStatusNotice(requirement.source);
+    await retryDwsWorkNow();
+  })();
+  dwsAuthRecheckInFlight = check;
+  void check.then(
+    () => {
+      if (dwsAuthRecheckInFlight === check) dwsAuthRecheckInFlight = null;
+    },
+    (error: unknown) => {
+      if (dwsAuthRecheckInFlight === check) dwsAuthRecheckInFlight = null;
+      if (revision !== dwsAuthRecheckRevision) return;
+      clearDwsAuthRequirement(requirement.source);
+      showDwsStatusNotice({
+        code: "auth_check_failed",
+        source: requirement.source,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
+}
+
+function updateDwsAuthRequirement(status: DaemonStatus): void {
+  const personalMessage = status.dingtalkPersonalMessage;
+  if (!personalMessage) {
+    invalidateDwsAuthRecheck();
+    clearDwsAuthRequirement("dingtalk_personal_message");
+    clearDwsStatusNotice("dingtalk_personal_message");
+    return;
+  }
+  const requirement = dwsRequirementFromPersonalMessage(
+    personalMessage.state,
+    personalMessage.message,
+  );
+  if (requirement) {
+    clearDwsStatusNotice("dingtalk_personal_message");
+    if (requirement.reason === "not_logged_in") {
+      recheckDwsAuthRequirement(requirement);
+      return;
+    }
+    invalidateDwsAuthRecheck();
+    showDwsAuthRequirement(requirement);
+    return;
+  }
+  invalidateDwsAuthRecheck();
+  clearDwsAuthRequirement("dingtalk_personal_message");
+  const notice = dwsStatusNoticeFromPersonalMessage(
+    personalMessage.state,
+    personalMessage.message,
+  );
+  if (notice) {
+    showDwsStatusNotice(notice);
+    return;
+  }
+  clearDwsStatusNotice("dingtalk_personal_message");
+}
+
 function sendStatus(status: DaemonStatus): void {
   const win = getMainWindow();
   win?.webContents.send("daemon:status", status);
+  updateDwsAuthRequirement(status);
 }
 
 interface HealthPayload {
@@ -181,6 +357,10 @@ interface HealthPayload {
   active_task_count?: number;
   agents?: string[];
   workspaces?: unknown[];
+  dingtalk_personal_message?: {
+    state?: string;
+    message?: string;
+  };
 }
 
 async function fetchHealthAtPort(
@@ -414,7 +594,31 @@ async function fetchHealth(): Promise<DaemonStatus> {
     profile: active.name,
     serverUrl: data.server_url,
     externallyManaged,
+    dingtalkPersonalMessage: data.dingtalk_personal_message?.state
+      ? {
+          state: data.dingtalk_personal_message.state,
+          message: data.dingtalk_personal_message.message,
+        }
+      : undefined,
   };
+}
+
+async function retryDwsWorkNow(): Promise<void> {
+  const active = await ensureActiveProfile();
+  if (!active) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
+  try {
+    await fetch(`http://127.0.0.1:${active.port}/dws/retry`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+  } catch {
+    // The daemon's polling loop remains the fallback when the local nudge
+    // races a restart or an externally managed daemon is unreachable.
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function findCliOnPath(): string | null {
@@ -1379,6 +1583,53 @@ export function setupDaemonManager(
     return lifecycleOperations.runForeground(() => restartDaemon());
   });
   ipcMain.handle("daemon:get-status", () => fetchHealth());
+  ipcMain.handle("dws:get-auth-requirement", () => currentDwsAuthRequirement);
+  ipcMain.handle("dws:get-status-notice", () => currentDwsStatusNotice);
+  ipcMain.handle("dws:get-auth-status", () => getDwsAuthStatus());
+  ipcMain.handle(
+    "dws:ensure-authenticated",
+    async (_event, request: DwsAuthRequest) => {
+      const normalizedRequest: DwsAuthRequest = {
+        source:
+          typeof request?.source === "string" && request.source.trim()
+            ? request.source.trim()
+            : "dws_action",
+        message:
+          typeof request?.message === "string" && request.message.trim()
+            ? request.message.trim()
+            : undefined,
+      };
+      const status = await getDwsAuthStatus();
+      const requirement = dwsRequirementFromAuthStatus(
+        status,
+        normalizedRequest,
+      );
+      if (requirement) {
+        clearDwsStatusNotice(normalizedRequest.source);
+        showDwsAuthRequirement(requirement);
+      } else if (status.state === "error") {
+        clearDwsAuthRequirement(normalizedRequest.source);
+        showDwsStatusNotice({
+          code: "auth_check_failed",
+          source: normalizedRequest.source,
+          message: status.message,
+        });
+      } else {
+        clearDwsAuthRequirement(normalizedRequest.source);
+        clearDwsStatusNotice(normalizedRequest.source);
+      }
+      return status;
+    },
+  );
+  ipcMain.handle("dws:login", async () => {
+    const result = await loginDws();
+    if (result.ok) {
+      clearDwsAuthRequirement();
+      await retryDwsWorkNow();
+      await pollOnce();
+    }
+    return result;
+  });
   ipcMain.handle("daemon:probe-runtimes", () => probeLocalRuntimes());
   // The host's OS name, available regardless of daemon state. The Runtimes
   // page uses it as a fallback identity for "this machine" when no

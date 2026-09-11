@@ -22,19 +22,31 @@ const listData: { active: InboxItem[]; archived: InboxItem[] } = {
   archived: [],
 };
 
-vi.mock("@tanstack/react-query", () => ({
-  useQuery: (options: { queryKey: readonly unknown[] }) => ({
-    data: options.queryKey.includes("archived") ? listData.archived : listData.active,
-    isLoading: false,
-    isError: false,
-  }),
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQuery: (options: { queryKey: readonly unknown[] }) => {
+    const [key] = options.queryKey;
+    if (key === "visibility-workspaces") {
+      return { data: [{ id: "workspace-1", slug: "acme" }], isSuccess: true };
+    }
+    if (key === "visibility-members") {
+      return { data: [], isSuccess: true };
+    }
+    return {
+      data: options.queryKey.includes("archived") ? listData.archived : listData.active,
+      isLoading: false,
+      isError: false,
+    };
+  },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
 }));
 
-vi.mock("@multica/core/paths", () => ({
+vi.mock("@multica/core/paths", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/core/paths")>()),
+  useWorkspaceSlug: () => "acme",
   useWorkspacePaths: () => ({
     inbox: () => "/acme/inbox",
     issueDetail: (id: string) => `/acme/issues/${id}`,

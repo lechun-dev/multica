@@ -61,6 +61,9 @@ function installApi(listIssueStatuses: () => Promise<unknown>) {
   rowRequests = [];
   setApiInstance({
     listIssueStatuses,
+    // 2026-09-11 coder(lq): The surface waits for workspace membership before
+    // querying tasks so projectless task visibility cannot leak during startup.
+    listMembers: async () => [],
     listIssueTableGroups: async (request: IssueTableGroupsRequest) => {
       groupRequests.push(request);
       return { query_fingerprint: "test", total: 0, groups: [], next_cursor: null };

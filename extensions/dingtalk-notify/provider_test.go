@@ -56,7 +56,7 @@ func TestDingTalkProviderRefreshesTokenAfterUnauthorized(t *testing.T) {
 }
 
 func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
-	text := "🔔 **张畅 在 MissionOS 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试\n\n**[打开任务并回复](https://example.test/task)**"
+	text := "🔔 **张畅提到了你**\n\n请继续测试\n\n---\n\n来源：乐纯「私有」 / [LC-5 · 测试钉钉消息通知](https://example.test/task)\n\n[打开任务并回复](https://example.test/task)"
 	param, ok := mustActionCardParam(text)
 	if !ok {
 		t.Fatal("expected action card payload")
@@ -68,7 +68,7 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 	if got["title"] != "MissionOS 通知" {
 		t.Fatalf("title=%q", got["title"])
 	}
-	if got["text"] != "🔔 **张畅 在 MissionOS 中提到了你**\n\n***来源：乐纯「私有」***\n\n***任务：[LC-5 · 测试钉钉消息通知验证](https://example.test/task)***\n\n> 请继续测试" {
+	if got["text"] != "🔔 **张畅提到了你**\n\n请继续测试\n\n---\n\n来源：乐纯「私有」 / [LC-5 · 测试钉钉消息通知](https://example.test/task)" {
 		t.Fatalf("text=%q", got["text"])
 	}
 	if _, ok := got["markdown"]; ok {
@@ -104,7 +104,7 @@ func TestDingTalkProviderFallsBackToMarkdownWhenActionCardUnsupported(t *testing
 	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
 	err := p.Send(context.Background(), Message{
 		ChannelType: "p2p", DingUserID: "user",
-		Text: "🔔 **张畅 在 MissionOS 中提到了你**\n\n> hello\n\n**[打开任务并回复](https://example.test/task)**",
+		Text: "🔔 **张畅提到了你**\n\nhello\n\n来源：lechun-test\n\n[打开任务并回复](https://example.test/task)",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/oauth-token":
-			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token","refreshToken":"refresh-token","expiresIn":3600,"corpId":"corp-1"}`), nil
 		case "/me":
 			return jsonResponse(http.StatusOK, `{"unionId":"union-1","openId":"open-1","nick":"Alice"}`), nil
 		case "/app-token":
@@ -169,6 +169,12 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
 	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" || user.Email != "alice@example.com" || user.AvatarURL != "https://example.test/alice.png" {
 		t.Fatalf("user=%+v err=%v", user, err)
+	}
+	if user.Credential == nil || user.Credential.AccessToken != "oauth-token" || user.Credential.RefreshToken != "refresh-token" || user.Credential.CorpID != "corp-1" || user.Credential.ClientID != "id" {
+		t.Fatalf("credential=%+v", user.Credential)
+	}
+	if remaining := time.Until(user.Credential.AccessExpiresAt); remaining < 59*time.Minute || remaining > 61*time.Minute {
+		t.Fatalf("access token expiry remaining = %v", remaining)
 	}
 }
 

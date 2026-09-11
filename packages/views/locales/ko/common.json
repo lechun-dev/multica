@@ -121,6 +121,39 @@
     "error_not_member": "로그인한 Multica 계정이 이 워크스페이스의 멤버가 아니에요.",
     "error_unknown": "문제가 발생했어요. 다시 시도해 보고, 계속되면 워크스페이스 관리자에게 문의하세요."
   },
+  "desktop": {
+    "dws_auth": {
+      "title": "DingTalk 연결",
+      "not_logged_in_title": "DingTalk 개인 메시지 인증",
+      "expired_title": "DingTalk 개인 메시지 재인증",
+      "unavailable_title": "DingTalk 개인 메시지를 사용할 수 없음",
+      "delivery_error_title": "DingTalk 개인 메시지 전송 실패",
+      "delivery_error_description": "현재 DingTalk 개인 메시지를 보낼 수 없습니다. 나중에 다시 시도하거나 관리자에게 문의하세요.",
+      "identity_mismatch_title": "DingTalk 계정 전환",
+      "not_installed_title": "DWS 설치",
+      "description": "서버가 사용자를 대신해 DingTalk 개인 메시지를 보낼 권한이 없습니다. 인증 후 대기 메시지를 다시 전송합니다.",
+      "expired_description": "서버에 저장된 DingTalk 인증이 만료되었거나 취소되었습니다. 다시 인증해 주세요.",
+      "identity_mismatch": "인증한 DingTalk 계정이 Multica 로그인 계정과 일치하지 않습니다. 올바른 계정으로 다시 인증하세요.",
+      "not_installed": "이 버전은 로컬 DWS CLI에 의존하지 않습니다. 관리자에게 서버 측 DingTalk 개인 메시지 설정을 확인해 달라고 요청하세요.",
+      "browser_hint": "브라우저가 열립니다. DingTalk 인증을 완료한 후 Multica로 돌아오세요.",
+      "server_hint": "인증 정보는 서버에서 전용 키로 암호화되며 로컬 DWS 설치나 로그인이 필요하지 않습니다.",
+      "authorizing": "DingTalk 인증을 기다리는 중...",
+      "login": "인증하고 로그인",
+      "reauthorize": "전환 후 재인증",
+      "detect_and_login": "감지 후 연결",
+      "later": "나중에",
+      "success": "서버에서 DingTalk 개인 메시지를 보낼 수 있도록 인증했습니다.",
+      "resuming": "DingTalk 인증이 완료되었습니다. 보류 중인 개인 메시지를 다시 전송하고 있습니다.",
+      "failed": "DingTalk 개인 메시지 인증을 완료하지 못했습니다.",
+      "invalid_client_credentials": "서버에 설정된 DingTalk 앱 자격 증명이 잘못되었거나 만료되었습니다. 관리자에게 DINGTALK_CLIENT_ID와 DINGTALK_CLIENT_SECRET 확인을 요청한 후 다시 인증하세요.",
+      "auth_check_failed": "서버 측 DingTalk 인증 상태를 일시적으로 확인할 수 없습니다. 메시지를 보관하고 자동으로 다시 시도합니다.",
+      "identity_check_failed": "인증한 DingTalk 계정을 일시적으로 확인할 수 없습니다. 메시지를 보관하고 자동으로 다시 시도합니다.",
+      "recipient_identity_unresolved": "DingTalk 수신자를 확인할 수 없습니다. 메시지를 보관하고 자동으로 다시 시도합니다.",
+      "send_failed": "DingTalk 개인 메시지를 보내지 못했습니다. 메시지를 보관하고 자동으로 다시 시도합니다.",
+      "delivery_tracking_failed": "DingTalk 전송 절차가 시작되었지만 전송 결과를 확인할 수 없습니다. 자동으로 다시 시도합니다.",
+      "delivery_failed": "DingTalk에서 개인 메시지 전송 실패를 보고했습니다. 메시지를 보관하고 자동으로 다시 시도합니다."
+    }
+  },
   "navigation": {
     "open_in_new_tab": "새 탭에서 열기"
   },

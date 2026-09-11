@@ -35,6 +35,7 @@ import type {
   CronPreviewResponse,
   DingTalkInstallation,
   DingTalkProfile,
+  DingTalkDWSStatus,
   ListDingTalkInstallationsResponse,
   ListDingTalkGroupsResponse,
   RedeemDingTalkBindingTokenResponse,
@@ -3277,10 +3278,30 @@ export const DingTalkProfileSchema = z.object({
   email: z.string().optional(),
   avatar_url: z.string().optional(),
   departments: z.array(z.string()).optional().catch(undefined),
+  personal_message_capable: z.boolean().optional().catch(undefined),
+  personal_message_issue: z.string().optional().catch(undefined),
 });
 
 export const EMPTY_DINGTALK_PROFILE: DingTalkProfile = {
   bound: false,
+};
+
+export const DingTalkDWSStatusSchema = z.object({
+  configured: z.boolean().default(false),
+  connected: z.boolean().default(false),
+  state: z.string().default("unavailable"),
+  reason: z.string().optional(),
+  message: z.string().optional(),
+  pending_count: z.number().int().nonnegative().default(0),
+  expires_at: z.string().optional(),
+});
+
+export const EMPTY_DINGTALK_DWS_STATUS: DingTalkDWSStatus = {
+  configured: false,
+  connected: false,
+  state: "unavailable",
+  reason: "server_not_configured",
+  pending_count: 0,
 };
 
 export const WorkspaceMcpServerListSchema = z.array(WorkspaceMcpServerSchema);

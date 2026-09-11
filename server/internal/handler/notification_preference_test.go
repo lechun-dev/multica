@@ -123,10 +123,11 @@ func TestPatchNotificationPreferencesMergesWithoutReplacing(t *testing.T) {
 	}
 }
 
-// TestPatchNotificationPreferencesAcceptsMentions covers the group added by
-// #6468. The whitelist rejects unknown keys, so a client shipped ahead of the
-// server would 400 on this key — the reason the server must deploy first.
-func TestPatchNotificationPreferencesAcceptsMentions(t *testing.T) {
+// TestPatchNotificationPreferencesAcceptsMentionGroups covers both the Inbox
+// mention preference and the independent DingTalk personal-message preference.
+// The whitelist rejects unknown keys, so the server must recognize both before
+// a client can persist them.
+func TestPatchNotificationPreferencesAcceptsMentionGroups(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -142,7 +143,8 @@ func TestPatchNotificationPreferencesAcceptsMentions(t *testing.T) {
 	testHandler.PatchNotificationPreferences(
 		recorder,
 		notificationPreferenceRequest(t, http.MethodPatch, map[string]string{
-			"mentions": "muted",
+			"mentions":                   "muted",
+			"dingtalk_personal_mentions": "muted",
 		}),
 	)
 	if recorder.Code != http.StatusOK {
@@ -157,6 +159,9 @@ func TestPatchNotificationPreferencesAcceptsMentions(t *testing.T) {
 	}
 	if response.Preferences["mentions"] != "muted" {
 		t.Fatalf("mentions not persisted: %#v", response.Preferences)
+	}
+	if response.Preferences["dingtalk_personal_mentions"] != "muted" {
+		t.Fatalf("DingTalk personal mentions not persisted: %#v", response.Preferences)
 	}
 }
 

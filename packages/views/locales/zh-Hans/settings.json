@@ -653,6 +653,12 @@
       "label": "显示系统通知",
       "hint": "App 未获得焦点时，新的收件箱条目通过操作系统弹出通知横幅。"
     },
+    "dingtalk_personal": {
+      "title": "钉钉个人消息",
+      "description": "由服务器以你的钉钉身份发送评论中的成员提及。现有机器人通知不受影响。",
+      "label": "@成员时发送钉钉私信",
+      "hint": "默认开启。首次发送时会提示钉钉授权；待发送消息最多保留 7 天，不依赖本机 DWS。"
+    },
     "browser": {
       "label": "浏览器通知",
       "hint": "允许当前浏览器为新的收件箱条目弹出通知横幅。",
@@ -720,6 +726,11 @@
     "slug_label": "Slug",
     "issue_prefix_label": "任务前缀",
     "issue_prefix_hint": "用于任务编号，例如 {{example}}。",
+    "frontend_version_label": "前端版本",
+    "frontend_version_hint": "当前页面正在运行的 Web 或桌面端构建版本。",
+    "backend_version_label": "后端版本",
+    "backend_version_hint": "当前页面连接的 API 构建版本。",
+    "version_unknown": "未知",
     "prefix_confirm_title": "确认修改任务前缀？",
     "prefix_confirm_description": "所有任务将从 {{oldPrefix}}-N 重命名为 {{newPrefix}}-N。任何使用旧编号的外部引用——PR 标题、分支名、文档与聊天中的链接——都会失效。",
     "save": "保存",
@@ -1197,6 +1208,9 @@
       "title": "更新",
       "description": "控制后台自动更新，或手动检查新版本。",
       "current_version": "当前版本",
+      "changelog_title": "更新日志",
+      "changelog_description": "查看当前版本的新功能、改进和问题修复。",
+      "view_changelog": "查看更新日志",
       "automatic_updates_title": "后台自动更新",
       "automatic_updates_description": "开启后，桌面端会在启动后和每小时检查更新，并在后台下载可用版本。",
       "automatic_updates_save_failed": "保存自动更新设置失败",

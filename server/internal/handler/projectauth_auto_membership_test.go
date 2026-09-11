@@ -22,7 +22,16 @@ func enableProjectAuthForTest(t *testing.T) {
 func projectRoleForTest(t *testing.T, projectID, userID string) string {
 	t.Helper()
 	var role string
-	dbfx.QueryRow(t, `SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2`, projectID, userID).Scan(&role)
+	// 2026-09-11 coder(lq): Absence is the expected result for task-scoped
+	// assignee/mention grants; keep this helper usable for both positive and
+	// negative project-membership assertions.
+	dbfx.QueryRow(t, `
+		SELECT COALESCE((
+			SELECT role
+			FROM project_members
+			WHERE project_id = $1 AND user_id = $2
+		), '')
+	`, projectID, userID).Scan(&role)
 	return role
 }
 
@@ -446,8 +455,8 @@ func TestIssueUpdateAssigneePromotionPreservesStrongerProjectRoles(t *testing.T)
 		initialRole string
 		wantRole    string
 	}{
-		{name: "no grant", wantRole: "member"},
-		{name: "viewer grant", initialRole: "viewer", wantRole: "member"},
+		{name: "no grant", wantRole: ""},
+		{name: "viewer grant", initialRole: "viewer", wantRole: "viewer"},
 		{name: "member grant", initialRole: "member", wantRole: "member"},
 		{name: "manager grant", initialRole: "manager", wantRole: "manager"},
 		{name: "owner grant", initialRole: "owner", wantRole: "owner"},

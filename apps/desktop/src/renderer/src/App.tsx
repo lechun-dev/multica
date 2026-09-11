@@ -17,6 +17,7 @@ import { DesktopLoginPage } from "./pages/login";
 import { DesktopAuthRecoveryPage } from "./pages/auth-recovery";
 import { DesktopShell } from "./components/desktop-layout";
 import { UpdateNotification } from "./components/update-notification";
+import { DingTalkDWSAuthorizationDialog } from "@multica/views/dingtalk";
 import { IssueWindow } from "./components/issue-window";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
@@ -338,7 +339,11 @@ function AppContent() {
     );
   }
 
-  return user ? <DesktopShell /> : <DesktopLoginPage />;
+  return user ? (
+    <DesktopShell />
+  ) : (
+    <DesktopLoginPage />
+  );
 }
 
 function BlockingRuntimeConfigError({ message }: { message: string }) {
@@ -484,6 +489,10 @@ export default function App() {
           ) : (
             <AppContent />
           )}
+          <DingTalkDWSAuthorizationDialog
+            client={import.meta.env.DEV ? "desktop-dev" : "desktop-lechun"}
+            openAuthorization={(url) => window.desktopAPI.openExternal(url)}
+          />
         </CoreProvider>
       ) : (
         <BlockingRuntimeConfigError message={runtimeConfigResult.error.message} />

@@ -161,6 +161,37 @@ func TestCheckIssueRejectsUserWithoutProjectMembership(t *testing.T) {
 	}
 }
 
+// 2026-09-11 coder(lq): A task-level Member grant lets a workspace member
+// work on that task without making the user a member of its parent project.
+func TestCheckIssueAllowsDirectTaskMemberWithoutProjectMembership(t *testing.T) {
+	repo := &fakeGrantRepo{
+		fakeRepo: fakeRepo{
+			workspace:        string(WorkspaceMember),
+			projectWorkspace: "ws-1",
+			issueProject:     "project-1",
+		},
+		grants: []AccessGrant{{
+			ProjectID:   "project-1",
+			IssueID:     "issue-1",
+			SubjectType: SubjectUser,
+			SubjectID:   "u-1",
+			Role:        ProjectMember,
+			Source:      GrantSourceSystem,
+		}},
+	}
+	service := New(repo, true)
+	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
+
+	for _, permission := range []Permission{View, IssueComment} {
+		if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", permission); err != nil {
+			t.Fatalf("direct task Member should allow %s without project membership: %v", permission, err)
+		}
+	}
+	if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", MemberManage); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("task Member must not manage project members, got %v", err)
+	}
+}
+
 func TestCheckIssueRequiresProjectBinding(t *testing.T) {
 	service := New(&fakeRepo{
 		workspace:        string(WorkspaceMember),

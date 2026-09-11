@@ -121,6 +121,39 @@
     "error_not_member": "你登录的 Multica 账号不是当前工作区成员。",
     "error_unknown": "出现未知错误。请稍后再试，如反复失败请联系工作区管理员。"
   },
+  "desktop": {
+    "dws_auth": {
+      "title": "连接钉钉",
+      "not_logged_in_title": "授权钉钉个人消息",
+      "expired_title": "重新授权钉钉个人消息",
+      "unavailable_title": "钉钉个人消息暂不可用",
+      "delivery_error_title": "钉钉私信发送失败",
+      "delivery_error_description": "钉钉个人消息暂时无法发送，请稍后重试或联系管理员。",
+      "identity_mismatch_title": "切换钉钉账号",
+      "not_installed_title": "安装 DWS",
+      "description": "服务器尚未获得以你的身份发送钉钉私信的授权。完成授权后，待发送消息会自动补发。",
+      "expired_description": "服务器保存的钉钉授权已过期或被撤销。重新授权后，仍在有效期内的消息会自动补发。",
+      "identity_mismatch": "当前授权的钉钉账号与 Multica 登录账号不一致。请使用正确账号重新授权。",
+      "not_installed": "此版本不再依赖本机 DWS CLI，请联系管理员检查服务端钉钉个人消息配置。",
+      "browser_hint": "即将打开浏览器。请在浏览器完成钉钉授权，然后返回 Multica。",
+      "server_hint": "授权凭据由服务器使用独立密钥加密保存，不依赖本机安装或登录 DWS。",
+      "authorizing": "正在等待钉钉授权...",
+      "login": "去授权登录",
+      "reauthorize": "切换并重新授权",
+      "detect_and_login": "重新检测并连接",
+      "later": "稍后处理",
+      "success": "已授权服务器发送钉钉个人消息。",
+      "resuming": "钉钉授权已完成，正在补发待发送的私信。",
+      "failed": "钉钉个人消息授权未完成。",
+      "invalid_client_credentials": "服务器配置的钉钉应用凭证无效或已失效。请管理员检查 DINGTALK_CLIENT_ID 和 DINGTALK_CLIENT_SECRET 后重新授权。",
+      "auth_check_failed": "暂时无法检查服务端钉钉授权状态，消息已保留并将自动重试。",
+      "identity_check_failed": "暂时无法核对钉钉授权账号，消息已保留并将自动重试。",
+      "recipient_identity_unresolved": "暂时无法识别钉钉私信接收人，消息已保留并将自动重试。",
+      "send_failed": "钉钉私信暂时未发送成功，消息已保留并将自动重试。",
+      "delivery_tracking_failed": "钉钉私信已进入发送流程，但暂时无法确认投递结果，系统将自动重试。",
+      "delivery_failed": "钉钉报告私信投递失败，消息已保留并将自动重试。"
+    }
+  },
   "navigation": {
     "open_in_new_tab": "在新标签页打开"
   },

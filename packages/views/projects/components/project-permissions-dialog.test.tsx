@@ -68,6 +68,7 @@ const workspaceMembers = [
     name: "Alice Owner",
     email: "alice@example.com",
     avatar_url: null,
+    has_logged_in: true,
   },
   {
     id: "membership-bob",
@@ -78,6 +79,7 @@ const workspaceMembers = [
     name: "Bob Builder",
     email: "bob@example.com",
     avatar_url: null,
+    has_logged_in: true,
   },
   {
     id: "membership-carol",
@@ -88,6 +90,7 @@ const workspaceMembers = [
     name: "Carol Reviewer",
     email: "carol@example.com",
     avatar_url: null,
+    has_logged_in: true,
   },
   {
     id: "membership-dave",
@@ -98,6 +101,7 @@ const workspaceMembers = [
     name: "Dave Designer",
     email: "dave@example.com",
     avatar_url: null,
+    has_logged_in: true,
   },
 ];
 
@@ -265,8 +269,8 @@ describe("ProjectPermissionsDialog", () => {
     const addMembers = screen.getByRole("region", { name: "Add members" });
     await user.click(within(addMembers).getAllByRole("combobox")[0]!);
     await user.click(await screen.findByRole("option", { name: "Organization" }));
-    await user.click(within(addMembers).getByRole("combobox", { name: "Organization" }));
-    await user.click(await screen.findByRole("option", { name: /Department A/ }));
+    await user.click(within(addMembers).getByRole("button", { name: "Organization" }));
+    await user.click(await screen.findByRole("button", { name: "Department A" }));
     await user.click(within(addMembers).getByRole("combobox", { name: "Role for selected members" }));
     await user.click(await screen.findByRole("option", { name: "Member" }));
     await user.click(screen.getByRole("button", { name: "Grant access" }));

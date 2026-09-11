@@ -6,6 +6,11 @@ import { DESKTOP_PRODUCT_NAME } from "../desktop-brand";
 
 const mocks = vi.hoisted(() => ({
   installUpdate: vi.fn(),
+  openExternal: vi.fn(),
+}));
+
+vi.mock("@multica/views/platform", () => ({
+  openExternal: mocks.openExternal,
 }));
 
 type UpdateDownloadedListener = (info: {
@@ -20,6 +25,16 @@ describe("UpdateNotification", () => {
 
   beforeEach(() => {
     mocks.installUpdate.mockReset().mockResolvedValue({ success: true });
+    mocks.openExternal.mockReset();
+    Object.defineProperty(window, "desktopAPI", {
+      configurable: true,
+      value: {
+        runtimeConfig: {
+          ok: true,
+          config: { appUrl: "https://mission.example" },
+        },
+      },
+    });
     Object.defineProperty(window, "updater", {
       configurable: true,
       value: {
@@ -36,16 +51,17 @@ describe("UpdateNotification", () => {
     });
   });
 
-  it("does not show a changelog link in the update prompt", () => {
+  it("opens the downloaded version's changelog from the update prompt", () => {
     render(<UpdateNotification />);
     act(() => updateDownloaded({ version: "0.4.27" }));
 
     expect(
       screen.getByText(`${DESKTOP_PRODUCT_NAME} Update ready`),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "See changelog" }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "See changelog" }));
+    expect(mocks.openExternal).toHaveBeenCalledWith(
+      "https://mission.example/changelog#release-0-4-27",
+    );
   });
 
   it("installs the update immediately from the primary action", async () => {

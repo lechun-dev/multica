@@ -33,7 +33,8 @@ vi.mock("@multica/core/paths", async () => {
   };
 });
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: () => ({ data: mockWorkspaces }),
 }));
 

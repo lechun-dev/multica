@@ -19,6 +19,7 @@ import { AuthInitializer } from "./auth-initializer";
 import type { CoreProviderProps, ClientIdentity } from "./types";
 import type { StorageAdapter } from "../types/storage";
 import { ClientUsageReporter } from "../client-usage";
+import { configStore } from "../config";
 import {
   configureShortcutPlatform,
   configureShortcutRuntime,
@@ -148,6 +149,10 @@ export function CoreProvider({
   useEffect(() => {
     installFreezeWatchdog();
   }, []);
+
+  useEffect(() => {
+    configStore.getState().setClientVersion(identity?.version);
+  }, [identity?.version]);
 
   // I18nProvider wraps everything else: server and client must use the same
   // (locale, resources) to avoid hydration mismatch. Language switching goes

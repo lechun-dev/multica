@@ -418,6 +418,8 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 			if d.workspaceChanges != nil {
 				d.workspaceChanges.broadcast()
 			}
+		case protocol.EventDaemonDingTalkPersonalMessageAvailable:
+			go d.drainDingTalkPersonalMessages(context.Background())
 		case protocol.EventDaemonPendingWork:
 			var payload protocol.PendingWorkPayload
 			if err := json.Unmarshal(msg.Payload, &payload); err != nil {

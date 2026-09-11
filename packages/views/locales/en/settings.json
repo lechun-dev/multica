@@ -655,6 +655,12 @@
       "label": "Show system notifications",
       "hint": "Show a banner from your operating system for new inbox items when the app isn't focused."
     },
+    "dingtalk_personal": {
+      "title": "DingTalk personal messages",
+      "description": "Use the server to send member mentions in comments as your DingTalk identity. Existing robot notifications are unchanged.",
+      "label": "Send a DingTalk DM when I @mention a member",
+      "hint": "On by default. DingTalk authorization is requested on first use; pending messages are kept for up to 7 days and do not require local DWS."
+    },
     "browser": {
       "label": "Browser notifications",
       "hint": "Allow this browser to show notification banners for new inbox items.",
@@ -722,6 +728,11 @@
     "slug_label": "Slug",
     "issue_prefix_label": "Issue prefix",
     "issue_prefix_hint": "Used in issue numbers like {{example}}.",
+    "frontend_version_label": "Frontend version",
+    "frontend_version_hint": "Identifies the web or desktop build currently running in this page.",
+    "backend_version_label": "Backend version",
+    "backend_version_hint": "Identifies the API build this page is connected to.",
+    "version_unknown": "Unknown",
     "prefix_confirm_title": "Change issue prefix?",
     "prefix_confirm_description": "All issues will be renumbered from {{oldPrefix}}-N to {{newPrefix}}-N. External references — pull request titles, branch names, links in docs and chat — that use {{oldPrefix}}-N will stop resolving.",
     "save": "Save",
@@ -1200,6 +1211,9 @@
       "title": "Updates",
       "description": "Control automatic background updates or check for a new version manually.",
       "current_version": "Current version",
+      "changelog_title": "Changelog",
+      "changelog_description": "See the new features, improvements, and fixes in this version.",
+      "view_changelog": "View changelog",
       "automatic_updates_title": "Automatic background updates",
       "automatic_updates_description": "Check shortly after launch and every hour, then download available updates in the background.",
       "automatic_updates_save_failed": "Failed to save automatic update settings",

@@ -49,9 +49,7 @@ func TestProjectlessIssueCanProgressAndAttachToProject(t *testing.T) {
 		t.Fatalf("insert project: %v", err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'member')
-	`, projectID, actorID); err != nil {
+	if err := (&projectAuthRepository{db: testPool}).AddProjectMember(ctx, projectID, actorID, projectauth.ProjectMember); err != nil {
 		t.Fatalf("add project member: %v", err)
 	}
 

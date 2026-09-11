@@ -1194,15 +1194,18 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			openPropertiesFilter = marshaled
 		}
 		issues, err := h.Queries.ListOpenIssues(ctx, db.ListOpenIssuesParams{
-			WorkspaceID:      wsUUID,
-			Priority:         priorityFilter,
-			AssigneeID:       assigneeFilter,
-			AssigneeIds:      assigneeIdsFilter,
-			CreatorID:        creatorFilter,
-			ProjectID:        projectFilter,
-			InvolvesUserID:   involvesUserFilter,
-			MetadataFilter:   metadataFilter,
-			PropertiesFilter: openPropertiesFilter,
+			WorkspaceID: wsUUID,
+			// 2026-09-11 coder(lq): An omitted array becomes SQL NULL, and
+			// NOT(status = ANY(NULL)) excludes every row instead of only terminal issues.
+			TerminalStatusKeys: h.projectTerminalIssueStatusKeys(ctx, wsUUID),
+			Priority:           priorityFilter,
+			AssigneeID:         assigneeFilter,
+			AssigneeIds:        assigneeIdsFilter,
+			CreatorID:          creatorFilter,
+			ProjectID:          projectFilter,
+			InvolvesUserID:     involvesUserFilter,
+			MetadataFilter:     metadataFilter,
+			PropertiesFilter:   openPropertiesFilter,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -4292,7 +4295,7 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
 	_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
 
-	attachmentURLs, err := h.deleteIssueAndCollectAttachmentURLs(r.Context(), issue)
+	attachmentURLs, detachedChildren, err := h.deleteIssueAndCollectAttachmentURLs(r.Context(), issue, true)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
@@ -4301,6 +4304,15 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	h.deleteS3Objects(r.Context(), attachmentURLs)
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	// 2026-09-11 coder(lq): A single delete must expose the same surviving-child
+	// detach updates as batch delete; relying on the FK only cleared parent_id
+	// and left both stage and connected clients stale.
+	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
+	for _, child := range detachedChildren {
+		h.publish(protocol.EventIssueUpdated, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{
+			"issue": issueToResponse(child, prefix),
+		})
+	}
 	// Always emit the resolved UUID — frontend caches key by UUID, so an
 	// identifier-style payload ("MUL-123") would leave stale entries on
 	// other clients after an identifier-path delete.
@@ -4315,10 +4327,10 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 // FOR KEY SHARE, and URL collection happens only after that lock is held:
 // bind-first means the new URL is collected; delete-first means the bind rolls
 // back without consuming its durable object intent.
-func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue db.Issue) ([]string, error) {
+func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue db.Issue, detachChildren bool) ([]string, []db.Issue, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin issue delete: %w", err)
+		return nil, nil, fmt.Errorf("begin issue delete: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
@@ -4327,22 +4339,33 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	}); err != nil {
-		return nil, fmt.Errorf("lock issue for delete: %w", err)
+		return nil, nil, fmt.Errorf("lock issue for delete: %w", err)
+	}
+	var detachedChildren []db.Issue
+	if detachChildren {
+		detachedChildren, err = qtx.DetachDirectChildIssues(ctx, db.DetachDirectChildIssuesParams{
+			WorkspaceID:      issue.WorkspaceID,
+			ParentIssueID:    issue.ID,
+			ExcludedIssueIds: []pgtype.UUID{},
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("detach child issues: %w", err)
+		}
 	}
 	attachmentURLs, err := qtx.ListAttachmentURLsByIssueOrComments(ctx, issue.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list issue attachment URLs: %w", err)
+		return nil, nil, fmt.Errorf("list issue attachment URLs: %w", err)
 	}
 	if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	}); err != nil {
-		return nil, fmt.Errorf("delete issue: %w", err)
+		return nil, nil, fmt.Errorf("delete issue: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit issue delete: %w", err)
+		return nil, nil, fmt.Errorf("commit issue delete: %w", err)
 	}
-	return attachmentURLs, nil
+	return attachmentURLs, detachedChildren, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -4824,7 +4847,7 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 		_ = h.AutopilotService.FailAutopilotRunsByIssue(r.Context(), issue.ID)
 
-		attachmentURLs, err := h.deleteIssueAndCollectAttachmentURLs(r.Context(), issue)
+		attachmentURLs, _, err := h.deleteIssueAndCollectAttachmentURLs(r.Context(), issue, false)
 		if err != nil {
 			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
 			continue

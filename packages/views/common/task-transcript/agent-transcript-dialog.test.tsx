@@ -538,17 +538,28 @@ describe("AgentTranscriptDialog", () => {
   it("cancels copy feedback timers when the dialog unmounts", async () => {
     vi.useFakeTimers();
     try {
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
       const { unmount } = renderDialog();
 
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Copy all" }));
         await Promise.resolve();
       });
-      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      const feedbackTimerIndex = setTimeoutSpy.mock.calls.findIndex(
+        ([, delay]) => delay === 2000,
+      );
+      const feedbackTimerHandle =
+        feedbackTimerIndex >= 0
+          ? setTimeoutSpy.mock.results[feedbackTimerIndex]?.value
+          : undefined;
+      expect(feedbackTimerHandle).toBeDefined();
 
       unmount();
 
-      expect(vi.getTimerCount()).toBe(0);
+      // 2026-09-11 coder(lq): Other UI primitives may own timers; assert that
+      // this hook clears its own feedback timer instead of counting globally.
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(feedbackTimerHandle);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

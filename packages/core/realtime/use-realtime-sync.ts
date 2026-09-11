@@ -213,6 +213,13 @@ export function applyChatDoneToCache(
   const taskId = payload.task_id;
   const messageId = payload.message_id;
   const content = payload.content;
+  // 2026-09-10 coder(lq): A task lifecycle invalidation can leave a request in
+  // flight that read the transcript before this completion committed. Its late
+  // response must not overwrite the assistant row or the authoritative refetch
+  // below. Query cancellation takes effect synchronously in TanStack Query;
+  // intentionally do not await it so the cache updates stay in one render tick.
+  void qc.cancelQueries({ queryKey: chatKeys.messages(sessionId) });
+  void qc.cancelQueries({ queryKey: chatKeys.messagesPage(sessionId) });
   if (messageId && (content !== undefined || (payload.quick_actions?.length ?? 0) > 0)) {
     const assistant: ChatMessage = {
       id: messageId,

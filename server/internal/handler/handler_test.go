@@ -724,10 +724,10 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 	}
 }
 
-func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
-	var parentProjectID, childProjectID, parentID, childID string
+func TestCreateSubIssueRejectsExplicitProjectDifferentFromParent(t *testing.T) {
+	var parentProjectID, childProjectID, parentID string
 	defer func() {
-		for _, issueID := range []string{childID, parentID} {
+		for _, issueID := range []string{parentID} {
 			if issueID == "" {
 				continue
 			}
@@ -778,16 +778,18 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 		"parent_issue_id": parentID,
 		"project_id":      childProjectID,
 	})
-	w = testutil.Call(t, testHandler.CreateIssue, req).Want(http.StatusCreated)
-	var child IssueResponse
-	json.NewDecoder(w.Body).Decode(&child)
-	childID = child.ID
-
-	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
-		t.Fatalf("CreateIssue child: expected parent_issue_id %q, got %v", parentID, child.ParentIssueID)
+	w = testutil.Call(t, testHandler.CreateIssue, req).Want(http.StatusBadRequest)
+	// 2026-09-11 coder(lq): Parent/child hierarchy is scoped to one project;
+	// rejecting a mismatched explicit project prevents cross-project access leaks.
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM issue
+		WHERE workspace_id = $1 AND title = 'Child with explicit project'
+	`, testWorkspaceID).Scan(&count); err != nil {
+		t.Fatalf("count rejected child issue: %v", err)
 	}
-	if child.ProjectID == nil || *child.ProjectID != childProjectID {
-		t.Fatalf("CreateIssue child: expected explicit project_id %q, got %v", childProjectID, child.ProjectID)
+	if count != 0 {
+		t.Fatalf("CreateIssue child: created %d cross-project issue(s), want 0", count)
 	}
 }
 

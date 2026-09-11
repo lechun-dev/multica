@@ -82,6 +82,15 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 
+// 2026-09-11 coder(lq): Mention search is permission-gated in production. These
+// suggestion tests use an already-loaded workspace membership context.
+vi.mock("../../issues/surface/visibility-context", () => ({
+  useWorkspaceTaskVisibility: () => ({
+    ready: true,
+    includeWorkspaceOwned: true,
+  }),
+}));
+
 import {
   createMentionSuggestion,
   MentionList,

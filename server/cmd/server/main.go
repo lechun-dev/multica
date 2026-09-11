@@ -541,12 +541,11 @@ func main() {
 
 	queries := db.New(pool)
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
-	// Order matters: subscriber listeners must register BEFORE notification listeners.
-	// The notification listener queries the subscriber table to determine recipients,
-	// so subscribers must be written first within the same synchronous event dispatch.
+	// Subscriber listeners must be registered before notification listeners. The
+	// latter is registered after router construction so it can reuse the Handler's
+	// canonical issue-visibility check.
 	registerSubscriberListeners(bus, pool)
 	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -610,6 +609,10 @@ func main() {
 		HeartbeatScheduler:  heartbeatScheduler,
 		LLMMaxRetries:       llmMaxRetries,
 	})
+	// 2026-09-10 coder(lq): Authorize the exact target issue before creating an
+	// inbox row or WebSocket event. This is especially important when a child
+	// status change bubbles through the parent issue's subscriber list.
+	registerNotificationListeners(bus, queries, h.CanMemberViewIssue)
 
 	srv := newMainHTTPServer(":"+port, r)
 	profilingServer := profiling.NewServer()

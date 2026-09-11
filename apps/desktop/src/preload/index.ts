@@ -26,6 +26,16 @@ import type {
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
 import {
+  DWS_AUTH_REQUIRED_CHANNEL,
+  DWS_AUTH_RESOLVED_CHANNEL,
+  DWS_STATUS_NOTICE_CHANNEL,
+  type DwsAuthRequest,
+  type DwsAuthRequirement,
+  type DwsAuthStatus,
+  type DwsLoginResult,
+  type DwsStatusNotice,
+} from "../shared/dws-auth";
+import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
   parseTabSelectionShortcutKey,
   TAB_SELECTION_SHORTCUT_CHANNEL,
@@ -301,6 +311,39 @@ const daemonAPI = {
     ipcRenderer.invoke("daemon:open-log-file"),
 };
 
+const dwsAPI = {
+  getAuthRequirement: (): Promise<DwsAuthRequirement | null> =>
+    ipcRenderer.invoke("dws:get-auth-requirement"),
+  getStatusNotice: (): Promise<DwsStatusNotice | null> =>
+    ipcRenderer.invoke("dws:get-status-notice"),
+  getAuthStatus: (): Promise<DwsAuthStatus> =>
+    ipcRenderer.invoke("dws:get-auth-status"),
+  ensureAuthenticated: (request: DwsAuthRequest): Promise<DwsAuthStatus> =>
+    ipcRenderer.invoke("dws:ensure-authenticated", request),
+  login: (): Promise<DwsLoginResult> => ipcRenderer.invoke("dws:login"),
+  onAuthRequired: (callback: (requirement: DwsAuthRequirement) => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      requirement: DwsAuthRequirement,
+    ) => callback(requirement);
+    ipcRenderer.on(DWS_AUTH_REQUIRED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(DWS_AUTH_REQUIRED_CHANNEL, handler);
+  },
+  onAuthResolved: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on(DWS_AUTH_RESOLVED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(DWS_AUTH_RESOLVED_CHANNEL, handler);
+  },
+  onStatusNotice: (callback: (notice: DwsStatusNotice) => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      notice: DwsStatusNotice,
+    ) => callback(notice);
+    ipcRenderer.on(DWS_STATUS_NOTICE_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(DWS_STATUS_NOTICE_CHANNEL, handler);
+  },
+};
+
 const updaterAPI = {
   onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => {
     const handler = (_: unknown, info: { version: string; releaseNotes?: string }) => callback(info);
@@ -340,6 +383,7 @@ if (process.contextIsolated) {
   contextBridge.exposeInMainWorld("electron", electronAPI);
   contextBridge.exposeInMainWorld("desktopAPI", desktopAPI);
   contextBridge.exposeInMainWorld("daemonAPI", daemonAPI);
+  contextBridge.exposeInMainWorld("dwsAPI", dwsAPI);
   contextBridge.exposeInMainWorld("updater", updaterAPI);
 } else {
   // @ts-expect-error - fallback for non-isolated context
@@ -348,6 +392,8 @@ if (process.contextIsolated) {
   window.desktopAPI = desktopAPI;
   // @ts-expect-error - fallback for non-isolated context
   window.daemonAPI = daemonAPI;
+  // @ts-expect-error - fallback for non-isolated context
+  window.dwsAPI = dwsAPI;
   // @ts-expect-error - fallback for non-isolated context
   window.updater = updaterAPI;
 }

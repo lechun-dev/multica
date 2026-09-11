@@ -294,6 +294,35 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.82",
+        date: "2026-09-11",
+        title: "DingTalk personal mentions now work without a local DWS process",
+        changes: [],
+        features: [
+          "Mentioned teammates can receive DingTalk personal messages from web, mobile, and desktop because delivery now runs securely on the server.",
+        ],
+        improvements: [
+          "Pending personal messages resume automatically after DingTalk authorization, while existing Mission Assistant notifications continue unchanged.",
+        ],
+        fixes: [
+          "Authorization prompts now distinguish a missing authorization, an expired session, an account mismatch, and a server configuration problem.",
+        ],
+      },
+      {
+        version: "0.4.81",
+        date: "2026-09-11",
+        title: "More reliable chat replies, preview branding, and DingTalk messages",
+        changes: [],
+        improvements: [
+          "MissionOS Preview once again uses its own name and BETA badge, making it easy to distinguish from the production app.",
+        ],
+        fixes: [
+          "Chats show the complete reply saved by the server instead of only the reply duration.",
+          "DingTalk personal-message JSON output no longer includes authentication progress text.",
+          "The desktop app rechecks DWS sign-in state so stale state cannot block personal-message processing.",
+        ],
+      },
+      {
         version: "0.4.37",
         date: "2026-08-31",
         title: "Faster Issue lists, steadier long runs, and more complete localization",

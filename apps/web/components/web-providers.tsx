@@ -13,6 +13,7 @@ import {
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
 import { detectWebOS } from "@/platform/client-os";
+import { DingTalkDWSAuthorizationDialog } from "@multica/views/dingtalk";
 
 // Legacy token in localStorage → keep this session in token mode so users who
 // logged in before the cookie-auth migration stay authed. They migrate to
@@ -88,6 +89,12 @@ export function WebProviders({
     >
       <WebNavigationProvider>
         <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>
+        <DingTalkDWSAuthorizationDialog
+          client="web"
+          openAuthorization={(url) => {
+            window.location.assign(url);
+          }}
+        />
       </WebNavigationProvider>
     </CoreProvider>
   );

@@ -57,6 +57,47 @@ func priorityLabel(p string) string {
 
 var emptyDetails = []byte("{}")
 
+// issueViewAuthorizer verifies that a member recipient can open the issue a
+// notification links to. A nil authorizer preserves compatibility for tests
+// and deployments where the project-permission overlay is disabled.
+type issueViewAuthorizer func(ctx context.Context, workspaceID, userID, issueID string) (bool, error)
+
+// canDeliverIssueNotification fails closed when authorization cannot be
+// established. This check happens before both the inbox row and WebSocket
+// event are created, so the native notification and inbox cannot disagree.
+// 2026-09-10 coder(lq): Parent subscribers may be allowed to see the parent
+// without being allowed to see the child referenced by a bubbled notification.
+func canDeliverIssueNotification(
+	ctx context.Context,
+	canViewIssue issueViewAuthorizer,
+	workspaceID string,
+	recipientID string,
+	issueID string,
+	notifType string,
+) bool {
+	if canViewIssue == nil {
+		return true
+	}
+	allowed, err := canViewIssue(ctx, workspaceID, recipientID, issueID)
+	if err != nil {
+		slog.Error("notification authorization failed",
+			"workspace_id", workspaceID,
+			"recipient_id", recipientID,
+			"issue_id", issueID,
+			"type", notifType,
+			"error", err)
+		return false
+	}
+	if !allowed {
+		slog.Debug("notification suppressed: recipient cannot view issue",
+			"workspace_id", workspaceID,
+			"recipient_id", recipientID,
+			"issue_id", issueID,
+			"type", notifType)
+	}
+	return allowed
+}
+
 // parseMentions extracts mentions from markdown content.
 // Delegates to the shared util.ParseMentions and converts to the local type.
 func parseMentions(content string) []mention {
@@ -285,10 +326,11 @@ func notifySubscribers(
 	title string,
 	body string,
 	details []byte,
+	canViewIssue issueViewAuthorizer,
 ) {
 	notified, tierSuppressed := notifyIssueSubscribers(ctx, queries, bus,
 		issueID, issueID, issueStatus, workspaceID, e, exclude,
-		notifType, severity, title, body, details)
+		notifType, severity, title, body, details, canViewIssue)
 
 	// Only a small allowlist of event types bubbles to parent subscribers.
 	if !parentBubbleNotifTypes[notifType] {
@@ -330,7 +372,7 @@ func notifySubscribers(
 	parentID := util.UUIDToString(issue.ParentIssueID)
 	notifyIssueSubscribers(ctx, queries, bus,
 		parentID, issueID, issueStatus, workspaceID, e, parentExclude,
-		notifType, severity, title, body, details)
+		notifType, severity, title, body, details, canViewIssue)
 }
 
 // notifyIssueSubscribers sends inbox notifications to subscribers of
@@ -357,6 +399,7 @@ func notifyIssueSubscribers(
 	title string,
 	body string,
 	details []byte,
+	canViewIssue issueViewAuthorizer,
 ) (map[string]bool, map[string]bool) {
 	notified := map[string]bool{}
 	tierSuppressed := map[string]bool{}
@@ -413,6 +456,10 @@ func notifyIssueSubscribers(
 			continue
 		}
 
+		if !canDeliverIssueNotification(ctx, canViewIssue, workspaceID, subID, targetIssueID, notifType) {
+			continue
+		}
+
 		item, err := queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
 			ID:            dbid.NewV7(),
 			WorkspaceID:   parseUUID(workspaceID),
@@ -465,6 +512,7 @@ func notifyDirect(
 	title string,
 	body string,
 	details []byte,
+	canViewIssue issueViewAuthorizer,
 ) {
 	// Skip if recipient is the actor
 	if recipientID == e.ActorID {
@@ -475,6 +523,9 @@ func notifyDirect(
 	if recipientType == "member" {
 		prefs := loadUserPrefs(ctx, queries, workspaceID, []string{recipientID})
 		if p, ok := prefs[recipientID]; ok && isNotifMuted(p, notifType) {
+			return
+		}
+		if !canDeliverIssueNotification(ctx, canViewIssue, workspaceID, recipientID, issueID, notifType) {
 			return
 		}
 	}
@@ -630,7 +681,7 @@ func notifyMentionedMembers(
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
+func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canViewIssue issueViewAuthorizer) {
 	ctx := context.Background()
 
 	// issue:created — Direct notification to assignee if assignee != actor
@@ -657,6 +708,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 				issue.Title,
 				"",
 				emptyDetails,
+				canViewIssue,
 			)
 		}
 
@@ -719,6 +771,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 					issue.Title,
 					"",
 					assigneeDetails,
+					canViewIssue,
 				)
 			}
 
@@ -733,6 +786,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 					issue.Title,
 					"",
 					assigneeDetails,
+					canViewIssue,
 				)
 			}
 
@@ -748,7 +802,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				exclude, "assignee_changed", "info",
 				issue.Title, "",
-				assigneeDetails)
+				assigneeDetails, canViewIssue)
 		}
 
 		if statusChanged {
@@ -760,7 +814,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "status_changed", "info",
 				issue.Title, "",
-				statusDetails)
+				statusDetails, canViewIssue)
 
 			// When the issue progresses past the failure (in_review / done /
 			// cancelled), retire any stale task_failed inbox rows so the
@@ -782,7 +836,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "priority_changed", "info",
 				issue.Title, "",
-				priorityDetails)
+				priorityDetails, canViewIssue)
 		}
 
 		if startDateChanged, _ := payload["start_date_changed"].(bool); startDateChanged {
@@ -801,7 +855,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "start_date_changed", "info",
 				issue.Title, "",
-				startDateDetails)
+				startDateDetails, canViewIssue)
 		}
 
 		if dueDateChanged, _ := payload["due_date_changed"].(bool); dueDateChanged {
@@ -820,7 +874,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				nil, "due_date_changed", "info",
 				issue.Title, "",
-				dueDateDetails)
+				dueDateDetails, canViewIssue)
 		}
 
 		// Notify NEW @mentions in description
@@ -897,7 +951,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 		notifySubscribers(ctx, queries, bus, issueID, issueStatus, e.WorkspaceID, e,
 			nil, "new_comment", "info",
 			issueTitle, commentContent,
-			commentDetails)
+			commentDetails, canViewIssue)
 
 		// Notify @mentions in comment content.
 		mentions := parseMentions(commentContent)
@@ -940,6 +994,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			"reaction_added", "info",
 			issueTitle, "",
 			details,
+			canViewIssue,
 		)
 	})
 
@@ -980,6 +1035,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			"reaction_added", "info",
 			issueTitle, "",
 			details,
+			canViewIssue,
 		)
 	})
 
@@ -1017,7 +1073,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			},
 			exclude, "task_failed", "action_required",
 			issue.Title, "",
-			emptyDetails)
+			emptyDetails, canViewIssue)
 	})
 }
 

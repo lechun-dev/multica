@@ -43,6 +43,30 @@ export interface DingTalkProfile {
   email?: string;
   avatar_url?: string;
   departments?: string[];
+  /** Whether this identity can receive a user-authored DWS personal message. */
+  personal_message_capable?: boolean;
+  /** Machine-readable reason personal delivery is unavailable. */
+  personal_message_issue?: string;
+}
+
+/** Server-side DWS authorization and delivery state for the current user. */
+export interface DingTalkDWSStatus {
+  configured: boolean;
+  connected: boolean;
+  state:
+    | "connected"
+    | "authorization_required"
+    | "delivery_error"
+    | "unavailable"
+    | string;
+  reason?: string;
+  message?: string;
+  pending_count: number;
+  expires_at?: string;
+}
+
+export interface DingTalkDWSAuthorization {
+  authorization_url: string;
 }
 
 /** One connected Multica bot observed in a DingTalk group. */

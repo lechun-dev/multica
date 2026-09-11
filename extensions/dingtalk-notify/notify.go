@@ -228,7 +228,7 @@ func skipped(event MentionCreated, target MentionTarget, reason string) Delivery
 }
 
 func FormatText(event MentionCreated) string {
-	text := truncateMentionPreview(stripMentionLinks(sanitizeText(event.Text)))
+	text := truncateMentionPreview(stripMentionLinks(stripStructuredMentions(sanitizeText(event.Text))))
 
 	actor := strings.TrimSpace(event.Actor.Name)
 	if actor == "" {
@@ -239,27 +239,65 @@ func FormatText(event MentionCreated) string {
 		}
 	}
 
-	sections := []string{fmt.Sprintf("🔔 **%s 在 MissionOS 中提到了你**", escapeMarkdown(actor))}
-	metadata := make([]string, 0, 2)
-	if source := notificationSource(event); source != "" {
-		metadata = append(metadata, "***来源："+source+"***")
-	}
-	if task := notificationTask(event); task != "" {
-		metadata = append(metadata, "***任务："+task+"***")
-	}
-	if len(metadata) > 0 {
-		// DingTalk's sampleMarkdown renderer collapses a single newline inside a
-		// paragraph. Keep a blank line between metadata rows so they render as
-		// separate lines.
-		sections = append(sections, strings.Join(metadata, "\n\n"))
-	}
+	sections := []string{fmt.Sprintf("🔔 **%s提到了你**", escapeMarkdown(actor))}
 	if text != "" {
-		sections = append(sections, quoteMarkdown(text))
+		sections = append(sections, text)
+	}
+	footer := ""
+	if task := notificationTask(event); task != "" {
+		footer = "来源：" + task
+	}
+	if footer != "" {
+		if text != "" {
+			sections = append(sections, "---")
+		}
+		sections = append(sections, footer)
 	}
 	if event.SourceURL != "" {
-		sections = append(sections, "**[打开任务并回复]("+event.SourceURL+")**")
+		sections = append(sections, "[打开任务并回复]("+event.SourceURL+")")
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+// FormatPersonalMentionText creates the compact copy sent by DWS as the
+// signed-in human. The DingTalk conversation already identifies the sender,
+// and the mention tokens only served as routing instructions inside Multica,
+// so neither belongs in the private-message body.
+func FormatPersonalMentionText(event MentionCreated) string {
+	text := truncateMentionPreview(stripMentionLinks(stripStructuredMentions(sanitizeText(event.Text))))
+	if text == "" {
+		text = "在任务评论中提到了你"
+	}
+	sections := make([]string, 0, 4)
+	if event.Actor.Kind == "agent" {
+		agent := strings.TrimSpace(event.Actor.Name)
+		if agent == "" {
+			agent = "MissionOS Agent"
+		}
+		sections = append(sections, fmt.Sprintf("**你的 Agent %s 提到了你：**", escapeMarkdown(agent)))
+	}
+	sections = append(sections, boldPersonalMentionText(text))
+	footer := ""
+	if sourceURL := strings.TrimSpace(event.SourceURL); sourceURL != "" {
+		footer = "[打开任务并回复](" + sourceURL + ")"
+	}
+	if task := notificationTask(event); task != "" {
+		footer += "（来源：" + task + "）"
+	}
+	if footer != "" {
+		sections = append(sections, "---", footer)
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func boldPersonalMentionText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			lines[i] = "**" + line + "**"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // BuildCompletionMessages resolves each requested human recipient to their
@@ -315,34 +353,14 @@ func FormatAgentCompletionText(event AgentCompleted) string {
 	if agent == "" {
 		agent = "MissionOS Agent"
 	}
-	sections := []string{fmt.Sprintf("✅ 智能体「%s」已完成执行", escapeMarkdown(agent))}
-	metadata := make([]string, 0, 2)
-	if source := notificationSourceFromCompletion(event); source != "" {
-		metadata = append(metadata, "***来源："+source+"***")
-	}
+	sections := []string{fmt.Sprintf("✅ **%s 已完成执行**", escapeMarkdown(agent))}
 	if task := notificationTaskFromCompletion(event); task != "" {
-		metadata = append(metadata, "***任务："+task+"***")
+		sections = append(sections, "来源："+task)
 	}
-	if len(metadata) > 0 {
-		sections = append(sections, strings.Join(metadata, "\n\n"))
-	}
-	sections = append(sections, "任务已完成，可查看本次执行结果。")
 	if source := strings.TrimSpace(event.SourceURL); source != "" {
-		sections = append(sections, "**[打开任务并回复]("+source+")**")
+		sections = append(sections, "[打开任务并回复]("+source+")")
 	}
 	return strings.Join(sections, "\n\n")
-}
-
-func notificationSourceFromCompletion(event AgentCompleted) string {
-	workspace := strings.TrimSpace(event.WorkspaceName)
-	project := strings.TrimSpace(event.ProjectName)
-	if workspace == "" {
-		return escapeMarkdown(project)
-	}
-	if project == "" {
-		return escapeMarkdown(workspace)
-	}
-	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
 }
 
 func notificationTaskFromCompletion(event AgentCompleted) string {
@@ -355,22 +373,7 @@ func notificationTaskFromCompletion(event AgentCompleted) string {
 	if title != "" {
 		label += " · " + escapeMarkdown(title)
 	}
-	if event.SourceURL == "" {
-		return label
-	}
-	return "[" + label + "](" + event.SourceURL + ")"
-}
-
-func notificationSource(event MentionCreated) string {
-	workspace := strings.TrimSpace(event.WorkspaceName)
-	project := strings.TrimSpace(event.ProjectName)
-	if workspace == "" {
-		return escapeMarkdown(project)
-	}
-	if project == "" {
-		return escapeMarkdown(workspace)
-	}
-	return escapeMarkdown(workspace) + " / " + escapeMarkdown(project)
+	return label
 }
 
 func notificationTask(event MentionCreated) string {
@@ -422,8 +425,8 @@ func sanitizeText(text string) string {
 }
 
 const (
-	mentionPreviewMaxLines = 4
-	mentionPreviewMaxRunes = 480
+	mentionPreviewMaxLines = 2
+	mentionPreviewMaxRunes = 40
 )
 
 // truncateMentionPreview keeps @ notifications compact in DingTalk while
@@ -471,6 +474,27 @@ func truncateMentionPreview(text string) string {
 // Internal comment content remains unchanged; this is a presentation-only
 // transformation for outbound notifications.
 var mentionLinkRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(?:member|agent|squad|issue|all)/[^)]+\)`)
+var structuredAtMentionRe = regexp.MustCompile(`\[@(.+?)\]\(mention://(?:member|agent|squad|all)/[^)]+\)`)
+var repeatedHorizontalSpaceRe = regexp.MustCompile(`[ \t]+`)
+var spaceBeforePunctuationRe = regexp.MustCompile(`[ \t]+([,，。.!！?？;；:：、])`)
+
+// stripStructuredMentions removes Multica routing mentions completely. It is
+// intentionally limited to mention:// links: literal @ text and email
+// addresses are message content and must not be guessed at or deleted.
+func stripStructuredMentions(text string) string {
+	text = structuredAtMentionRe.ReplaceAllString(text, "")
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = repeatedHorizontalSpaceRe.ReplaceAllString(line, " ")
+		line = spaceBeforePunctuationRe.ReplaceAllString(line, "$1")
+		line = strings.Trim(line, " \t,，、;；")
+		if line != "" {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
 
 func stripMentionLinks(text string) string {
 	matches := mentionLinkRe.FindAllStringIndex(text, -1)

@@ -1245,6 +1245,50 @@ func (h *Handler) visibleIssueIDsByProjectPermissionWithWorkspaceScope(ctx conte
 	return visible, rows.Err()
 }
 
+// CanMemberViewIssue is the notification pipeline's authorization adapter.
+// It deliberately includes the current workspace-membership check performed
+// by HTTP middleware, because background event listeners do not pass through
+// that middleware before writing inbox rows or publishing WebSocket events.
+// 2026-09-10 coder(lq): Keep notification targets aligned with the task page
+// so former members and parent-only subscribers never receive dead links.
+func (h *Handler) CanMemberViewIssue(ctx context.Context, workspaceID, userID, issueID string) (bool, error) {
+	if _, err := h.getWorkspaceMember(ctx, userID, workspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return true, nil
+	}
+
+	workspaceUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return false, fmt.Errorf("parse notification workspace id: %w", err)
+	}
+	userUUID, err := util.ParseUUID(userID)
+	if err != nil {
+		return false, fmt.Errorf("parse notification user id: %w", err)
+	}
+	issueUUID, err := util.ParseUUID(issueID)
+	if err != nil {
+		return false, fmt.Errorf("parse notification issue id: %w", err)
+	}
+
+	visible, err := h.visibleIssueIDsByProjectPermissionWithWorkspaceScope(
+		ctx,
+		workspaceUUID,
+		userUUID,
+		[]pgtype.UUID{issueUUID},
+		true,
+	)
+	if err != nil {
+		return false, err
+	}
+	_, allowed := visible[issueUUID]
+	return allowed, nil
+}
+
 // 2026-08-27 coder(lq): Filter task projections in one authorization pass so
 // history and presence endpoints cannot expose runs outside the caller's
 // View scope. Issue-backed tasks use the same project/projectless predicate as

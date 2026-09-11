@@ -96,6 +96,59 @@ func TestHealthHandlerReportsCLIVersionAndTaskCounts(t *testing.T) {
 	}
 }
 
+func TestDWSRetryHandlerRequiresPostAndReturnsToReadyWhenQueueIsEmpty(t *testing.T) {
+	retryWaiting := make(chan bool, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RetryWaiting bool `json:"retry_waiting"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode claim request: %v", err)
+		}
+		retryWaiting <- body.RetryWaiting
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":null}`))
+	}))
+	defer server.Close()
+	d := &Daemon{
+		cfg:    Config{DaemonID: "daemon-test"},
+		client: NewClient(server.URL),
+	}
+	d.setDingTalkPersonalMessageHealth("dws_not_logged_in", "sign in")
+	handler := d.dwsRetryHandler()
+
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/dws/retry", nil))
+	if getRec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want %d", getRec.Code, http.StatusMethodNotAllowed)
+	}
+
+	postRec := httptest.NewRecorder()
+	handler.ServeHTTP(postRec, httptest.NewRequest(http.MethodPost, "/dws/retry", nil))
+	if postRec.Code != http.StatusAccepted {
+		t.Fatalf("POST status = %d, want %d", postRec.Code, http.StatusAccepted)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		got := d.dingtalkPersonalMessageHealthSnapshot()
+		if got != nil && got.State == "ready" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("DWS health = %+v, want ready", got)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case got := <-retryWaiting:
+		if !got {
+			t.Fatal("post-login retry did not release waiting messages")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("post-login retry did not claim messages")
+	}
+}
+
 // TestHealthHandlerReportsDeferredReload covers the "while waiting to restart,
 // the reason and state are visible" criterion. When trySelfReload has confirmed
 // a multica version change but the daemon was busy at the barrier check, the

@@ -62,3 +62,44 @@ func TestPendingSlotTakenErr_RecognizesBothShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestRerunEnqueueRaceErr_RecognizesDeadlockAndPendingSlot(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "pending slot conflict",
+			err:  ErrDuplicatePendingTask,
+			want: true,
+		},
+		{
+			name: "raw PostgreSQL deadlock",
+			err:  &pgconn.PgError{Code: "40P01"},
+			want: true,
+		},
+		{
+			name: "wrapped PostgreSQL deadlock",
+			err:  fmt.Errorf("create task: %w", &pgconn.PgError{Code: "40P01"}),
+			want: true,
+		},
+		{
+			name: "serialization failure is not silently retried",
+			err:  &pgconn.PgError{Code: "40001"},
+			want: false,
+		},
+		{
+			name: "unrelated error",
+			err:  errors.New("connection reset"),
+			want: false,
+		},
+		{name: "nil", err: nil, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rerunEnqueueRaceErr(tc.err); got != tc.want {
+				t.Fatalf("rerunEnqueueRaceErr(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

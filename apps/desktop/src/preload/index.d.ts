@@ -17,6 +17,13 @@ import type {
   DaemonPrefs,
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
+import type {
+  DwsAuthRequest,
+  DwsAuthRequirement,
+  DwsAuthStatus,
+  DwsLoginResult,
+  DwsStatusNotice,
+} from "../shared/dws-auth";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
 
 interface DesktopAPI {
@@ -154,6 +161,19 @@ interface DaemonAPI {
   openLogFile: () => Promise<{ success: boolean; error?: string }>;
 }
 
+interface DwsAPI {
+  getAuthRequirement: () => Promise<DwsAuthRequirement | null>;
+  getStatusNotice: () => Promise<DwsStatusNotice | null>;
+  getAuthStatus: () => Promise<DwsAuthStatus>;
+  ensureAuthenticated: (request: DwsAuthRequest) => Promise<DwsAuthStatus>;
+  login: () => Promise<DwsLoginResult>;
+  onAuthRequired: (
+    callback: (requirement: DwsAuthRequirement) => void,
+  ) => () => void;
+  onAuthResolved: (callback: () => void) => () => void;
+  onStatusNotice: (callback: (notice: DwsStatusNotice) => void) => () => void;
+}
+
 interface UpdaterAPI {
   onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => () => void;
   onDownloadProgress: (callback: (progress: { percent: number }) => void) => () => void;
@@ -173,6 +193,7 @@ declare global {
     electron: ElectronAPI;
     desktopAPI: DesktopAPI;
     daemonAPI: DaemonAPI;
+    dwsAPI: DwsAPI;
     updater: UpdaterAPI;
   }
 }

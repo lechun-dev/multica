@@ -95,7 +95,7 @@ func TestRetrySourceContextQuickCreateReturnsIssueLimitRecovery(t *testing.T) {
 		t.Fatalf("insert pending source context: %v", err)
 	}
 	var issueCount int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id = $1`, testWorkspaceID).Scan(&issueCount); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id = $1 AND archived_at IS NULL`, testWorkspaceID).Scan(&issueCount); err != nil {
 		t.Fatalf("count issues before retry: %v", err)
 	}
 	stub := entitlementtest.New()
@@ -355,7 +355,7 @@ func TestCommentSourceContextLifecycle(t *testing.T) {
 		})
 
 		var issueCount int
-		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id = $1`, testWorkspaceID).Scan(&issueCount); err != nil {
+		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id = $1 AND archived_at IS NULL`, testWorkspaceID).Scan(&issueCount); err != nil {
 			t.Fatalf("count issues before source-context limit check: %v", err)
 		}
 		stub := entitlementtest.New()

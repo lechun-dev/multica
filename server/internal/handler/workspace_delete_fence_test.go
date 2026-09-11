@@ -172,7 +172,10 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: begin: %v", name, err)
 		}
-		defer writer.Rollback(ctx)
+		// 2026-09-11 coder(lq): A lock-timeout aborts the statement but the
+		// transaction can retain row locks until rollback. End each probe here so
+		// one expected failure cannot block the later status-only control case.
+		defer func() { _ = writer.Rollback(ctx) }()
 		if _, err := writer.Exec(ctx, "SET LOCAL lock_timeout = 750"); err != nil {
 			t.Fatalf("%s: set lock_timeout: %v", name, err)
 		}
@@ -208,6 +211,9 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 	if err == nil || !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
 		t.Errorf("reassignment onto the victim's runtime: got %v, want lock_not_available (55P03)", err)
 	}
+	if err := reassign.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("rollback blocked reassignment: %v", err)
+	}
 
 	// A workspace nobody is deleting is unaffected.
 	unrelated, err := testPool.Begin(ctx)
@@ -221,6 +227,9 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 	if err := enqueueViaRealQuery(ctx, testHandler.Queries.WithTx(unrelated),
 		f.neighbourAgent, f.neighbourRuntime, f.neighbourIssue); err != nil {
 		t.Errorf("neighbour-only enqueue was blocked by the victim's workspace lock: %v", err)
+	}
+	if err := unrelated.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("rollback unrelated enqueue: %v", err)
 	}
 
 	// Status-only updates are the hot path and must not touch the fence at all.

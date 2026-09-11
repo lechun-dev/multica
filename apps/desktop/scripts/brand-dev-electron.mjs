@@ -25,6 +25,7 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { DEV_PROTOCOL, ensureDevProtocol } from "./brand-dev-protocol.mjs";
 
 if (process.platform !== "darwin") process.exit(0);
 
@@ -43,6 +44,20 @@ const require = createRequire(import.meta.url);
 // (.../Electron.app/Contents/MacOS/Electron). Walk up to Contents/Info.plist.
 const electronBin = require("electron");
 const plistPath = resolve(electronBin, "../../Info.plist");
+const electronAppPath = resolve(electronBin, "../../..");
+const launchServicesRegister =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/" +
+  "LaunchServices.framework/Support/lsregister";
+
+function registerDevelopmentBundle() {
+  // The development binary runs directly from node_modules, so LaunchServices
+  // does not discover it the way it discovers an installed app in /Applications.
+  // Force-register only this development Electron.app after its isolated
+  // multica-dev URL scheme is present.
+  execFileSync(launchServicesRegister, ["-f", electronAppPath], {
+    stdio: "ignore",
+  });
+}
 
 function plistGet(key) {
   try {
@@ -72,11 +87,40 @@ function plistSet(key, value) {
   }
 }
 
+function plistJSON() {
+  return JSON.parse(
+    execFileSync(
+      "/usr/bin/plutil",
+      ["-convert", "json", "-o", "-", plistPath],
+      { encoding: "utf8" },
+    ),
+  );
+}
+
+function plistSetJSON(key, value) {
+  execFileSync("/usr/bin/plutil", [
+    "-replace",
+    key,
+    "-json",
+    JSON.stringify(value),
+    plistPath,
+  ]);
+}
+
+const currentPlist = plistJSON();
+const desiredURLTypes = ensureDevProtocol(
+  currentPlist.CFBundleURLTypes,
+  DESIRED_BUNDLE_ID,
+);
+const hasDesiredProtocol = desiredURLTypes === currentPlist.CFBundleURLTypes;
+
 if (
   plistGet("CFBundleName") === DESIRED_NAME &&
   plistGet("CFBundleDisplayName") === DESIRED_NAME &&
-  plistGet("CFBundleIdentifier") === DESIRED_BUNDLE_ID
+  plistGet("CFBundleIdentifier") === DESIRED_BUNDLE_ID &&
+  hasDesiredProtocol
 ) {
+  registerDevelopmentBundle();
   process.exit(0);
 }
 
@@ -90,8 +134,13 @@ writeFileSync(plistPath, original);
 plistSet("CFBundleName", DESIRED_NAME);
 plistSet("CFBundleDisplayName", DESIRED_NAME);
 plistSet("CFBundleIdentifier", DESIRED_BUNDLE_ID);
+if (!hasDesiredProtocol) {
+  plistSetJSON("CFBundleURLTypes", desiredURLTypes);
+}
+registerDevelopmentBundle();
 
 console.log(
   `[brand-dev-electron] ${plistPath} → ` +
-    `CFBundleName="${DESIRED_NAME}", CFBundleIdentifier="${DESIRED_BUNDLE_ID}"`,
+    `CFBundleName="${DESIRED_NAME}", CFBundleIdentifier="${DESIRED_BUNDLE_ID}", ` +
+    `protocol="${DEV_PROTOCOL}"`,
 );
