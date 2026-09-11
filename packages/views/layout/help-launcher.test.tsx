@@ -109,7 +109,13 @@ describe("HelpLauncher", () => {
   it("links to the download page on web", () => {
     render(<HelpLauncher />);
     const link = screen.getByRole("link", { name: /Desktop app/ });
-    expect(link).toHaveAttribute("href", "https://multica.ai/download");
+    expect(link).toHaveAttribute("href", "https://mission.lechun.cc/download");
+  });
+
+  it("does not expose upstream documentation or Discord entries", () => {
+    render(<HelpLauncher />);
+    expect(screen.queryByText("Docs")).not.toBeInTheDocument();
+    expect(screen.queryByText("Discord")).not.toBeInTheDocument();
   });
 
   it("links to the current site's changelog on web", () => {
@@ -126,8 +132,8 @@ describe("HelpLauncher", () => {
     vi.mocked(isDesktopShell).mockReturnValue(true);
     render(<HelpLauncher />);
     expect(screen.queryByText("Desktop app")).not.toBeInTheDocument();
-    // The rest of the menu is unaffected by the gate.
-    expect(screen.getByText("Docs")).toBeInTheDocument();
+    expect(screen.queryByText("Docs")).not.toBeInTheDocument();
+    expect(screen.queryByText("Discord")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Change log/ })).toHaveAttribute(
       "href",
       "https://mission.lechun.cc/changelog",

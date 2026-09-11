@@ -2,7 +2,6 @@
 
 import {
   ArrowUpRight,
-  BookOpen,
   CircleHelp,
   Download,
   History,
@@ -20,17 +19,15 @@ import {
 import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
 import { isDesktopShell } from "../platform/local-directory";
-import { DISCORD_URL, DiscordIcon } from "./discord";
 import { useT } from "../i18n";
 
-const DOCS_URL = "https://multica.ai/docs";
 const WEB_CHANGELOG_URL = "/changelog";
 const DESKTOP_CHANGELOG_URL = "https://mission.lechun.cc/changelog";
 // Absolute, including on self-hosted deployments: the installers we ship are
 // the same binaries either way, and the desktop client can point at a
 // self-hosted backend once installed. A self-host-relative /download would
 // only serve a copy of this page that still has to reach our release assets.
-const DOWNLOAD_URL = "https://multica.ai/download";
+const DOWNLOAD_URL = "https://mission.lechun.cc/download";
 
 export function HelpLauncher() {
   const { t } = useT("layout");
@@ -80,15 +77,6 @@ export function HelpLauncher() {
         )}
         <DropdownMenuItem
           render={
-            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" />
-          }
-        >
-          <BookOpen className="h-3.5 w-3.5" />
-          {t(($) => $.help.docs)}
-          <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          render={
             <a
               href={desktop ? DESKTOP_CHANGELOG_URL : WEB_CHANGELOG_URL}
               target="_blank"
@@ -98,15 +86,6 @@ export function HelpLauncher() {
         >
           <History className="h-3.5 w-3.5" />
           {t(($) => $.help.changelog)}
-          <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          render={
-            <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" />
-          }
-        >
-          <DiscordIcon className="h-3.5 w-3.5" />
-          {t(($) => $.help.discord)}
           <ArrowUpRight className="size-3 translate-y-px text-faint-foreground" />
         </DropdownMenuItem>
         <DropdownMenuItem
