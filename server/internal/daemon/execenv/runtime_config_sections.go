@@ -858,7 +858,7 @@ func writeMentions(b *strings.Builder) {
 	b.WriteString("- `[Project Name](mention://project/<project-id>)` — clickable link (no side effect)\n")
 	b.WriteString("- `[@Name](mention://member/<user-id>)` — **notifies a human**\n")
 	b.WriteString("- `[@Name](mention://agent/<agent-id>)` — **enqueues a new run for that agent**\n\n")
-	b.WriteString("When the user asks you to @, notify, remind, or message a person, resolve that target only from `multica workspace member list --output json` and use a `member` mention. Do not search for or substitute an Agent with the same or a derived name (for example, `Li Qun's Agent`). Use an `agent` mention only when the user explicitly asks to trigger, delegate to, or run that Agent. If no unique member matches, explain that the person could not be resolved instead of falling back to an Agent.\n\n")
+	b.WriteString("When the user asks you to @, notify, remind, or message a person, resolve that target only from the workspace's member roster and use a `member` mention. Do not search for or substitute an Agent with the same or a derived name (for example, `Li Qun's Agent`). Use an `agent` mention only when the user explicitly asks to trigger, delegate to, or run that Agent. If no unique member matches, explain that the person could not be resolved instead of falling back to an Agent.\n\n")
 	// No prescriptive default here (MUL-6417): the mention syntax hides its
 	// semantics — it reads like a free social gesture but is a spawn/notify
 	// operation — so what this paragraph must supply is the facts that

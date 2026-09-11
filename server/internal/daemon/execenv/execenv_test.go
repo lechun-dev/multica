@@ -5497,7 +5497,7 @@ func TestInjectRuntimeConfigMentionLoopHardening(t *testing.T) {
 		for _, want := range []string{
 			"side-effecting actions",
 			"enqueues a new run for that agent",
-			"resolve that target only from `multica workspace member list --output json`",
+			"resolve that target only from the workspace's member roster",
 			"Do not search for or substitute an Agent",
 			"only when the user explicitly asks to trigger, delegate to, or run that Agent",
 			"instead of falling back to an Agent",
