@@ -285,7 +285,7 @@ export function createZhDict(allowSignup: boolean): LandingDict {
 
   changelog: {
     title: "\u66f4\u65b0\u65e5\u5fd7",
-    subtitle: "Multica \u7684\u6700\u65b0\u66f4\u65b0\u548c\u6539\u8fdb\u3002",
+    subtitle: "MissionOS \u7684\u6700\u65b0\u66f4\u65b0\u548c\u6539\u8fdb\u3002",
     toc: "\u5386\u53f2\u7248\u672c",
     categories: {
       features: "新功能",
@@ -300,12 +300,17 @@ export function createZhDict(allowSignup: boolean): LandingDict {
         changes: [],
         features: [
           "钉钉个人消息改由服务端安全发送，在网页端、手机端和桌面端 @成员 都可以触发私信提醒。",
+          "Grok 模型现在会显示各自支持的思考强度，并可以选择跟随 CLI 配置。",
         ],
         improvements: [
           "完成钉钉授权后会自动继续发送待处理的个人消息，原有 Mission 小助理通知保持不变。",
+          "钉钉提醒可以预览智能体的执行结果，个人提醒的文案也更简洁。",
+          "侧边栏和帮助入口已替换为 MissionOS 私有部署相关地址。",
         ],
         fixes: [
           "授权提示会准确区分未授权、授权过期、账号不一致和服务端配置异常。",
+          "修复 macOS 自动更新时因解压目录非空导致的 ENOTEMPTY 失败。",
+          "时间线会保留智能体名称和头像，不再因无权查看智能体详情而显示 Unknown Agent。",
         ],
       },
       {

@@ -260,7 +260,7 @@ export function createKoDict(allowSignup: boolean): LandingDict {
     },
     changelog: {
       title: "변경 로그",
-      subtitle: "Multica의 새로운 업데이트와 개선 사항입니다.",
+      subtitle: "MissionOS의 새로운 업데이트와 개선 사항입니다.",
       toc: "모든 릴리스",
       categories: {
         features: "새 기능",
@@ -275,12 +275,17 @@ export function createKoDict(allowSignup: boolean): LandingDict {
           changes: [],
           features: [
             "개인 메시지를 서버에서 안전하게 전송하여 웹, 모바일, 데스크톱 어디서든 멤버를 멘션하면 알림을 보낼 수 있습니다.",
+            "Grok 모델별로 지원하는 추론 강도를 표시하고 CLI 설정을 따르는 옵션도 선택할 수 있습니다.",
           ],
           improvements: [
             "DingTalk 인증을 마치면 보류된 개인 메시지를 자동으로 다시 보내며, 기존 Mission Assistant 알림은 그대로 유지됩니다.",
+            "DingTalk 알림에서 Agent 실행 결과를 미리 볼 수 있고, 개인 알림 문구도 더 간결해졌습니다.",
+            "사이드바와 도움말 링크를 MissionOS 사설 배포 리소스로 변경했습니다.",
           ],
           fixes: [
             "인증 안내가 미인증, 인증 만료, 계정 불일치, 서버 설정 오류를 정확히 구분합니다.",
+            "macOS 자동 업데이트에서 압축 해제 디렉터리에 파일이 남아 있을 때 발생하는 ENOTEMPTY 오류를 수정했습니다.",
+            "Agent 프로필에 접근할 수 없는 경우에도 타임라인에 이름과 아바타를 유지하여 Unknown Agent로 표시되지 않습니다.",
           ],
         },
         {

@@ -285,7 +285,7 @@ export function createEnDict(allowSignup: boolean): LandingDict {
 
   changelog: {
     title: "Changelog",
-    subtitle: "New updates and improvements to Multica.",
+    subtitle: "New updates and improvements to MissionOS.",
     toc: "All releases",
     categories: {
       features: "New Features",
@@ -300,12 +300,17 @@ export function createEnDict(allowSignup: boolean): LandingDict {
         changes: [],
         features: [
           "Mentioned teammates can receive DingTalk personal messages from web, mobile, and desktop because delivery now runs securely on the server.",
+          "Grok models now show their supported reasoning levels, including the option to follow the CLI configuration.",
         ],
         improvements: [
           "Pending personal messages resume automatically after DingTalk authorization, while existing Mission Assistant notifications continue unchanged.",
+          "DingTalk notifications can preview Agent completion results, with a simpler personal-message format.",
+          "Sidebar and help links now point to the MissionOS private deployment resources.",
         ],
         fixes: [
           "Authorization prompts now distinguish a missing authorization, an expired session, an account mismatch, and a server configuration problem.",
+          "macOS automatic updates no longer fail with ENOTEMPTY when an extraction directory still contains files.",
+          "Timelines preserve an Agent's name and avatar instead of showing Unknown Agent when its profile is not accessible.",
         ],
       },
       {

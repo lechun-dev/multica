@@ -261,7 +261,7 @@ export function createJaDict(allowSignup: boolean): LandingDict {
     },
     changelog: {
       title: "変更履歴",
-      subtitle: "Multica の新しいアップデートと改善点をお届けします。",
+      subtitle: "MissionOS の新しいアップデートと改善点をお届けします。",
       toc: "すべてのリリース",
       categories: {
         features: "新機能",
@@ -276,12 +276,17 @@ export function createJaDict(allowSignup: boolean): LandingDict {
           changes: [],
           features: [
             "個人メッセージをサーバーから安全に送信し、Web、モバイル、デスクトップのどこでメンバーをメンションしても通知できます。",
+            "Grok モデルごとに対応する推論強度を表示し、CLI 設定に従うオプションも選択できます。",
           ],
           improvements: [
             "DingTalk の認証完了後に保留中の個人メッセージを自動で再開し、既存の Mission アシスタント通知はそのまま維持します。",
+            "DingTalk 通知で Agent の実行結果をプレビューでき、個人通知の文面も簡潔になりました。",
+            "サイドバーとヘルプのリンクを MissionOS のプライベート環境向けに更新しました。",
           ],
           fixes: [
             "未認証、認証期限切れ、アカウント不一致、サーバー設定エラーを認証案内で正しく区別します。",
+            "macOS の自動更新で展開先ディレクトリにファイルが残っている場合の ENOTEMPTY エラーを修正しました。",
+            "Agent の詳細を表示できない場合でも、タイムラインに名前とアバターを保持し、Unknown Agent と表示されないようにしました。",
           ],
         },
         {
