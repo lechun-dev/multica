@@ -274,7 +274,7 @@ func FormatPersonalMentionText(event MentionCreated) string {
 		if agent == "" {
 			agent = "MissionOS Agent"
 		}
-		sections = append(sections, fmt.Sprintf("**你的 Agent %s 提到了你：**", escapeMarkdown(agent)))
+		sections = append(sections, fmt.Sprintf("**Agent「%s」提到了你：**", escapeMarkdown(agent)))
 	}
 	sections = append(sections, boldPersonalMentionText(text))
 	footer := ""

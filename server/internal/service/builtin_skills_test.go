@@ -504,6 +504,10 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 			want: []string{
 				"(member|agent|squad|issue|all)/([0-9a-fA-F-]+|all)",
 				"multica workspace member list --output json",
+				"search the member list only",
+				"Never replace that person with an Agent",
+				"only when the user explicitly asks to trigger, delegate to, or run that Agent",
+				"instead of falling back to an Agent",
 				"enqueues a run for that agent",
 				"enqueues NOTHING",
 				"[@all](mention://all/all)",

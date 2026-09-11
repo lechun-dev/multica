@@ -230,7 +230,7 @@ func TestFormatPersonalMentionTextIdentifiesAgentButUsesTaskOnlyAsSource(t *test
 		IssueTitle:      "子任务测试",
 		SourceURL:       "https://multica.test/issues/LC-71",
 	})
-	want := "**你的 Agent Mika 提到了你：**\n\n**请检查结果**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：[LC-71 · 子任务测试](https://multica.test/issues/LC-71)）"
+	want := "**Agent「Mika」提到了你：**\n\n**请检查结果**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：[LC-71 · 子任务测试](https://multica.test/issues/LC-71)）"
 	if got != want {
 		t.Fatalf("formatted Agent personal notification = %q, want %q", got, want)
 	}

@@ -51,6 +51,14 @@ backend's own roster formatter uses `user_id` for member mentions. Match by
 display name. If the name is ambiguous or absent, do not guess — say so in your
 comment instead of emitting a broken link.
 
+When the user asks to @, notify, remind, or message a person, search the member
+list only and emit a `member` mention. Never replace that person with an Agent
+whose name happens to match or is derived from theirs (for example,
+`Li Qun's Agent`). Search the Agent list and emit an `agent` mention only when
+the user explicitly asks to trigger, delegate to, or run that Agent. If the
+member lookup is absent or ambiguous, explain that instead of falling back to
+an Agent.
+
 ## Step 2 — the four types and what each enqueues
 
 Format: `[@Name](mention://<type>/<uuid>)`. The `<type>` and the id source must
@@ -60,7 +68,7 @@ match, or the link resolves to the wrong entity (or to nothing).
 | -------------------- | -------- | --------------- | -------------------------------------------------------- |
 | trigger an agent     | `agent`  | agent.id        | enqueues a run for that agent                            |
 | hand work to a squad | `squad`  | squad.id        | resolves the squad's `leader_id` and enqueues a run for the LEADER agent |
-| link a person        | `member` | member.user_id  | renders a link; enqueues NOTHING — no agent run          |
+| notify a person      | `member` | member.user_id  | routes human notifications; enqueues NO agent run        |
 | reference an issue   | `issue`  | issue.id        | renders a link; enqueues NOTHING — always safe           |
 
 The backend computes the trigger set from two types only: the `squad` branch
@@ -68,9 +76,11 @@ resolves the squad and adds its leader to the set; everything that is not
 `agent` after that is skipped, then the `agent` branch adds that agent. A
 `member` or `issue` mention reaches neither branch, so it enqueues no task.
 
-A `member` mention therefore does NOT make a person "run", and no notification
-is delivered through the comment path. What IS guaranteed is the contract above:
-only `agent` and `squad` mentions enqueue work.
+A `member` mention therefore does NOT make a person "run". It addresses the
+human through the notification channels enabled for that workspace and sender;
+for example, an Agent-authored member mention can enqueue a DingTalk personal
+message through that Agent owner's authorized identity. Only `agent` and
+`squad` mentions enqueue Agent work.
 
 ## Preview and per-comment suppression
 
