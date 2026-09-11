@@ -270,6 +270,21 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.82",
+          date: "2026-09-11",
+          title: "DingTalk の個人通知がローカル DWS プロセスなしで動作",
+          changes: [],
+          features: [
+            "個人メッセージをサーバーから安全に送信し、Web、モバイル、デスクトップのどこでメンバーをメンションしても通知できます。",
+          ],
+          improvements: [
+            "DingTalk の認証完了後に保留中の個人メッセージを自動で再開し、既存の Mission アシスタント通知はそのまま維持します。",
+          ],
+          fixes: [
+            "未認証、認証期限切れ、アカウント不一致、サーバー設定エラーを認証案内で正しく区別します。",
+          ],
+        },
+        {
           version: "0.4.81",
           date: "2026-09-11",
           title: "チャット返信、プレビュー版の表示、DingTalk メッセージの信頼性向上",

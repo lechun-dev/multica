@@ -269,6 +269,21 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.82",
+          date: "2026-09-11",
+          title: "로컬 DWS 프로세스 없이 동작하는 DingTalk 개인 알림",
+          changes: [],
+          features: [
+            "개인 메시지를 서버에서 안전하게 전송하여 웹, 모바일, 데스크톱 어디서든 멤버를 멘션하면 알림을 보낼 수 있습니다.",
+          ],
+          improvements: [
+            "DingTalk 인증을 마치면 보류된 개인 메시지를 자동으로 다시 보내며, 기존 Mission Assistant 알림은 그대로 유지됩니다.",
+          ],
+          fixes: [
+            "인증 안내가 미인증, 인증 만료, 계정 불일치, 서버 설정 오류를 정확히 구분합니다.",
+          ],
+        },
+        {
           version: "0.4.81",
           date: "2026-09-11",
           title: "더 안정적인 채팅 답변, 프리뷰 표시 및 DingTalk 메시지",
