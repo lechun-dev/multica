@@ -85,6 +85,31 @@ func TestEveryConcurrentUpBuildHasCleanup(t *testing.T) {
 	assertEveryConcurrentBuildHasCleanup(t, "up", concurrentIndexCleanups)
 }
 
+// TestConcurrentUpBuildsAreSingleStatement prevents PostgreSQL from treating
+// a migration file as an implicit transaction around CREATE INDEX
+// CONCURRENTLY. The migrator executes one whole file per Exec call, so every
+// concurrent index build must live in its own one-statement migration.
+func TestConcurrentUpBuildsAreSingleStatement(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.up.sql"))
+	if err != nil {
+		t.Fatalf("glob up migrations: %v", err)
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s: read: %v", path, err)
+			continue
+		}
+		statements := strings.TrimSpace(string(stripSQLLineComments(body)))
+		if !concurrentIndexNamePattern.MatchString(statements) {
+			continue
+		}
+		if strings.Count(statements, ";") != 1 || !strings.HasSuffix(statements, ";") {
+			t.Errorf("%s: CREATE INDEX CONCURRENTLY must be the migration's only statement", filepath.Base(path))
+		}
+	}
+}
+
 func assertEveryConcurrentBuildHasCleanup(t *testing.T, direction string, cleanups map[string]string) {
 	t.Helper()
 	suffix := "." + direction + ".sql"

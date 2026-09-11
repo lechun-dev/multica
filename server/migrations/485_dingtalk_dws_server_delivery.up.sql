@@ -47,9 +47,3 @@ SET status = CASE
     available_at = now(),
     updated_at = now()
 WHERE status IN ('pending', 'leased', 'waiting_for_dws_login', 'waiting_for_identity');
-
--- Keep the sender-scoped index for per-user status reads and old data tools;
--- add a separate global index for the server worker's cross-user claim query.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dingtalk_personal_message_server_claim
-    ON dingtalk_personal_message (status, available_at, created_at)
-    WHERE status IN ('pending', 'leased', 'waiting_for_dws_login', 'waiting_for_identity');
