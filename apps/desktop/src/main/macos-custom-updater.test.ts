@@ -1,13 +1,22 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
   downloadMacUpdate,
+  isPreparedMacUpdateReusable,
+  prepareMacUpdate,
   resolveMacUpdateUrl,
   selectMacUpdateFile,
 } from "./macos-custom-updater";
@@ -166,5 +175,77 @@ describe("downloadMacUpdate", () => {
     expect(requester).toHaveBeenCalledTimes(3);
     expect(existsSync(destination)).toBe(false);
     expect(existsSync(`${destination}.download`)).toBe(false);
+  });
+});
+
+describe("prepareMacUpdate", () => {
+  it("uses a unique extraction directory and removes the legacy staging directory", async () => {
+    const directory = createTemporaryDirectory();
+    const legacyDirectory = join(directory, "extract-0.4.81-arm64");
+    mkdirSync(join(legacyDirectory, "MissionOS.app", "Contents", "Resources"), {
+      recursive: true,
+    });
+    const body = Buffer.from("verified update archive");
+    const extractor = vi.fn(async (_archivePath: string, extractionDirectory: string) => {
+      mkdirSync(join(extractionDirectory, "MissionOS.app", "Contents", "Resources"), {
+        recursive: true,
+      });
+    });
+
+    const update = await prepareMacUpdate(
+      { url: "https://example.test/update.zip", sha512: sha512(body) },
+      directory,
+      "0.4.81",
+      "arm64",
+      undefined,
+      async () => createResponse(body),
+      extractor,
+    );
+
+    expect(update.appPath).toMatch(/extract-0\.4\.81-arm64-[^/]+\/MissionOS\.app$/);
+    expect(existsSync(update.appPath)).toBe(true);
+    expect(existsSync(legacyDirectory)).toBe(false);
+  });
+
+  it("cleans an isolated extraction directory after extraction fails", async () => {
+    const directory = createTemporaryDirectory();
+    const body = Buffer.from("broken update archive");
+
+    await expect(
+      prepareMacUpdate(
+        { url: "https://example.test/update.zip", sha512: sha512(body) },
+        directory,
+        "0.4.81",
+        "arm64",
+        undefined,
+        async () => createResponse(body),
+        async (_archivePath, extractionDirectory) => {
+          mkdirSync(join(extractionDirectory, "partial"), { recursive: true });
+          throw new Error("extraction failed");
+        },
+      ),
+    ).rejects.toThrow("extraction failed");
+
+    expect(
+      readdirSync(directory).filter((name) => name.startsWith("extract-0.4.81-arm64-")),
+    ).toEqual([]);
+  });
+});
+
+describe("isPreparedMacUpdateReusable", () => {
+  it("reuses only a matching version whose staged app still exists", async () => {
+    const directory = createTemporaryDirectory();
+    const appPath = join(directory, "MissionOS.app");
+    mkdirSync(appPath);
+    const update = {
+      version: "0.4.81",
+      appPath,
+      archivePath: join(directory, "update.zip"),
+    };
+
+    await expect(isPreparedMacUpdateReusable(update, "0.4.81")).resolves.toBe(true);
+    await expect(isPreparedMacUpdateReusable(update, "0.4.82")).resolves.toBe(false);
+    rmSync(appPath, { recursive: true, force: true });
+    await expect(isPreparedMacUpdateReusable(update, "0.4.81")).resolves.toBe(false);
   });
 });

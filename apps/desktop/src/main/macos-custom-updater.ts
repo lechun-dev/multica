@@ -65,6 +65,39 @@ export interface DownloadedMacUpdate {
   releaseNotes?: unknown;
 }
 
+export type MacUpdateExtractor = (
+  archivePath: string,
+  extractionDirectory: string,
+) => Promise<void>;
+
+const UPDATE_DIRECTORY_REMOVE_MAX_RETRIES = 5;
+const UPDATE_DIRECTORY_REMOVE_RETRY_DELAY_MS = 200;
+
+async function removeUpdateDirectory(directory: string): Promise<void> {
+  // 2026-09-11 coder(lq): Finder, antivirus software, and late filesystem
+  // writes can briefly keep extracted app resources busy. Let Node retry the
+  // known transient macOS errors instead of failing the whole update at once.
+  await fs.rm(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: UPDATE_DIRECTORY_REMOVE_MAX_RETRIES,
+    retryDelay: UPDATE_DIRECTORY_REMOVE_RETRY_DELAY_MS,
+  });
+}
+
+export async function isPreparedMacUpdateReusable(
+  update: DownloadedMacUpdate | null,
+  version: string,
+): Promise<boolean> {
+  if (!update || update.version !== version) return false;
+  try {
+    await fs.access(update.appPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function selectMacUpdateFile(
   info: MacUpdateInfo,
   arch: string,
@@ -226,15 +259,24 @@ export async function prepareMacUpdate(
   arch: string,
   onProgress?: (percent: number) => void,
   requester?: MacUpdateRequester,
+  extractor: MacUpdateExtractor = (archivePath, extractionDirectory) =>
+    run("ditto", ["-x", "-k", archivePath, extractionDirectory]),
 ): Promise<DownloadedMacUpdate> {
   const archivePath = join(cacheDirectory, `multica-${version}-${arch}.zip`);
   await downloadMacUpdate(file, archivePath, onProgress, requester);
-  const extractionDirectory = join(cacheDirectory, `extract-${version}-${arch}`);
-  await fs.rm(extractionDirectory, { recursive: true, force: true });
-  await fs.mkdir(extractionDirectory, { recursive: true });
-  await run("ditto", ["-x", "-k", archivePath, extractionDirectory]);
-  const appPath = resolve(await findAppBundle(extractionDirectory));
-  return { version, appPath, archivePath };
+  const legacyExtractionDirectory = join(cacheDirectory, `extract-${version}-${arch}`);
+  await removeUpdateDirectory(legacyExtractionDirectory);
+  // 2026-09-11 coder(lq): Each preparation gets its own staging directory so
+  // a later check cannot remove an app bundle that is already ready to install.
+  const extractionDirectory = await fs.mkdtemp(`${legacyExtractionDirectory}-`);
+  try {
+    await extractor(archivePath, extractionDirectory);
+    const appPath = resolve(await findAppBundle(extractionDirectory));
+    return { version, appPath, archivePath };
+  } catch (error) {
+    await removeUpdateDirectory(extractionDirectory);
+    throw error;
+  }
 }
 
 function shellQuote(value: string): string {

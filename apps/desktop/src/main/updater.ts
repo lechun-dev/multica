@@ -15,6 +15,7 @@ import {
 } from "./updater-preferences";
 import {
   installMacUpdate,
+  isPreparedMacUpdateReusable,
   prepareMacUpdate,
   resolveMacUpdateUrl,
   selectMacUpdateFile,
@@ -256,27 +257,38 @@ export function setupAutoUpdater(
   // renderer actions cannot overwrite the same verified update archive.
   const downloadMacUpdateOnce = (info: MacUpdateInfo): Promise<DownloadedMacUpdate> => {
     if (macDownloadPromise) return macDownloadPromise;
-    const file = selectMacUpdateFile(info, process.arch);
-    const resolvedFile = {
-      ...file,
-      url: resolveMacUpdateUrl(file.url, info.tag),
-    };
-    sendToLiveRenderer(getMainWindow(), "updater:download-progress", { percent: 0 });
-    const promise = prepareMacUpdate(
-      resolvedFile,
-      macUpdateCacheDirectory,
-      info.version,
-      process.arch,
-      (percent) =>
-        sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
-          percent,
-        }),
-      requestMacUpdateWithElectron,
-    ).then((update) => {
+    const promise = (async () => {
+      // 2026-09-11 coder(lq): A periodic or manual check may rediscover the
+      // same release after it is ready. Reuse that staged app instead of
+      // deleting its extraction directory and downloading it again.
+      const preparedUpdate = downloadedMacUpdate;
+      if (
+        preparedUpdate &&
+        (await isPreparedMacUpdateReusable(preparedUpdate, info.version))
+      ) {
+        return preparedUpdate;
+      }
+      const file = selectMacUpdateFile(info, process.arch);
+      const resolvedFile = {
+        ...file,
+        url: resolveMacUpdateUrl(file.url, info.tag),
+      };
+      sendToLiveRenderer(getMainWindow(), "updater:download-progress", { percent: 0 });
+      const update = await prepareMacUpdate(
+        resolvedFile,
+        macUpdateCacheDirectory,
+        info.version,
+        process.arch,
+        (percent) =>
+          sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
+            percent,
+          }),
+        requestMacUpdateWithElectron,
+      );
       update.releaseNotes = info.releaseNotes;
       downloadedMacUpdate = update;
       return update;
-    });
+    })();
     macDownloadPromise = promise;
     void promise
       .finally(() => {
