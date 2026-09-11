@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // dingtalkNotifyRuntime is the thin host bridge. All routing, idempotency,
@@ -160,6 +161,7 @@ func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
 	taskID := strings.TrimSpace(e.TaskID)
 	agentID := ""
 	initiatorID := ""
+	resultText := ""
 	if payload, ok := e.Payload.(map[string]any); ok {
 		if value, ok := payload["task_id"].(string); ok {
 			taskID = strings.TrimSpace(value)
@@ -170,10 +172,14 @@ func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
 		if value, ok := payload["initiator_user_id"].(string); ok {
 			initiatorID = strings.TrimSpace(value)
 		}
+		if value, ok := payload["output"].(string); ok {
+			resultText = strings.TrimSpace(value)
+		}
 	}
 	if taskID == "" || agentID == "" {
 		return
 	}
+	resultText = r.loadTaskCompletionText(context.Background(), e.WorkspaceID, taskID, resultText)
 	ownerID, agentName := "", ""
 	if r.agentDetails != nil {
 		var err error
@@ -191,7 +197,7 @@ func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
 		slog.Info("dingtalk notify: completed Agent has no human recipients", "workspace_id", e.WorkspaceID, "agent_id", agentID, "task_id", taskID)
 		return
 	}
-	event := notify.AgentCompleted{EventID: taskID, WorkspaceID: e.WorkspaceID, AgentID: agentID, AgentName: agentName, CompletedAt: time.Now().UTC()}
+	event := notify.AgentCompleted{EventID: taskID, WorkspaceID: e.WorkspaceID, AgentID: agentID, AgentName: agentName, ResultText: resultText, CompletedAt: time.Now().UTC()}
 	if completionContext != nil {
 		event.WorkspaceName = completionContext.workspaceName
 		event.ProjectName = completionContext.projectName
@@ -215,6 +221,28 @@ func (r *dingtalkNotifyRuntime) handleTaskCompleted(e events.Event) {
 		return
 	}
 	slog.Info("dingtalk notify: Agent completion enqueued", "task_id", taskID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
+}
+
+// loadTaskCompletionText mirrors the content visible in MissionOS whenever
+// the Agent posted a task-linked comment. The terminal output carried by the
+// event is the fallback for tool-only runs and older comments without lineage.
+func (r *dingtalkNotifyRuntime) loadTaskCompletionText(ctx context.Context, workspaceID, taskID, fallback string) string {
+	if r == nil || r.pool == nil || strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(taskID) == "" {
+		return strings.TrimSpace(fallback)
+	}
+	var content string
+	err := r.pool.QueryRow(ctx, `
+		SELECT content
+		FROM comment
+		WHERE workspace_id = $1
+		  AND source_task_id = $2
+		  AND author_type = 'agent'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, workspaceID, taskID).Scan(&content)
+	if err != nil {
+		return strings.TrimSpace(fallback)
+	}
+	return strings.TrimSpace(redact.Text(content))
 }
 
 // loadTaskNotificationContext builds best-effort source/task metadata and a

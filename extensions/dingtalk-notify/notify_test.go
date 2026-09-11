@@ -98,10 +98,23 @@ func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
 }
 
 func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
-	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
-	want := "✅ **A\\*gent 已完成执行**\n\n来源：MUL-67 · 优化成员通知\n\n[打开任务并回复](https://multica.test/task-1)"
+	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", ResultText: "已完成通知流程修复。\n请查看执行结果。", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
+	want := "✅ **A\\*gent 已完成执行**\n\n已完成通知流程修复。\n请查看执行结果。\n\n---\n\n来源：[MUL-67 · 优化成员通知](https://multica.test/task-1)\n\n[打开任务并回复](https://multica.test/task-1)"
 	if got != want {
 		t.Fatalf("formatted completion = %q, want %q", got, want)
+	}
+}
+
+func TestFormatAgentCompletionTextBoundsResultPreviewAndHidesStructuredMentions(t *testing.T) {
+	got := FormatAgentCompletionText(AgentCompleted{
+		AgentName:  "测试智能体",
+		ResultText: "[@李群](mention://member/member-1) 已完成第一部分，并补充了一段明显超过四十个字符的执行结果用于验证通知摘要不会展示全部正文内容。\n第二行也不会突破总字符上限。\n第三行不应展示。",
+	})
+	if strings.Contains(got, "@李群") || strings.Contains(got, "mention://") {
+		t.Fatalf("completion preview leaked structured mention: %q", got)
+	}
+	if !strings.Contains(got, "…\n\n---") {
+		t.Fatalf("completion preview was not bounded before divider: %q", got)
 	}
 }
 

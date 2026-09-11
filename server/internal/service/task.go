@@ -4470,8 +4470,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 
-	// Broadcast
-	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
+	// Broadcast the redacted final text with the completion event so outbound
+	// notification adapters can render a compact preview. The durable task
+	// result remains the source of truth and consumers must still bound their
+	// own presentation.
+	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task, taskCompletedFields(result))
 
 	return &task, nil
 }
@@ -7029,6 +7032,21 @@ func (s *TaskService) publishTaskEvent(eventType, workspaceID string, task db.Ag
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue, extra ...map[string]any) {
 	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
 	s.publishTaskEvent(eventType, workspaceID, task, extra...)
+}
+
+// taskCompletedFields exposes only the redacted, user-facing final text to
+// completion subscribers. Malformed or empty results deliberately add no
+// field, preserving the legacy event contract for tool-only runs.
+func taskCompletedFields(result []byte) map[string]any {
+	fields := map[string]any{}
+	var payload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return fields
+	}
+	if output := strings.TrimSpace(util.UnescapeBackslashEscapes(payload.Output)); output != "" {
+		fields["output"] = redact.Text(output)
+	}
+	return fields
 }
 
 // taskFailedFields adds the terminal failure context required by channel

@@ -187,7 +187,7 @@ func TestDingTalkNotifyRuntimeNotifiesCompletedAgentOwnerAndInitiator(t *testing
 		agentOwner: agentOwnerStub(map[string]string{agentID: ownerID}),
 	}
 	runtime.handleTaskCompleted(events.Event{Type: "task:completed", TaskID: taskID, WorkspaceID: workspaceID, Payload: map[string]any{
-		"task_id": taskID, "agent_id": agentID, "initiator_user_id": initiatorID,
+		"task_id": taskID, "agent_id": agentID, "initiator_user_id": initiatorID, "output": "已完成测试并生成结果。",
 	}})
 	items := store.Snapshot()
 	if len(items) != 2 {
@@ -198,7 +198,7 @@ func TestDingTalkNotifyRuntimeNotifiesCompletedAgentOwnerAndInitiator(t *testing
 		if want[item.Message.TargetID] != item.Message.DingUserID || item.Message.ChannelType != "p2p" {
 			t.Fatalf("unexpected completion message: %+v", item.Message)
 		}
-		if item.Message.Text != "✅ **MissionOS Agent 已完成执行**" {
+		if item.Message.Text != "✅ **MissionOS Agent 已完成执行**\n\n已完成测试并生成结果。\n\n---" {
 			t.Fatalf("unexpected completion text: %q", item.Message.Text)
 		}
 		delete(want, item.Message.TargetID)

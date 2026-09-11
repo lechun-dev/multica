@@ -48,6 +48,7 @@ type AgentCompleted struct {
 	WorkspaceID     string
 	AgentID         string
 	AgentName       string
+	ResultText      string
 	WorkspaceName   string
 	ProjectName     string
 	IssueIdentifier string
@@ -354,6 +355,9 @@ func FormatAgentCompletionText(event AgentCompleted) string {
 		agent = "MissionOS Agent"
 	}
 	sections := []string{fmt.Sprintf("✅ **%s 已完成执行**", escapeMarkdown(agent))}
+	if result := truncateMentionPreview(stripMentionLinks(stripStructuredMentions(sanitizeText(event.ResultText)))); result != "" {
+		sections = append(sections, result, "---")
+	}
 	if task := notificationTaskFromCompletion(event); task != "" {
 		sections = append(sections, "来源："+task)
 	}
@@ -366,12 +370,17 @@ func FormatAgentCompletionText(event AgentCompleted) string {
 func notificationTaskFromCompletion(event AgentCompleted) string {
 	identifier := strings.TrimSpace(event.IssueIdentifier)
 	title := strings.TrimSpace(event.IssueTitle)
+	label := ""
 	if identifier == "" {
-		return escapeMarkdown(title)
+		label = escapeMarkdown(title)
+	} else {
+		label = escapeMarkdown(identifier)
 	}
-	label := escapeMarkdown(identifier)
-	if title != "" {
+	if identifier != "" && title != "" {
 		label += " · " + escapeMarkdown(title)
+	}
+	if source := strings.TrimSpace(event.SourceURL); source != "" && label != "" {
+		return "[" + label + "](" + source + ")"
 	}
 	return label
 }
