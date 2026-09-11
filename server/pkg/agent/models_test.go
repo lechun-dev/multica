@@ -85,19 +85,30 @@ func TestListModelsCodexAlwaysInjectsGrokModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels(codex) error: %v", err)
 	}
-	ids := map[string]bool{}
+	byID := map[string]Model{}
 	for _, model := range got.Models {
-		ids[model.ID] = true
+		byID[model.ID] = model
 	}
-	for _, want := range []string{"grok-4.6", "grok-4.5"} {
-		if !ids[want] {
-			t.Errorf("ListModels(codex) missing %s: %+v", want, got.Models)
+	for _, tc := range []struct {
+		id     string
+		levels []string
+	}{
+		{id: "grok-4.6", levels: []string{"low", "medium", "high", "xhigh"}},
+		{id: "grok-4.5", levels: []string{"low", "medium", "high"}},
+	} {
+		model, ok := byID[tc.id]
+		if !ok {
+			t.Errorf("ListModels(codex) missing %s: %+v", tc.id, got.Models)
 			continue
 		}
-		for _, model := range got.Models {
-			if model.ID == want && model.Provider != "openai" {
-				t.Errorf("ListModels(codex) model %s provider = %q, want openai", want, model.Provider)
-			}
+		if model.Provider != "openai" {
+			t.Errorf("ListModels(codex) model %s provider = %q, want openai", tc.id, model.Provider)
+		}
+		if gotLevels := thinkingValues(model.Thinking); !reflect.DeepEqual(gotLevels, tc.levels) {
+			t.Errorf("ListModels(codex) model %s thinking = %v, want %v", tc.id, gotLevels, tc.levels)
+		}
+		if model.Thinking != nil && model.Thinking.DefaultLevel != "" {
+			t.Errorf("ListModels(codex) model %s default thinking = %q, want blank to follow CLI config", tc.id, model.Thinking.DefaultLevel)
 		}
 	}
 }
@@ -113,8 +124,14 @@ func TestEnsureCodexModelsKeepsGatewayModelsInCodexCatalog(t *testing.T) {
 	if models[0].ID != "grok-4.6" || models[0].Provider != "openai" {
 		t.Fatalf("gateway model = %+v, want Codex catalog provider openai", models[0])
 	}
+	if got := thinkingValues(models[0].Thinking); !reflect.DeepEqual(got, []string{"low", "medium", "high", "xhigh"}) {
+		t.Errorf("gateway Grok 4.6 thinking = %v, want low/medium/high/xhigh", got)
+	}
 	if models[1].ID != "grok-4.5" || models[1].Provider != "openai" {
 		t.Fatalf("injected model = %+v, want Codex catalog provider openai", models[1])
+	}
+	if got := thinkingValues(models[1].Thinking); !reflect.DeepEqual(got, []string{"low", "medium", "high"}) {
+		t.Errorf("injected Grok 4.5 thinking = %v, want low/medium/high", got)
 	}
 }
 

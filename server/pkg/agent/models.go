@@ -632,13 +632,19 @@ func ensureCodexModels(models []Model) []Model {
 		// future Codex CLI reports one with a provider-specific annotation.
 		if model.ID == "grok-4.6" || model.ID == "grok-4.5" {
 			model.Provider = "openai"
+			// 2026-09-11 coder(lq): codex2api translates Codex reasoning effort
+			// for gateway-routed Grok models. Keep an empty default so the
+			// existing blank selection continues to mean "follow CLI config".
+			if model.Thinking == nil {
+				model.Thinking = grokThinkingCatalog(model.ID == "grok-4.6")
+			}
 		}
 		seen[model.ID] = struct{}{}
 		result = append(result, model)
 	}
 	for _, model := range []Model{
-		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "openai"},
-		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "openai"},
+		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "openai", Thinking: grokThinkingCatalog(true)},
+		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "openai", Thinking: grokThinkingCatalog(false)},
 	} {
 		if _, exists := seen[model.ID]; exists {
 			continue
