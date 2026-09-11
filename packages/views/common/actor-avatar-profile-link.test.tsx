@@ -15,12 +15,21 @@ import { NavigationProvider } from "../navigation/context";
 import type { NavigationAdapter } from "../navigation/types";
 import { DeferredPopup } from "./deferred-popup";
 
+const actorDirectory = vi.hoisted(() => ({
+  exists: true as boolean | undefined,
+}));
+
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({
     getActorName: () => "Ada Lovelace",
     getActorInitials: () => "AL",
     getActorAvatarUrl: () => null,
+    hasActor: () => actorDirectory.exists,
   }),
+}));
+
+vi.mock("@multica/core/workspace/avatar-url", () => ({
+  resolvePublicFileUrl: (url: string | null | undefined) => url ?? null,
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -118,7 +127,43 @@ function renderCardPicker(adapter: NavigationAdapter) {
 
 describe("ActorAvatar profile link", () => {
   afterEach(() => {
+    actorDirectory.exists = true;
     vi.restoreAllMocks();
+  });
+
+  it("shows a timeline identity without exposing a private agent profile", () => {
+    actorDirectory.exists = false;
+    render(
+      <NavigationProvider value={makeAdapter()}>
+        <ActorAvatar
+          actorType="agent"
+          actorId="private-agent"
+          name="Planning Agent"
+          avatarUrl="https://example.com/planning-agent.png"
+          profileRequiresDirectoryEntry
+          enableHoverCard
+        />
+      </NavigationProvider>,
+    );
+
+    expect(screen.getByRole("img", { name: "Planning Agent" })).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("keeps the profile interaction while the directory is loading", () => {
+    actorDirectory.exists = undefined;
+    render(
+      <NavigationProvider value={makeAdapter()}>
+        <ActorAvatar
+          actorType="agent"
+          actorId="loading-agent"
+          name="Planning Agent"
+          profileRequiresDirectoryEntry
+        />
+      </NavigationProvider>,
+    );
+
+    expect(screen.getByRole("link")).toBeInTheDocument();
   });
 
   it("pushes on plain click", () => {

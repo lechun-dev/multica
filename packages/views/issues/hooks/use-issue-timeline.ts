@@ -95,7 +95,13 @@ function applyCommentSnapshot(
         return entry;
       }
       return acceptsCommentRevision(entry, comment)
-        ? commentToTimelineEntry(comment)
+        ? {
+            ...commentToTimelineEntry(comment),
+            // 2026-09-11 coder(lq): WebSocket snapshots intentionally contain
+            // only safe comment fields; keep REST-hydrated display identity.
+            actor_name: entry.actor_name,
+            actor_avatar_url: entry.actor_avatar_url,
+          }
         : entry;
     }),
   );
@@ -147,6 +153,13 @@ export function useIssueTimeline(issueId: string, userId?: string) {
         const { comment } = payload as CommentCreatedPayload;
         if (!comment?.issue_id || comment.issue_id !== issueId) return;
         if (!isRenderableCommentSnapshot(comment)) {
+          qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
+          return;
+        }
+        if (comment.author_type === "agent") {
+          // 2026-09-11 coder(lq): Permission-safe WebSocket snapshots do not
+          // include agent identity. Refetch the authorized timeline so a new
+          // agent comment never flashes as "Unknown Agent".
           qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
           return;
         }

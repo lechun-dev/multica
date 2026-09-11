@@ -223,6 +223,32 @@ describe("useIssueTimeline", () => {
     expect(updated.map((e) => e.id)).toEqual(["new-c"]);
   });
 
+  it("comment:created refetches agent identity instead of showing an unknown author", () => {
+    queryState.data = [];
+    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+
+    act(() => {
+      wsHandlers.get("comment:created")!({
+        comment: {
+          id: "agent-c",
+          issue_id: "issue-1",
+          author_type: "agent",
+          author_id: "private-agent",
+          content: "Done",
+          parent_id: null,
+          created_at: "2026-09-11T05:00:00Z",
+          updated_at: "2026-09-11T05:00:00Z",
+          type: "comment",
+          reactions: [],
+          attachments: [],
+        },
+      });
+    });
+
+    expect(cacheUpdates.last).toBeNull();
+    expect(cacheUpdates.invalidations).toBe(1);
+  });
+
   it.each([
     "comment:created",
     "comment:updated",

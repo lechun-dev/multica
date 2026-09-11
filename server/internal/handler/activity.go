@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -19,6 +21,9 @@ type TimelineEntry struct {
 	ActorType string `json:"actor_type"`
 	ActorID   string `json:"actor_id"`
 	CreatedAt string `json:"created_at"`
+	// Display identity is independent from permission to open an actor profile.
+	ActorName      string `json:"actor_name,omitempty"`
+	ActorAvatarURL string `json:"actor_avatar_url,omitempty"`
 
 	// Activity-only fields
 	Action  *string         `json:"action,omitempty"`
@@ -204,11 +209,15 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(HeaderTimelineTruncated, kinds)
 	}
 
+	entries := h.mergeTimeline(r, comments, activities, !wantWrapped)
+	// 2026-09-11 coder(lq): Hydrate only actors already present in an authorized
+	// issue timeline. Profile endpoints retain their existing access checks.
+	h.hydrateTimelineActors(ctx, issue.WorkspaceID, entries)
+	if entries == nil {
+		entries = []TimelineEntry{}
+	}
+
 	if wantWrapped {
-		entries := h.mergeTimeline(r, comments, activities, false)
-		if entries == nil {
-			entries = []TimelineEntry{}
-		}
 		resp := timelinePaginatedResponse{
 			Entries:       entries,
 			HasMoreBefore: commentsTruncated || activitiesTruncated,
@@ -228,11 +237,77 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := h.mergeTimeline(r, comments, activities, true)
-	if entries == nil {
-		entries = []TimelineEntry{}
-	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+// hydrateTimelineActors supplies stable attribution without widening actor
+// directory or detail access. Lookup failures are display-only and never make
+// an otherwise authorized timeline unavailable.
+func (h *Handler) hydrateTimelineActors(ctx context.Context, workspaceID pgtype.UUID, entries []TimelineEntry) {
+	memberIDs := make([]pgtype.UUID, 0)
+	agentIDs := make([]pgtype.UUID, 0)
+	memberSeen := make(map[string]struct{})
+	agentSeen := make(map[string]struct{})
+	for i := range entries {
+		entry := &entries[i]
+		id, err := util.ParseUUID(entry.ActorID)
+		if err != nil {
+			continue
+		}
+		switch entry.ActorType {
+		case "member":
+			if _, exists := memberSeen[entry.ActorID]; !exists {
+				memberSeen[entry.ActorID] = struct{}{}
+				memberIDs = append(memberIDs, id)
+			}
+		case "agent":
+			if _, exists := agentSeen[entry.ActorID]; !exists {
+				agentSeen[entry.ActorID] = struct{}{}
+				agentIDs = append(agentIDs, id)
+			}
+		}
+	}
+
+	memberNames := make(map[string]string)
+	memberAvatars := make(map[string]string)
+	if len(memberIDs) > 0 {
+		if users, err := h.Queries.GetUsersByIDs(ctx, memberIDs); err == nil {
+			for _, user := range users {
+				id := uuidToString(user.ID)
+				memberNames[id] = user.Name
+				if user.AvatarUrl.Valid {
+					memberAvatars[id] = h.resolveAvatarURL(user.AvatarUrl.String)
+				}
+			}
+		}
+	}
+
+	agentNames := make(map[string]string)
+	agentAvatars := make(map[string]string)
+	if len(agentIDs) > 0 {
+		params := db.GetAgentsByIDsInWorkspaceParams{WorkspaceID: workspaceID, Ids: agentIDs}
+		if agents, err := h.Queries.GetAgentsByIDsInWorkspace(ctx, params); err == nil {
+			for _, agent := range agents {
+				id := uuidToString(agent.ID)
+				agentNames[id] = agent.Name
+				if agent.AvatarUrl.Valid {
+					agentAvatars[id] = h.resolveAvatarURL(agent.AvatarUrl.String)
+				}
+			}
+		}
+	}
+
+	for i := range entries {
+		entry := &entries[i]
+		switch entry.ActorType {
+		case "member":
+			entry.ActorName = memberNames[entry.ActorID]
+			entry.ActorAvatarURL = memberAvatars[entry.ActorID]
+		case "agent":
+			entry.ActorName = agentNames[entry.ActorID]
+			entry.ActorAvatarURL = agentAvatars[entry.ActorID]
+		}
+	}
 }
 
 // mergeTimeline merges comments and activities and returns them sorted by
