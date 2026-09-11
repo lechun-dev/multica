@@ -4463,6 +4463,46 @@ func (q *Queries) GetAgentTaskInWorkspace(ctx context.Context, arg GetAgentTaskI
 	return i, err
 }
 
+const getAgentsByIDsInWorkspace = `-- name: GetAgentsByIDsInWorkspace :many
+SELECT id, name, avatar_url FROM agent
+WHERE workspace_id = $1
+  AND id = ANY($2::uuid[])
+  AND kind = 'user'
+`
+
+type GetAgentsByIDsInWorkspaceParams struct {
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	Ids         []pgtype.UUID `json:"ids"`
+}
+
+type GetAgentsByIDsInWorkspaceRow struct {
+	ID        pgtype.UUID `json:"id"`
+	Name      string      `json:"name"`
+	AvatarUrl pgtype.Text `json:"avatar_url"`
+}
+
+// Display-only lookup for actors already exposed by an authorized timeline.
+// It includes archived agents so historical authorship remains readable.
+func (q *Queries) GetAgentsByIDsInWorkspace(ctx context.Context, arg GetAgentsByIDsInWorkspaceParams) ([]GetAgentsByIDsInWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, getAgentsByIDsInWorkspace, arg.WorkspaceID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAgentsByIDsInWorkspaceRow{}
+	for rows.Next() {
+		var i GetAgentsByIDsInWorkspaceRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.AvatarUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 WITH retired_sessions AS (
     SELECT DISTINCT r.retired_session_id AS session_id

@@ -68,6 +68,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
     },
     getActorInitials: (type: string) => (type === "member" ? "TU" : "CA"),
     getActorAvatarUrl: () => null,
+    hasActor: () => true,
   }),
 }));
 

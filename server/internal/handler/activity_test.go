@@ -134,6 +134,37 @@ func TestListTimeline_CommentIncludesRevision(t *testing.T) {
 	t.Fatalf("comment %s missing from timeline", commentIDs[0])
 }
 
+func TestListTimeline_HydratesArchivedAgentIdentity(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Archived Timeline Agent", nil)
+	issueID := createIssueForTimeline(t, "Agent identity projection")
+	ctx := context.Background()
+	var commentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'agent', $3, 'historical agent reply', 'comment')
+		RETURNING id
+	`, issueID, testWorkspaceID, agentID).Scan(&commentID); err != nil {
+		t.Fatalf("seed agent comment: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET archived_at = now() WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("archive agent: %v", err)
+	}
+
+	entries, status := fetchTimeline(t, issueID)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	for _, entry := range entries {
+		if entry.ID == commentID {
+			if entry.ActorName != "Archived Timeline Agent" {
+				t.Fatalf("actor name = %q, want archived agent name", entry.ActorName)
+			}
+			return
+		}
+	}
+	t.Fatalf("agent comment %s missing from timeline", commentID)
+}
+
 func TestListTimeline_MergesCommentsAndActivities(t *testing.T) {
 	issueID := createIssueForTimeline(t, "Merged entries test")
 	seedTimelineEntries(t, issueID, 3, 2)

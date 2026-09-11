@@ -38,6 +38,14 @@ FOR UPDATE;
 SELECT * FROM agent
 WHERE id = $1 AND workspace_id = $2 AND kind = 'user';
 
+-- name: GetAgentsByIDsInWorkspace :many
+-- Display-only lookup for actors already exposed by an authorized timeline.
+-- It includes archived agents so historical authorship remains readable.
+SELECT id, name, avatar_url FROM agent
+WHERE workspace_id = @workspace_id
+  AND id = ANY(@ids::uuid[])
+  AND kind = 'user';
+
 -- name: LockAgentForAutopilotAssignment :one
 -- Serializes creating, retargeting, or resuming an active Autopilot with
 -- Runtime teardown. Teardown takes FOR UPDATE on this same Agent row before it
