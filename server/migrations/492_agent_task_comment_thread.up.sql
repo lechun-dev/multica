@@ -33,9 +33,11 @@ FOR EACH ROW EXECUTE FUNCTION set_agent_task_comment_thread();
 -- Existing rows intentionally retain a NULL thread scope. Pre-migration tasks
 -- drain under the issue/agent claim fence without rewriting historical data.
 
--- Do NOT add a backfill here. Migration 451 originally shipped one and it was
+-- 2026-09-12 coder(lq): Upstream migration 451 was renumbered to 492 while
+-- merging it into the private migration stream. Do not add a backfill: it once
+-- shipped one and it was
 -- removed: rewriting the whole historical queue at startup is unsafe against
 -- production data volume, and there is nothing to gain — the only rows without
 -- a thread scope are the tasks in flight during the rolling deploy, and their
--- historical thread scope has no value. #8229 proposed doing it again as
--- migration 457 and was closed for the same reason.
+-- historical thread scope has no value. #8229 later proposed doing it again
+-- and was closed for the same reason.

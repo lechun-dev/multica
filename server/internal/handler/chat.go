@@ -1977,6 +1977,9 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
+	// 2026-09-12 coder(lq): Resolve the merged request actor once so private
+	// agent checks and cancellation audit fields use the same identity.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if task.IssueID.Valid {
 		issue, issueErr := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: task.IssueID, WorkspaceID: wsUUID})
 		if issueErr != nil {

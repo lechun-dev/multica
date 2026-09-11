@@ -186,9 +186,44 @@ multica issue property unset <issue-id> --name Environment
   it does not change the property's type or value validation.
 - Agents cannot create or edit property definitions (owner/admin humans only).
   If a needed property does not exist, propose it in a comment instead.
-- Property vs metadata: if the value is workflow state a human should see and
-  filter by, and a definition exists, prefer the property. Metadata stays the
-  free-form bag for durable custom issue state.
+- Where state belongs: workflow state a human should see and filter by goes in
+  a property; the stage the issue is at goes in its status; everything else —
+  what you did this run, what you found — goes in the result comment.
+- `issue list` filters and sorts by property with the same name addressing:
+
+```bash
+multica issue list --property "Impact=High" --property "Impact=Medium" --output json
+multica issue list --property "QA Status=__none__" --status in_review --output json
+multica issue list --sort property:Impact --direction desc --output json
+```
+
+- `--property` takes one `Name=Value` per flag. Repeating the same property
+  matches ANY of its values; different properties must ALL match. Values are
+  option names or ids (select types), `true`/`false` (checkbox), a member
+  name/email/id (actor types), or the value itself for text, url, number,
+  and date (`YYYY-MM-DD`). The reserved value `__none__` matches
+  issues where the property is unset (works for every type; it is not
+  index-backed, so use it for targeted audits rather than as a default
+  listing filter). Only `=` is supported today; the `>=`, `<=` and `!=`
+  spellings are reserved for comparison filters and are rejected.
+- `--sort property:<name-or-id>` orders select properties by option order —
+  an ordinal scale (Low < Medium < High) sorts by meaning — and number/date/
+  text/url by value; issues without the property sort last either way.
+  Archived properties and types without an order (multi_select, checkbox,
+  actor kinds) are rejected up front.
+- `issue list` and `issue get` return `properties` as a map of definition id
+  to stored value. Add `--resolve-properties` in JSON mode to get the rows
+  `issue property list` prints instead (name, type, stored value, display
+  names); the CLI makes at most one catalog request for the whole page, so
+  no `property list` call is needed:
+
+```bash
+multica issue list --status in_progress --output json --resolve-properties
+multica issue get <issue-id> --resolve-properties
+```
+
+  Read `display` for a single value and `display_values` for a multi_select
+  or multi_actor value; `value` keeps the stored ids.
 
 ## Status changes have server side effects
 

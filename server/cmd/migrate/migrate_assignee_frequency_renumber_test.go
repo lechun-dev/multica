@@ -12,7 +12,7 @@ import (
 )
 
 func TestAssigneeFrequencyRenumberPreservesExistingIndex(t *testing.T) {
-	const version = "466_activity_log_member_assignee_frequency_index"
+	const version = "507_activity_log_member_assignee_frequency_index"
 	const legacyVersion = "458_activity_log_member_assignee_frequency_index"
 	const index = "idx_activity_log_member_assignee_frequency"
 

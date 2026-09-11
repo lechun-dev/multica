@@ -476,7 +476,8 @@ UPDATE issue SET
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = $2 AND workspace_id = $3 AND archived_at IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, archived_at
+  AND metadata ? $1::text
+RETURNING id, workspace_id, metadata, revision
 `
 
 type DeleteIssueMetadataKeyParams struct {
@@ -502,8 +503,6 @@ func (q *Queries) DeleteIssueMetadataKey(ctx context.Context, arg DeleteIssueMet
 		&i.WorkspaceID,
 		&i.Metadata,
 		&i.Revision,
-		&i.LastActivityAt,
-		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -942,8 +941,8 @@ type GetIssueMetadataInWorkspaceRow struct {
 	Revision int64  `json:"revision"`
 }
 
-// Reloads the committed metadata snapshot after a conditional mutation
-// returns no rows, without fetching the rest of the issue payload.
+// 2026-09-12 coder(lq): Reload only the metadata snapshot after a conditional
+// mutation returns no rows, while keeping the lookup workspace-scoped.
 func (q *Queries) GetIssueMetadataInWorkspace(ctx context.Context, arg GetIssueMetadataInWorkspaceParams) (GetIssueMetadataInWorkspaceRow, error) {
 	row := q.db.QueryRow(ctx, getIssueMetadataInWorkspace, arg.ID, arg.WorkspaceID)
 	var i GetIssueMetadataInWorkspaceRow
@@ -1759,7 +1758,8 @@ UPDATE issue SET
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = $3 AND workspace_id = $4 AND archived_at IS NULL
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage, properties, revision, last_activity_at, archived_at
+  AND metadata -> $1::text IS DISTINCT FROM $2::jsonb
+RETURNING id, workspace_id, metadata, revision
 `
 
 type SetIssueMetadataKeyParams struct {
@@ -1795,8 +1795,6 @@ func (q *Queries) SetIssueMetadataKey(ctx context.Context, arg SetIssueMetadataK
 		&i.WorkspaceID,
 		&i.Metadata,
 		&i.Revision,
-		&i.LastActivityAt,
-		&i.ArchivedAt,
 	)
 	return i, err
 }

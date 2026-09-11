@@ -9,14 +9,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
-// Migration 467 fills a legacy trigger's missing creator from its autopilot's
+// Migration 508 fills a legacy trigger's missing creator from its autopilot's
 // creator, so schedule/webhook dispatch has a principal again instead of
 // skipping every run (#8284).
 //
 // The shipped SQL runs twice inside a transaction that is rolled back: the
 // UPDATE is table-wide, and committing it would rewrite the NULL-creator
 // triggers that other packages' tests build concurrently in the same database.
-func TestMigration467BackfillsTriggerCreatorFromAutopilot(t *testing.T) {
+func TestMigration508BackfillsTriggerCreatorFromAutopilot(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -56,7 +56,7 @@ func TestMigration467BackfillsTriggerCreatorFromAutopilot(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The #8284 shape: created before published_by existed and never edited, so
-	// migration 449 had nothing to backfill created_by from.
+	// migration 490 had nothing to backfill created_by from.
 	legacyWebhookID := dbfx.Insert(t, "autopilot_trigger", testutil.Cols{
 		"autopilot_id":  liveAutopilotID,
 		"kind":          "webhook",
@@ -76,7 +76,7 @@ func TestMigration467BackfillsTriggerCreatorFromAutopilot(t *testing.T) {
 		t.Fatalf("pre-backfill webhook = %v, want skipped: the legacy trigger has no principal yet", before)
 	}
 
-	migration, err := os.ReadFile("../../migrations/467_autopilot_trigger_creator_from_autopilot.up.sql")
+	migration, err := os.ReadFile("../../migrations/508_autopilot_trigger_creator_from_autopilot.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

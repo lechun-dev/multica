@@ -1,4 +1,6 @@
--- Renumbered from 458 to avoid the cancellation-provenance migration.
+-- 2026-09-12 coder(lq): Upstream migration 466 was renumbered to 507 while
+-- merging into the private stream; upstream had previously moved it from 458
+-- to avoid the cancellation-provenance migration.
 -- IF NOT EXISTS preserves an index already created under the old version;
 -- the runner records this version without rewriting the historical ledger.
 -- CountAssigneeChangesByActor filters by workspace and member actor, then

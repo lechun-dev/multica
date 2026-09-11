@@ -51,7 +51,7 @@ ALTER TABLE channel_task_delivery
     ADD COLUMN IF NOT EXISTS channel_sender_id TEXT;
 
 -- Existing generations intentionally keep a NULL trigger — no backfill, in
--- line with 451_agent_task_comment_thread's "pre-migration rows drain without
+-- line with 492_agent_task_comment_thread's "pre-migration rows drain without
 -- rewriting historical data".
 --
 -- Nothing needs one. The trigger is recorded during AppendUserMessage, which

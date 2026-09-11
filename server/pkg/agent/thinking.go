@@ -634,8 +634,8 @@ func catalogLoader(ctx context.Context, providerType string, cmd Command) func()
 //
 //   - codex: the effective model comes from the user's local config.toml
 //     and can be ANY installed model, not necessarily the catalog's flagged
-//     Default. Borrowing the Default entry (gpt-5.6-sol, the only one
-//     advertising `ultra`) would green-light levels the actually-configured
+//     Default. Borrowing the Default entry (currently gpt-6-astra) would
+//     green-light levels the actually-configured
 //     model may not support — Luna tops out at `max`, gpt-5.5/5.4 at `xhigh`
 //     — and Codex does not reject the mismatch itself. We can't know the
 //     effective model without parsing config.toml in the task cwd (see this

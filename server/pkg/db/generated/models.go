@@ -240,14 +240,15 @@ type AutopilotCollaborator struct {
 }
 
 type AutopilotQuotaPeriod struct {
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	PeriodStart   pgtype.Timestamptz `json:"period_start"`
-	PeriodEnd     pgtype.Timestamptz `json:"period_end"`
-	UsedCount     int64              `json:"used_count"`
-	ReservedCount int64              `json:"reserved_count"`
-	BlockedCounts []byte             `json:"blocked_counts"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	PeriodStart         pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd           pgtype.Timestamptz `json:"period_end"`
+	UsedCount           int64              `json:"used_count"`
+	ReservedCount       int64              `json:"reserved_count"`
+	BlockedCounts       []byte             `json:"blocked_counts"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	RejectionNotifiedAt pgtype.Timestamptz `json:"rejection_notified_at"`
 }
 
 type AutopilotQuotaReservation struct {
@@ -319,10 +320,14 @@ type AutopilotTrigger struct {
 	Provider       string             `json:"provider"`
 	SigningSecret  pgtype.Text        `json:"signing_secret"`
 	EventFilters   []byte             `json:"event_filters"`
-	// Actor type of the trigger's current responsible publisher: member | agent. Set to the creator at creation and re-stamped to the editor on any substantive edit governing this trigger. Consumed only for attribution (source=trigger_owner) — never authorization. NULL on pre-migration triggers (MUL-4302).
+	// Actor type of the trigger's current responsible publisher: member | agent. Set to the creator at creation and re-stamped to the editor on any substantive edit governing this trigger. CONFIG audit only — since MUL-6951 it decides nothing about the runs this trigger fires. NULL on triggers predating MUL-4302.
 	PublishedByType pgtype.Text `json:"published_by_type"`
-	// The member/agent currently responsible for this trigger's effective config (creator, then last substantive editor). For a member this is the accountable human of runs the trigger fires (source=trigger_owner). No FK, app-layer integrity. NULL on pre-migration triggers, which degrade to rule_owner (MUL-4302).
+	// The member/agent currently responsible for this trigger's effective config (creator, then last substantive editor). CONFIG audit only: since MUL-6951 the runs this trigger fires act as, and are accountable to, created_by_id instead, so an edit recorded here never moves a run's authority. No FK, app-layer integrity (MUL-4302).
 	PublishedByID pgtype.UUID `json:"published_by_id"`
+	// Actor type of created_by_id: member | agent. Only 'member' yields a run principal. NULL only for a legacy trigger that neither backfill (migrations 449, 467) could fill.
+	CreatedByType pgtype.Text `json:"created_by_type"`
+	// The member a schedule/webhook run fires AS: dispatch admission, the task's originator/accountable, and every delegated run all resolve to this one human (MUL-6951). For a trigger created since MUL-6951 it is the creator, written at creation. For a legacy trigger it is a best-effort principal inferred once by backfill and frozen (the last publisher, migration 490, else the autopilot's creator, migration 508), not proof of who created it. Ordinary edits never rewrite it, so editing the trigger cannot re-authorize its runs as the editor. NULL means no principal and the dispatch fails closed. No FK; workspace membership is re-validated on every dispatch.
+	CreatedByID pgtype.UUID `json:"created_by_id"`
 }
 
 type ChannelBindingToken struct {
@@ -623,6 +628,31 @@ type DingtalkBotIdentity struct {
 	BotIdentityIssue string             `json:"bot_identity_issue"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DingtalkDwsCredential struct {
+	MulticaUserID          pgtype.UUID        `json:"multica_user_id"`
+	CorpID                 string             `json:"corp_id"`
+	DingUserID             string             `json:"ding_user_id"`
+	UnionID                pgtype.Text        `json:"union_id"`
+	ClientID               string             `json:"client_id"`
+	AccessTokenCiphertext  []byte             `json:"access_token_ciphertext"`
+	RefreshTokenCiphertext []byte             `json:"refresh_token_ciphertext"`
+	AccessExpiresAt        pgtype.Timestamptz `json:"access_expires_at"`
+	RefreshExpiresAt       pgtype.Timestamptz `json:"refresh_expires_at"`
+	Status                 string             `json:"status"`
+	LastErrorCode          pgtype.Text        `json:"last_error_code"`
+	LastErrorMessage       pgtype.Text        `json:"last_error_message"`
+	LastRefreshedAt        pgtype.Timestamptz `json:"last_refreshed_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DingtalkDwsOauthState struct {
+	State         string             `json:"state"`
+	MulticaUserID pgtype.UUID        `json:"multica_user_id"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type DingtalkGroupPresence struct {

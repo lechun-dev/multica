@@ -14,7 +14,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// MUL-7234 / #8234, driven from the top. Migration 461 moved the reply trigger
+// MUL-7234 / #8234, driven from the top. Migration 502 moved the reply trigger
 // onto channel_chat_context_generation and CreateChannelTaskDeliveryFromSession
 // reads it by the task's context revision; the DB-level tests in
 // session_db_test.go pin that query by calling SetChannelChatContextReplyTarget

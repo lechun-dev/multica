@@ -618,6 +618,7 @@ func TestCodexStaticModelsMatchVerifiedFallbackCatalog(t *testing.T) {
 		ids[m.ID] = m
 	}
 	for _, want := range []string{
+		"gpt-6-astra",
 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 		"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
 		"gpt-5.3-codex", "gpt-5.2",
@@ -631,9 +632,9 @@ func TestCodexStaticModelsMatchVerifiedFallbackCatalog(t *testing.T) {
 			t.Errorf("unexpected stale/invalid Codex model %q in fallback: %+v", unwanted, models)
 		}
 	}
-	latest, ok := ids["gpt-5.6-sol"]
+	latest, ok := ids["gpt-6-astra"]
 	if !ok || !latest.Default {
-		t.Errorf("expected `gpt-5.6-sol` to be the default Codex entry, got %+v", latest)
+		t.Errorf("expected `gpt-6-astra` to be the default Codex entry, got %+v", latest)
 	}
 	defaults := 0
 	for _, m := range models {

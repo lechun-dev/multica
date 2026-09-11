@@ -892,8 +892,8 @@ func runAgentTasks(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	var tasks []map[string]any
-	if err := client.GetJSON(ctx, "/api/agents/"+args[0]+"/tasks", &tasks); err != nil {
-		return fmt.Errorf("list agent tasks: %w", err)
+	if err := client.GetJSON(ctx, path, &tasks); err != nil {
+		return fmt.Errorf("list agent runs: %w", err)
 	}
 
 	if output == "json" {

@@ -649,18 +649,16 @@ type searchResult struct {
 	matchedCommentContent string
 }
 
-// buildSearchQuery builds a dynamic SQL query for issue search.
-// It uses LOWER(column) LIKE for case-insensitive matching compatible with pg_bigm 1.2 GIN indexes.
-// Search patterns are lowercased in Go to avoid redundant LOWER() on the pattern side in SQL.
-// LIKE patterns are pre-built in Go (e.g. "%html%") so pg_bigm can extract bigrams from a single parameter value.
-func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string) (string, []any) {
-	return buildSearchQueryWithWorkspaceScope(phrase, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, true)
+// buildSearchQuery builds the upstream-compatible search query used by tests
+// and callers that do not need private entitlement or task-access constraints.
+func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, terminalStatusKeys []string) (string, []any) {
+	return buildSearchQueryWithWorkspaceScope(phrase, terms, queryNum, hasNum, includeClosed, terminalStatusKeys, nil, "", true)
 }
 
 // 2026-09-01 coder(lq): Keep the legacy search builder default-inclusive for
 // older callers, while allowing the task page's workspace-owner toggle to
 // flow into the same SQL visibility predicate as list/table queries.
-func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, creationWindowLimit *int64, projectPermissionUserID string, includeWorkspaceOwned bool, archiveStates ...string) (string, []any) {
+func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool, terminalStatusKeys []string, creationWindowLimit *int64, projectPermissionUserID string, includeWorkspaceOwned bool, archiveStates ...string) (string, []any) {
 	// Lowercase in Go so SQL only needs LOWER() on the column side.
 	phrase = strings.ToLower(phrase)
 	for i, term := range terms {
@@ -678,8 +676,6 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 	phraseContainsParam := nextArg("%" + escapedPhrase + "%") // $2: contains
 	phraseStartsWithParam := nextArg(escapedPhrase + "%")     // $3: starts with
 	wsParam := nextArg(nil)                                   // $4: workspace_id, filled by caller
-
-	wsParam := nextArg(nil) // $4 — workspace_id, will be filled by caller position
 	projectUserParam := ""
 	if projectPermissionUserID != "" {
 		projectUserParam = nextArg(projectPermissionUserID)
@@ -697,27 +693,10 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 	if hasNum {
 		numParam = nextArg(queryNum)
 	}
-
-	whereClause := "(" + strings.Join(whereParts, " OR ") + ")"
-	archiveState := "active"
-	if len(archiveStates) > 0 && archiveStates[0] != "" {
-		archiveState = archiveStates[0]
-	}
-	whereClause = appendIssueArchivePredicate([]string{whereClause}, archiveState, "i")[0]
-
+	terminalStatusesParam := ""
 	if !includeClosed {
-		whereClause += " AND issue_effective_status(i.workspace_id, i.status) NOT IN ('done', 'cancelled')"
+		terminalStatusesParam = nextArg(terminalStatusKeys)
 	}
-	if creationWindowLimit != nil {
-		limitRef := nextArg(*creationWindowLimit)
-		whereClause = issueWindowPredicate("i", wsParam, limitRef) + " AND " + whereClause
-	}
-	if projectUserParam != "" {
-		whereClause = issueProjectVisibilityPredicateWithWorkspaceScope("i", wsParam, projectUserParam, includeWorkspaceOwned) + " AND " + whereClause
-	}
-
-	limitParam := nextArg(nil)
-	offsetParam := nextArg(nil)
 
 	// Stage one scans this workspace's issues once and retains only the narrow
 	// flags and sort fields needed to choose a page. Do not force this CTE to be
@@ -757,10 +736,33 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 		)
 	}
 
-	issueWhere := "i.workspace_id = " + wsParam
-	if terminalStatusesParam != "" {
-		issueWhere += fmt.Sprintf(" AND NOT (i.status = ANY(%s::text[]))", terminalStatusesParam)
+	// 2026-09-12 coder(lq): Apply private archive, entitlement, and task-access
+	// rules inside the upstream candidate CTE so hidden issues never participate
+	// in ranking or pagination.
+	issueWhereParts := []string{"i.workspace_id = " + wsParam}
+	archiveState := "active"
+	if len(archiveStates) > 0 && archiveStates[0] != "" {
+		archiveState = archiveStates[0]
 	}
+	issueWhereParts = appendIssueArchivePredicate(issueWhereParts, archiveState, "i")
+	if !includeClosed {
+		// 2026-09-12 coder(lq): Resolve custom terminal categories once before
+		// building the query while retaining the private visibility predicates.
+		issueWhereParts = append(issueWhereParts, fmt.Sprintf("NOT (i.status = ANY(%s::text[]))", terminalStatusesParam))
+	}
+	if creationWindowLimit != nil {
+		windowParam := nextArg(*creationWindowLimit)
+		issueWhereParts = append(issueWhereParts, issueWindowPredicate("i", wsParam, windowParam))
+	}
+	if projectUserParam != "" {
+		issueWhereParts = append(issueWhereParts, issueProjectVisibilityPredicateWithWorkspaceScope("i", wsParam, projectUserParam, includeWorkspaceOwned))
+	}
+	issueWhere := strings.Join(issueWhereParts, " AND ")
+
+	// 2026-09-12 coder(lq): Keep pagination placeholders last because SearchIssues
+	// fills these two positions after dynamic permission parameters are assembled.
+	limitParam := nextArg(nil)
+	offsetParam := nextArg(nil)
 	// PostgreSQL otherwise inlines scalar LATERAL subqueries and recomputes the
 	// LOWER expressions for every flag. The OFFSET 0 fences cache the normalized
 	// title and description per issue row without materializing the whole CTE.
@@ -971,16 +973,19 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 	SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
-		 i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
-		 i.revision, i.archived_at,
-		%s AS match_source,
-		%s AS matched_comment_content
-	FROM issue i
-	WHERE i.workspace_id = %s AND %s
-	ORDER BY %s, %s, %s, i.updated_at DESC
-	LIMIT %s OFFSET %s`,
-		matchSourceExpr,
-		commentSubquery,
+		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
+		i.revision, i.archived_at,
+		pc.match_source,
+		COALESCE(c.content, '') AS matched_comment_content
+	FROM page_candidates pc
+	JOIN issue i ON i.id = pc.issue_id AND i.workspace_id = %s
+	LEFT JOIN comment c ON c.id = pc.snippet_comment_id AND c.workspace_id = %s
+	ORDER BY pc.cancelled_rank, pc.relevance_rank, pc.status_rank, pc.updated_at DESC, pc.issue_id ASC`,
+		issueMatchesCTE,
+		commentMatchesCTE,
+		rankedCandidatesCTE,
+		pageCandidatesCTE,
+		wsParam,
 		wsParam,
 	)
 
@@ -1029,6 +1034,16 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 	queryNum, hasNum := parseQueryNumber(q)
+	var terminalStatusKeys []string
+	if !includeClosed {
+		resolvedKeys, err := h.terminalIssueStatusKeys(ctx, wsUUID)
+		if err != nil {
+			slog.Warn("expand terminal status categories failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to resolve status categories")
+			return
+		}
+		terminalStatusKeys = resolvedKeys
+	}
 	policy, windowEnabled := h.issueWindowPolicy(ctx, wsUUID)
 
 	var creationWindowLimit *int64
@@ -1043,7 +1058,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sqlQuery, args := buildSearchQueryWithWorkspaceScope(q, terms, queryNum, hasNum, includeClosed, creationWindowLimit, projectPermissionUserID, includeWorkspaceOwned, archiveState)
+	sqlQuery, args := buildSearchQueryWithWorkspaceScope(q, terms, queryNum, hasNum, includeClosed, terminalStatusKeys, creationWindowLimit, projectPermissionUserID, includeWorkspaceOwned, archiveState)
 	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
 	args[3] = wsUUID
 	args[len(args)-2] = limit
@@ -1487,6 +1502,15 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
+	}
+	if sortByStatus {
+		var err error
+		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
+		if err != nil {
+			slog.Warn("resolve status sort failed", append(logger.RequestAttrs(r), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to resolve sort")
+			return
+		}
 	}
 
 	if len(statusCategoriesFilter) > 0 {

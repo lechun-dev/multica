@@ -82,6 +82,12 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetIssueMetadataInWorkspace :one
+-- 2026-09-12 coder(lq): Reload only the metadata snapshot after a conditional
+-- mutation returns no rows, while keeping the lookup workspace-scoped.
+SELECT metadata, revision FROM issue
+WHERE id = $1 AND workspace_id = $2;
+
 -- name: ArchiveIssue :one
 UPDATE issue
 SET archived_at = now(),
@@ -594,7 +600,8 @@ UPDATE issue SET
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
-RETURNING *;
+  AND metadata -> sqlc.arg('key')::text IS DISTINCT FROM sqlc.arg('value')::jsonb
+RETURNING id, workspace_id, metadata, revision;
 
 -- name: DeleteIssueMetadataKey :one
 -- Atomically removes a single key from the issue's metadata JSONB.
@@ -605,7 +612,8 @@ UPDATE issue SET
     last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
-RETURNING *;
+  AND metadata ? sqlc.arg('key')::text
+RETURNING id, workspace_id, metadata, revision;
 
 -- name: MarkIssueFirstExecuted :one
 -- Flips first_executed_at from NULL to now() atomically. Returns the row if

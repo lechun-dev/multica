@@ -565,7 +565,7 @@ func isTopicIsolated(b ChatSessionBinding) bool {
 //
 // So we decline to send. The member can ask again, the answer is still in
 // Multica, and this is a one-time window: it is reachable only for
-// generations predating migration 460 that are recovered after deploy without
+// generations predating migration 502 that are recovered after deploy without
 // a new inbound turn, since every turn after deploy records a trigger before
 // its task is enqueued.
 //

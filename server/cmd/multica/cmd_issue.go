@@ -326,7 +326,7 @@ var issueRunsCmd = &cobra.Command{
 }
 
 var issueRunMessagesCmd = &cobra.Command{
-	Use:   "run-messages <task-id>",
+	Use:   "run-messages <run-id>",
 	Short: "List messages for an execution",
 	Args:  exactArgs(1),
 	RunE:  runIssueRunMessages,
@@ -350,9 +350,9 @@ var issueRerunCmd = &cobra.Command{
 }
 
 var issueCancelTaskCmd = &cobra.Command{
-	Use:   "cancel-task <task-id>",
-	Short: "Cancel a running or queued task (interrupts in-flight agent)",
-	Long: "Cancel a single task by its ID. Accepts the short ID prefix shown by `issue runs`. " +
+	Use:   "cancel-task <run-id>",
+	Short: "Cancel an in-progress or queued run (interrupts in-flight agent)",
+	Long: "Cancel a single run by its ID. Accepts the short ID prefix shown by `issue runs`. " +
 		"Use --issue to scope short-ID resolution to a specific issue when ambiguous. " +
 		"Triggers daemon-side interrupt of any in-flight agent so it stops emitting tool calls promptly.",
 	Args: exactArgs(1),
@@ -507,10 +507,13 @@ func init() {
 	issueListCmd.Flags().String("assignee-id", "", "Filter by assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueListCmd.Flags().String("project", "", "Filter by project ID")
 	issueListCmd.Flags().StringSlice("metadata", nil, "Filter by metadata key=value (repeatable; combined with AND). Value is JSON-parsed: 'true'/'false' → bool, numbers → number, otherwise string. Wrap as '\"42\"' to force a string when the value would otherwise sniff as a number.")
-	issueListCmd.Flags().Int("limit", 50, "Maximum number of issues to return in one page (the server caps a page at 100; use --offset to page through more)")
-	issueListCmd.Flags().Int("offset", 0, "Number of issues to skip (for pagination)")
-	issueListCmd.Flags().String("sort", "", "Sort column: position (default, manual board order), title, created_at, start_date, due_date, priority")
-	issueListCmd.Flags().String("direction", "", "Sort direction (asc or desc); requires --sort to be a non-position column (position is always ascending)")
+	issueListCmd.Flags().StringArray("property", nil, `Filter by custom property, written as "Name=Value" (repeatable, one value per flag). Name is a property name (case-insensitive) or its UUID. Value depends on the type: an option name or id for select and multi_select, true or false for checkbox, a member name, email, or id for actor types, and the value itself for text, url, number, and date (YYYY-MM-DD). Use __none__ to match issues where the property is unset; it works for every type, so an option or member actually named __none__ has to be given by id, as does a property whose name contains "=" or ends in <, > or ! (the >=, <=, and != spellings are reserved for comparison filters). Repeating a property matches ANY of its values; different properties must ALL match.`)
+	issueListCmd.Flags().Int("limit", 50, fmt.Sprintf("Page size, 1 to %d (the server returns at most %d issues per request; use --offset to page through more)", issueListMaxPageSize, issueListMaxPageSize))
+	issueListCmd.Flags().Int("offset", 0, "Number of issues to skip (for pagination; while --output json reports has_more, advance it by the number of issues in that same response)")
+	issueListCmd.Flags().String("sort", "", "Sort column: position (default, manual board order), title, created_at, start_date, due_date, priority, or property:<name-or-id> to sort by a custom property (select properties sort by option order)")
+	issueListCmd.Flags().String("direction", "", "Sort direction (asc or desc); requires --sort to be a non-position column or a property sort (position is always ascending)")
+	issueListCmd.Flags().String("fields", "", "JSON output only: comma-separated list of issue fields to include (e.g. id,title,status,priority). Filtering happens client-side after the full response is fetched, so this shrinks CLI output size and agent context cost, not network/server-side cost. Omit for the full issue object (default, unchanged). Valid fields: "+strings.Join(validIssueFields, ", "))
+	issueListCmd.Flags().Bool("resolve-properties", false, resolvePropertiesHelp)
 
 	// issue get
 	issueGetCmd.Flags().String("output", "json", "Output format: table or json")
@@ -599,18 +602,18 @@ func init() {
 	issueRerunCmd.Flags().String("output", "json", "Output format: table or json")
 	// issue cancel-task
 	issueCancelTaskCmd.Flags().String("output", "json", "Output format: table or json")
-	issueCancelTaskCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+	issueCancelTaskCmd.Flags().String("issue", "", "Issue ID/key to scope short run ID prefix resolution")
 	// issue run-messages
 	issueRunMessagesCmd.Flags().String("output", "json", "Output format: table or json")
 	issueRunMessagesCmd.Flags().Int("since", 0, "Only return messages after this sequence number")
-	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short run ID prefix resolution")
 
 	// issue comment add
 	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
 	issueCommentAddCmd.Flags().Bool("content-stdin", false, "Read comment content from stdin (preserves multi-line content verbatim)")
 	issueCommentAddCmd.Flags().String("content-file", "", "Read comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
 	issueCommentAddCmd.Flags().Bool("allow-external-file", false, "Allow --content-file / --attachment to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
-	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID to reply under. A comment-triggered agent task must reply under its trigger comment; omitting --parent to post a top-level comment is rejected")
+	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID to reply under. A comment-triggered agent run must reply under its trigger comment; omitting --parent to post a top-level comment is rejected")
 	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -702,8 +705,34 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		}
 		params.Set("metadata", filter)
 	}
+	// --property filtering and property:<ref> sorting both address definitions
+	// by name or UUID, so they share a single catalog fetch. An actor filter
+	// and --resolve-properties share one member request the same way.
+	const propertySortPrefix = "property:"
+	propertyFlags, _ := cmd.Flags().GetStringArray("property")
 	sortVal, _ := cmd.Flags().GetString("sort")
-	if sortVal != "" {
+	var properties []propertyDTO
+	var members memberDirectory
+	if len(propertyFlags) > 0 || strings.HasPrefix(sortVal, propertySortPrefix) {
+		var err error
+		if properties, err = fetchProperties(ctx, client); err != nil {
+			return err
+		}
+	}
+	if len(propertyFlags) > 0 {
+		filter, err := buildPropertiesFilterQueryParam(ctx, client, &members, properties, propertyFlags)
+		if err != nil {
+			return err
+		}
+		params.Set("properties", filter)
+	}
+	if strings.HasPrefix(sortVal, propertySortPrefix) {
+		property, err := resolveSortableProperty(properties, strings.TrimPrefix(sortVal, propertySortPrefix))
+		if err != nil {
+			return err
+		}
+		params.Set("sort", propertySortPrefix+property.ID)
+	} else if sortVal != "" {
 		valid := false
 		for _, c := range validIssueSortColumns {
 			if c == sortVal {
@@ -712,7 +741,7 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if !valid {
-			return fmt.Errorf("invalid --sort %q; valid values: %s", sortVal, strings.Join(validIssueSortColumns, ", "))
+			return fmt.Errorf("invalid --sort %q; valid values: %s, or property:<name-or-id> for a custom property", sortVal, strings.Join(validIssueSortColumns, ", "))
 		}
 		params.Set("sort", sortVal)
 	}
@@ -726,7 +755,7 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 		// than silently dropping the flag — a passed-but-ignored flag is a
 		// footgun, especially in scripts.
 		if sortVal == "" || sortVal == "position" {
-			return fmt.Errorf("--direction requires --sort to be one of %s; position (the default manual board order) is always ascending", strings.Join(directionalIssueSortColumns, ", "))
+			return fmt.Errorf("--direction requires --sort to be one of %s, or a property:<name-or-id> sort; position (the default manual board order) is always ascending", strings.Join(directionalIssueSortColumns, ", "))
 		}
 		params.Set("direction", d)
 	}

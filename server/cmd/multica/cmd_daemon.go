@@ -35,7 +35,7 @@ var daemonCmd = &cobra.Command{
 var daemonStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the local agent runtime daemon",
-	Long:  "Start the daemon process that polls for tasks and executes them using local agent CLIs (Claude, Codex).\nRuns in the background by default. Use --foreground to run in the current terminal.",
+	Long:  "Start the daemon process that polls for runs and executes them using local agent CLIs (Claude, Codex).\nRuns in the background by default. Use --foreground to run in the current terminal.",
 	RunE:  runDaemonStart,
 }
 
@@ -72,9 +72,9 @@ var daemonLogsCmd = &cobra.Command{
 
 var daemonDiskUsageCmd = &cobra.Command{
 	Use:   "disk-usage",
-	Short: "Show daemon workspace disk usage by task or workspace",
-	Long: "Walks the daemon's workspaces root and reports per-task or per-workspace disk usage.\n" +
-		"Default view is per-task, sorted by size descending. --by-workspace switches to a per-workspace summary;\n" +
+	Short: "Show daemon workspace disk usage by run or workspace",
+	Long: "Walks the daemon's workspaces root and reports per-run or per-workspace disk usage.\n" +
+		"Default view is per-run, sorted by size descending. --by-workspace switches to a per-workspace summary;\n" +
 		"--top N keeps only the largest N entries.\n\n" +
 		"By default only the current profile's root is scanned. --all-profiles aggregates across every workspace\n" +
 		"root — the default root plus each ~/.multica/profiles/* root, including the Desktop app's dedicated\n" +
@@ -100,7 +100,7 @@ func init() {
 	f.String("workspaces-root", "", "Base directory for task workspaces (env: MULTICA_WORKSPACES_ROOT)")
 	f.Duration("poll-interval", 0, "Task poll interval (env: MULTICA_DAEMON_POLL_INTERVAL)")
 	f.Duration("heartbeat-interval", 0, "Heartbeat interval (env: MULTICA_DAEMON_HEARTBEAT_INTERVAL)")
-	f.Duration("agent-timeout", 0, "Absolute per-task wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
+	f.Duration("agent-timeout", 0, "Absolute per-run wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
 	f.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
 	f.Duration("codex-handshake-timeout", 0, "Codex app-server startup RPC timeout (env: MULTICA_CODEX_HANDSHAKE_TIMEOUT)")
 	f.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
@@ -122,7 +122,7 @@ func init() {
 	rf.String("workspaces-root", "", "Base directory for task workspaces (env: MULTICA_WORKSPACES_ROOT)")
 	rf.Duration("poll-interval", 0, "Task poll interval (env: MULTICA_DAEMON_POLL_INTERVAL)")
 	rf.Duration("heartbeat-interval", 0, "Heartbeat interval (env: MULTICA_DAEMON_HEARTBEAT_INTERVAL)")
-	rf.Duration("agent-timeout", 0, "Absolute per-task wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
+	rf.Duration("agent-timeout", 0, "Absolute per-run wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
 	rf.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
 	rf.Duration("codex-handshake-timeout", 0, "Codex app-server startup RPC timeout (env: MULTICA_CODEX_HANDSHAKE_TIMEOUT)")
 	rf.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")

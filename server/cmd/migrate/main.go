@@ -61,6 +61,27 @@ var commentContentBigramIndex = usableIndexRequirement{
 	Extension:     "pg_bigm",
 }
 
+// extensionOperatorClass names an operator class a migration writes literally
+// into a CREATE INDEX, together with the extension that must own it. A
+// migration cannot both build concurrently and swallow a missing extension in a
+// DO ... EXCEPTION block, so the ones that need an optional opclass are gated on
+// this instead.
+type extensionOperatorClass struct {
+	AccessMethod  string
+	OperatorClass string
+	Extension     string
+}
+
+// pgBigmOperatorClass gates migrations that build optional pg_bigm indexes.
+// pg_bigm ships with neither core Postgres nor the pgvector image CI and
+// self-hosted deployments run, so those migrations must remain safe when the
+// operator class is unavailable.
+var pgBigmOperatorClass = extensionOperatorClass{
+	AccessMethod:  "gin",
+	OperatorClass: "gin_bigm_ops",
+	Extension:     "pg_bigm",
+}
+
 // preMigrationHooks wires migration version → hook. The version key is
 // the file basename without the `.up.sql` suffix, matching what
 // `migrations.ExtractVersion` returns.
@@ -294,6 +315,13 @@ var concurrentIndexCleanups = map[string]string{
 	"482_dingtalk_personal_message_idempotency_unique":          "dingtalk_personal_message_idempotency_uniq",
 	"483_dingtalk_personal_message_claim_index":                 "idx_dingtalk_personal_message_claim",
 	"486_dingtalk_personal_message_server_claim_index":          "idx_dingtalk_personal_message_server_claim",
+	// 2026-09-12 coder(lq): Upstream migrations 446-467 were shifted after the released private migration stream.
+	"487_issue_properties_bigm_index":                     "idx_issue_properties_bigm",
+	"493_agent_task_pending_thread_unique":                "idx_one_pending_task_per_issue_agent_thread",
+	"500_chat_message_assistant_task_index":               "idx_chat_message_assistant_task",
+	"501_agent_task_queue_autopilot_run_created_at_index": "idx_agent_task_queue_autopilot_run_created_at",
+	"506_agent_task_queue_chat_with_session_index":        "idx_agent_task_queue_chat_with_session_created_at",
+	"507_activity_log_member_assignee_frequency_index":    "idx_activity_log_member_assignee_frequency",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -317,6 +345,13 @@ var concurrentDownIndexCleanups = map[string]string{
 	"375_drop_issue_last_activity_index":                    "idx_issue_workspace_last_activity",
 	"391_drop_agent_task_queue_dispatched_prepare_index":    "idx_agent_task_queue_dispatched_prepare",
 	"437_drop_agent_runtime_last_seen_at_index":             "idx_agent_runtime_last_seen_at",
+	// 2026-09-12 coder(lq): Keep rollback cleanup aligned with the shifted upstream migrations.
+	"491_drop_comment_delegated_failure_pending_index": "idx_comment_delegated_failure_pending",
+	"494_drop_pending_issue_agent_unique":              "idx_one_pending_task_per_issue_agent_v2",
+	"495_drop_comment_content_bigm_index":              "idx_comment_content_bigm",
+	"496_drop_comment_content_trgm_index":              "idx_comment_content_trgm",
+	"504_drop_issue_description_bigm_index":            "idx_issue_description_bigm",
+	"505_drop_issue_description_trgm_index":            "idx_issue_description_trgm",
 }
 
 var preMigrationHooks = func() map[string]preMigrationHook {
@@ -391,15 +426,28 @@ func refuseChannelChatRouteHistoryRollbackWith(ctx context.Context, query rowQue
 
 var upMigrationConditions = map[string]migrationCondition{
 	// Current search no longer consumes an issue-description GIN. Fresh installs
-	// should not build the historical fallback only to retire it at migration 464.
-	"139_issue_description_trgm_index": skipMigration("issue description search indexes are retired by migration 464"),
+	// should not build the historical fallback only to retire it at migration 505.
+	"139_issue_description_trgm_index": skipMigration("issue description search indexes are retired by migration 505"),
 	// Current search no longer consumes a comment-content GIN. Fresh installs
-	// should not build the historical fallback only to retire it at migration 455.
-	"140_comment_content_trgm_index": skipMigration("comment content search indexes are retired by migration 455"),
+	// should not build the historical fallback only to retire it at migration 496.
+	"140_comment_content_trgm_index": skipMigration("comment content search indexes are retired by migration 496"),
 	// Existing pg_bigm deployments already have both indexes. Remove the
 	// fallback only after proving the preferred index has the exact usable shape;
 	// pg_bigm-less self-hosted databases keep trgm and record 371 as a no-op.
 	"371_comment_content_search_index_strategy": whenIndexUsable(commentContentBigramIndex),
+	// The properties prefilter index is an optimization, not a correctness
+	// requirement. Skip it safely when pg_bigm is unavailable.
+	"487_issue_properties_bigm_index": whenOperatorClassAvailable(pgBigmOperatorClass),
+}
+
+// Migrations 495 and 496 restore the mutually exclusive comment search index
+// selected before its retirement. Migration 504 independently restores the
+// optional issue-description bigram; migration 505's trigram rollback is
+// unconditional.
+var downMigrationConditions = map[string]migrationCondition{
+	"495_drop_comment_content_bigm_index":   whenOperatorClassAvailable(pgBigmOperatorClass),
+	"496_drop_comment_content_trgm_index":   whenOperatorClassUnavailable(pgBigmOperatorClass),
+	"504_drop_issue_description_bigm_index": whenOperatorClassAvailable(pgBigmOperatorClass),
 }
 
 func hooksForDirection(direction string) map[string]preMigrationHook {
@@ -466,6 +514,53 @@ func whenIndexNotUsable(requirement usableIndexRequirement) migrationCondition {
 		}
 		if usable {
 			return false, fmt.Sprintf("preferred index %s is ready", requirement.IndexRegclass), nil
+		}
+		return true, "", nil
+	}
+}
+
+// whenOperatorClassAvailable lets a migration's SQL run only where the operator
+// class it names is installed, owned by the expected extension, and visible on
+// the search_path the migration itself will resolve the unqualified name
+// against — the condition runs on the same pinned connection as the SQL.
+func whenOperatorClassAvailable(opclass extensionOperatorClass) migrationCondition {
+	return func(ctx context.Context, conn *pgxpool.Conn) (bool, string, error) {
+		var available bool
+		if err := conn.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_opclass opc
+				JOIN pg_am am ON am.oid = opc.opcmethod
+				JOIN pg_depend dep
+				  ON dep.classid = 'pg_opclass'::regclass
+				 AND dep.objid = opc.oid
+				 AND dep.refclassid = 'pg_extension'::regclass
+				 AND dep.deptype = 'e'
+				JOIN pg_extension ext ON ext.oid = dep.refobjid
+				WHERE opc.opcname = $1
+				  AND am.amname = $2
+				  AND ext.extname = $3
+				  AND pg_opclass_is_visible(opc.oid)
+			)
+		`, opclass.OperatorClass, opclass.AccessMethod, opclass.Extension).Scan(&available); err != nil {
+			return false, "", fmt.Errorf("inspect operator class %q: %w", opclass.OperatorClass, err)
+		}
+		if !available {
+			return false, fmt.Sprintf("operator class %s (%s) is not installed", opclass.OperatorClass, opclass.Extension), nil
+		}
+		return true, "", nil
+	}
+}
+
+func whenOperatorClassUnavailable(opclass extensionOperatorClass) migrationCondition {
+	availableCondition := whenOperatorClassAvailable(opclass)
+	return func(ctx context.Context, conn *pgxpool.Conn) (bool, string, error) {
+		available, _, err := availableCondition(ctx, conn)
+		if err != nil {
+			return false, "", err
+		}
+		if available {
+			return false, fmt.Sprintf("operator class %s (%s) is installed", opclass.OperatorClass, opclass.Extension), nil
 		}
 		return true, "", nil
 	}

@@ -1,7 +1,7 @@
--- MUL-7267: give legacy autopilot triggers the dispatch principal migration 449
+-- MUL-7267: give legacy autopilot triggers the dispatch principal migration 490
 -- could not recover.
 --
--- Migration 449 backfilled autopilot_trigger.created_by from published_by and
+-- Migration 490 backfilled autopilot_trigger.created_by from published_by and
 -- left the row NULL when there was no published_by either: every trigger created
 -- before migration 189 that nobody substantively edited since. A schedule/webhook
 -- dispatch acts as created_by and fails closed without one (MUL-6951), so since
@@ -59,7 +59,7 @@ WHERE a.id = t.autopilot_id
 -- That now holds only for triggers created since MUL-6951, and the text is
 -- generated into pkg/db/generated/models.go, so correct it here.
 COMMENT ON COLUMN autopilot_trigger.created_by_type IS
-    'Actor type of created_by_id: member | agent. Only ''member'' yields a run principal. NULL only for a legacy trigger that neither backfill (migrations 449, 467) could fill.';
+    'Actor type of created_by_id: member | agent. Only ''member'' yields a run principal. NULL only for a legacy trigger that neither backfill (migrations 490, 508) could fill.';
 
 COMMENT ON COLUMN autopilot_trigger.created_by_id IS
-    'The member a schedule/webhook run fires AS: dispatch admission, the task''s originator/accountable, and every delegated run all resolve to this one human (MUL-6951). For a trigger created since MUL-6951 it is the creator, written at creation. For a legacy trigger it is a best-effort principal inferred once by backfill and frozen (the last publisher, migration 449, else the autopilot''s creator, migration 467), not proof of who created it. Ordinary edits never rewrite it, so editing the trigger cannot re-authorize its runs as the editor. NULL means no principal and the dispatch fails closed. No FK; workspace membership is re-validated on every dispatch.';
+    'The member a schedule/webhook run fires AS: dispatch admission, the task''s originator/accountable, and every delegated run all resolve to this one human (MUL-6951). For a trigger created since MUL-6951 it is the creator, written at creation. For a legacy trigger it is a best-effort principal inferred once by backfill and frozen (the last publisher, migration 490, else the autopilot''s creator, migration 508), not proof of who created it. Ordinary edits never rewrite it, so editing the trigger cannot re-authorize its runs as the editor. NULL means no principal and the dispatch fails closed. No FK; workspace membership is re-validated on every dispatch.';

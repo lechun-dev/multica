@@ -1451,11 +1451,9 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
-		return
-	}
-
-	userID, ok := requireUserID(w, r)
+	// 2026-09-12 coder(lq): Keep the private visibility guard while using the
+	// acting member returned by the upstream write gate for audit attribution.
+	actor, ok := h.requireAutopilotWrite(w, r, ap, workspaceID)
 	if !ok {
 		return
 	}
@@ -2148,7 +2146,10 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if !h.requireAutopilotWrite(w, r, ap, workspaceID) {
+	// 2026-09-12 coder(lq): Preserve private parent visibility and stamp the
+	// same acting member that passed the merged write authorization.
+	actor, ok := h.requireAutopilotWrite(w, r, ap, workspaceID)
+	if !ok {
 		return
 	}
 
@@ -2459,16 +2460,6 @@ func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "autopilot is not active")
 		return
 	}
-
-	// A manual "run now" is a direct human action, so the run is attributed
-	// direct_human to the triggering member (MUL-4302 §4). Resolve the actor the
-	// same way assign/promote does; only a member actor is a human — an agent
-	// triggering via A2A yields an invalid actor and falls back to rule_owner.
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if len(idempotencyKey) > 255 {

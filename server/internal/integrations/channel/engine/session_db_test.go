@@ -1347,7 +1347,7 @@ func TestChannelTaskDeliveryFreezesThreadPerGeneration(t *testing.T) {
 }
 
 // TestChannelTaskDeliveryRecoversThreadForIsolatedBinding covers the shape
-// migration 460 leaves behind on every thread-isolated channel: a generation
+// migration 502 leaves behind on every thread-isolated channel: a generation
 // with no trigger at all, recovered after deploy.
 //
 // The trigger is legitimately unknown there. The THREAD is not: a Slack

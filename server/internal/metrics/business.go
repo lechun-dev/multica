@@ -80,6 +80,9 @@ type BusinessMetrics struct {
 	autopilotQuotaDecision            *prometheus.CounterVec
 	issueWindowDecision               *prometheus.CounterVec
 	agentRuntimeLookup                *prometheus.CounterVec
+	// 2026-09-12 coder(lq): Preserve upstream issue metadata instrumentation alongside private metrics.
+	issueMetadataMutation         *prometheus.CounterVec
+	issueMetadataMutationDuration *prometheus.HistogramVec
 
 	activeMu    sync.Mutex
 	activeTasks map[string]activeTaskLabels

@@ -1,0 +1,4 @@
+-- 2026-09-12 coder(lq): Upstream migration 447 is renumbered to 488 to preserve the released private migration history.
+-- No-op: 488 refreshes planner statistics, which are not schema. Discarding
+-- them would only make the planner worse, and 487's rollback drops the
+-- expression whose statistics this generated.

@@ -26,7 +26,7 @@ type agentMetricsCacheStore interface {
 }
 
 type redisAgentMetricsCacheStore struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
 func (s redisAgentMetricsCacheStore) Get(ctx context.Context, key string) (string, error) {
@@ -48,7 +48,9 @@ type AgentMetricsCache struct {
 	loads singleflight.Group
 }
 
-func NewAgentMetricsCache(rdb *redis.Client) *AgentMetricsCache {
+// 2026-09-12 coder(lq): Accept UniversalClient so the private metrics cache
+// follows the merged standalone/cluster Redis configuration.
+func NewAgentMetricsCache(rdb redis.UniversalClient) *AgentMetricsCache {
 	if rdb == nil {
 		return nil
 	}

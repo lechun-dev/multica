@@ -5149,7 +5149,27 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ListTasksByIssue returns all tasks (any status) for an issue — used for execution history.
+// familyActiveRunCap bounds a scope=family coordination read. The handler asks
+// for one extra row so callers can distinguish a complete result from a
+// truncated one.
+const familyActiveRunCap = 20
+
+// ActiveRunSummary contains only the fields needed to coordinate in-flight
+// work across related issues.
+type ActiveRunSummary struct {
+	TaskID          string  `json:"task_id"`
+	IssueID         string  `json:"issue_id"`
+	IssueIdentifier string  `json:"issue_identifier"`
+	IssueTitle      string  `json:"issue_title"`
+	AgentID         string  `json:"agent_id"`
+	Status          string  `json:"status"`
+	CreatedAt       string  `json:"created_at"`
+	StartedAt       *string `json:"started_at,omitempty"`
+}
+
+// ListTasksByIssue returns issue execution history by default. active=true
+// restricts it to in-flight runs; scope=family returns in-flight runs for the
+// issue family.
 func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -5157,13 +5177,74 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.Queries.ListTasksByIssue(r.Context(), issue.ID)
+	// 2026-09-12 coder(lq): Merge upstream run-scope reads without bypassing the
+	// private loadIssueForUser permission gate above.
+	scope := r.URL.Query().Get("scope")
+	if scope != "" && scope != "issue" && scope != "family" {
+		writeError(w, http.StatusBadRequest, "scope must be 'issue' or 'family'")
+		return
+	}
+	activeOnly := false
+	if activeStr := r.URL.Query().Get("active"); activeStr != "" {
+		switch activeStr {
+		case "true":
+			activeOnly = true
+		case "false":
+		default:
+			writeError(w, http.StatusBadRequest, "invalid active parameter; expected boolean")
+			return
+		}
+	}
+
+	workspaceID := uuidToString(issue.WorkspaceID)
+	if scope == "family" {
+		root := issue.ID
+		if issue.ParentIssueID.Valid {
+			root = issue.ParentIssueID
+		}
+		rows, err := h.Queries.ListActiveTasksByIssueFamily(r.Context(), db.ListActiveTasksByIssueFamilyParams{
+			WorkspaceID: issue.WorkspaceID,
+			RootIssueID: root,
+			RowLimit:    familyActiveRunCap + 1,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list tasks")
+			return
+		}
+		if len(rows) > familyActiveRunCap {
+			rows = rows[:familyActiveRunCap]
+			w.Header().Set(HeaderActiveRunsTruncated, "true")
+		}
+		summaries := make([]ActiveRunSummary, len(rows))
+		for i, row := range rows {
+			summaries[i] = ActiveRunSummary{
+				TaskID:          uuidToString(row.TaskID),
+				IssueID:         uuidToString(row.IssueID),
+				IssueIdentifier: service.IssueIdentifier(row.IssuePrefix, row.IssueNumber),
+				IssueTitle:      row.IssueTitle,
+				AgentID:         uuidToString(row.AgentID),
+				Status:          row.Status,
+				CreatedAt:       timestampToString(row.CreatedAt),
+				StartedAt:       timestampToPtr(row.StartedAt),
+			}
+		}
+		writeJSON(w, http.StatusOK, summaries)
+		return
+	}
+
+	var tasks []db.AgentTaskQueue
+	var err error
+	if activeOnly {
+		tasks, err = h.Queries.ListActiveTasksByIssue(r.Context(), issue.ID)
+	} else {
+		tasks, err = h.Queries.ListTasksByIssue(r.Context(), issue.ID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list tasks")
 		return
 	}
 
-	workspaceID := uuidToString(issue.WorkspaceID)
+	tasks = visibleTaskHistory(tasks)
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
 		resp[i] = taskToResponse(t, workspaceID)
@@ -5172,7 +5253,9 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	// issue-facing surface must resolve initiator/originator names (departed-safe,
 	// one batch) — otherwise the badge falls back to "someone" on issue detail.
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
-	h.hydrateTaskUsage(r.Context(), issue.ID, resp)
+	if !activeOnly {
+		h.hydrateTaskUsage(r.Context(), issue.ID, resp)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
