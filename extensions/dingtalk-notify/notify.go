@@ -269,15 +269,7 @@ func FormatPersonalMentionText(event MentionCreated) string {
 	if text == "" {
 		text = "在任务评论中提到了你"
 	}
-	sections := make([]string, 0, 4)
-	if event.Actor.Kind == "agent" {
-		agent := strings.TrimSpace(event.Actor.Name)
-		if agent == "" {
-			agent = "MissionOS Agent"
-		}
-		sections = append(sections, fmt.Sprintf("**Agent「%s」提到了你：**", escapeMarkdown(agent)))
-	}
-	sections = append(sections, boldPersonalMentionText(text))
+	sections := []string{boldPersonalMentionText(text)}
 	footer := ""
 	if sourceURL := strings.TrimSpace(event.SourceURL); sourceURL != "" {
 		footer = "[打开任务并回复](" + sourceURL + ")"
