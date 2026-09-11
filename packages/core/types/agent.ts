@@ -275,6 +275,14 @@ export interface TaskAttribution {
   rerun_of_task_id?: string;
 }
 
+/** Point-in-time identity of the actor that cancelled a run. */
+export interface TaskCancellationActor {
+  /** Open wire value; current servers emit member, agent, or system. */
+  type: string;
+  id?: string;
+  name?: string;
+}
+
 export interface AgentTask {
   id: string;
   agent_id: string;
@@ -312,6 +320,10 @@ export interface AgentTask {
   // coarse values; `string & {}` admits the rest without collapsing the
   // hints.
   failure_reason?: TaskFailureReason | (string & {}) | "";
+  /** The input comment was edited or deleted, invalidating this run. */
+  cancelled_by_comment_change?: boolean;
+  /** Present on cancellations recorded by a backend with actor provenance. */
+  cancelled_by?: TaskCancellationActor;
   created_at: string;
   /** Non-empty when the task was spawned from a chat session. */
   chat_session_id?: string;
@@ -414,8 +426,8 @@ export interface AgentTask {
   attribution?: TaskAttribution;
   /**
    * This run's own token consumption, one entry per (provider, model) it used.
-   * Present on the issue execution-log endpoint only; the daemon claim path
-   * omits it.
+   * Present on issue execution logs and explicit agent-history accounting
+   * requests; normal UI history and daemon claims omit it.
    *
    * `undefined` (old backend, or a surface that doesn't hydrate it) and `[]`
    * (backend hydrated, this run has no recorded usage) both mean "no number to
@@ -904,6 +916,11 @@ export interface IssueUsageSummary {
   uncosted_output_tokens?: number;
   uncosted_cache_read_tokens?: number;
   uncosted_cache_write_tokens?: number;
+  // Coverage fields are optional for compatibility with older backends.
+  // task_count remains the legacy count of runs represented by usage rows.
+  terminal_task_count?: number;
+  metered_task_count?: number;
+  unreported_task_count?: number;
   task_count: number;
 }
 
@@ -1026,6 +1043,10 @@ export interface DashboardAgentRunTime {
   agent_id: string;
   total_seconds: number;
   task_count: number;
+  // Optional for compatibility with backends predating usage-coverage
+  // reporting. Consumers can still identify the fully-unreported case when
+  // this is absent by checking whether the agent has any usage rows.
+  metered_task_count?: number;
   failed_count: number;
   // Runs the user stopped mid-flight. Disjoint from `failed_count`, and
   // both are subsets of `task_count` — the succeeded count is the

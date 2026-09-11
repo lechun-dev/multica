@@ -262,6 +262,7 @@ Daemon behavior is configured via flags or environment variables:
 | Codex semantic inactivity timeout | `--codex-semantic-inactivity-timeout` | `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` | same as the idle watchdog (Codex's timer is not tool-aware, so it tracks the larger of the idle / tool budgets) |
 | Codex first-turn no-progress timeout | — | `MULTICA_CODEX_FIRST_TURN_TIMEOUT` | `0` (keeps the built-in `60s` ceiling) |
 | Codex handshake timeout | `--codex-handshake-timeout` | `MULTICA_CODEX_HANDSHAKE_TIMEOUT` | `30s`; `thread/start` and `thread/resume`: `60s` (an explicit value overrides both budgets globally) |
+| Codex turn-interrupt timeout | — | `MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT` | `2s` (bounded grace period for `turn/interrupt` acknowledgement and `turn/completed`; tune from the logged interrupt latency on unusually slow hosts) |
 | OpenCode idle watchdog | — | `MULTICA_OPENCODE_IDLE_WATCHDOG` | `10m` (`0` falls back to the generic idle watchdog; cannot extend it) |
 | Max concurrent tasks | `--max-concurrent-tasks` | `MULTICA_DAEMON_MAX_CONCURRENT_TASKS` | `20` |
 | Daemon ID | `--daemon-id` | `MULTICA_DAEMON_ID` | hostname |
@@ -510,11 +511,17 @@ multica issue list --full-id
 multica issue list --limit 20 --output json
 multica issue list --status todo --sort position       # board order (the default)
 multica issue list --sort created_at --direction desc  # newest first
+multica issue list --output json --fields=id,title,status,priority  # narrow the JSON payload
+multica issue list --output json --resolve-properties  # property names beside the ids
 ```
 
 Table output shows a routable issue `KEY` such as `MUL-123`; copy that key into follow-up commands like `issue get`, `issue comment list`, `issue status`, or `--parent`. Add `--full-id` when you need canonical UUIDs. Available filters: `--status`, `--priority`, `--assignee` / `--assignee-id`, `--project`, `--metadata`, `--limit`. Use `--assignee-id <uuid>` for unambiguous filtering when names overlap.
 
 Results come back in board order (`position`, ascending) by default. Pass `--sort` to change the column (`position`, `title`, `created_at`, `start_date`, `due_date`, `priority`) and `--direction asc|desc` to flip the order. `position` is always ascending (it is the manual drag order), so `--direction` is rejected when `--sort` is `position` or omitted — use it only with `title`, `created_at`, `start_date`, `due_date`, or `priority`.
+
+One call returns one page. `--limit` is the page size, 1 to 100 (the server returns at most 100 issues per request), and `--offset` is how many issues to skip. A limit outside 1 to 100 or a negative offset is rejected rather than quietly clamped. In table mode a line on stderr says when you are looking at a page of a larger set (`Showing 1-50 of 2706 issues. Next page: --offset 50`). It prints whenever the JSON `has_more` described below would be true or `--offset` is above zero, and stays silent otherwise. The `of N` is dropped when the server's count cannot be trusted (`Showing issues 1-100. Next page: --offset 100`), for the reasons below.
+
+With `--output json` the envelope carries `total`, `limit`, `offset` and `has_more`. `limit` and `offset` echo the request, so `limit` holds steady across a walk and `offset` is the one you passed. The number of issues in this page is `issues | length`, and that is what to advance `--offset` by: it equals `limit` on a full page and stays right on any page that comes back shorter. An empty page always reports `has_more: false`. `total` cannot end a walk on its own: when the server's count query fails it reports the size of the page it just returned, and a newer backend may drop the field. So a full page reports `has_more: true` whenever `total` is missing or no larger than the page itself. That rule means a list that fills exactly one page costs one extra request that comes back empty; the alternative is a walk that ends one page in whenever the count is unhealthy. To walk a whole list, sort by `created_at` (`--sort created_at --direction asc`): the default `position` order is re-ranked by board drags and status changes, so pages can shift under a walk. Sorting by `created_at` keeps them still, but no offset walk is a consistent snapshot while others are writing.
 
 Use `--metadata key=value` (repeatable; combined with AND) to filter by per-issue metadata. The value is JSON-parsed: `true`/`false` become bool, numbers become numbers, anything else is a string. Wrap as `'"42"'` to force a string when the value would otherwise sniff as a number:
 
@@ -528,6 +535,7 @@ multica issue list --metadata pr_number=482 --metadata is_blocked=true
 ```bash
 multica issue get <id>
 multica issue get <id> --output json
+multica issue get <id> --resolve-properties   # property names beside the ids, as in issue list
 ```
 
 ### Create Issue
@@ -560,6 +568,8 @@ multica issue reorder <id> --after  <other>   # directly below another issue in 
 ```
 
 Pick exactly one of `--top`, `--bottom`, `--before`, or `--after`. Reorder stays inside the issue's current column, so `--before` / `--after` must name an issue in that same column. To move an issue to a different column, change its status first with `issue status`, then reorder within the new column.
+
+Reorder reads the project-scoped column before computing the new position. With older servers that omit the total or substitute the page length after a failed count, it continues to an empty page instead of trusting that count. This may cost one extra request. A failed page request, malformed issue, or repeated issue aborts the operation before a position is written. These checks do not provide a consistent snapshot across concurrent edits.
 
 ### Assign Issue
 
@@ -880,6 +890,19 @@ multica autopilot delete <id>
 ```bash
 multica autopilot trigger <id>            # Fires the autopilot once, returns the run
 ```
+
+The command exits non-zero unless the run actually started (`issue_created` or
+`running`). A `skipped` run — admission refused, runtime offline, quota
+exhausted, a duplicate already in flight — dispatched nothing; its
+`failure_reason` and `reason_code` are printed to stderr, and `--output json`
+still writes the full run to stdout first.
+
+Run as an agent (inside a task, or over A2A), the trigger is authorized as the
+human that run acts for, not as the owner of the machine it executes on. That
+human needs exactly the write access they would need to trigger it themselves —
+and it is the only access checked: the machine's owner needs no grant on the
+autopilot, only workspace membership. A run carrying no originator cannot
+trigger at all, and says so rather than failing generically.
 
 ### Run History
 

@@ -45,7 +45,7 @@ describe("SourceContextPreviewCard", () => {
     expect(screen.getByText("Alice").closest("ol")?.parentElement).toHaveClass("space-y-8");
     expect(screen.getByText("Alice").closest('[data-slot="source-context-content"]')).toBeInTheDocument();
     expect(screen.getByText("Source comment")).toHaveClass(
-      "rounded",
+      "rounded-xs",
       "bg-info/10",
       "px-1.5",
       "py-0.5",

@@ -26,6 +26,7 @@ import type {
   CreateProjectRequest,
   CreateProjectResourceRequest,
   InboxItem,
+  InboxWorkspaceUnread,
   Issue,
   IssueLabelsResponse,
   Label,
@@ -87,6 +88,7 @@ import {
   EMPTY_CHAT_SESSION_LIST,
   EMPTY_COMMENT,
   EMPTY_INBOX_LIST,
+  EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_ISSUE_FALLBACK,
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_LIST_PROJECT_RESOURCES_RESPONSE,
@@ -102,6 +104,7 @@ import {
   EMPTY_USER,
   EMPTY_WORKSPACE_LIST,
   InboxListSchema,
+  InboxUnreadSummarySchema,
   NotificationPreferenceResponseSchema,
   ListLabelsResponseSchema,
   ListProjectResourcesResponseSchema,
@@ -452,6 +455,25 @@ class ApiClient {
     return parseWithFallback(raw, InboxListSchema, EMPTY_INBOX_LIST, {
       endpoint: "listInbox",
     });
+  }
+
+  /**
+   * Cross-workspace unread inbox counts, one entry per workspace with unread
+   * items. Backs the inbox tab badge — see lib/unread-counts.ts for why the
+   * badge reads this instead of counting `listInbox()` locally.
+   */
+  async getInboxUnreadSummary(opts?: {
+    signal?: AbortSignal;
+  }): Promise<InboxWorkspaceUnread[]> {
+    const raw = await this.fetch<unknown>("/api/inbox/unread-summary", {
+      signal: opts?.signal,
+    });
+    return parseWithFallback(
+      raw,
+      InboxUnreadSummarySchema,
+      EMPTY_INBOX_UNREAD_SUMMARY,
+      { endpoint: "getInboxUnreadSummary" },
+    );
   }
 
   async markInboxRead(id: string): Promise<InboxItem> {

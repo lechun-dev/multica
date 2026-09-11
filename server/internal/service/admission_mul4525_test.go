@@ -93,9 +93,9 @@ func TestRerunIssueBlockedBeforeMutationWhenInvokeDenied(t *testing.T) {
 }
 
 // TestAutopilotDispatchAdmitsClickerNotCreator is the acceptance test for
-// MUL-4525 §3: a MANUAL "run now" admits on the CURRENT clicker's invoke
-// permission (not the autopilot creator's), while automation (no human actor)
-// still falls back to the creator gate. The two must not fork.
+// MUL-4525 §3: a MANUAL "run now" admits on the invoke permission of the human
+// who ordered it (not the autopilot creator's), while a dispatch that resolves
+// no principal at all is refused. The two must not fork.
 func TestAutopilotDispatchAdmitsClickerNotCreator(t *testing.T) {
 	pool := newResolveOriginatorPool(t)
 	ctx := context.Background()

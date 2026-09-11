@@ -585,30 +585,24 @@ GROUP BY parent_issue_id;
 -- name: SetIssueMetadataKey :one
 -- Atomically sets a single key in the issue's metadata JSONB. The
 -- workspace_id filter is the authorization gate — handler resolves the
--- issue first so this is also the tenant check.
+-- issue first so this is also the tenant check. A no-op, a missing issue, or
+-- a workspace mismatch returns no rows; callers that must distinguish those
+-- cases need a separate workspace-scoped read.
 UPDATE issue SET
     metadata = jsonb_set(metadata, ARRAY[sqlc.arg('key')::text], sqlc.arg('value')::jsonb),
-    revision = revision + CASE WHEN metadata -> sqlc.arg('key')::text IS DISTINCT FROM sqlc.arg('value')::jsonb THEN 1 ELSE 0 END,
-    last_activity_at = CASE
-        WHEN metadata -> sqlc.arg('key')::text IS DISTINCT FROM sqlc.arg('value')::jsonb
-        THEN GREATEST(COALESCE(last_activity_at, updated_at), now())
-        ELSE last_activity_at
-    END,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
 RETURNING *;
 
 -- name: DeleteIssueMetadataKey :one
 -- Atomically removes a single key from the issue's metadata JSONB.
--- Deleting a missing key is a no-op (still returns the row).
+-- Deleting a missing key is a no-op (returns no rows).
 UPDATE issue SET
     metadata = metadata - sqlc.arg('key')::text,
-    revision = revision + CASE WHEN metadata ? sqlc.arg('key')::text THEN 1 ELSE 0 END,
-    last_activity_at = CASE
-        WHEN metadata ? sqlc.arg('key')::text
-        THEN GREATEST(COALESCE(last_activity_at, updated_at), now())
-        ELSE last_activity_at
-    END,
+    revision = revision + 1,
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now()),
     updated_at = now()
 WHERE id = sqlc.arg('id') AND workspace_id = sqlc.arg('workspace_id') AND archived_at IS NULL
 RETURNING *;

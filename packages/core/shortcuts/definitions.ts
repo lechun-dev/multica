@@ -95,15 +95,8 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   // to keep working while the caret sits in the chat composer itself.
   { id: "toggleChat", category: "general", defaultShortcut: primary("J"), allowInEditable: true },
   { id: "findInIssue", category: "general", defaultShortcut: primary("F"), allowInEditable: true },
-  // Mod+Shift+O mirrors "go to symbol in file" in code editors: jump to a
-  // section of the document you already have open, as opposed to Mod+F, which
-  // searches its text. `allowInEditable` because reaching another thread while
-  // drafting a comment is the common case, not the exception.
-  //
-  // Known gap: Chrome on Windows/Linux binds Ctrl+Shift+O to its bookmark
-  // manager, so on those web builds the default never reaches the page. It is
-  // recordable rather than reserved because the desktop app does receive it,
-  // and Settings → Keyboard shortcuts lets affected users rebind.
+  // 2026-09-12 coder(lq): Keep the task thread navigator available while
+  // drafting a comment; desktop receives this chord and web users can rebind it.
   {
     id: "openThreadNav",
     category: "general",

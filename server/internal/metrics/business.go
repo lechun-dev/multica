@@ -311,6 +311,14 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Name:      "lookup_total",
 			Help:      "Total agent_runtime single-row lookups by call-site source and result.",
 		}, metricLabels("multica_agent_runtime_lookup_total")),
+		issueMetadataMutation: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "issue_metadata", Name: "mutation_total",
+			Help: "Total issue metadata mutation attempts by operation and bounded result.",
+		}, metricLabels("multica_issue_metadata_mutation_total")),
+		issueMetadataMutationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: "multica", Subsystem: "issue_metadata", Name: "mutation_duration_seconds",
+			Help: "Duration of issue metadata database work by operation and bounded result, including fallback reads after conditional no-ops.", Buckets: chatClaimResumeQueryDurationBuckets,
+		}, metricLabels("multica_issue_metadata_mutation_duration_seconds")),
 		activeTasks: map[string]activeTaskLabels{},
 		events:      newBusinessEventMetrics(),
 	}
@@ -362,7 +370,31 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.autopilotQuotaDecision,
 		m.issueWindowDecision,
 		m.agentRuntimeLookup,
+		m.issueMetadataMutation,
+		m.issueMetadataMutationDuration,
 	}, m.events.collectors()...)
+}
+
+// RecordIssueMetadataMutation records the UPDATE and, for a no-row result, its
+// fallback read. HTTP latency and pool acquisition pressure are exposed by the
+// existing HTTP and DB pool collectors, while these labels distinguish useful
+// writes from no-op load.
+func (m *BusinessMetrics) RecordIssueMetadataMutation(op, result string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	switch op {
+	case "set", "delete":
+	default:
+		op = "other"
+	}
+	switch result {
+	case "changed", "noop", "not_found", "error":
+	default:
+		result = "error"
+	}
+	m.issueMetadataMutation.WithLabelValues(op, result).Inc()
+	m.issueMetadataMutationDuration.WithLabelValues(op, result).Observe(duration.Seconds())
 }
 
 func (m *BusinessMetrics) RecordEntitlementConfigError() {

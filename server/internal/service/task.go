@@ -670,7 +670,7 @@ func isDuplicatePendingTaskErr(err error) bool {
 		return false
 	}
 	switch pgErr.ConstraintName {
-	case "idx_one_pending_task_per_issue_agent", "idx_one_pending_task_per_issue_agent_v2":
+	case "idx_one_pending_task_per_issue_agent", "idx_one_pending_task_per_issue_agent_v2", "idx_one_pending_task_per_issue_agent_thread":
 		return true
 	default:
 		return false
@@ -2081,6 +2081,7 @@ func (s *TaskService) enqueueChatTaskTx(
 		if _, err := qtx.CreateChannelTaskDeliveryFromSession(
 			ctx, db.CreateChannelTaskDeliveryFromSessionParams{
 				TaskID: task.ID, ChatSessionID: chatSession.ID,
+				ContextRevision: contextRevision,
 			},
 		); err != nil {
 			return db.AgentTaskQueue{}, fmt.Errorf("snapshot channel task delivery: %w", err)
@@ -2759,6 +2760,15 @@ type CancelTaskResult struct {
 
 var ErrTaskNoLongerQueued = errors.New("task is no longer queued")
 
+// TaskCancellationActor is the point-in-time identity written onto a task when
+// an authenticated member or agent explicitly stops it. Automatic paths leave
+// this empty and the SQL transition records the system actor instead.
+type TaskCancellationActor struct {
+	Type string
+	ID   pgtype.UUID
+	Name string
+}
+
 // CancelTaskOptions carries what the caller knows about the client that asked
 // for the cancellation.
 type CancelTaskOptions struct {
@@ -2780,6 +2790,7 @@ type CancelTaskOptions struct {
 	// daemon log the user never sees.
 	ErrorMessage  string
 	FailureReason string
+	CancelledBy   TaskCancellationActor
 	// UserInitiated distinguishes the issue UI/API cancel action from automatic
 	// server repairs. An explicit user cancellation terminally acknowledges any
 	// delegated-failure recovery signal planned into the task; automatic
@@ -2808,9 +2819,10 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 // automatic server cancellation, it terminally acknowledges any delegated-
 // failure recovery signal carried by the task so the sweeper respects the
 // user's decision instead of recreating the task.
-func (s *TaskService) CancelTaskByUser(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) CancelTaskByUser(ctx context.Context, taskID pgtype.UUID, actor TaskCancellationActor) (*db.AgentTaskQueue, error) {
 	result, err := s.CancelTaskWithResult(ctx, taskID, CancelTaskOptions{
 		ClientSupportsDraftRestore: true,
+		CancelledBy:                actor,
 		UserInitiated:              true,
 	})
 	if err != nil {
@@ -2846,9 +2858,17 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 	// task running — the same wedge as GH #7098 on the fail/complete paths.
 	opts.ErrorMessage = util.SanitizeTextForPostgres(opts.ErrorMessage)
 	opts.FailureReason = util.SanitizeTextForPostgres(opts.FailureReason)
+	opts.CancelledBy.Name = util.SanitizeTextForPostgres(opts.CancelledBy.Name)
 
 	if opts.UserInitiated && (opts.ErrorMessage != "" || opts.FailureReason != "") {
 		return nil, errors.New("user-initiated cancellation cannot carry a server failure reason")
+	}
+	if opts.UserInitiated &&
+		(opts.CancelledBy.Type != "member" && opts.CancelledBy.Type != "agent") {
+		return nil, errors.New("user-initiated cancellation requires a member or agent actor")
+	}
+	if opts.UserInitiated && !opts.CancelledBy.ID.Valid {
+		return nil, errors.New("user-initiated cancellation requires an actor id")
 	}
 	var (
 		task                 db.AgentTaskQueue
@@ -2864,8 +2884,11 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 				return fmt.Errorf("lock queued chat session: %w", err)
 			}
 			task, err = qtx.CancelQueuedAgentTask(ctx, db.CancelQueuedAgentTaskParams{
-				ID:            taskID,
-				ChatSessionID: opts.ExpectedChatSession,
+				ID:              taskID,
+				ChatSessionID:   opts.ExpectedChatSession,
+				CancelledByType: pgtype.Text{String: opts.CancelledBy.Type, Valid: opts.CancelledBy.Type != ""},
+				CancelledByID:   opts.CancelledBy.ID,
+				CancelledByName: pgtype.Text{String: opts.CancelledBy.Name, Valid: opts.CancelledBy.Name != ""},
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTaskNoLongerQueued
@@ -2890,7 +2913,12 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 				err       error
 			)
 			if opts.UserInitiated {
-				cancelled, err = qtx.CancelAgentTaskByUser(ctx, taskID)
+				cancelled, err = qtx.CancelAgentTaskByUser(ctx, db.CancelAgentTaskByUserParams{
+					ID:              taskID,
+					CancelledByType: pgtype.Text{String: opts.CancelledBy.Type, Valid: true},
+					CancelledByID:   opts.CancelledBy.ID,
+					CancelledByName: pgtype.Text{String: opts.CancelledBy.Name, Valid: opts.CancelledBy.Name != ""},
+				})
 			} else if opts.ErrorMessage != "" || opts.FailureReason != "" {
 				cancelled, err = qtx.CancelAgentTaskWithReason(ctx, db.CancelAgentTaskWithReasonParams{
 					ID:            taskID,
@@ -3850,7 +3878,7 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		return nil, fmt.Errorf("promote deferred tasks: %w", err)
 	}
 	for _, task := range promoted {
-		slog.Info("deferred fallback task promoted (batch)",
+		slog.Info("deferred task promoted (batch)",
 			"task_id", util.UUIDToString(task.ID),
 			"runtime_id", util.UUIDToString(task.RuntimeID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -4044,7 +4072,7 @@ func (s *TaskService) PromoteDueDeferredTasksForRuntime(ctx context.Context, run
 		return fmt.Errorf("promote due deferred tasks: %w", err)
 	}
 	for _, task := range tasks {
-		slog.Info("deferred fallback task promoted",
+		slog.Info("deferred task promoted",
 			"task_id", util.UUIDToString(task.ID),
 			"runtime_id", util.UUIDToString(runtimeID),
 			"agent_id", util.UUIDToString(task.AgentID),
@@ -4086,7 +4114,6 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 		return nil, fmt.Errorf("start task: %w", err)
 	}
 	s.forgetTaskReclaim(task)
-	s.cancelDeferredEscalationsForTask(ctx, task.ID)
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
@@ -4103,43 +4130,6 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	// on the transition users care about most.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskRunning, task)
 	return &task, nil
-}
-
-func (s *TaskService) cancelDeferredEscalationsForTask(ctx context.Context, taskID pgtype.UUID) {
-	cancelled, err := s.Queries.CancelDeferredEscalationsForTask(ctx, taskID)
-	if err != nil {
-		slog.Warn("cancel deferred escalations for task failed", "task_id", util.UUIDToString(taskID), "error", err)
-		return
-	}
-	for _, task := range cancelled {
-		slog.Info("deferred fallback task cancelled",
-			"task_id", util.UUIDToString(task.ID),
-			"primary_task_id", util.UUIDToString(taskID),
-			"reason", "primary_acknowledged",
-		)
-	}
-}
-
-func (s *TaskService) CancelDeferredEscalationsForIssueAgent(ctx context.Context, issueID, agentID pgtype.UUID) {
-	cancelled, err := s.Queries.CancelDeferredEscalationsForIssueAgent(ctx, db.CancelDeferredEscalationsForIssueAgentParams{
-		IssueID: issueID,
-		AgentID: agentID,
-	})
-	if err != nil {
-		slog.Warn("cancel deferred escalations for issue agent failed",
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"error", err)
-		return
-	}
-	for _, task := range cancelled {
-		slog.Info("deferred fallback task cancelled",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"reason", "agent_comment_acknowledged",
-		)
-	}
 }
 
 // ExtendTaskPrepareLease keeps a claimed-but-not-started task protected while
@@ -5260,9 +5250,10 @@ func hasRunnableSuccessor(ctx context.Context, q *db.Queries, task db.AgentTaskQ
 	if !task.IssueID.Valid {
 		return false, nil
 	}
-	return q.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
-		IssueID: task.IssueID,
-		AgentID: task.AgentID,
+	return q.HasPendingTaskForIssueAndAgentInThread(ctx, db.HasPendingTaskForIssueAndAgentInThreadParams{
+		ThreadCommentID: task.TriggerCommentID,
+		IssueID:         task.IssueID,
+		AgentID:         task.AgentID,
 	})
 }
 
@@ -5592,9 +5583,10 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		// that failed after this committed.
 		cerr := s.runInTx(ctx, func(qtx *db.Queries) error {
 			var err error
-			cancelled, err = qtx.CancelPendingTasksByIssueAndAgent(ctx, db.CancelPendingTasksByIssueAndAgentParams{
-				IssueID: issueID,
-				AgentID: agentID,
+			cancelled, err = qtx.CancelPendingTasksByIssueAndAgentInThread(ctx, db.CancelPendingTasksByIssueAndAgentInThreadParams{
+				ThreadCommentID: triggerCommentID,
+				IssueID:         issueID,
+				AgentID:         agentID,
 			})
 			if err != nil {
 				return err
@@ -5783,13 +5775,24 @@ func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtim
 // CancelTasksForArchivedAgent cancels every active task belonging to an agent
 // being archived and settles their recovery receipts in the same transaction.
 //
-// Unlike CancelTasksForAgent it emits no per-task task:cancelled event: the
-// agent:archived event the caller publishes already invalidates every client's
-// active-task view, so per-row events would be redundant noise.
+// After commit, cancellation side effects are captured before chat tasks emit
+// task:cancelled so existing consumers can clear processing indicators, release
+// streams, and refresh chat state. The caller still publishes agent:archived;
+// non-chat tasks keep their existing behavior.
 func (s *TaskService) CancelTasksForArchivedAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	return s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
+	cancelled, err := s.terminateTasksInTx(ctx, func(qtx *db.Queries) ([]db.AgentTaskQueue, error) {
 		return qtx.CancelAgentTasksByAgent(ctx, agentID)
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.CaptureCancelledTasks(ctx, cancelled)
+	for _, task := range cancelled {
+		if task.ChatSessionID.Valid {
+			s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+		}
+	}
+	return cancelled, nil
 }
 
 func (s *TaskService) terminateTasksInTx(ctx context.Context, fail func(*db.Queries) ([]db.AgentTaskQueue, error)) ([]db.AgentTaskQueue, error) {
@@ -7074,27 +7077,74 @@ func (s *TaskService) broadcastTaskFailedEvent(ctx context.Context, task db.Agen
 	s.publishTaskFailedEvent(workspaceID, task, errMsg, failureReason, retryPending)
 }
 
-// ResolveTaskWorkspaceID determines the workspace ID for a task.
-// For issue tasks, it comes from the issue. For chat tasks, from the chat session.
-// For autopilot tasks, from the autopilot via its run.
-// Returns "" when none of the links resolve — callers treat that as "not found".
+// ResolveTaskWorkspaceID determines the workspace ID for a task, best-effort.
+// Returns "" when the workspace could not be determined, whether because the
+// link target is genuinely gone or because a lookup failed.
+//
+// Use this only where "" is an acceptable answer — event broadcasts skip
+// themselves rather than fabricating a workspace. Anything that turns the
+// result into an HTTP status MUST use ResolveTaskWorkspaceIDChecked instead:
+// collapsing both cases to "" is what let a transient DB error be reported to
+// the daemon as `404 task not found`, which it acts on by killing a healthy
+// run (MUL-7259 / GH #8272).
 func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentTaskQueue) string {
-	if task.IssueID.Valid {
-		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
-			return util.UUIDToString(issue.WorkspaceID)
+	workspaceID, _ := s.ResolveTaskWorkspaceIDChecked(ctx, task)
+	return workspaceID
+}
+
+// ResolveTaskWorkspaceIDChecked resolves a task's workspace and keeps the two
+// failure modes apart:
+//
+//   - ("", nil)  — every link this task carries was looked up successfully and
+//     the target is genuinely absent. The task is unreachable; a 404 is honest.
+//   - ("", err)  — a lookup could not be completed (DB timeout, pool exhaustion,
+//     …). We do not know whether the task is reachable, and the caller must NOT
+//     report absence. This is a 5xx.
+//
+// For issue tasks the workspace comes from the issue, for chat tasks from the
+// chat session, for autopilot tasks from the autopilot via its run, and for
+// quick-create tasks from the context JSONB (they carry no link at all).
+//
+// A failed lookup does not stop the walk. If a later link resolves, its
+// workspace is returned and the earlier error is dropped, because that answer
+// is still trustworthy; the error is surfaced only when nothing resolved. That
+// keeps a task carrying several links working during a partial outage while
+// still refusing to call an unknown state "not found".
+func (s *TaskService) ResolveTaskWorkspaceIDChecked(ctx context.Context, task db.AgentTaskQueue) (string, error) {
+	// isNotFound is the "genuinely absent" signal; every other error means the
+	// lookup itself did not complete. pgx.ErrNoRows is the only error the
+	// queries below use to say "this row does not exist".
+	var lookupErr error
+	note := func(err error) {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) && lookupErr == nil {
+			lookupErr = err
 		}
+	}
+
+	if task.IssueID.Valid {
+		issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+		if err == nil {
+			return util.UUIDToString(issue.WorkspaceID), nil
+		}
+		note(err)
 	}
 	if task.ChatSessionID.Valid {
-		if cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID); err == nil {
-			return util.UUIDToString(cs.WorkspaceID)
+		cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID)
+		if err == nil {
+			return util.UUIDToString(cs.WorkspaceID), nil
 		}
+		note(err)
 	}
 	if task.AutopilotRunID.Valid {
-		if run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID); err == nil {
-			if ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID); err == nil {
-				return util.UUIDToString(ap.WorkspaceID)
+		run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
+		if err == nil {
+			ap, apErr := s.Queries.GetAutopilot(ctx, run.AutopilotID)
+			if apErr == nil {
+				return util.UUIDToString(ap.WorkspaceID), nil
 			}
+			note(apErr)
 		}
+		note(err)
 	}
 	// Quick-create tasks have no issue / chat / autopilot link — workspace
 	// lives in the context JSONB. Returning "" here is what blocked
@@ -7102,9 +7152,12 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 	// for the daemon) and silently dropped task:dispatch / task:completed
 	// broadcasts, which is why quick-create tasks appeared stuck queued.
 	if qc, ok := s.parseQuickCreateContext(task); ok {
-		return qc.WorkspaceID
+		return qc.WorkspaceID, nil
 	}
-	return ""
+	if lookupErr != nil {
+		return "", fmt.Errorf("resolve task workspace: %w", lookupErr)
+	}
+	return "", nil
 }
 
 func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage, quickActionsPending bool) {
@@ -7242,7 +7295,6 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 		return
 	}
 	comment := created.Comment()
-	s.CancelDeferredEscalationsForIssueAgent(ctx, issueID, agentID)
 	commentFields := commentEventFields(comment)
 	commentFields["revision"] = comment.Revision
 	s.Bus.Publish(events.Event{
@@ -7527,11 +7579,12 @@ func (s *TaskService) notifyQuickCreateCompleted(ctx context.Context, task db.Ag
 		return
 	}
 
-	// Link the new issue back to this task so subsequent reads of the task
-	// (Activity tab, Recent work, etc.) render it as a normal issue task
-	// (kind = "direct") instead of staying on the "Creating issue" active-
-	// wording label. Best-effort: a write failure here doesn't block the
-	// inbox notification, which is the more important signal to the user.
+	// Link the new issue back to this task so subsequent reads (Activity tab,
+	// Recent work, etc.) can navigate to the result instead of leaving it on
+	// the "Creating issue" active wording. The task's source kind remains
+	// quick_create, derived from its typed context. Best-effort: a write failure
+	// here doesn't block the inbox notification, which is the more important
+	// signal to the user.
 	if err := s.Queries.LinkTaskToIssue(ctx, db.LinkTaskToIssueParams{
 		ID:      task.ID,
 		IssueID: issue.ID,

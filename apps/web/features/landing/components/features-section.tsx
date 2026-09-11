@@ -240,7 +240,7 @@ function TeammatesVisual() {
                   <PropRow label="Status">
                     <button
                       type="button"
-                      className="flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors"
+                      className="flex items-center gap-1.5 cursor-pointer rounded-xs px-1 -mx-1 hover:bg-accent/30 transition-colors"
                       onClick={() => { setStatusOpen(!statusOpen); setPriorityOpen(false); }}
                     >
                       <StatusIcon status={status} className="h-3.5 w-3.5 shrink-0" />
@@ -273,7 +273,7 @@ function TeammatesVisual() {
                   <PropRow label="Priority">
                     <button
                       type="button"
-                      className="flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors"
+                      className="flex items-center gap-1.5 cursor-pointer rounded-xs px-1 -mx-1 hover:bg-accent/30 transition-colors"
                       onClick={() => { setPriorityOpen(!priorityOpen); setStatusOpen(false); }}
                     >
                       <PriorityIcon priority={priority} />
@@ -305,7 +305,7 @@ function TeammatesVisual() {
                 <PropRow label="Assignee">
                   <button
                     type="button"
-                    className="flex items-center gap-1.5 cursor-pointer rounded px-1 -mx-1 hover:bg-accent/30 transition-colors"
+                    className="flex items-center gap-1.5 cursor-pointer rounded-xs px-1 -mx-1 hover:bg-accent/30 transition-colors"
                     onClick={() => { setPickerOpen(!pickerOpen); setStatusOpen(false); setPriorityOpen(false); }}
                   >
                     {assignee.type ? (
@@ -457,7 +457,7 @@ function AutonomousVisual() {
                   <button
                     type="button"
                     key={i}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-caption hover:bg-info/5 transition-colors"
+                    className="flex w-full items-center gap-2 rounded-xs px-2 py-1 text-caption hover:bg-info/5 transition-colors"
                     onClick={() => setExpanded(isExpanded ? null : i)}
                   >
                     <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-90")} />
@@ -472,7 +472,7 @@ function AutonomousVisual() {
                   <button
                     type="button"
                     key={i}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-caption hover:bg-info/5 transition-colors"
+                    className="flex w-full items-center gap-2 rounded-xs px-2 py-1 text-caption hover:bg-info/5 transition-colors"
                     onClick={() => setExpanded(isExpanded ? null : i)}
                   >
                     <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-90")} />
@@ -487,7 +487,7 @@ function AutonomousVisual() {
                 <button
                   type="button"
                   key={i}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-caption hover:bg-accent/50 transition-colors"
+                  className="flex w-full items-center gap-2 rounded-xs px-2 py-1 text-caption hover:bg-accent/50 transition-colors"
                   onClick={() => setExpanded(isExpanded ? null : i)}
                 >
                   <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-90")} />
@@ -552,7 +552,7 @@ function SkillsVisual() {
         <div className="w-[200px] shrink-0 border-r flex flex-col">
           <div className="flex items-center justify-between border-b px-3 py-2">
             <span className="text-caption font-semibold">Skills</span>
-            <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent transition-colors">
+            <button type="button" className="rounded-xs p-0.5 text-muted-foreground hover:bg-accent transition-colors">
               <Sparkles className="h-3.5 w-3.5" />
             </button>
           </div>

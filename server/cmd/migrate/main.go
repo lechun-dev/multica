@@ -390,9 +390,12 @@ func refuseChannelChatRouteHistoryRollbackWith(ctx context.Context, query rowQue
 }
 
 var upMigrationConditions = map[string]migrationCondition{
-	// Fresh databases that successfully built the CJK-friendly bigram index do
-	// not need to build the trigram fallback only to remove it at migration 371.
-	"140_comment_content_trgm_index": whenIndexNotUsable(commentContentBigramIndex),
+	// Current search no longer consumes an issue-description GIN. Fresh installs
+	// should not build the historical fallback only to retire it at migration 464.
+	"139_issue_description_trgm_index": skipMigration("issue description search indexes are retired by migration 464"),
+	// Current search no longer consumes a comment-content GIN. Fresh installs
+	// should not build the historical fallback only to retire it at migration 455.
+	"140_comment_content_trgm_index": skipMigration("comment content search indexes are retired by migration 455"),
 	// Existing pg_bigm deployments already have both indexes. Remove the
 	// fallback only after proving the preferred index has the exact usable shape;
 	// pg_bigm-less self-hosted databases keep trgm and record 371 as a no-op.
@@ -426,12 +429,20 @@ func ensureSourceContextRollbackSafe(ctx context.Context, pool *pgxpool.Pool) er
 }
 
 func conditionsForDirection(direction string) map[string]migrationCondition {
-	if direction == "up" {
+	switch direction {
+	case "up":
 		return upMigrationConditions
+	case "down":
+		return downMigrationConditions
+	default:
+		return nil
 	}
-	// Rollbacks intentionally ignore environment gates: they restore the
-	// portable pre-migration schema regardless of which up SQL actually ran.
-	return nil
+}
+
+func skipMigration(reason string) migrationCondition {
+	return func(context.Context, *pgxpool.Conn) (bool, string, error) {
+		return false, reason, nil
+	}
 }
 
 func whenIndexUsable(requirement usableIndexRequirement) migrationCondition {

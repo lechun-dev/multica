@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/handler"
 )
 
 // stderrCapture redirects os.Stderr through a pipe so a test can assert on
@@ -657,6 +658,9 @@ func TestRunIssueUsageReturnsTokenSummaryAsJSON(t *testing.T) {
 				"total_cache_read_tokens":  float64(537800),
 				"total_cache_write_tokens": float64(42400),
 				"task_count":               float64(1),
+				"terminal_task_count":      float64(2),
+				"metered_task_count":       float64(1),
+				"unreported_task_count":    float64(1),
 			})
 		default:
 			http.NotFound(w, r)
@@ -666,7 +670,7 @@ func TestRunIssueUsageReturnsTokenSummaryAsJSON(t *testing.T) {
 
 	t.Setenv("MULTICA_SERVER_URL", srv.URL)
 	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
 
 	cmd := newIssueUsageTestCmd()
 	_ = cmd.Flags().Set("output", "json")
@@ -690,8 +694,120 @@ func TestRunIssueUsageReturnsTokenSummaryAsJSON(t *testing.T) {
 	}
 	if payload["total_input_tokens"] != float64(3800) || payload["total_output_tokens"] != float64(11700) ||
 		payload["total_cache_read_tokens"] != float64(537800) || payload["total_cache_write_tokens"] != float64(42400) ||
-		payload["task_count"] != float64(1) {
+		payload["task_count"] != float64(1) || payload["terminal_task_count"] != float64(2) ||
+		payload["metered_task_count"] != float64(1) || payload["unreported_task_count"] != float64(1) {
 		t.Fatalf("unexpected usage payload: %#v", payload)
+	}
+}
+
+func TestFormatIssueUsageTokensDistinguishesUnreportedRuns(t *testing.T) {
+	tests := []struct {
+		name          string
+		value         any
+		terminal      any
+		metered       any
+		usageRows     any
+		coverageKnown bool
+		want          string
+	}{
+		{"complete", float64(3800), float64(1), float64(1), float64(1), true, "3800"},
+		{"partially reported", float64(3800), float64(2), float64(1), float64(1), true, ">=3800"},
+		{"fully unreported", float64(0), float64(4), float64(0), float64(0), true, "—"},
+		{"nonterminal usage with unreported terminal run", float64(40000), float64(1), float64(0), float64(1), true, ">=40000"},
+		{"only nonterminal usage", float64(40000), float64(0), float64(0), float64(1), true, "40000"},
+		{"unknown usage row count preserves known total", float64(40000), float64(1), float64(0), nil, true, ">=40000"},
+		{"old server", float64(0), nil, float64(0), float64(0), false, "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatIssueUsageTokens(tt.value, tt.terminal, tt.metered, tt.usageRows, tt.coverageKnown); got != tt.want {
+				t.Fatalf("formatIssueUsageTokens() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunIssueUsageTableKeepsNonterminalUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/MUL-2818":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "MUL-2818",
+				"title":      "CLI usage lookup",
+			})
+		case "/api/issues/issue-uuid/usage":
+			json.NewEncoder(w).Encode(map[string]any{
+				"total_input_tokens":       40000,
+				"total_output_tokens":      0,
+				"total_cache_read_tokens":  0,
+				"total_cache_write_tokens": 0,
+				"task_count":               1,
+				"terminal_task_count":      1,
+				"metered_task_count":       0,
+				"unreported_task_count":    1,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	out, err := captureStdout(t, func() error {
+		return runIssueUsage(newIssueUsageTestCmd(), []string{"MUL-2818"})
+	})
+	if err != nil {
+		t.Fatalf("runIssueUsage: %v", err)
+	}
+	if !strings.Contains(out, ">=40000") {
+		t.Fatalf("table output hides nonterminal usage:\n%s", out)
+	}
+}
+
+func TestRunIssueUsageTableSeparatesRunsFromMeteredRuns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/MUL-2818":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "MUL-2818",
+				"title":      "CLI usage lookup",
+			})
+		case "/api/issues/issue-uuid/usage":
+			json.NewEncoder(w).Encode(map[string]any{
+				"total_input_tokens":       0,
+				"total_output_tokens":      0,
+				"total_cache_read_tokens":  0,
+				"total_cache_write_tokens": 0,
+				"task_count":               0,
+				"terminal_task_count":      4,
+				"metered_task_count":       0,
+				"unreported_task_count":    4,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "mat_test-token")
+
+	out, err := captureStdout(t, func() error {
+		return runIssueUsage(newIssueUsageTestCmd(), []string{"MUL-2818"})
+	})
+	if err != nil {
+		t.Fatalf("runIssueUsage: %v", err)
+	}
+	for _, want := range []string{"METERED_RUNS", "UNREPORTED", "—", "4"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table output missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -1255,7 +1371,7 @@ func TestResolveAssignee(t *testing.T) {
 	})
 
 	t.Run("resolveActorPropertyRef renders a prefixed reference", func(t *testing.T) {
-		ref, err := resolveActorPropertyRef(ctx, client, "alice@example.com")
+		ref, err := resolveActorPropertyRef(ctx, client, &memberDirectory{}, "alice@example.com")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1265,7 +1381,7 @@ func TestResolveAssignee(t *testing.T) {
 	})
 
 	t.Run("resolveActorPropertyRef rejects a non-member kind", func(t *testing.T) {
-		if _, err := resolveActorPropertyRef(ctx, client, "codebot"); err == nil {
+		if _, err := resolveActorPropertyRef(ctx, client, &memberDirectory{}, "codebot"); err == nil {
 			t.Error("expected an agent name to be unresolvable for an actor property")
 		}
 	})
@@ -2947,6 +3063,8 @@ func newIssueListTestCmd() *cobra.Command {
 	cmd.Flags().Int("offset", 0, "")
 	cmd.Flags().String("sort", "", "")
 	cmd.Flags().String("direction", "", "")
+	cmd.Flags().String("fields", "", "")
+	cmd.Flags().Bool("resolve-properties", false, "")
 	return cmd
 }
 
@@ -3286,6 +3404,254 @@ func TestRunIssueListRejectsDirectionWithoutDirectionalSort(t *testing.T) {
 	}
 }
 
+// sampleIssueResponse returns a handler.IssueResponse populated the way the
+// /api/issues list endpoint actually populates one (ListIssues in
+// server/internal/handler/issue.go) — every field a real "issue list
+// --output json" row carries. Reactions, Attachments, and SourceContext are
+// left zero-valued on purpose: they are `omitempty` and ListIssues never
+// sets them (detail-only), so a real list payload never carries those keys.
+// This is the single source of truth for both fullTestIssue (the --fields
+// filtering fixture) and the drift guard below, so the two can't diverge
+// from each other the way the whitelist once diverged from the real API.
+func sampleIssueResponse() handler.IssueResponse {
+	desc := "a very long description"
+	assigneeType := "member"
+	assigneeID := "user-1"
+	parentID := "parent-1"
+	projectID := "proj-1"
+	stage := int32(1)
+	startDate := "2024-01-01"
+	dueDate := "2024-01-02"
+	lastActivity := "2024-01-01T00:00:00Z"
+	labels := []handler.LabelResponse{}
+
+	return handler.IssueResponse{
+		ID:             "iss-1",
+		WorkspaceID:    "ws-1",
+		Number:         42,
+		Identifier:     "MUL-42",
+		Title:          "Test issue",
+		Description:    &desc,
+		Status:         "in_progress",
+		StatusCategory: "active",
+		StatusName:     "In Progress",
+		Priority:       "high",
+		AssigneeType:   &assigneeType,
+		AssigneeID:     &assigneeID,
+		CreatorType:    "member",
+		CreatorID:      "user-2",
+		ParentIssueID:  &parentID,
+		ProjectID:      &projectID,
+		Position:       1,
+		Stage:          &stage,
+		StartDate:      &startDate,
+		DueDate:        &dueDate,
+		CreatedAt:      "2024-01-01T00:00:00Z",
+		UpdatedAt:      "2024-01-01T00:00:00Z",
+		Revision:       1,
+		LastActivityAt: &lastActivity,
+		Metadata:       map[string]any{},
+		Properties:     map[string]any{},
+		Labels:         &labels,
+	}
+}
+
+// fullTestIssue returns a JSON-decoded issue map carrying every field a real
+// "issue list --output json" row exposes (see sampleIssueResponse), so
+// --fields tests can assert on a realistic full payload rather than a
+// hand-picked subset.
+func fullTestIssue(t *testing.T) map[string]any {
+	t.Helper()
+	return issueResponseJSONMap(t, sampleIssueResponse())
+}
+
+func keysOf(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func issueResponseJSONMap(t *testing.T, resp handler.IssueResponse) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal handler.IssueResponse: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("unmarshal handler.IssueResponse: %v", err)
+	}
+	return m
+}
+
+// TestValidIssueFieldsMatchListEndpointShape guards validIssueFields (the
+// --fields whitelist) against drifting from what /api/issues actually
+// returns for `issue list`. It caught a real bug: the whitelist was modeled
+// on publicapi/v1.Issue, which the list endpoint never serializes — the real
+// response is handler.IssueResponse, which also emits status_name and
+// labels that the whitelist rejected as invalid field names.
+func TestValidIssueFieldsMatchListEndpointShape(t *testing.T) {
+	realKeys := keysOf(fullTestIssue(t))
+
+	valid := make(map[string]bool, len(validIssueFields))
+	for _, f := range validIssueFields {
+		valid[f] = true
+	}
+	real := make(map[string]bool, len(realKeys))
+	for _, k := range realKeys {
+		real[k] = true
+	}
+
+	for _, k := range realKeys {
+		if !valid[k] {
+			t.Errorf("validIssueFields is missing %q, which a real issue list JSON response emits", k)
+		}
+	}
+	for _, f := range validIssueFields {
+		if !real[f] {
+			t.Errorf("validIssueFields has %q, which a real issue list JSON response never emits", f)
+		}
+	}
+}
+
+// TestRunIssueListFieldsFiltersJSONOutput guards that --fields whitelists
+// exactly the requested top-level keys on each returned issue, so an agent
+// asking for id/title/status/priority never pays for the description field
+// that makes up most of a typical issue payload.
+func TestRunIssueListFieldsFiltersJSONOutput(t *testing.T) {
+	issue := fullTestIssue(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"issues": []any{issue}, "total": 1})
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cases := []struct {
+		name   string
+		fields string
+		want   []string
+	}{
+		{"id, title, status, priority", "id,title,status,priority", []string{"id", "title", "status", "priority"}},
+		{"assignee pair", "assignee_type,assignee_id", []string{"assignee_type", "assignee_id"}},
+		{"single field", "identifier", []string{"identifier"}},
+		{"description explicitly requested", "id,description", []string{"id", "description"}},
+		{"whitespace around names", " id , title ", []string{"id", "title"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newIssueListTestCmd()
+			_ = cmd.Flags().Set("output", "json")
+			_ = cmd.Flags().Set("fields", tc.fields)
+
+			out, err := captureStdout(t, func() error { return runIssueList(cmd, nil) })
+			if err != nil {
+				t.Fatalf("runIssueList: %v", err)
+			}
+
+			var resp struct {
+				Issues []map[string]any `json:"issues"`
+			}
+			if err := json.Unmarshal([]byte(out), &resp); err != nil {
+				t.Fatalf("unmarshal output: %v\noutput: %s", err, out)
+			}
+			if len(resp.Issues) != 1 {
+				t.Fatalf("issues = %d, want 1", len(resp.Issues))
+			}
+			got := resp.Issues[0]
+			if len(got) != len(tc.want) {
+				t.Fatalf("issue keys = %v, want exactly %v", keysOf(got), tc.want)
+			}
+			for _, f := range tc.want {
+				if _, ok := got[f]; !ok {
+					t.Fatalf("issue missing field %q; got keys %v", f, keysOf(got))
+				}
+			}
+		})
+	}
+}
+
+// TestRunIssueListDefaultKeepsFullIssueUnchanged guards backward
+// compatibility: omitting --fields must return the full issue object,
+// description included, exactly as before this flag existed.
+func TestRunIssueListDefaultKeepsFullIssueUnchanged(t *testing.T) {
+	issue := fullTestIssue(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"issues": []any{issue}, "total": 1})
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssueListTestCmd()
+	_ = cmd.Flags().Set("output", "json")
+
+	out, err := captureStdout(t, func() error { return runIssueList(cmd, nil) })
+	if err != nil {
+		t.Fatalf("runIssueList: %v", err)
+	}
+	var resp struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	got := resp.Issues[0]
+	if len(got) != len(issue) {
+		t.Fatalf("issue keys = %v, want all %d original fields", keysOf(got), len(issue))
+	}
+	if _, ok := got["description"]; !ok {
+		t.Fatalf("expected description to remain in default (no --fields) output, got %v", got)
+	}
+}
+
+// TestRunIssueListRejectsInvalidFields guards that a typo'd or non-existent
+// field name fails fast with the valid list, instead of silently returning
+// an issue object missing the field the caller expected.
+func TestRunIssueListRejectsInvalidFields(t *testing.T) {
+	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssueListTestCmd()
+	_ = cmd.Flags().Set("output", "json")
+	_ = cmd.Flags().Set("fields", "id,bogus_field")
+	err := runIssueList(cmd, nil)
+	if err == nil {
+		t.Fatal("runIssueList: expected error for invalid --fields")
+	}
+	if !strings.Contains(err.Error(), `invalid --fields value "bogus_field"`) {
+		t.Fatalf("error = %q, want it to mention the invalid field name", err)
+	}
+}
+
+// TestRunIssueListIgnoresFieldsWithTableOutput guards that --output table
+// (the default) is completely unaffected by --fields, matching how
+// issue comment list's --compact/--summary are JSON-only no-ops for table.
+func TestRunIssueListIgnoresFieldsWithTableOutput(t *testing.T) {
+	issue := fullTestIssue(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"issues": []any{issue}, "total": 1})
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssueListTestCmd()
+	_ = cmd.Flags().Set("fields", "id") // table output; --fields must not error or change behavior
+	if err := runIssueList(cmd, nil); err != nil {
+		t.Fatalf("runIssueList: %v", err)
+	}
+}
+
 func TestComputeReorderPosition(t *testing.T) {
 	positions := map[string]float64{"a": 10, "b": 20, "x": 99}
 	tests := []struct {
@@ -3417,10 +3783,7 @@ func reorderTestServer(t *testing.T, gotPosition *float64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/issues" && r.Method == http.MethodGet {
 			// The column query only ever asks for "todo" in these tests.
-			json.NewEncoder(w).Encode(map[string]any{
-				"issues": []any{a, b, target},
-				"total":  3,
-			})
+			writeReorderColumnPage(w, r, []any{a, b, target})
 			return
 		}
 		ref, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/issues/"))
@@ -3611,7 +3974,7 @@ func TestRunIssueReorderNoOpSkipsPut(t *testing.T) {
 	putCalled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/issues" && r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]any{"issues": []any{a, target, b}, "total": 3})
+			writeReorderColumnPage(w, r, []any{a, target, b})
 			return
 		}
 		if r.Method == http.MethodPut {
@@ -3655,7 +4018,7 @@ func TestRunIssueReorderSingleItemColumnValidatesTarget(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/issues" && r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]any{"issues": []any{target}, "total": 1})
+			writeReorderColumnPage(w, r, []any{target})
 			return
 		}
 		ref, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/issues/"))
@@ -3703,7 +4066,7 @@ func TestRunIssueReorderOnlyIssueInColumnIsNoOp(t *testing.T) {
 	putCalled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/issues" && r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(map[string]any{"issues": []any{target}, "total": 1})
+			writeReorderColumnPage(w, r, []any{target})
 			return
 		}
 		if r.Method == http.MethodPut {

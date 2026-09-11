@@ -193,7 +193,7 @@ type CommentFacts struct {
 
 	// ParentAccountable is the source task's accountable_user_id (MUL-4302 §3.2).
 	// It lets an autopilot-rooted chain — where the parent has NO authorizing human
-	// (ParentOriginator NULL) but IS accountable to someone (trigger creator / rule
+	// (ParentOriginator NULL) but IS accountable to someone (trigger principal / rule
 	// publisher) — copy that responsible human down the delegation, instead of
 	// dropping the chain root to unattributed. Loaded by the caller alongside
 	// ParentOriginator; invalid when the parent has no accountable human either.
@@ -228,7 +228,7 @@ func ClassifyComment(f CommentFacts, agentAuthoredSource Source) Result {
 			r.Source = agentAuthoredSource
 		} else if f.ParentAccountable.Valid {
 			// The parent had no authorizing human (autopilot-rooted chain:
-			// originator NULL, accountable = trigger creator / rule publisher) but
+			// originator NULL, accountable = trigger principal / rule publisher) but
 			// IS accountable to someone. Copy that accountable down so the
 			// responsibility chain root stays stable at any depth (MUL-4302 §3.2);
 			// originator stays NULL so authorization is unchanged and a fail-closed
@@ -311,7 +311,7 @@ func ClassifyDirect(f DirectFacts) Result {
 			r.Source = SourceDelegation
 		} else if f.OriginAccountable.Valid {
 			// Autopilot-rooted origin task: no authorizing human, but accountable
-			// to the trigger creator / rule publisher. Copy accountable down so the
+			// to the trigger principal / rule publisher. Copy accountable down so the
 			// chain root stays stable; originator stays NULL (MUL-4302 §3.2).
 			r.AccountableUserID = f.OriginAccountable
 			r.Source = SourceDelegation
@@ -422,8 +422,8 @@ type SubscriptionFacts struct {
 	//
 	// It exists because OriginOriginator alone stopped answering "did a human ask
 	// for this?" in MUL-6951: an armed autopilot trigger now carries its
-	// creator's authorization, so the two cases became indistinguishable by
-	// value. See DelegatedSubscriber.
+	// created_by principal's authorization, so the two cases became
+	// indistinguishable by value. See DelegatedSubscriber.
 	OriginRootSource Source
 }
 
@@ -467,12 +467,13 @@ type SubscriptionFacts struct {
 // SourceDirectHuman was the only root that left an originator behind, so "the
 // origin run carries a human" and "a human asked for this work" were the same
 // statement and only the first had to be tested. MUL-6951 separated them: an
-// armed schedule/webhook trigger now runs with its creator's authorization
-// (SourceTriggerOwner), and that human is copied down the whole chain exactly
-// like a requester would be. The untested half of the old equivalence is what
-// broke — every issue an autopilot's agent filed started subscribing whoever
-// armed the trigger, which is the case the origin_type='autopilot' exclusion
-// above already says must not happen, arriving one hop lower.
+// armed schedule/webhook trigger now runs with its created_by principal's
+// authorization (SourceTriggerOwner), and that human is copied down the whole
+// chain exactly like a requester would be. The untested half of the old
+// equivalence is what broke — every issue an autopilot's agent filed started
+// subscribing whoever armed the trigger, which is the case the
+// origin_type='autopilot' exclusion above already says must not happen, arriving
+// one hop lower.
 //
 // So the condition is stated as what it means — the chain BEGAN with a member
 // acting — and it is a whitelist. A future root that resolves a human some other

@@ -2039,7 +2039,7 @@ func TestGateResumeToReachableSession(t *testing.T) {
 			task := Task{PriorSessionID: tt.sessionID, PriorWorkDir: priorDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: tt.sessionID != ""}
 
-			reachable := gateResumeToReachableSession(&task, &taskCtx, "claude", envDir, !tt.sessionHomeUnreachable, slog.Default())
+			reachable := gateResumeToReachableSession(&task, &taskCtx, "claude", envDir, !tt.sessionHomeUnreachable, false, slog.Default())
 
 			if reachable != tt.wantReused {
 				t.Fatalf("reachable = %v, want %v", reachable, tt.wantReused)
@@ -2084,7 +2084,7 @@ func TestGatePiResumeToSessionFile(t *testing.T) {
 			task := Task{PriorSessionID: sessionFile, PriorWorkDir: priorDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-			reachable := gateResumeToReachableSession(&task, &taskCtx, provider, envDir, true, slog.Default())
+			reachable := gateResumeToReachableSession(&task, &taskCtx, provider, envDir, true, providerRefusesMissingSessionCwd(provider, true), slog.Default())
 
 			if !reachable {
 				t.Fatal("Pi-family session file should remain reachable across workdirs")
@@ -2144,7 +2144,7 @@ func TestGatePiResumeDropsUnusableSessionFile(t *testing.T) {
 			task := Task{PriorSessionID: sessionPath, PriorWorkDir: workDir}
 			taskCtx := execenv.TaskContextForEnv{PriorSessionResumed: true}
 
-			reachable := gateResumeToReachableSession(&task, &taskCtx, "pi", workDir, true, slog.Default())
+			reachable := gateResumeToReachableSession(&task, &taskCtx, "pi", workDir, true, providerRefusesMissingSessionCwd("pi", true), slog.Default())
 
 			if reachable {
 				t.Fatalf("%s Pi session was treated as reachable", test.name)
@@ -2345,7 +2345,9 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	t.Parallel()
 
 	d := newTestDaemon(t)
-	ctx := context.Background()
+	capture := newTaskPhaseCaptureHandler()
+	recorder := newTaskPhaseRecorder(slog.New(capture), time.Now)
+	ctx := withTaskPhaseRecorder(context.Background(), recorder)
 	taskLog := slog.Default()
 
 	fb := &fakeBackend{
@@ -2368,6 +2370,9 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	}
 	if result.Status != "failed" || result.SessionID != "" {
 		t.Fatalf("expected failed result with empty SessionID, got %+v", result)
+	}
+	if slices.Contains(capture.phasesSnapshot(), taskPhaseTurnCompleted) {
+		t.Fatal("turn_completed was recorded for the discarded resume attempt")
 	}
 
 	// Mirrors the retry in runTask, gated on the same production predicate.
@@ -2395,6 +2400,13 @@ func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	// Second call should NOT have ResumeSessionID.
 	if fb.calls[1].ResumeSessionID != "" {
 		t.Fatal("retry should not have ResumeSessionID")
+	}
+	if slices.Contains(capture.phasesSnapshot(), taskPhaseTurnCompleted) {
+		t.Fatal("executeAndDrain recorded turn_completed before runTask reconciled the final attempt")
+	}
+	recorder.Mark(taskPhaseTurnCompleted) // Mirrors runTask after fresh-retry reconciliation.
+	if got, want := capture.phasesSnapshot(), []taskPhase{taskPhaseRuntimeStarted, taskPhaseTurnCompleted}; !slices.Equal(got, want) {
+		t.Fatalf("task phases = %v, want %v", got, want)
 	}
 }
 
@@ -2473,6 +2485,97 @@ func TestExecuteAndDrain_FlushesTranscriptBeforeReturningResult(t *testing.T) {
 
 	if got := rec.snapshot(); len(got) != 2 {
 		t.Fatalf("expected the transcript flushed before the result hand-off, got %d messages: %+v", len(got), got)
+	}
+}
+
+// timedTranscriptBackend keeps a tool open long enough to prove the daemon
+// records event occurrence time rather than giving a whole flush batch one
+// server insertion time.
+type timedTranscriptBackend struct{}
+
+func (timedTranscriptBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		msgCh <- agent.Message{Type: agent.MessageToolUse, Tool: "bash", CallID: "timed"}
+		time.Sleep(10 * time.Millisecond)
+		msgCh <- agent.Message{Type: agent.MessageToolResult, Tool: "bash", CallID: "timed", Output: "ok"}
+		close(msgCh)
+		resCh <- agent.Result{Status: "completed", Output: "done"}
+		close(resCh)
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestExecuteAndDrain_ReportsPerEventTimestamps(t *testing.T) {
+	t.Parallel()
+
+	d, rec := newTranscriptRecorder(t)
+	if _, _, err := d.executeAndDrain(context.Background(), timedTranscriptBackend{}, "p", agent.ExecOptions{}, slog.Default(), "task-timing", "", new(atomic.Int32)); err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
+	}
+
+	got := rec.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("reported %d messages, want tool use and result: %+v", len(got), got)
+	}
+	if got[0].CreatedAt.IsZero() || !got[1].CreatedAt.After(got[0].CreatedAt) {
+		t.Fatalf("event timestamps = [%s, %s], want distinct ordered times", got[0].CreatedAt, got[1].CreatedAt)
+	}
+}
+
+type chunkedTranscriptBackend struct {
+	thinkingSecondStartedAt chan time.Time
+	textSecondStartedAt     chan time.Time
+}
+
+func (b *chunkedTranscriptBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		msgCh <- agent.Message{Type: agent.MessageThinking, Content: "think one "}
+		time.Sleep(20 * time.Millisecond)
+		b.thinkingSecondStartedAt <- time.Now()
+		msgCh <- agent.Message{Type: agent.MessageThinking, Content: "think two"}
+
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "text one "}
+		time.Sleep(20 * time.Millisecond)
+		b.textSecondStartedAt <- time.Now()
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "text two"}
+		close(msgCh)
+		resCh <- agent.Result{Status: "completed", Output: "done"}
+		close(resCh)
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func TestExecuteAndDrain_ReportsFirstBufferedChunkTimestamp(t *testing.T) {
+	t.Parallel()
+
+	backend := &chunkedTranscriptBackend{
+		thinkingSecondStartedAt: make(chan time.Time, 1),
+		textSecondStartedAt:     make(chan time.Time, 1),
+	}
+	d, rec := newTranscriptRecorder(t)
+	if _, _, err := d.executeAndDrain(context.Background(), backend, "p", agent.ExecOptions{}, slog.Default(), "task-chunks", "", new(atomic.Int32)); err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
+	}
+
+	got := rec.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("reported %d messages, want thinking and text: %+v", len(got), got)
+	}
+	if got[0].Type != "thinking" || got[0].Content != "think one think two" {
+		t.Fatalf("thinking message = %+v", got[0])
+	}
+	if boundary := <-backend.thinkingSecondStartedAt; !got[0].CreatedAt.Before(boundary) {
+		t.Fatalf("thinking created_at = %s, want before second chunk started at %s", got[0].CreatedAt, boundary)
+	}
+	if got[1].Type != "text" || got[1].Content != "text one text two" {
+		t.Fatalf("text message = %+v", got[1])
+	}
+	if boundary := <-backend.textSecondStartedAt; !got[1].CreatedAt.Before(boundary) {
+		t.Fatalf("text created_at = %s, want before second chunk started at %s", got[1].CreatedAt, boundary)
 	}
 }
 
@@ -2734,6 +2837,36 @@ func TestShouldRetryWithFreshSession(t *testing.T) {
 			result:         agent.Result{Status: "failed", Error: "no conversation found", ResumeRejected: true},
 			priorSessionID: "stale-id",
 			want:           true,
+		},
+		{
+			// GH #8116 end to end. A qoder chat pinned to a session the CLI
+			// never persisted used to reach this gate with ResumeRejected
+			// false, because the adapter returned a bare failed Result from
+			// session/resume — so the gate read "checked, not a rejection",
+			// declined to retry, and the conversation replayed the same dead
+			// id on every later message. The adapters now flag it, and this is
+			// what that flag has to buy.
+			name: "ghost session rejected at session/resume retries",
+			result: agent.Result{
+				Status:         "failed",
+				Error:          `qoder session/resume failed: session/resume: Invalid session identifier "27d8031c-9fea-4bda-9d42-37c36fa9aebf". (code=-32602)`,
+				ResumeRejected: true,
+			},
+			priorSessionID: "27d8031c-9fea-4bda-9d42-37c36fa9aebf",
+			provider:       "qoder",
+			want:           true,
+		},
+		{
+			// The other half of the same contract: an unrecognised resume
+			// failure must NOT retry. The adapters answer "not a rejection" by
+			// leaving the flag false, and a capable backend's false is an
+			// answer, not an absence — retrying here would fork a healthy
+			// conversation over a transient MCP or network fault.
+			name:           "unflagged resume failure does not retry",
+			result:         agent.Result{Status: "failed", Error: "qoder session/resume failed: session/resume: Invalid params: mcpServers[0] transport unreachable (code=-32602)"},
+			priorSessionID: "27d8031c-9fea-4bda-9d42-37c36fa9aebf",
+			provider:       "qoder",
+			want:           false,
 		},
 		{
 			name:           "temporarily busy resume retries without declaring the session dead",

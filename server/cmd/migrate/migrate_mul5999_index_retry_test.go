@@ -18,6 +18,9 @@ import (
 var concurrentIndexNamePattern = regexp.MustCompile(
 	`(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_]+)`)
 
+var pgBigmConcurrentIndexPattern = regexp.MustCompile(
+	`(?is)CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b[^;]*\bgin_bigm_ops\b`)
+
 // stripSQLLineComments drops `--` comment lines so prose that mentions SQL is
 // not mistaken for SQL.
 func stripSQLLineComments(body []byte) []byte {
