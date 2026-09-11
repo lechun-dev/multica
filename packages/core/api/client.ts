@@ -1,4 +1,5 @@
 import { configStore } from "../config";
+import type { DingTalkOAuthClient } from "../auth";
 import type {
   Issue,
   IssuePriority,
@@ -194,6 +195,8 @@ import type {
   RedeemSlackBindingTokenResponse,
   DingTalkInstallation,
   DingTalkProfile,
+  DingTalkDWSStatus,
+  DingTalkDWSAuthorization,
   ListDingTalkInstallationsResponse,
   ListDingTalkGroupsResponse,
   ListDingTalkGroupsParams,
@@ -360,11 +363,13 @@ import {
   CreateWorkspaceSubscriptionPortalResponseSchema,
   DingTalkInstallationSchema,
   DingTalkProfileSchema,
+  DingTalkDWSStatusSchema,
   ListDingTalkInstallationsResponseSchema,
   ListDingTalkGroupsResponseSchema,
   RedeemDingTalkBindingTokenResponseSchema,
   EMPTY_DINGTALK_INSTALLATION,
   EMPTY_DINGTALK_PROFILE,
+  EMPTY_DINGTALK_DWS_STATUS,
   EMPTY_LIST_DINGTALK_INSTALLATIONS_RESPONSE,
   EMPTY_LIST_DINGTALK_GROUPS_RESPONSE,
   EMPTY_REDEEM_DINGTALK_BINDING_TOKEN_RESPONSE,
@@ -4873,6 +4878,27 @@ export class ApiClient {
     return parseWithFallback(raw, DingTalkProfileSchema, EMPTY_DINGTALK_PROFILE, {
       endpoint: "GET /api/me/dingtalk-profile",
     });
+  }
+
+  async getDingTalkDWSStatus(): Promise<DingTalkDWSStatus> {
+    const raw = await this.fetch<unknown>(`/api/me/dingtalk-dws`);
+    return parseWithFallback(raw, DingTalkDWSStatusSchema, EMPTY_DINGTALK_DWS_STATUS, {
+      endpoint: "GET /api/me/dingtalk-dws",
+    });
+  }
+
+  async startDingTalkDWSAuthorization(
+    client: DingTalkOAuthClient,
+    next?: string,
+  ): Promise<DingTalkDWSAuthorization> {
+    return this.fetch(`/api/me/dingtalk-dws/start`, {
+      method: "POST",
+      body: JSON.stringify({ client, ...(next ? { next } : {}) }),
+    });
+  }
+
+  async disconnectDingTalkDWS(): Promise<void> {
+    await this.fetch(`/api/me/dingtalk-dws`, { method: "DELETE" });
   }
 
   async listDingTalkGroups(

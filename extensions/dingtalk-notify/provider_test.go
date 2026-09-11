@@ -135,7 +135,7 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	client := httpDoerFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/oauth-token":
-			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token"}`), nil
+			return jsonResponse(http.StatusOK, `{"accessToken":"oauth-token","refreshToken":"refresh-token","expiresIn":3600,"corpId":"corp-1"}`), nil
 		case "/me":
 			return jsonResponse(http.StatusOK, `{"unionId":"union-1","openId":"open-1","nick":"Alice"}`), nil
 		case "/app-token":
@@ -169,6 +169,12 @@ func TestDingTalkOAuthProviderExchangesCodeAndLoadsIdentity(t *testing.T) {
 	user, err := p.ExchangeCode(context.Background(), "code", "https://app/callback")
 	if err != nil || user.DingUserID != "u1" || user.UnionID != "union-1" || user.Email != "alice@example.com" || user.AvatarURL != "https://example.test/alice.png" {
 		t.Fatalf("user=%+v err=%v", user, err)
+	}
+	if user.Credential == nil || user.Credential.AccessToken != "oauth-token" || user.Credential.RefreshToken != "refresh-token" || user.Credential.CorpID != "corp-1" || user.Credential.ClientID != "id" {
+		t.Fatalf("credential=%+v", user.Credential)
+	}
+	if remaining := time.Until(user.Credential.AccessExpiresAt); remaining < 59*time.Minute || remaining > 61*time.Minute {
+		t.Fatalf("access token expiry remaining = %v", remaining)
 	}
 }
 

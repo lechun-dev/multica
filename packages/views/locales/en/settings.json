@@ -657,9 +657,9 @@
     },
     "dingtalk_personal": {
       "title": "DingTalk personal messages",
-      "description": "Use the local DWS CLI to send member mentions in comments as your DingTalk identity. Existing robot notifications are unchanged.",
+      "description": "Use the server to send member mentions in comments as your DingTalk identity. Existing robot notifications are unchanged.",
       "label": "Send a DingTalk DM when I @mention a member",
-      "hint": "On by default. Install DWS and run dws auth login first; offline messages are retained for 24 hours."
+      "hint": "On by default. DingTalk authorization is requested on first use; pending messages are kept for up to 7 days and do not require local DWS."
     },
     "browser": {
       "label": "Browser notifications",

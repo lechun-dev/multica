@@ -808,6 +808,10 @@ export function useCreateComment(issueId: string) {
       suppressAgentIds?: string[];
     }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
     onSuccess: (comment) => {
+      // A human @mention can create a server-side DingTalk delivery that needs
+      // OAuth. Refresh the global authorization guard immediately instead of
+      // waiting for its background poll.
+      qc.invalidateQueries({ queryKey: ["me", "dingtalk-dws"] });
       if (!isRenderableCommentSnapshot(comment)) {
         // 2026-09-07 coder(lq): A malformed success response must never become
         // a blank System/NaN timeline row. The write may still have succeeded,

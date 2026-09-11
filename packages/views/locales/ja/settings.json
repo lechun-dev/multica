@@ -655,9 +655,9 @@
     },
     "dingtalk_personal": {
       "title": "DingTalk 個人メッセージ",
-      "description": "ローカルの DWS CLI を使い、コメント内のメンバーメンションをあなたの DingTalk ID で送信します。既存のボット通知は変更されません。",
+      "description": "サーバーから、コメント内のメンバーメンションをあなたの DingTalk ID で送信します。既存のボット通知は変更されません。",
       "label": "メンバーへの @メンション時に DingTalk DM を送信",
-      "hint": "デフォルトで有効です。DWS をインストールして dws auth login を実行してください。オフラインメッセージは 24 時間保持されます。"
+      "hint": "デフォルトで有効です。初回送信時に DingTalk 認証を求めます。保留メッセージは最大 7 日間保持され、ローカル DWS は不要です。"
     },
     "browser": {
       "label": "ブラウザ通知",

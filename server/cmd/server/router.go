@@ -898,7 +898,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Member @mentions use the deployment-wide DingTalk login application and
 	// are intentionally independent from the optional per-Agent BYO robot
 	// integration above.
-	registerDingTalkNotifyRuntime(bus, pool, opts.DaemonWakeup)
+	dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr := registerDingTalkNotifyRuntime(bus, pool)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
@@ -1398,7 +1398,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if dingtalkRedirectURI == "" && signupConfig.AppURL != "" {
 		dingtalkRedirectURI = strings.TrimRight(signupConfig.AppURL, "/") + "/auth/dingtalk/callback"
 	}
-	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI)
+	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI, dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr)
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
@@ -1459,8 +1459,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/workspaces", h.ListDaemonWorkspaces)
 		r.Get("/workspaces/{workspaceId}/repos", h.GetDaemonWorkspaceRepos)
 		r.Get("/workspaces/{workspaceId}/runtime-profiles", h.DaemonListRuntimeProfiles)
-		r.Post("/dingtalk-personal-messages/claim", h.ClaimDingTalkPersonalMessage)
-		r.Post("/dingtalk-personal-messages/{id}/result", h.ReportDingTalkPersonalMessageResult)
+		// Personal DingTalk messages are now delivered by the server-side DWS
+		// worker. Do not expose the retired desktop claim/result endpoints: an
+		// older desktop daemon must receive 404 instead of racing the server for
+		// the same outbox row.
 
 		// Agent-triggered plugin hooks. The daemon's local MCP server calls
 		// this when an agent picks one of its tools; the server makes the
@@ -1548,6 +1550,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
 		r.Get("/api/me/dingtalk-profile", h.GetDingTalkProfile)
+		r.Get("/api/me/dingtalk-dws", dingtalkLogin.GetDWSStatus)
+		r.Post("/api/me/dingtalk-dws/start", dingtalkLogin.StartDWSAuthorization)
+		r.Delete("/api/me/dingtalk-dws", dingtalkLogin.DisconnectDWS)
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)

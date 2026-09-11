@@ -197,6 +197,13 @@ func (h *Handler) RecordUserLoginForOAuth(ctx context.Context, user db.User) {
 	h.recordUserLogin(ctx, uuidToString(user.ID))
 }
 
+// AuthenticatedUserIDForOAuth exposes the already-verified request identity to
+// the host-owned DingTalk OAuth adapter. It does not parse credentials itself;
+// middleware.Auth has already populated the trusted request header/context.
+func (h *Handler) AuthenticatedUserIDForOAuth(r *http.Request) string {
+	return requestUserID(r)
+}
+
 // UserResponseForOAuth uses the same public user shape as the built-in login
 // handlers so an external OAuth adapter cannot drift from /auth/verify-code or
 // /auth/google responses.

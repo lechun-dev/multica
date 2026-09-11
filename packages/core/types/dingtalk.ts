@@ -49,6 +49,26 @@ export interface DingTalkProfile {
   personal_message_issue?: string;
 }
 
+/** Server-side DWS authorization and delivery state for the current user. */
+export interface DingTalkDWSStatus {
+  configured: boolean;
+  connected: boolean;
+  state:
+    | "connected"
+    | "authorization_required"
+    | "delivery_error"
+    | "unavailable"
+    | string;
+  reason?: string;
+  message?: string;
+  pending_count: number;
+  expires_at?: string;
+}
+
+export interface DingTalkDWSAuthorization {
+  authorization_url: string;
+}
+
 /** One connected Multica bot observed in a DingTalk group. */
 export interface DingTalkGroupBot {
   installation_id: string;

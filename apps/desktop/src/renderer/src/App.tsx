@@ -17,7 +17,7 @@ import { DesktopLoginPage } from "./pages/login";
 import { DesktopAuthRecoveryPage } from "./pages/auth-recovery";
 import { DesktopShell } from "./components/desktop-layout";
 import { UpdateNotification } from "./components/update-notification";
-import { DwsLoginDialog } from "./components/dws-login-dialog";
+import { DingTalkDWSAuthorizationDialog } from "@multica/views/dingtalk";
 import { IssueWindow } from "./components/issue-window";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
@@ -489,7 +489,10 @@ export default function App() {
           ) : (
             <AppContent />
           )}
-          <DwsLoginDialog />
+          <DingTalkDWSAuthorizationDialog
+            client={import.meta.env.DEV ? "desktop-dev" : "desktop-lechun"}
+            openAuthorization={(url) => window.desktopAPI.openExternal(url)}
+          />
         </CoreProvider>
       ) : (
         <BlockingRuntimeConfigError message={runtimeConfigResult.error.message} />

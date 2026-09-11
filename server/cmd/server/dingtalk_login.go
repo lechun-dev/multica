@@ -17,6 +17,7 @@ import (
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalkpersonal"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -30,6 +31,8 @@ type dingtalkLoginHandler struct {
 	pool        *pgxpool.Pool
 	service     *notify.LoginOAuthService
 	provider    notify.DingTalkOAuthProvider
+	dws         *dingtalkpersonal.Service
+	dwsInitErr  error
 	redirectURI string
 	initErr     error
 }
@@ -39,7 +42,12 @@ type dingtalkLoginRequest struct {
 	Code  string `json:"code"`
 }
 
-func newDingTalkLoginHandler(host *handler.Handler, pool *pgxpool.Pool, redirectURI string) *dingtalkLoginHandler {
+type dingtalkDWSStartRequest struct {
+	Client string `json:"client"`
+	Next   string `json:"next"`
+}
+
+func newDingTalkLoginHandler(host *handler.Handler, pool *pgxpool.Pool, redirectURI string, dws *dingtalkpersonal.Service, dwsInitErr error) *dingtalkLoginHandler {
 	clientID := strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID"))
 	clientSecret := strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_SECRET"))
 	provider := notify.DingTalkOAuthProvider{
@@ -57,6 +65,8 @@ func newDingTalkLoginHandler(host *handler.Handler, pool *pgxpool.Pool, redirect
 		redirectURI: strings.TrimSpace(redirectURI),
 		service:     &notify.LoginOAuthService{Provider: provider, Store: dingtalkOAuthStateStore{pool: pool}, TTL: 10 * time.Minute},
 		provider:    provider,
+		dws:         dws,
+		dwsInitErr:  dwsInitErr,
 	}
 	switch {
 	case clientID == "" || clientSecret == "":
@@ -157,6 +167,18 @@ func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) 
 		writeDingTalkError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	expectedDWSUserID, dwsConnect, stateErr := h.dwsOAuthStateUser(r.Context(), req.State)
+	if stateErr != nil {
+		writeDingTalkError(w, http.StatusServiceUnavailable, "DingTalk authorization state is temporarily unavailable")
+		return
+	}
+	if dwsConnect {
+		defer func() {
+			if err := h.dws.ConsumeOAuthState(context.Background(), req.State); err != nil {
+				slog.Warn("dingtalk DWS: consume connection state failed", "error", err)
+			}
+		}()
+	}
 	identity, err := h.service.Complete(r.Context(), req.State, req.Code, h.redirectURI)
 	if err != nil {
 		if errors.Is(err, notify.ErrInvalidLoginState) {
@@ -167,10 +189,52 @@ func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) 
 		writeDingTalkError(w, http.StatusBadGateway, "Unable to complete DingTalk login")
 		return
 	}
-	user, err := h.resolveUser(r.Context(), identity)
+	var user db.User
+	if dwsConnect {
+		user, err = h.resolveDWSUser(r.Context(), expectedDWSUserID, identity)
+	} else {
+		user, err = h.resolveUser(r.Context(), identity)
+	}
 	if err != nil {
+		var deliveryErr *dingtalkpersonal.DeliveryError
+		if errors.As(err, &deliveryErr) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": deliveryErr.Message, "code": deliveryErr.Code})
+			return
+		}
 		slog.Warn("dingtalk login: account resolution failed", "error", err)
 		writeDingTalkError(w, http.StatusForbidden, "DingTalk account could not be linked to a Multica account")
+		return
+	}
+	resolvedUserID := util.UUIDToString(user.ID)
+	if identity.Credential != nil && h.dws != nil {
+		credential := dingtalkpersonal.OAuthCredential{
+			AccessToken:      identity.Credential.AccessToken,
+			RefreshToken:     identity.Credential.RefreshToken,
+			AccessExpiresAt:  identity.Credential.AccessExpiresAt,
+			RefreshExpiresAt: identity.Credential.RefreshExpiresAt,
+			CorpID:           identity.Credential.CorpID,
+			ClientID:         identity.Credential.ClientID,
+		}
+		if saveErr := h.dws.SaveCredential(r.Context(), resolvedUserID, identity.DingUserID, identity.UnionID, credential); saveErr != nil {
+			slog.Warn("dingtalk DWS: persist OAuth credential failed", "user_id", resolvedUserID, "error", saveErr)
+			if dwsConnect {
+				var deliveryErr *dingtalkpersonal.DeliveryError
+				if errors.As(saveErr, &deliveryErr) {
+					writeJSON(w, http.StatusConflict, map[string]string{"error": deliveryErr.Message, "code": deliveryErr.Code})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+					"error": "钉钉授权已完成，但服务器暂时无法安全保存授权，请稍后重试。",
+					"code":  "dws_credential_save_failed",
+				})
+				return
+			}
+		}
+	} else if dwsConnect {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "钉钉授权响应缺少个人消息凭据，请重新授权。",
+			"code":  "dws_credential_missing",
+		})
 		return
 	}
 	token, err := h.host.IssueLoginTokenForOAuth(r.Context(), user)
@@ -188,6 +252,177 @@ func (h *dingtalkLoginHandler) complete(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	writeJSON(w, http.StatusOK, handler.LoginResponse{Token: token, User: h.host.UserResponseForOAuth(user)})
+}
+
+func (h *dingtalkLoginHandler) dwsOAuthStateUser(ctx context.Context, state string) (string, bool, error) {
+	if h == nil || h.dws == nil {
+		return "", false, nil
+	}
+	return h.dws.OAuthStateUser(ctx, state)
+}
+
+// resolveDWSUser validates the connection against the already-authenticated
+// Multica user before profile sync performs any write. A stable DingTalk link
+// wins; for a first-time link, the trusted enterprise email must match.
+func (h *dingtalkLoginHandler) resolveDWSUser(ctx context.Context, expectedUserID string, identity notify.OAuthUser) (db.User, error) {
+	expectedUUID, err := util.ParseUUID(expectedUserID)
+	if err != nil {
+		return db.User{}, fmt.Errorf("invalid authenticated Multica user id: %w", err)
+	}
+	user, err := h.host.Queries.GetUser(ctx, expectedUUID)
+	if err != nil {
+		return db.User{}, fmt.Errorf("load authenticated Multica user: %w", err)
+	}
+
+	var linkedCount int64
+	var allLinkedToExpected bool
+	err = h.pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(bool_and(multica_user_id = $4), false)
+		FROM dingtalk_notify_identities
+		WHERE active = true
+		  AND (($1 <> '' AND ding_user_id = $1)
+		    OR ($2 <> '' AND union_id = $2)
+		    OR ($3 <> '' AND open_id = $3))`,
+		strings.TrimSpace(identity.DingUserID), strings.TrimSpace(identity.UnionID),
+		strings.TrimSpace(identity.OpenID), expectedUserID).
+		Scan(&linkedCount, &allLinkedToExpected)
+	if err != nil {
+		return db.User{}, fmt.Errorf("verify DingTalk identity binding: %w", err)
+	}
+	if linkedCount > 0 && !allLinkedToExpected {
+		return db.User{}, dwsIdentityMismatchError()
+	}
+	if linkedCount == 0 {
+		identityEmail := strings.TrimSpace(identity.Email)
+		if identityEmail == "" || !strings.EqualFold(identityEmail, strings.TrimSpace(user.Email)) {
+			return db.User{}, dwsIdentityMismatchError()
+		}
+	}
+	return h.syncDingTalkProfile(ctx, user, identity)
+}
+
+func dwsIdentityMismatchError() error {
+	return &dingtalkpersonal.DeliveryError{
+		Code:    "dws_identity_mismatch",
+		Message: "当前授权的钉钉账号与 MissionOS 登录账号不一致，请返回并使用正确账号授权。",
+	}
+}
+
+func (h *dingtalkLoginHandler) StartDWSAuthorization(w http.ResponseWriter, r *http.Request) {
+	if h == nil {
+		writeDWSUnavailable(w, nil)
+		return
+	}
+	if h.dws == nil {
+		writeDWSUnavailable(w, h.dwsInitErr)
+		return
+	}
+	if h.initErr != nil {
+		writeDWSUnavailable(w, &dingtalkpersonal.DeliveryError{Code: "dws_oauth_unavailable", Message: "服务器钉钉 OAuth 状态服务暂时不可用。", Cause: h.initErr})
+		return
+	}
+	if h.redirectURI == "" {
+		writeDWSUnavailable(w, &dingtalkpersonal.DeliveryError{Code: "dws_redirect_not_configured", Message: "服务器尚未配置钉钉 OAuth 回调地址，请联系管理员。"})
+		return
+	}
+	userID := strings.TrimSpace(h.host.AuthenticatedUserIDForOAuth(r))
+	if userID == "" {
+		writeDingTalkError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var req dingtalkDWSStartRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	client, err := notify.ParseLoginClient(req.Client)
+	if err != nil {
+		writeDingTalkError(w, http.StatusBadRequest, "unsupported DingTalk authorization client")
+		return
+	}
+	next := sanitizeDingTalkNext(req.Next)
+	authz, err := h.service.BeginForClientWithNext(r.Context(), h.redirectURI, client, next)
+	if err != nil {
+		slog.Warn("dingtalk DWS: start authorization failed", "error", err)
+		writeDingTalkError(w, http.StatusBadGateway, "Unable to start DingTalk authorization")
+		return
+	}
+	if err := h.dws.BindOAuthState(r.Context(), authz.State, userID, time.Now().Add(10*time.Minute)); err != nil {
+		slog.Warn("dingtalk DWS: bind authorization state failed", "error", err)
+		writeDingTalkError(w, http.StatusServiceUnavailable, "Unable to save DingTalk authorization state")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"authorization_url": authz.URL})
+}
+
+func (h *dingtalkLoginHandler) GetDWSStatus(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.host == nil {
+		writeDingTalkError(w, http.StatusServiceUnavailable, "DingTalk personal messaging is not configured")
+		return
+	}
+	userID := strings.TrimSpace(h.host.AuthenticatedUserIDForOAuth(r))
+	if userID == "" {
+		writeDingTalkError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if h.dws == nil {
+		var pendingCount int64
+		if h.pool != nil {
+			_ = h.pool.QueryRow(r.Context(), `
+				SELECT count(*) FROM dingtalk_personal_message
+				WHERE sender_user_id = $1 AND expires_at > now()
+				  AND status IN ('pending', 'leased', 'waiting_for_dws_login', 'waiting_for_identity')`, userID).
+				Scan(&pendingCount)
+		}
+		code, message := dwsUnavailableDetails(h.dwsInitErr)
+		writeJSON(w, http.StatusOK, dingtalkpersonal.Status{
+			Configured: false, State: "unavailable", Reason: code,
+			Message: message, PendingCount: pendingCount,
+		})
+		return
+	}
+	status, err := h.dws.Status(r.Context(), userID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "暂时无法读取钉钉个人消息授权状态。",
+			"code":  "dws_status_unavailable",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *dingtalkLoginHandler) DisconnectDWS(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.host == nil {
+		writeDingTalkError(w, http.StatusServiceUnavailable, "DingTalk personal messaging is not configured")
+		return
+	}
+	userID := strings.TrimSpace(h.host.AuthenticatedUserIDForOAuth(r))
+	if userID == "" {
+		writeDingTalkError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if h == nil || h.dws == nil {
+		writeDingTalkError(w, http.StatusServiceUnavailable, "DingTalk personal messaging is not configured")
+		return
+	}
+	if err := h.dws.Disconnect(r.Context(), userID); err != nil {
+		writeDingTalkError(w, http.StatusServiceUnavailable, "Unable to disconnect DingTalk personal messaging")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func dwsUnavailableDetails(err error) (string, string) {
+	var deliveryErr *dingtalkpersonal.DeliveryError
+	if errors.As(err, &deliveryErr) && strings.TrimSpace(deliveryErr.Code) != "" && strings.TrimSpace(deliveryErr.Message) != "" {
+		return deliveryErr.Code, deliveryErr.Message
+	}
+	return "dws_server_not_configured", "服务器尚未配置钉钉个人消息服务，请联系管理员。"
+}
+
+func writeDWSUnavailable(w http.ResponseWriter, err error) {
+	code, message := dwsUnavailableDetails(err)
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": message, "code": code})
 }
 
 func (h *dingtalkLoginHandler) resolveUser(ctx context.Context, identity notify.OAuthUser) (db.User, error) {

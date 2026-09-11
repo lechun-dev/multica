@@ -21,6 +21,19 @@ type OAuthUser struct {
 	AvatarURL         string
 	Departments       []DingTalkDepartment
 	DepartmentsSynced bool
+	// Credential is server-only OAuth material. It is never serialized into a
+	// user/session response; the Multica host encrypts it before persistence so
+	// server-side DWS delivery can refresh and send without a desktop CLI.
+	Credential *OAuthCredential
+}
+
+type OAuthCredential struct {
+	AccessToken      string
+	RefreshToken     string
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+	CorpID           string
+	ClientID         string
 }
 
 // DingTalkDepartment is profile metadata from the enterprise directory. The

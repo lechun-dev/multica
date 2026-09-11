@@ -16,7 +16,9 @@ import (
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/integrations/dingtalkpersonal"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -51,13 +53,13 @@ const (
 	dingtalkNotifyWorkerRetryMax = 30 * time.Second
 )
 
-// registerDingTalkNotifyRuntime always wires the local-DWS personal mention
-// outbox. The existing robot worker remains separately gated by its deployment
-// credentials, so adding personal delivery does not change robot behavior.
-func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, wakeup any) {
+// registerDingTalkNotifyRuntime wires the personal-mention outbox to the
+// server-side DWS sender. The existing robot worker remains independently
+// gated, so personal delivery cannot alter its routing or payloads.
+func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) (*dingtalkpersonal.Service, error) {
 	if bus == nil || pool == nil {
 		slog.Warn("dingtalk notify disabled: event bus or database is unavailable")
-		return
+		return nil, &dingtalkpersonal.DeliveryError{Code: "dws_runtime_unavailable", Message: "服务器钉钉个人消息运行环境暂时不可用。"}
 	}
 
 	// The extension owns its schema and outbox. Use simple protocol because its
@@ -72,7 +74,42 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, wakeup a
 	if err != nil {
 		_ = sqlDB.Close()
 		slog.Warn("dingtalk notify disabled: schema initialization failed", "error", err)
-		return
+		return nil, &dingtalkpersonal.DeliveryError{Code: "dws_database_unavailable", Message: "服务器暂时无法初始化钉钉个人消息数据库。", Cause: err}
+	}
+
+	var personalService *dingtalkpersonal.Service
+	var personalInitErr error
+	if dwsKey, keyErr := secretbox.LoadKey("MULTICA_DWS_TOKEN_KEY"); keyErr != nil {
+		slog.Warn("dingtalk server personal delivery unavailable", "error", keyErr)
+		code := "dws_encryption_key_invalid"
+		message := "服务器钉钉个人消息加密密钥格式无效，请联系管理员。"
+		if strings.TrimSpace(os.Getenv("MULTICA_DWS_TOKEN_KEY")) == "" {
+			code = "dws_encryption_key_missing"
+			message = "服务器尚未配置钉钉个人消息加密密钥，请联系管理员。"
+		}
+		personalInitErr = &dingtalkpersonal.DeliveryError{Code: code, Message: message, Cause: keyErr}
+	} else if dwsBox, boxErr := secretbox.New(dwsKey); boxErr != nil {
+		slog.Warn("dingtalk server personal delivery unavailable", "error", boxErr)
+		personalInitErr = &dingtalkpersonal.DeliveryError{Code: "dws_encryption_key_invalid", Message: "服务器钉钉个人消息加密密钥格式无效，请联系管理员。", Cause: boxErr}
+	} else {
+		personalService, err = dingtalkpersonal.New(dingtalkpersonal.Config{
+			Pool: pool, Box: dwsBox,
+			ClientID:        strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_ID")),
+			ClientSecret:    strings.TrimSpace(os.Getenv("DINGTALK_CLIENT_SECRET")),
+			CorpID:          strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")),
+			TokenEndpoint:   strings.TrimSpace(os.Getenv("DINGTALK_OAUTH_TOKEN_URL")),
+			ChatEndpoint:    strings.TrimSpace(os.Getenv("DINGTALK_DWS_CHAT_ENDPOINT")),
+			ContactEndpoint: strings.TrimSpace(os.Getenv("DINGTALK_DWS_CONTACT_ENDPOINT")),
+			IMEndpoint:      strings.TrimSpace(os.Getenv("DINGTALK_DWS_IM_ENDPOINT")),
+		})
+		if err != nil {
+			slog.Warn("dingtalk server personal delivery unavailable", "error", err)
+			personalInitErr = err
+			personalService = nil
+		} else {
+			personalService.Start(context.Background())
+			slog.Info("dingtalk server personal delivery enabled")
+		}
 	}
 
 	runtime := &dingtalkNotifyRuntime{
@@ -80,9 +117,7 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, wakeup a
 		agentOwner:   dingtalkAgentOwnerResolver(pool),
 		agentDetails: dingtalkAgentDetailsResolver(pool),
 	}
-	if notifier, ok := wakeup.(dingtalkPersonalMessageWakeup); ok {
-		runtime.personalWakeup = notifier
-	}
+	runtime.personalWakeup = personalService
 	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
 	slog.Info("dingtalk personal mention outbox enabled")
 
@@ -90,7 +125,7 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, wakeup a
 	if missing := config.MissingNotificationSettings(); len(missing) > 0 {
 		_ = sqlDB.Close()
 		slog.Info("dingtalk robot notify disabled: application configuration is incomplete", "missing", strings.Join(missing, ","))
-		return
+		return personalService, personalInitErr
 	}
 
 	store := &notify.SQLStore{DB: sqlDB, Lease: 2 * time.Minute}
@@ -110,6 +145,7 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, wakeup a
 	bus.Subscribe(protocol.EventTaskCompleted, runtime.handleTaskCompleted)
 	go runtime.run(context.Background())
 	slog.Info("dingtalk member notifications enabled")
+	return personalService, personalInitErr
 }
 
 // handleTaskCompleted sends a distinct completion message to both the Agent's

@@ -257,6 +257,8 @@ export type {
 export type {
   DingTalkInstallation,
   DingTalkProfile,
+  DingTalkDWSStatus,
+  DingTalkDWSAuthorization,
   ListDingTalkInstallationsResponse,
   DingTalkGroupBot,
   DingTalkGroup,

@@ -116,7 +116,11 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 	}
 	payload, _ := json.Marshal(map[string]string{"clientId": p.ClientID, "clientSecret": p.ClientSecret, "code": code, "grantType": "authorization_code"})
 	var token struct {
-		AccessToken string `json:"accessToken"`
+		AccessToken    string `json:"accessToken"`
+		RefreshToken   string `json:"refreshToken"`
+		PersistentCode string `json:"persistentCode"`
+		ExpiresIn      int64  `json:"expiresIn"`
+		CorpID         string `json:"corpId"`
 	}
 	if err := p.postJSON(ctx, tokenURL, payload, &token); err != nil {
 		return OAuthUser{}, err
@@ -204,7 +208,20 @@ func (p DingTalkOAuthProvider) ExchangeCode(ctx context.Context, code, redirectU
 	if user.DingUserID == "" && user.UnionID == "" && user.OpenID == "" {
 		return OAuthUser{}, errors.New("DingTalk OAuth user response has no stable identity")
 	}
-	identity := OAuthUser{DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID, Name: user.Name, Email: user.Email, AvatarURL: user.AvatarURL}
+	expiresIn := token.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 7200
+	}
+	identity := OAuthUser{
+		DingUserID: user.DingUserID, UnionID: user.UnionID, OpenID: user.OpenID,
+		Name: user.Name, Email: user.Email, AvatarURL: user.AvatarURL,
+		Credential: &OAuthCredential{
+			AccessToken: token.AccessToken, RefreshToken: token.RefreshToken,
+			AccessExpiresAt:  time.Now().Add(time.Duration(expiresIn) * time.Second),
+			RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour),
+			CorpID:           token.CorpID, ClientID: p.ClientID,
+		},
+	}
 	needsEnterpriseIdentity := identity.DingUserID == "" || identity.Name == "" || identity.Email == "" || identity.AvatarURL == ""
 	if identity.DingUserID != "" || identity.UnionID != "" {
 		enterpriseIdentity, err := p.enterpriseIdentity(ctx, identity.DingUserID, identity.UnionID)
