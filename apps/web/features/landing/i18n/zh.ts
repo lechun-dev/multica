@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.85",
+        date: "2026-09-12",
+        title: "修复桌面端 daemon 升级后的任务 CLI",
+        changes: [],
+        features: [],
+        improvements: [
+          "桌面端会在旧 daemon 空闲且缺少当前 CLI 别名时自动重启，同时保留正在执行的任务。",
+        ],
+        fixes: [
+          "修复 daemon 升级后桌面端任务环境找不到 `multica` 命令的问题。",
+        ],
+      },
+      {
         version: "0.4.84",
         date: "2026-09-12",
         title: "恢复左侧栏的统计和设置入口",

@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.85",
+          date: "2026-09-12",
+          title: "デーモン更新後もデスクトップのタスク CLI を利用可能に",
+          changes: [],
+          features: [],
+          improvements: [
+            "現在の CLI エイリアスがないアイドル状態の旧デーモンをデスクトップ版が再起動し、実行中のタスクは維持します。",
+          ],
+          fixes: [
+            "デーモン更新後にデスクトップのタスク環境で `multica` コマンドが見つからない問題を修正しました。",
+          ],
+        },
+        {
           version: "0.4.84",
           date: "2026-09-12",
           title: "サイドバーの統計と設定入口を復元",

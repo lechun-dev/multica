@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.85",
+        date: "2026-09-12",
+        title: "Keep the desktop task CLI available after daemon upgrades",
+        changes: [],
+        features: [],
+        improvements: [
+          "Desktop now restarts an idle legacy daemon when it is missing the current CLI alias, while preserving active work.",
+        ],
+        fixes: [
+          "Fix desktop task environments failing to find the `multica` command after a daemon upgrade.",
+        ],
+      },
+      {
         version: "0.4.84",
         date: "2026-09-12",
         title: "Restore Analytics and Settings in the sidebar",

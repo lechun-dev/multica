@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.85",
+          date: "2026-09-12",
+          title: "데몬 업데이트 후에도 데스크톱 작업 CLI 사용 가능",
+          changes: [],
+          features: [],
+          improvements: [
+            "현재 CLI 별칭이 없는 유휴 레거시 데몬을 데스크톱이 재시작하며 실행 중인 작업은 유지합니다.",
+          ],
+          fixes: [
+            "데몬 업데이트 후 데스크톱 작업 환경에서 `multica` 명령을 찾지 못하는 문제를 수정했습니다.",
+          ],
+        },
+        {
           version: "0.4.84",
           date: "2026-09-12",
           title: "사이드바의 통계와 설정 항목을 복원",
