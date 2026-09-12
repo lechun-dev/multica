@@ -294,6 +294,17 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.84",
+        date: "2026-09-12",
+        title: "Restore Analytics and Settings in the sidebar",
+        changes: [],
+        features: [],
+        improvements: [],
+        fixes: [
+          "Restore the missing Analytics and Settings items in the left sidebar.",
+        ],
+      },
+      {
         version: "0.4.83",
         date: "2026-09-12",
         title: "Clearer Agent progress and more reliable Inbox and task updates",

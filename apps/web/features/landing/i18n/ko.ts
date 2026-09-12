@@ -269,6 +269,17 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.84",
+          date: "2026-09-12",
+          title: "사이드바의 통계와 설정 항목을 복원",
+          changes: [],
+          features: [],
+          improvements: [],
+          fixes: [
+            "왼쪽 사이드바에서 사라졌던 통계와 설정 메뉴를 복원했습니다.",
+          ],
+        },
+        {
           version: "0.4.83",
           date: "2026-09-12",
           title: "더 선명한 Agent 진행 과정과 안정적인 받은편지함 및 태스크 업데이트",

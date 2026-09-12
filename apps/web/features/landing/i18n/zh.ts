@@ -294,6 +294,17 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.84",
+        date: "2026-09-12",
+        title: "恢复左侧栏的统计和设置入口",
+        changes: [],
+        features: [],
+        improvements: [],
+        fixes: [
+          "修复左侧栏丢失的「统计」和「设置」菜单。",
+        ],
+      },
+      {
         version: "0.4.83",
         date: "2026-09-12",
         title: "智能体过程更清晰，收件箱与任务操作更稳定",

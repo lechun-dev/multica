@@ -270,6 +270,17 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.84",
+          date: "2026-09-12",
+          title: "サイドバーの統計と設定入口を復元",
+          changes: [],
+          features: [],
+          improvements: [],
+          fixes: [
+            "左サイドバーから消えていた「統計」と「設定」メニューを復元しました。",
+          ],
+        },
+        {
           version: "0.4.83",
           date: "2026-09-12",
           title: "Agent の進行状況を見やすくし、受信トレイとタスク更新を安定化",
