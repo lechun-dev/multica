@@ -80,4 +80,26 @@ describe("humanizeTraceRow", () => {
       completed: false,
     });
   });
+
+  it("collapses adjacent actions in the summary while keeping their count", () => {
+    const rows = groupSteps(
+      buildSteps([
+        { seq: 1, type: "tool_use", tool: "Bash", input: { command: "pwd" } },
+        { seq: 2, type: "tool_result", tool: "Bash", output: "ok" },
+        { seq: 3, type: "tool_use", tool: "Bash", input: { command: "pnpm test" } },
+        { seq: 4, type: "tool_result", tool: "Bash", output: "ok" },
+        { seq: 5, type: "tool_use", tool: "Bash", input: { command: "pnpm lint" } },
+      ]),
+    );
+
+    expect(humanizeTraceRows(rows)).toMatchObject([
+      {
+        kind: "group",
+        action: "command",
+        count: 3,
+        completed: false,
+        subject: "pwd",
+      },
+    ]);
+  });
 });

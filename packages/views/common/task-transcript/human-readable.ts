@@ -81,7 +81,53 @@ export function humanizeTraceRow(row: TraceRow): HumanReadableStep {
   return row.kind === "call" ? humanizeCall(row) : humanizeMessage(row);
 }
 
-/** Build the human-readable list while retaining every technical row. */
+/**
+ * 2026-09-12 coder(lq): Collapse adjacent actions in the summary view so a
+ * long tool transcript reads as a few phases instead of one row per command.
+ * The details view still receives the original technical rows.
+ */
 export function humanizeTraceRows(rows: TraceRow[]): HumanReadableStep[] {
-  return rows.map(humanizeTraceRow);
+  const summary: HumanReadableStep[] = [];
+
+  const flush = (run: HumanReadableStep[]) => {
+    if (run.length === 0) return;
+    if (run.length === 1) {
+      summary.push(run[0]!);
+      return;
+    }
+
+    const first = run[0]!;
+    const count = run.reduce((total, step) => total + (step.count ?? 1), 0);
+    summary.push({
+      ...first,
+      kind: "group",
+      count,
+      completed: run.every((step) => step.completed === true),
+    });
+  };
+
+  let actionRun: HumanReadableStep[] = [];
+  let action: HumanReadableAction | undefined;
+
+  for (const row of rows) {
+    const step = humanizeTraceRow(row);
+    const isAction = step.kind === "action" || step.kind === "group";
+    if (!isAction) {
+      flush(actionRun);
+      actionRun = [];
+      action = undefined;
+      summary.push(step);
+      continue;
+    }
+
+    if (actionRun.length > 0 && step.action !== action) {
+      flush(actionRun);
+      actionRun = [];
+    }
+    action = step.action;
+    actionRun.push(step);
+  }
+
+  flush(actionRun);
+  return summary;
 }

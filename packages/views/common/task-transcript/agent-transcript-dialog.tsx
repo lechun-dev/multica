@@ -1782,29 +1782,29 @@ function HumanReadableRow({ step }: { step: HumanReadableStep }) {
     );
   }
 
+  const subject = step.subject || step.tool || t(($) => $.transcript.kind_tool);
   const actionText =
-    step.kind === "group"
-      ? t(($) => $.transcript.human_group, {
-          tool: step.tool || t(($) => $.transcript.kind_tool),
-          count: step.count ?? 0,
-        })
-      : step.action === "command"
-        ? t(($) => $.transcript.human_command, { subject: step.subject || t(($) => $.transcript.kind_tool) })
-        : step.action === "read"
-          ? t(($) => $.transcript.human_read, { subject: step.subject || t(($) => $.transcript.kind_tool) })
-          : step.action === "search"
-            ? t(($) => $.transcript.human_search, { subject: step.subject || t(($) => $.transcript.kind_tool) })
-            : step.action === "edit"
-              ? t(($) => $.transcript.human_edit, { subject: step.subject || t(($) => $.transcript.kind_tool) })
-              : t(($) => $.transcript.human_tool, { subject: step.subject || step.tool || t(($) => $.transcript.kind_tool) });
+    step.action === "command"
+      ? t(($) => $.transcript.human_command, { subject })
+      : step.action === "read"
+        ? t(($) => $.transcript.human_read, { subject })
+        : step.action === "search"
+          ? t(($) => $.transcript.human_search, { subject })
+          : step.action === "edit"
+            ? t(($) => $.transcript.human_edit, { subject })
+            : t(($) => $.transcript.human_tool, { subject });
+  const displayAction =
+    step.kind === "group" && step.count && step.count > 1
+      ? `${actionText} × ${step.count}`
+      : actionText;
 
   return (
     <div className="flex items-start gap-2 px-4 py-2.5">
       <HumanActionIcon action={step.action} className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 text-body text-foreground">
         {step.completed
-          ? t(($) => $.transcript.human_completed, { action: actionText })
-          : t(($) => $.transcript.human_running, { action: actionText })}
+          ? t(($) => $.transcript.human_completed, { action: displayAction })
+          : t(($) => $.transcript.human_running, { action: displayAction })}
       </span>
     </div>
   );
