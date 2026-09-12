@@ -11,7 +11,18 @@ export const CHANGELOG_LOCALE_FILES = [
   "apps/web/features/landing/i18n/zh.ts",
 ];
 
-const RELEASE_TAG_PATTERN = /^v(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/;
+const RELEASE_TAG_PATTERN = /^v(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+export function isPrereleaseTag(tag) {
+  const match = RELEASE_TAG_PATTERN.exec(tag);
+  if (!match) {
+    throw new Error(
+      `Release tag must look like vX.Y.Z or vX.Y.Z-suffix; got "${tag}".`,
+    );
+  }
+
+  return Boolean(match[2]);
+}
 
 export function changelogVersionForTag(tag) {
   const match = RELEASE_TAG_PATTERN.exec(tag);
@@ -30,6 +41,13 @@ function escapeRegExp(value) {
 
 export function validateReleaseChangelog({ tag, repoRoot }) {
   const version = changelogVersionForTag(tag);
+
+  // 2026-09-12 coder(lq): Prerelease builds must not require or publish the
+  // final version's notes before that stable version is released.
+  if (isPrereleaseTag(tag)) {
+    return { tag, version, skipped: true };
+  }
+
   const versionEntryPattern = new RegExp(
     `\\bversion\\s*:\\s*["']${escapeRegExp(version)}["']`,
   );
@@ -64,12 +82,16 @@ if (isCli) {
       );
     }
 
-    // 2026-09-11 coder(lq): Prereleases share the base version's product
-    // notes, so v0.4.82-beta.1 intentionally validates the 0.4.82 entry.
     const result = validateReleaseChangelog({ tag, repoRoot });
-    console.log(
-      `Release changelog is ready: ${result.tag} -> ${result.version} (${CHANGELOG_LOCALE_FILES.length} locales).`,
-    );
+    if (result.skipped) {
+      console.log(
+        `Prerelease ${result.tag} does not require a stable changelog entry.`,
+      );
+    } else {
+      console.log(
+        `Release changelog is ready: ${result.tag} -> ${result.version} (${CHANGELOG_LOCALE_FILES.length} locales).`,
+      );
+    }
   } catch (error) {
     console.error(`::error::${error.message}`);
     process.exitCode = 1;

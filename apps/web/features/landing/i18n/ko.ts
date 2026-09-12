@@ -269,22 +269,6 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
-          version: "0.4.83",
-          date: "2026-09-12",
-          title: "더 선명한 Agent 진행 과정과 안정적인 받은편지함 및 태스크 업데이트",
-          changes: [],
-          features: [
-            "태스크 타임라인에서 Agent의 추론 진행을 미리 보고 댓글과 태스크 설명에 주석을 추가할 수 있습니다.",
-          ],
-          improvements: [
-            "받은편지함이 태스크 변경 사항을 빠르게 반영하고 댓글 알림을 간결한 미리보기로 표시합니다.",
-            "자동 재시도가 기존 작업 디렉터리를 유지하며 데스크톱 앱에 편리한 뒤로 및 앞으로 이동 기록 메뉴가 추가되었습니다.",
-          ],
-          fixes: [
-            "최신 업스트림 버전에 맞춰 마이그레이션과 서버 통합 호환성을 조정하면서 MissionOS의 사설 권한, 알림 및 채팅 기능을 유지했습니다.",
-          ],
-        },
-        {
           version: "0.4.82",
           date: "2026-09-11",
           title: "로컬 DWS 프로세스 없이 동작하는 DingTalk 개인 알림",

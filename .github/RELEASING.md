@@ -7,15 +7,16 @@ version tag such as `v0.18.4`. The Release workflow intentionally has no manual
 trigger: a tag push is the only event that can publish binaries, Homebrew
 formulae, and container images.
 
-Before creating the tag, add the same base version to the changelog in all four
-locale files under `apps/web/features/landing/i18n/`. For example, both
-`v0.4.82` and `v0.4.82-beta.1` require a `0.4.82` entry in `en.ts`, `ja.ts`,
-`ko.ts`, and `zh.ts`. Run
-`node scripts/check-release-changelog.mjs v0.4.82` locally to verify it.
+Before creating a stable tag, add the same version to the changelog in all four
+locale files under `apps/web/features/landing/i18n/`. For example, `v0.4.82`
+requires a `0.4.82` entry in `en.ts`, `ja.ts`, `ko.ts`, and `zh.ts`. Beta, RC,
+and other prerelease tags do not require a changelog entry. Run
+`node scripts/check-release-changelog.mjs v0.4.82` locally to verify a stable
+release.
 
-The verification job requires those changelog entries, then runs the Go tests
-and `govulncheck` before any publishing job starts. The changelog and
-vulnerability checks are fail-closed by default.
+For stable tags, the verification job requires those changelog entries. It then
+runs the Go tests and `govulncheck` before any publishing job starts. The stable
+changelog and vulnerability checks are fail-closed by default.
 
 ## Test / prerelease release
 
