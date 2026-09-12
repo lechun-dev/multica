@@ -294,6 +294,22 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.83",
+        date: "2026-09-12",
+        title: "Clearer Agent progress and more reliable Inbox and task updates",
+        changes: [],
+        features: [
+          "Task timelines can now preview Agent reasoning progress and support annotations on comments and task descriptions.",
+        ],
+        improvements: [
+          "Inbox lists refresh task changes promptly and show concise previews for comment notifications.",
+          "Automatic retries preserve the original working directory, and the desktop app adds convenient back and forward history menus.",
+        ],
+        fixes: [
+          "Completed migration and server integration compatibility for the latest upstream release while preserving MissionOS private permissions, notifications, and chat behavior.",
+        ],
+      },
+      {
         version: "0.4.82",
         date: "2026-09-11",
         title: "DingTalk personal mentions now work without a local DWS process",

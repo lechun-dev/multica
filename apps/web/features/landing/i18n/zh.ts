@@ -294,6 +294,22 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.83",
+        date: "2026-09-12",
+        title: "智能体过程更清晰，收件箱与任务操作更稳定",
+        changes: [],
+        features: [
+          "任务时间线现在可以预览智能体的思考过程，并支持为评论和任务描述添加批注。",
+        ],
+        improvements: [
+          "收件箱列表会及时刷新任务变更，并以精简预览展示评论通知。",
+          "自动重试会保留原有工作目录，桌面端也增加了更方便的前进和后退历史菜单。",
+        ],
+        fixes: [
+          "完成最新上游版本的迁移与服务端集成兼容处理，保留 MissionOS 私有权限、通知和聊天能力。",
+        ],
+      },
+      {
         version: "0.4.82",
         date: "2026-09-11",
         title: "钉钉个人提醒不再依赖本机 DWS 进程",
