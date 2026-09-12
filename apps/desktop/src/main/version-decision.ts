@@ -15,7 +15,7 @@ export type VersionAction = "restart" | "defer" | "ok" | "not_running";
  * bundled CLI version and the latest /health payload.
  *
  *   not_running: no daemon is up, nothing to do
- *   ok:          versions match, OR either side is unknown (fail safe)
+ *   ok:          versions match, or the bundled version is unknown
  *   defer:       versions differ but the daemon is busy — wait for drain
  *   restart:     versions differ and the daemon is idle — safe to restart
  *
@@ -28,7 +28,13 @@ export function decideVersionAction(
   if (!running || running.status !== "running") return "not_running";
 
   const runningVersion = running.cli_version;
-  if (!bundled || !runningVersion) return "ok";
+  if (!bundled) return "ok";
+  // 2026-09-12 coder(lq): A missing version identifies a daemon older than
+  // the health/version contract. Restart it so fixes that affect task launch
+  // environments, such as CLI compatibility aliases, reach active tasks.
+  if (!runningVersion) {
+    return (running.active_task_count ?? 0) > 0 ? "defer" : "restart";
+  }
   if (runningVersion === bundled) return "ok";
 
   const activeTasks = running.active_task_count ?? 0;

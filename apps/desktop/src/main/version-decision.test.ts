@@ -23,13 +23,22 @@ describe("decideVersionAction", () => {
     ).toBe("ok");
   });
 
-  it("returns ok when running daemon does not report cli_version (older daemon)", () => {
+  it("restarts an idle older daemon that does not report cli_version", () => {
     expect(
       decideVersionAction("v1.0.0", {
         status: "running",
         active_task_count: 0,
       }),
-    ).toBe("ok");
+    ).toBe("restart");
+  });
+
+  it("defers restarting an older daemon while it has active tasks", () => {
+    expect(
+      decideVersionAction("v1.0.0", {
+        status: "running",
+        active_task_count: 2,
+      }),
+    ).toBe("defer");
   });
 
   it("returns ok when versions match exactly", () => {

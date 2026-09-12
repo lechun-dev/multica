@@ -22,8 +22,16 @@ function binaryName(): string {
   return process.platform === "win32" ? "missionos.exe" : "missionos";
 }
 
+function compatibilityBinaryName(): string {
+  return process.platform === "win32" ? "multica.exe" : "multica";
+}
+
 export function managedCliPath(): string {
   return join(app.getPath("userData"), "bin", binaryName());
+}
+
+function managedCliCompatibilityPath(): string {
+  return join(app.getPath("userData"), "bin", compatibilityBinaryName());
 }
 
 function run(cmd: string, args: string[], cwd?: string): Promise<void> {
@@ -136,6 +144,7 @@ async function installFresh(serverUrl?: string): Promise<string> {
     await rm(target, { force: true }).catch(() => {});
     await rename(extractedBin, target);
     await chmod(target, 0o755);
+    await installCompatibilityBinary(target);
 
     // macOS: ad-hoc sign so spawning the child never hits a gatekeeper quirk.
     // Non-fatal: unsigned binaries still execute when the parent app is trusted.
@@ -152,6 +161,16 @@ async function installFresh(serverUrl?: string): Promise<string> {
   }
 }
 
+async function installCompatibilityBinary(source: string): Promise<void> {
+  const alias = managedCliCompatibilityPath();
+  await rm(alias, { force: true }).catch(() => {});
+  await copyFile(source, alias);
+  await chmod(alias, 0o755);
+  if (process.platform === "darwin") {
+    await run("codesign", ["-s", "-", "--force", alias]).catch(() => {});
+  }
+}
+
 /**
  * Returns the path to a usable `missionos` binary. If one is already present at
  * the managed userData location, returns it immediately. Otherwise downloads
@@ -161,6 +180,11 @@ export async function ensureManagedCli(
   options: { forceInstall?: boolean; serverUrl?: string } = {},
 ): Promise<string> {
   const target = managedCliPath();
-  if (existsSync(target) && !options.forceInstall) return target;
+  if (existsSync(target) && !options.forceInstall) {
+    if (!existsSync(managedCliCompatibilityPath())) {
+      await installCompatibilityBinary(target);
+    }
+    return target;
+  }
   return installFresh(options.serverUrl);
 }
