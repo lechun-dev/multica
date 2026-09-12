@@ -171,6 +171,12 @@ const aiTeamNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "runtimes", labelKey: "runtimes" },
 ];
 
+// 2026-09-12 coder(lq): Keep usage/settings at the bottom after the upstream sidebar regroup dropped them from the rail.
+const utilityNav: { key: NavKey; labelKey: NavLabelKey }[] = [
+  { key: "usage", labelKey: "usage" },
+  { key: "settings", labelKey: "settings" },
+];
+
 const NAV_ITEM_CLASS_NAME =
   "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground";
 
@@ -918,6 +924,24 @@ export function AppSidebar({
         </SidebarContent>
 
         <SidebarFooter className="p-2">
+          <SidebarMenu className="gap-0.5">
+            {utilityNav.map((item) => {
+              const href = p[item.key]();
+              const Icon = routeIconForPath(href);
+              return (
+                <SidebarMenuItem key={item.key}>
+                  <SidebarMenuButton
+                    isActive={isNavActive(pathname, href)}
+                    render={<AppLink href={href} />}
+                    className={NAV_ITEM_CLASS_NAME}
+                  >
+                    <Icon />
+                    <span>{t(($) => $.nav[item.labelKey])}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
           <div className="flex items-center justify-end">
             <HelpLauncher />
           </div>

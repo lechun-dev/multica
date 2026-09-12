@@ -408,6 +408,22 @@ describe("navigation item presentation", () => {
       );
     }
   });
+
+  it("keeps Analytics and Settings in the sidebar footer", () => {
+    const { container } = render(<AppSidebar />);
+    const referenceClassName = container.querySelector(
+      'button[data-href="/acme/issues"]',
+    )?.className;
+
+    expect(referenceClassName).toBeTruthy();
+
+    for (const href of ["/acme/usage", "/acme/settings"]) {
+      expect(container.querySelector(`button[data-href="${href}"]`)).not.toBeNull();
+      expect(container.querySelector(`button[data-href="${href}"]`)?.className).toBe(
+        referenceClassName,
+      );
+    }
+  });
 });
 
 describe("personal nav — Chat", () => {
