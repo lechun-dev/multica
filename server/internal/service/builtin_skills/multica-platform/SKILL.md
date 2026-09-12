@@ -46,6 +46,10 @@ opened names — most domains have a `list` and a `get` that take `--output json
 and have no side effects. Run those before any mutation. When a command's shape
 is unclear, `multica <command> --help` beats guessing at flags.
 
+**The CLI is already on PATH.** `multica` and `missionos` are the same binary.
+If either command is missing, stop and report it — never `find`, `mdfind`, or
+walk `/` looking for it.
+
 **A name is not an id.** Mention links, assignment, and every `--*-id` flag take
 a real UUID from the matching `list --output json`. Never type a display name
 where an id belongs, and never invent a UUID: an id that is well-formed but

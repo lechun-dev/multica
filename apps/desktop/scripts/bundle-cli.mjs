@@ -64,6 +64,26 @@ function binaryNameForPlatform(platform) {
   return platform === "win32" ? "missionos.exe" : "missionos";
 }
 
+function aliasBinaryNameForPlatform(platform) {
+  return platform === "win32" ? "multica.exe" : "multica";
+}
+
+// 2026-09-12 coder(lq): Desktop ships missionos, but task prompts tell
+// agents to run `multica`. Install both names so LookPath succeeds.
+async function installBinary(src, dest) {
+  await copyFile(src, dest);
+  await chmod(dest, 0o755);
+  if (process.platform === "darwin") {
+    try {
+      execSync(`codesign -s - --force ${JSON.stringify(dest)}`, {
+        stdio: "pipe",
+      });
+    } catch {
+      // Non-fatal. Unsigned binaries still run when the parent app is trusted.
+    }
+  }
+}
+
 const targetPlatform = normalizeRuntimePlatform(
   runtimePlatformFromArgs(process.argv.slice(2)),
 );
@@ -161,19 +181,15 @@ if (!(await exists(srcBinary))) {
 
 await rm(destDir, { recursive: true, force: true });
 await mkdir(destDir, { recursive: true });
-await copyFile(srcBinary, destBinary);
-await chmod(destBinary, 0o755);
+await installBinary(srcBinary, destBinary);
 
-// macOS: ad-hoc sign so Gatekeeper doesn't complain when the parent app
-// (which itself may be unsigned in dev) spawns the child.
-if (process.platform === "darwin") {
-  try {
-    execSync(`codesign -s - --force ${JSON.stringify(destBinary)}`, {
-      stdio: "pipe",
-    });
-  } catch {
-    // Non-fatal. Unsigned binaries still run when the parent app is trusted.
-  }
+const aliasName = aliasBinaryNameForPlatform(targetPlatform);
+const destAlias = join(destDir, aliasName);
+if (aliasName !== binName) {
+  await installBinary(srcBinary, destAlias);
 }
 
 console.log(`[bundle-cli] bundled ${srcBinary} → ${destBinary}`);
+if (aliasName !== binName) {
+  console.log(`[bundle-cli] bundled alias ${srcBinary} → ${destAlias}`);
+}

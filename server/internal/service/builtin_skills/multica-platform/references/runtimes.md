@@ -99,6 +99,8 @@ The daemon injects a task-scoped `mat_` credential for Multica API commands and
 a private task-local Multica configuration root. Inside that managed task
 context:
 
+- Both `multica` and `missionos` are already on PATH and invoke the same binary.
+  If a command is missing, stop and report it; do not search the disk.
 - API commands such as `issue list`, `issue get`, and `issue runs` use the
   injected task identity and never fall back to the daemon Owner's saved Multica
   profile.

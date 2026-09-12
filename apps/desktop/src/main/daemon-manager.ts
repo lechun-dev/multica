@@ -644,8 +644,9 @@ function findCliOnPath(): string | null {
  * Returns the path to the CLI binary bundled inside the Desktop app.
  *
  * - Dev (`electron-vite dev`): `app.getAppPath()` → `apps/desktop`, resolving
- *   to `apps/desktop/resources/bin/multica`. `bundle-cli.mjs` populates this
- *   before dev starts, so iterating on Go changes is "make build → restart".
+ *   to `apps/desktop/resources/bin/missionos` (and `multica` as the same
+ *   binary). `bundle-cli.mjs` populates these before dev starts, so iterating
+ *   on Go changes is "make build → restart".
  * - Packaged: `app.getAppPath()` → `<Multica.app>/Contents/Resources/app.asar`.
  *   electron-builder's `asarUnpack: resources/**` extracts the binary to
  *   `app.asar.unpacked/`, so we swap the path segment to execute it.

@@ -881,6 +881,10 @@ func writeAttachments(b *strings.Builder) {
 func writeAlwaysUseCLI(b *strings.Builder) {
 	b.WriteString("## Important: Always Use the `multica` CLI\n\n")
 	b.WriteString("Access Multica platform resources only through the `multica` CLI — never `curl` / `wget`. For anything the CLI doesn't cover, post a comment mentioning the workspace owner rather than working around it.\n\n")
+	// 2026-09-12 coder(lq): Desktop binary is missionos; searching the disk
+	// for `multica` burned the first minutes of a task. PATH already has both
+	// names, so the brief must forbid find/mdfind/root walks.
+	b.WriteString("`multica` is already on PATH (`missionos` is the same binary). If the command is missing, stop and report it — do not search the disk.\n\n")
 }
 
 // writeDeliveryInvariant emits the always-on delivery contract, shared by every

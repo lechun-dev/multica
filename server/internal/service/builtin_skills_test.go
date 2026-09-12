@@ -442,6 +442,8 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Comment reads stay bounded",
 				"--roots-only --summary --compact",
 				"--thread <thread-id> --tail 30",
+				"The CLI is already on PATH",
+				"never `find`, `mdfind`, or walk `/`",
 			},
 			notWant: []string{
 				// The singular forms this replaced.
@@ -632,6 +634,8 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"github_repo",
 				"local_directory",
 				"Runtime and repo commands affect active agent execution",
+				"`multica` and `missionos` are already on PATH",
+				"do not search the disk",
 				// An agent reads this to know whether its checkout can be
 				// committed to. Codex on Linux and Windows gets task-local Git
 				// metadata; every other runtime gets a linked worktree.
