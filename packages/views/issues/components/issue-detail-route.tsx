@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useNavigation } from "../../navigation";
 import { IssueDetail, IssueDetailSkeleton, IssueNotFound } from "./issue-detail";
 import { useWorkspaceTaskVisibility } from "../surface/visibility-context";
+import { RestrictedIssueAccess } from "./restricted-issue-access";
 
 interface IssueDetailRouteProps {
   /**
@@ -85,15 +88,22 @@ export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
     includeWorkspaceOwned,
   );
   const highlight = useCommentHighlightHash();
+  const restrictedTarget = useQuery({
+    queryKey: ["issue-access-request-target", wsId, routeId],
+    queryFn: () => api.getIssueAccessRequestTarget(routeId),
+    enabled: visibilityReady && notFound,
+    retry: false,
+  });
 
   useCanonicalIssueUrl(routeId, issue?.identifier, highlight.hash);
 
-  if (!visibilityReady || isResolving) return <IssueDetailSkeleton />;
+  if (!visibilityReady || isResolving || (notFound && restrictedTarget.isLoading)) return <IssueDetailSkeleton />;
 
   // Render not-found here rather than handing the unresolved segment down.
   // `IssueDetail` would mount a second observer on the query that just failed,
   // refetch it, and restart this component's resolve/remount cycle — an
   // unbounded request loop that never settles. See `CanonicalIssue.notFound`.
+  if (notFound && restrictedTarget.data) return <RestrictedIssueAccess issueId={restrictedTarget.data.id} identifier={restrictedTarget.data.identifier} />;
   if (notFound || !canonicalId) return <IssueNotFound showBackLink={!onDelete} />;
 
   return (

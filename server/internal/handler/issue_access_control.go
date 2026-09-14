@@ -104,6 +104,69 @@ func (h *Handler) GetIssueAccessControl(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, state)
 }
 
+// GetIssueEffectiveAccess returns the signed-in user's resolver explanation.
+// It intentionally exposes no other subject's ACL and is therefore safe for
+// the read-only section of the task sharing dialog.
+func (h *Handler) GetIssueEffectiveAccess(w http.ResponseWriter, r *http.Request) {
+	issueUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "task id")
+	if !ok {
+		return
+	}
+	issueID := util.UUIDToString(issueUUID)
+	subject, _, ok := h.issueAccessSubject(w, r, issueID)
+	if !ok {
+		return
+	}
+	if h.EffectiveIssueAccess == nil {
+		writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)
+		return
+	}
+	access, err := h.EffectiveIssueAccess.ResolveIssue(r.Context(), subject, issueID)
+	if err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	hasView := false
+	for _, permission := range access.Permissions {
+		if permission == projectauth.View {
+			hasView = true
+			break
+		}
+	}
+	if !hasView {
+		writeProjectAccessGrantError(w, projectauth.ErrForbidden)
+		return
+	}
+	writeJSON(w, http.StatusOK, access)
+}
+
+// GetIssueAccessRequestTarget resolves either a UUID or identifier without
+// disclosing task content. It exists solely so a denied detail route can show
+// an access-request screen instead of falsely reporting "not found".
+func (h *Handler) GetIssueAccessRequestTarget(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
+	var id, identifier string
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT issue.id::text, issue.identifier
+		FROM issue
+		JOIN member ON member.workspace_id=issue.workspace_id AND member.user_id=$2
+		WHERE issue.workspace_id=$1 AND (issue.id::text=$3 OR lower(issue.identifier)=lower($3))
+		LIMIT 1`, workspaceID, userID, chi.URLParam(r, "id")).Scan(&id, &identifier)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "identifier": identifier})
+}
+
 func (h *Handler) PreviewIssueAccessControl(w http.ResponseWriter, r *http.Request) {
 	request, err := decodeIssueAccessControlRequest(r)
 	if err != nil {

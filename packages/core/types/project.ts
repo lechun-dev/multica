@@ -260,6 +260,7 @@ export interface ProjectAccessGrantRequest {
   subject_id?: string;
   role?: string;
   permission?: ProjectPermissionReportPermission | string;
+  expires_at?: string;
 }
 
 // ProjectResource is a typed pointer from a project to an external resource.

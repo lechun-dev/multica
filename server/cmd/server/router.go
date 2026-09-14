@@ -1906,12 +1906,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteProjectPermissionRole)
 				})
 			})
+			r.Get("/api/task-permission-roles", h.ListTaskPermissionRoles)
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
+				r.Get("/access-request-target/{id}", h.GetIssueAccessRequestTarget)
 				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
 				r.Post("/table/rows", h.ListIssueTableRows)
@@ -1931,6 +1933,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/effective-access", h.GetIssueEffectiveAccess)
 					r.Post("/access-requests", h.CreateIssueAccessRequest)
 					r.Get("/access-requests", h.ListIssueAccessRequests)
 					r.Post("/access-requests/{requestID}/review", h.ReviewIssueAccessRequest)

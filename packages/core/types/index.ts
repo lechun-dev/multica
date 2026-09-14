@@ -215,6 +215,21 @@ export type {
   ListProjectResourcesResponse,
 } from "./project";
 export { PROJECT_PERMISSION_KEYS } from "./project";
+export type {
+  TaskAccessMode,
+  TaskAccessSubjectType,
+  TaskPermissionRole,
+  TaskPermissionRolesResponse,
+  IssueAccessControlGrant,
+  IssueAccessControl,
+  IssueAccessControlUpdate,
+  IssueAccessControlPreview,
+  EffectiveAccessResourceRef,
+  EffectiveTaskPermissionSource,
+  EffectiveIssueAccess,
+  IssueAccessRequest,
+  IssueAccessRequestTarget,
+} from "./task-access";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,

@@ -108,6 +108,13 @@ import type {
   ProjectAccessGrant,
   ProjectAccessGrantRequest,
   ProjectAccessGrantsResponse,
+  TaskPermissionRolesResponse,
+  IssueAccessControl,
+  IssueAccessControlUpdate,
+  IssueAccessControlPreview,
+  EffectiveIssueAccess,
+  IssueAccessRequest,
+  IssueAccessRequestTarget,
   ProjectAuthorizationOrganizationsResponse,
   ProjectAuthorizationDingTalkSyncResult,
   ProjectAuthorizationImportPreview,
@@ -3871,6 +3878,74 @@ export class ApiClient {
 
   async revokeIssueAccessGrant(issueId: string, data: ProjectAccessGrantRequest): Promise<void> {
     await this.fetch(`/api/issues/${issueId}/access-grants`, { method: "DELETE", body: JSON.stringify(data) });
+  }
+
+  async listTaskPermissionRoles(): Promise<TaskPermissionRolesResponse> {
+    return this.fetch("/api/task-permission-roles");
+  }
+
+  async getIssueAccessControl(issueId: string): Promise<IssueAccessControl> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-control`);
+  }
+
+  async previewIssueAccessControl(
+    issueId: string,
+    data: IssueAccessControlUpdate,
+  ): Promise<IssueAccessControlPreview> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-control/preview`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateIssueAccessControl(
+    issueId: string,
+    data: IssueAccessControlUpdate,
+  ): Promise<IssueAccessControl> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-control`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getIssueEffectiveAccess(issueId: string): Promise<EffectiveIssueAccess> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/effective-access`);
+  }
+
+  async getIssueAccessRequestTarget(routeId: string): Promise<IssueAccessRequestTarget> {
+    return this.fetch(`/api/issues/access-request-target/${encodeURIComponent(routeId)}`);
+  }
+
+  async listIssueAccessRequests(issueId: string, mine = false): Promise<{ items: IssueAccessRequest[] }> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests${mine ? "?mine=true" : ""}`);
+  }
+
+  async createIssueAccessRequest(issueId: string, data: {
+    requested_role: string;
+    reason?: string;
+    expires_at?: string;
+    idempotency_key: string;
+  }): Promise<IssueAccessRequest> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async cancelIssueAccessRequest(issueId: string, requestId: string): Promise<IssueAccessRequest> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests/${encodeURIComponent(requestId)}/cancel`, {
+      method: "POST",
+    });
+  }
+
+  async reviewIssueAccessRequest(issueId: string, requestId: string, data: {
+    action: "approve" | "reject";
+    comment?: string;
+  }): Promise<IssueAccessRequest> {
+    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests/${encodeURIComponent(requestId)}/review`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async listProjectPermissionReport(

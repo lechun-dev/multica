@@ -16,6 +16,10 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
+vi.mock("../surface/visibility-context", () => ({
+  useWorkspaceTaskVisibility: () => ({ includeWorkspaceOwned: true, ready: true }),
+}));
+
 vi.mock("@multica/core/paths", async () => {
   const actual = await vi.importActual<typeof import("@multica/core/paths")>(
     "@multica/core/paths",
@@ -126,7 +130,10 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
     replace.mockClear();
     push.mockClear();
     const getIssue = vi.fn().mockRejectedValue(new Error("issue not found"));
-    setApiInstance({ getIssue } as unknown as ApiClient);
+    const getIssueAccessRequestTarget = vi
+      .fn()
+      .mockRejectedValue(new Error("task not found"));
+    setApiInstance({ getIssue, getIssueAccessRequestTarget } as unknown as ApiClient);
     const qc = new QueryClient({
       defaultOptions: { queries: { staleTime: Infinity, retry: false } },
     });
@@ -152,6 +159,7 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
     await waitFor(() => expect(getIssue).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(getIssue).toHaveBeenCalledTimes(1);
+    expect(getIssueAccessRequestTarget).toHaveBeenCalledTimes(1);
 
     rerender(
       <QueryClientProvider client={qc}>

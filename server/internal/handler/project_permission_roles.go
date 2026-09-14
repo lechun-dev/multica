@@ -50,7 +50,7 @@ func (h *Handler) ListProjectPermissionRoles(w http.ResponseWriter, r *http.Requ
 		writeProjectPermissionRoleError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"roles": roles})
+	writeJSON(w, http.StatusOK, map[string]any{"scope": projectauth.RoleScopeProject, "roles": roles})
 }
 
 func (h *Handler) CreateProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
