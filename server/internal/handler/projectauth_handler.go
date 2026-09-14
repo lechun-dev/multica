@@ -357,6 +357,10 @@ func issueProjectVisibilityPredicate(issueAlias, workspaceRef, userRef string) s
 }
 
 func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
+	return (issueVisibilitySQL{}).predicate(issueAlias, workspaceRef, userRef, includeWorkspaceOwned)
+}
+
+func (scope issueVisibilitySQL) predicate(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
 	// 2026-09-05 coder(lq): Project-bound tasks also keep their creator's hard
 	// Owner visibility when historical creator grants were never backfilled.
 	// This is task-scoped and therefore cannot expose sibling tasks.
@@ -377,14 +381,14 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 			))
 			OR %s
 		))
-	)`, issueAlias, ownerProjectClause, projectAccessPredicate(issueAlias+".project_id", workspaceRef, userRef),
-		issueDirectAccessPredicate(issueAlias+".id", workspaceRef, userRef),
+	)`, issueAlias, ownerProjectClause, scope.projectAccess(issueAlias+".project_id", workspaceRef, userRef),
+		scope.directAccess(issueAlias+".id", workspaceRef, userRef),
 		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
 		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
 		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
 		issueAlias, issueAlias, userRef,
 		issueAlias, issueAlias, workspaceRef, userRef,
-		projectlessIssueGrantViewPredicate(issueAlias, workspaceRef, userRef))
+		scope.projectlessGrant(issueAlias, workspaceRef, userRef))
 }
 
 // 2026-09-05 coder(lq): Projectless task grants are evaluated only against
@@ -392,7 +396,11 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 // deliberately absent from projectAccessPredicate so it cannot expose the
 // containing project or sibling tasks.
 func projectlessIssueGrantViewPredicate(issueAlias, workspaceRef, userRef string) string {
-	principal := accessGrantPrincipalPredicate("g")
+	return (issueVisibilitySQL{}).projectlessGrant(issueAlias, workspaceRef, userRef)
+}
+
+func (scope issueVisibilitySQL) projectlessGrant(issueAlias, workspaceRef, userRef string) string {
+	principal := scope.principal("g")
 	return fmt.Sprintf(`EXISTS (
 		WITH auth_subject AS (
 			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
@@ -453,28 +461,39 @@ func issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef string) strin
 // user, organization, or everyone grant. Both project and task predicates use
 // this fragment so their principal semantics cannot drift.
 func accessGrantPrincipalPredicate(alias string) string {
+	return (issueVisibilitySQL{}).principal(alias)
+}
+
+func (scope issueVisibilitySQL) principal(alias string) string {
+	orgs := userOrganizationIDsSQL("a.workspace_id", "a.user_id")
+	if scope.materialized {
+		orgs = "SELECT organization_id::text FROM issue_auth_organizations"
+	}
 	return fmt.Sprintf(`(
 		(%s.subject_type = 'user' AND %s.subject_id = a.user_id::text)
 		OR (%s.subject_type = 'everyone' AND (%s.subject_id = '' OR %s.subject_id = a.workspace_id::text))
-		OR (%s.subject_type = 'organization' AND %s.subject_id IN (
+		OR (%s.subject_type = 'organization' AND %s.subject_id IN (%s))
+	)`, alias, alias, alias, alias, alias, alias, alias, orgs)
+}
+
+func userOrganizationIDsSQL(workspaceRef, userRef string) string {
+	return fmt.Sprintf(`
 			WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
 				SELECT org.id, org.parent_id
 				FROM projectauth_organization_members om
 				JOIN projectauth_organizations org ON org.id = om.organization_id
-				WHERE om.workspace_id = a.workspace_id
-				  AND om.user_id = a.user_id
-				  AND org.workspace_id = a.workspace_id
+				WHERE om.workspace_id = %[1]s
+				  AND om.user_id = %[2]s
+				  AND org.workspace_id = %[1]s
 				  AND org.status = 'active'
 				UNION
 				SELECT parent.id, parent.parent_id
 				FROM user_orgs child
 				JOIN projectauth_organizations parent ON parent.id = child.parent_id
-				WHERE parent.workspace_id = a.workspace_id
+				WHERE parent.workspace_id = %[1]s
 				  AND parent.status = 'active'
 			)
-			SELECT organization_id::text FROM user_orgs
-		))
-	)`, alias, alias, alias, alias, alias, alias, alias)
+			SELECT organization_id::text FROM user_orgs`, workspaceRef, userRef)
 }
 
 // 2026-09-04 coder(lq): SQL list paths can run before the first role-catalog
@@ -508,8 +527,12 @@ func systemRoleViewPermissionPredicate(roleExpr, workspaceExpr string) string {
 // on the same task, mirroring projectauth.Service.checkGrants.
 // 2026-09-03 coder(lq): Keep direct task list visibility aligned with URL ACLs.
 func issueDirectAccessPredicate(issueExpr, workspaceRef, userRef string) string {
-	grantSubject := accessGrantPrincipalPredicate("g")
-	roleHolder := accessGrantPrincipalPredicate("rg")
+	return (issueVisibilitySQL{}).directAccess(issueExpr, workspaceRef, userRef)
+}
+
+func (scope issueVisibilitySQL) directAccess(issueExpr, workspaceRef, userRef string) string {
+	grantSubject := scope.principal("g")
+	roleHolder := scope.principal("rg")
 	return fmt.Sprintf(`EXISTS (
 		WITH auth_subject AS (
 			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id
@@ -554,6 +577,13 @@ func issueDirectAccessPredicate(issueExpr, workspaceRef, userRef string) string 
 // are not considered here, which prevents a task share from exposing the
 // remainder of its project.
 func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
+	return (issueVisibilitySQL{}).projectAccess(projectExpr, workspaceRef, userRef)
+}
+
+func (scope issueVisibilitySQL) projectAccess(projectExpr, workspaceRef, userRef string) string {
+	if scope.projectsMaterialized {
+		return fmt.Sprintf("%s IN (SELECT id FROM issue_auth_projects)", projectExpr)
+	}
 	// 2026-09-01 coder(lq): Once the overlay is enabled, project visibility is
 	// derived exclusively from the canonical grant table. The native member
 	// table remains the source for workspace-owner bypass, but a legacy project
@@ -565,8 +595,8 @@ func projectAccessPredicate(projectExpr, workspaceRef, userRef string) string {
 	// and preventing a stale creator UUID from leaking project visibility.
 	// 2026-09-05 coder(lq): Keep the subquery alias private because callers may
 	// evaluate this fragment against an outer issue alias named `p`.
-	grantSubject := accessGrantPrincipalPredicate("g")
-	roleHolder := accessGrantPrincipalPredicate("rg")
+	grantSubject := scope.principal("g")
+	roleHolder := scope.principal("rg")
 	return fmt.Sprintf(`EXISTS (
 		WITH auth_subject AS (
 			SELECT %s::uuid AS workspace_id, %s::uuid AS user_id

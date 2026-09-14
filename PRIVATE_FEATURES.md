@@ -30,6 +30,7 @@ private integration branch.
 | Area | Required private behavior | Primary boundary | Contract coverage |
 | --- | --- | --- | --- |
 | Task authorization | A task may be projectless. Task creator, assignee, and mentioned people receive task-level access. Mentioning a person is equivalent to granting task `MEMBER` access; it does not grant project membership. | `server/pkg/projectauth`, `server/internal/handler/projectauth_*` | `TestCreateIssuePromotesAssigneeAndMentionedMember`, `TestCreateCommentPromotesMentionedMember*`, `TestUpdateCommentPromotesMentionedMember*`, `TestProjectlessIssueCreateAndTriggerPreviewAllowedWhenPermissionsEnabled` |
+| Authorized list and progress reads | Reuse the existing ACL rules within each SQL statement, never across requests. Preserve owner-bypass configuration, task-only grants, active organization ancestry, empty role overrides, exact pagination totals, archived-child handling, and canonical/custom terminal status precedence. Unchanged realtime snapshots do not refetch child progress; status, hierarchy, and visibility changes still do. | `server/internal/handler/issue_visibility_sql.go`, `packages/core/issues/ws-updaters.ts` | `TestIssueVisibilityCTEsMatchStandalonePolicy`, `TestTerminalIssueStatusSetMatchesEffectiveStatus`, `ws-updaters.test.ts` |
 | Inbox and historical notifications | A directly mentioned user can see the inbox entry and open the linked task, including projectless tasks and historical records whose access was materialized. | `server/internal/handler/inbox.go`, project authorization adapters | `TestListInboxShowsDirectMentionOutsideProjectMembership`, `TestInboxListsShipCommentPreviewNotFullComment` |
 | Agent chat replies | Persisted agent replies remain visible when realtime events contain only a projection, and queued turns stay paired with their own replies. | `server/internal/handler/chat.go`, `packages/core/chat`, `packages/views/chat` | `TestCompleteTask_ChatNonEmptyOutputWritesMessage`, `TestCompleteTask_ChatCallbackIdempotent`, `TestDirectChat_ClaimKeepsQueuedTurnsPairedWithReplies`, selected chat UI tests |
 | DingTalk personal delivery | Human mentions and agent completion notifications are delivered through the private DingTalk integration without exposing internal mention links or routing IDs. | `extensions/dingtalk-notify`, `server/internal/integrations/dingtalkpersonal` | DingTalk extension tests and `TestDingTalkPersonalMessage*` |
@@ -41,6 +42,7 @@ private integration branch.
 
 | Date | Change | Inventory impact |
 | --- | --- | --- |
+| 2026-09-14 | Reduced redundant child-progress refreshes and reused statement-local authorization sets for expensive issue reads. Replaced repeated terminal-status function calls in progress SQL with equivalent status sets. | No permission policy, exact-total API, or schema changes. Cross-request TTL caching is deferred until revocation-safe invalidation exists. |
 | 2026-09-12 | Required every private product-code change to update this inventory, enforced by the pull-request checklist and CI. | Prevents new private behavior from being omitted from future upstream-sync reviews. |
 | 2026-09-12 | Added private feature contracts, migration collision protection, and upstream merge simulation. Moved comment authorization calls behind a private adapter. | Established the protected-behavior table and synchronization workflow; no task authorization behavior changed. |
 | 2026-09-12 | Desktop CLI alias: task PATH and bundled bin expose both `multica` and `missionos`; briefs forbid disk search. | Stops agents from spending the first minutes of a task searching for `multica`. |
@@ -55,6 +57,8 @@ The handler contracts require the normal local PostgreSQL test database. The
 target prepares it with the repository's existing migration workflow.
 
 ## Extension boundary rule
+
+Issue-read optimization measurements and rollout checks: [PERFORMANCE.md](PERFORMANCE.md).
 
 Private behavior should live in private modules or adapter files. Shared
 upstream handlers may call a small private hook, but should not contain the

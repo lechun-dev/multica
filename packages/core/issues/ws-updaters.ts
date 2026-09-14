@@ -531,10 +531,34 @@ export function onIssueUpdated(
   if (newParentId && parentChanged) {
     qc.invalidateQueries({ queryKey: issueKeys.children(wsId, newParentId) });
   }
+  // 2026-09-14 coder(lq): Full snapshots carry unchanged status/parent fields.
+  // Refetch for real changes, including visibility changes on a root parent;
+  // without a baseline, conservatively keep the server-owned aggregate fresh.
+  const progressFields = [
+    "status",
+    "parent_issue_id",
+    "project_id",
+    "assignee_id",
+    "assignee_type",
+    "creator_id",
+    "creator_type",
+    "description",
+    "archived_at",
+  ] as const;
+  const progressChanged =
+    meta.statusChanged === true ||
+    meta.projectChanged === true ||
+    meta.assigneeChanged === true ||
+    progressFields.some(
+      (field) =>
+        issue[field] !== undefined &&
+        (cachedIssue === undefined ||
+          (issue[field] ?? null) !== (cachedIssue[field] ?? null)),
+    );
+  if (progressChanged) {
+    qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
+  }
   if (oldParentId || newParentId) {
-    if (issue.status !== undefined || issue.parent_issue_id !== undefined) {
-      qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
-    }
     qc.invalidateQueries({ queryKey: issueKeys.childrenByParentsAll(wsId) });
   }
   reconcileIssueFullSnapshotRevision(qc, wsId, issue.id, issue.revision);

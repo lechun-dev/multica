@@ -578,6 +578,59 @@ describe("onIssueCreated — respects restricted list caches", () => {
   });
 });
 
+describe("onIssueUpdated child progress invalidation", () => {
+  it("does not refetch progress for an unchanged full child snapshot", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(issueKeys.detail(WS_ID, ISSUE_ID), parentedIssue);
+    qc.setQueryData(issueKeys.childProgress(WS_ID), []);
+    onIssueUpdated(qc, WS_ID, { ...parentedIssue, title: "Renamed", position: 42 });
+    expect(qc.getQueryState(issueKeys.childProgress(WS_ID))?.isInvalidated).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    { status: "done" },
+    { parent_issue_id: null },
+    { project_id: PROJECT_ID },
+    { assignee_type: "member", assignee_id: "another-user" },
+    { description: "New mention" },
+    { archived_at: "2026-09-14T00:00:00Z" },
+  ] satisfies Partial<Issue>[])(
+    "refreshes progress for a relevant change: %j",
+    (patch) => {
+      const qc = new QueryClient();
+      qc.setQueryData(issueKeys.detail(WS_ID, ISSUE_ID), parentedIssue);
+      qc.setQueryData(issueKeys.childProgress(WS_ID), []);
+      onIssueUpdated(qc, WS_ID, { id: ISSUE_ID, ...patch });
+      expectInvalidated(qc, issueKeys.childProgress(WS_ID));
+    },
+  );
+
+  it("refreshes when the server reports a status change already patched optimistically", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(issueKeys.detail(WS_ID, ISSUE_ID), parentedIssue);
+    qc.setQueryData(issueKeys.childProgress(WS_ID), []);
+    onIssueUpdated(qc, WS_ID, parentedIssue, { statusChanged: true });
+    expectInvalidated(qc, issueKeys.childProgress(WS_ID));
+  });
+
+  it("refreshes for an off-screen child with no cached baseline", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(issueKeys.childProgress(WS_ID), []);
+    onIssueUpdated(qc, WS_ID, parentedIssue);
+    expectInvalidated(qc, issueKeys.childProgress(WS_ID));
+  });
+
+  it("refreshes when a parent changes project even without a parent of its own", () => {
+    const qc = new QueryClient();
+    qc.setQueryData(issueKeys.detail(WS_ID, ISSUE_ID), baseIssue);
+    qc.setQueryData(issueKeys.childProgress(WS_ID), []);
+    onIssueUpdated(qc, WS_ID, { id: ISSUE_ID, project_id: PROJECT_ID });
+    expectInvalidated(qc, issueKeys.childProgress(WS_ID));
+  });
+});
+
 describe("onIssueUpdated — source deletion detaches sub-issues", () => {
   it("patches the detached child and invalidates the former parent's hierarchy caches", () => {
     const qc = new QueryClient();

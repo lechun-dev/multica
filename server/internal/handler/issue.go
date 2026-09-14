@@ -1487,6 +1487,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build dynamic SQL — same approach as ListGroupedIssues.
+	visibilityCTEs := ""
 	where := []string{"i.workspace_id = $1"}
 	where = appendIssueArchivePredicate(where, archiveState, "i")
 	args := []any{wsUUID}
@@ -1501,7 +1502,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
+		visibilityCTEs = issueVisibilityCTEs("$1", addArg(userID), includeWorkspaceOwned)
+		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
 	}
 	if sortByStatus {
 		var err error
@@ -1704,7 +1706,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 
-	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
+	query := visibilityCTEs + fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
        i.revision, i.archived_at
@@ -1774,7 +1776,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		} else {
 			// Get the true total count for pagination awareness. Count query uses
 			// the same args minus the OFFSET and LIMIT params (last two added).
-			countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
+			countQuery := visibilityCTEs + fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
 			countArgs := args[:len(args)-2]
 			if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 				total = int64(len(issues))
@@ -2794,17 +2796,8 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		userRef := "$2"
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		query := fmt.Sprintf(`SELECT i.parent_issue_id,
-			COUNT(*)::bigint AS total,
-			COUNT(*) FILTER (WHERE issue_effective_status(i.workspace_id, i.status) IN ('done', 'cancelled'))::bigint AS done
-		FROM issue i
-		JOIN issue p ON p.id = i.parent_issue_id AND p.workspace_id = i.workspace_id
-		WHERE i.workspace_id = $1
-			AND %s
-			AND %s
-		GROUP BY i.parent_issue_id`, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", userRef, includeWorkspaceOwned), issueProjectVisibilityPredicateWithWorkspaceScope("p", "$1", userRef, includeWorkspaceOwned))
+		query := childIssueProgressAuthorizedSQL(includeWorkspaceOwned)
 		rows, err := h.DB.Query(r.Context(), query, wsUUID, userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
@@ -2833,15 +2826,15 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT i.parent_issue_id,
 			COUNT(*)::bigint AS total,
-			COUNT(*) FILTER (WHERE issue_effective_status(i.workspace_id, i.status) IN ('done', 'cancelled'))::bigint AS done,
+			COUNT(*) FILTER (WHERE i.status IN (%[2]s))::bigint AS done,
 			COUNT(child_visible.id)::bigint AS visible_total,
-			COUNT(child_visible.id) FILTER (WHERE issue_effective_status(i.workspace_id, i.status) IN ('done', 'cancelled'))::bigint AS visible_done
+			COUNT(child_visible.id) FILTER (WHERE i.status IN (%[2]s))::bigint AS visible_done
 		FROM issue i
 		JOIN visible_issue_ids parent_visible ON parent_visible.id = i.parent_issue_id
 		LEFT JOIN visible_issue_ids child_visible ON child_visible.id = i.id
 		WHERE i.workspace_id = $1
 		  AND i.parent_issue_id IS NOT NULL
-		GROUP BY i.parent_issue_id`, issueWindowVisibleSetSQL("$1", "$2"))
+		GROUP BY i.parent_issue_id`, issueWindowVisibleSetSQL("$1", "$2"), terminalIssueStatusSetSQL("$1"))
 		rows, err := h.DB.Query(r.Context(), query, wsUUID, policy.limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
