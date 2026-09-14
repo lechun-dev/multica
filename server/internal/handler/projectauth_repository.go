@@ -1609,6 +1609,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 	if err := r.ensureSystemRoleDefinitions(ctx, filter.WorkspaceID); err != nil {
 		return projectauth.PermissionReportResult{}, wrapProjectPermissionRepositoryError(err)
 	}
+	if err := r.ensureTaskSystemRoleDefinitions(ctx, filter.WorkspaceID); err != nil {
+		return projectauth.PermissionReportResult{}, wrapProjectPermissionRepositoryError(err)
+	}
 	// 2026-09-04 coder(lq): Keep synthetic workspace-owner rows aligned with
 	// every other visibility query. When the deployment disables the owner
 	// bypass, the report must not claim access that list/detail endpoints deny.
@@ -1618,14 +1621,18 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			SELECT g.id::text AS grant_id, g.workspace_id::text AS workspace_id,
 				g.project_id::text AS project_id, COALESCE(g.issue_id::text, '') AS issue_id,
 				g.subject_type, COALESCE(g.subject_id, '') AS subject_id,
-				g.role_key, g.permission, g.source, COALESCE(g.granted_by::text, '') AS granted_by
+				g.role_key, g.permission, g.source, COALESCE(g.granted_by::text, '') AS granted_by,
+				g.created_at, constraint_row.expires_at
 			FROM projectauth_access_grants g
 			JOIN project p ON p.id = g.project_id AND p.workspace_id = g.workspace_id
+			LEFT JOIN projectauth_grant_constraints constraint_row
+			  ON constraint_row.workspace_id = g.workspace_id AND constraint_row.grant_id = g.id
 			WHERE g.workspace_id = $1
 			  AND ($2 = '' OR g.project_id::text = $2)
 			  -- Project grants remain in scope when the report is filtered to one
 			  -- issue because they materialize inherited permissions below.
 			  AND ($3 = '' OR g.issue_id IS NULL OR g.issue_id::text = $3)
+			  AND (constraint_row.expires_at IS NULL OR constraint_row.expires_at > now())
 
 			UNION ALL
 
@@ -1635,7 +1642,7 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			-- effective Owner role. A physical Owner grant wins this de-dup check.
 			SELECT 'creator-owner-project-' || p.id::text, p.workspace_id::text,
 				p.id::text, ''::text, 'user'::text, p.created_by::text,
-				'owner'::text, NULL::text, 'system'::text, ''::text
+				'owner'::text, NULL::text, 'system'::text, ''::text, p.created_at, NULL::timestamptz
 			FROM project p
 			JOIN member creator_member
 			  ON creator_member.workspace_id = p.workspace_id
@@ -1666,7 +1673,7 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 					WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN a.owner_id::text
 					ELSE ''
 				END,
-				'owner'::text, NULL::text, 'system'::text, ''::text
+				'owner'::text, NULL::text, 'system'::text, ''::text, i.created_at, NULL::timestamptz
 			FROM issue i
 			JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
 			LEFT JOIN agent a
@@ -1707,7 +1714,14 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			JOIN project_permission_roles rd
 			  ON rd.workspace_id = c.workspace_id::uuid AND rd.role_key = c.role_key
 			JOIN project_permission_role_permissions rp ON rp.role_id = rd.id
-			WHERE c.role_key IS NOT NULL
+			WHERE c.role_key IS NOT NULL AND c.issue_id = ''
+			UNION ALL
+			SELECT c.*, rp.permission AS permission_key
+			FROM canonical c
+			JOIN projectauth_task_roles rd
+			  ON rd.workspace_id = c.workspace_id::uuid AND rd.role_key = c.role_key
+			JOIN projectauth_task_role_permissions rp ON rp.role_id = rd.id
+			WHERE c.role_key IS NOT NULL AND c.issue_id <> ''
 		), effective_org_members(workspace_id, organization_id, parent_id, user_id) AS (
 			-- 2026-09-03 coder(lq): Materialize each user's active department and
 			-- all active ancestors so reports reflect inherited parent grants too.
@@ -1784,7 +1798,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 				''::text AS issue_id, ''::text AS issue_title, s.effective_user_id AS user_id,
 				COALESCE(u.name, '') AS user_name, COALESCE(u.email, '') AS user_email, COALESCE(m.role, '') AS workspace_role,
 				COALESCE(s.role_key, '') AS project_role, s.permission_key AS permission,
-				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE AS inherited_from_project
+				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE AS inherited_from_project,
+				s.grant_id, s.created_at, s.expires_at, 'project'::text AS source_resource_scope,
+				s.project_id AS source_resource_id, ''::text AS project_access_mode, 0::bigint AS policy_version
 			FROM subjects s
 			JOIN project p ON p.id::text = s.project_id AND p.workspace_id::text = s.workspace_id
 			LEFT JOIN "user" u ON u.id::text = NULLIF(s.effective_user_id, '')
@@ -1795,10 +1811,14 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 
 			SELECT 'issue', s.project_id, p.title, i.id::text, i.title, s.effective_user_id,
 				COALESCE(u.name, ''), COALESCE(u.email, ''), COALESCE(m.role, ''), COALESCE(s.role_key, ''), s.permission_key,
-				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE
+				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE,
+				s.grant_id, s.created_at, s.expires_at, 'task'::text, i.id::text,
+				COALESCE(policy.project_access_mode, 'inherit'), COALESCE(policy.policy_version, 1)
 			FROM subjects s
 			JOIN project p ON p.id::text = s.project_id AND p.workspace_id::text = s.workspace_id
 			JOIN issue i ON i.id::text = s.issue_id AND i.project_id = p.id AND i.workspace_id = p.workspace_id
+			LEFT JOIN projectauth_issue_policies policy
+			  ON policy.workspace_id = i.workspace_id AND policy.issue_id = i.id
 			LEFT JOIN "user" u ON u.id::text = NULLIF(s.effective_user_id, '')
 			LEFT JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = NULLIF(s.effective_user_id, '')
 			WHERE s.issue_id <> ''
@@ -1807,13 +1827,21 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 
 			SELECT 'issue', s.project_id, p.title, i.id::text, i.title, s.effective_user_id,
 				COALESCE(u.name, ''), COALESCE(u.email, ''), COALESCE(m.role, ''), COALESCE(s.role_key, ''), s.permission_key,
-				s.source, s.granted_by, s.subject_type, s.subject_id, TRUE
+				s.source, s.granted_by, s.subject_type, s.subject_id, TRUE,
+				s.grant_id, s.created_at, s.expires_at, 'project'::text, s.project_id,
+				COALESCE(policy.project_access_mode, 'inherit'), COALESCE(policy.policy_version, 1)
 			FROM subjects s
 			JOIN project p ON p.id::text = s.project_id AND p.workspace_id::text = s.workspace_id
 			JOIN issue i ON i.project_id = p.id AND i.workspace_id = p.workspace_id
+			LEFT JOIN projectauth_issue_policies policy
+			  ON policy.workspace_id = i.workspace_id AND policy.issue_id = i.id
 			LEFT JOIN "user" u ON u.id::text = NULLIF(s.effective_user_id, '')
 			LEFT JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = NULLIF(s.effective_user_id, '')
 			WHERE s.issue_id = ''
+			  AND COALESCE(policy.project_access_mode, 'inherit') = 'inherit'
+			  AND s.permission_key IN ('project.view', 'project.edit', 'project.issue.comment',
+				'project.issue.manage', 'project.issue.archive', 'project.agent.use',
+				'project.issue.child.create')
 		), owner_users AS (
 			SELECT m.workspace_id::text AS workspace_id, m.user_id::text AS user_id
 			FROM member m
@@ -1824,14 +1852,17 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 				COALESCE(u.name, '') AS user_name, COALESCE(u.email, '') AS user_email, m.role AS workspace_role,
 				''::text AS project_role, pm.permission, 'workspace_role'::text AS source,
 				''::text AS granted_by, 'user'::text AS subject_type, m.user_id::text AS subject_id,
-				FALSE AS inherited_from_project
+				FALSE AS inherited_from_project, ''::text AS grant_id, p.created_at,
+				NULL::timestamptz AS expires_at, 'workspace'::text AS source_resource_scope,
+				p.workspace_id::text AS source_resource_id, ''::text AS project_access_mode,
+				0::bigint AS policy_version
 			FROM project p
 			JOIN owner_users ou ON ou.workspace_id = p.workspace_id::text
 			JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = ou.user_id
 			JOIN "user" u ON u.id::text = ou.user_id
 			CROSS JOIN (VALUES ('project.view'), ('project.edit'), ('project.issue.create'),
 				('project.issue.comment'), ('project.issue.manage'), ('project.issue.archive'),
-				('project.agent.use'), ('project.member.manage'),
+				('project.agent.use'), ('project.issue.child.create'), ('project.member.manage'),
 				('project.settings.manage')) AS pm(permission)
 			WHERE p.workspace_id = $1 AND (%s)
 
@@ -1842,25 +1873,35 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 				COALESCE(u.name, '') AS user_name, COALESCE(u.email, '') AS user_email, 'owner'::text AS workspace_role,
 				''::text AS project_role, pm.permission, 'workspace_role'::text AS source,
 				''::text AS granted_by, 'user'::text AS subject_type, ou.user_id AS subject_id,
-				TRUE AS inherited_from_project
+				TRUE AS inherited_from_project, ''::text AS grant_id, i.created_at,
+				NULL::timestamptz AS expires_at, 'workspace'::text AS source_resource_scope,
+				p.workspace_id::text AS source_resource_id,
+				COALESCE(policy.project_access_mode, 'inherit') AS project_access_mode,
+				COALESCE(policy.policy_version, 1) AS policy_version
 			FROM issue i
 			JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
 			JOIN owner_users ou ON ou.workspace_id = p.workspace_id::text
 			JOIN "user" u ON u.id::text = ou.user_id
-			CROSS JOIN (VALUES ('project.view'), ('project.edit'), ('project.issue.create'),
+			CROSS JOIN (VALUES ('project.view'), ('project.edit'),
 				('project.issue.comment'), ('project.issue.manage'), ('project.issue.archive'),
-				('project.agent.use'), ('project.member.manage'),
-				('project.settings.manage')) AS pm(permission)
+				('project.agent.use'), ('project.issue.child.create')) AS pm(permission)
+			LEFT JOIN projectauth_issue_policies policy
+			  ON policy.workspace_id = i.workspace_id AND policy.issue_id = i.id
 			WHERE p.workspace_id = $1 AND (%s)
+			  AND COALESCE(policy.project_access_mode, 'inherit') = 'inherit'
 		), all_rows AS (
 			SELECT scope, project_id, project_title, issue_id, issue_title, user_id,
 				user_name, user_email, workspace_role, project_role, permission, source,
-				granted_by, subject_type, subject_id, inherited_from_project
+				granted_by, subject_type, subject_id, inherited_from_project, grant_id,
+				created_at, expires_at, source_resource_scope, source_resource_id,
+				project_access_mode, policy_version
 			FROM report_rows
 			UNION ALL
 			SELECT scope, project_id, project_title, issue_id, issue_title, user_id,
 				user_name, user_email, workspace_role, project_role, permission, source,
-				granted_by, subject_type, subject_id, inherited_from_project
+				granted_by, subject_type, subject_id, inherited_from_project, grant_id,
+				created_at, expires_at, source_resource_scope, source_resource_id,
+				project_access_mode, policy_version
 			FROM owner_rows
 		), filtered_rows AS (
 			SELECT DISTINCT * FROM all_rows
@@ -1876,7 +1917,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 		SELECT scope, project_id, project_title, issue_id, issue_title,
 			user_id, user_name, user_email, workspace_role, project_role,
 			permission, source, granted_by, subject_type, subject_id,
-			inherited_from_project, COUNT(*) OVER() AS total_count
+			inherited_from_project, grant_id, created_at, expires_at,
+			source_resource_scope, source_resource_id, project_access_mode,
+			policy_version, COUNT(*) OVER() AS total_count
 		FROM filtered_rows
 		ORDER BY project_title, project_id, issue_title, issue_id, user_name, permission, source
 		LIMIT $10 OFFSET $11`, ownerBypass, ownerBypass)
@@ -1892,13 +1935,16 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 	result := projectauth.PermissionReportResult{Rows: make([]projectauth.PermissionReportRow, 0)}
 	for rows.Next() {
 		var row projectauth.PermissionReportRow
-		var issueID, issueTitle, projectRole, grantedBy, subjectID pgtype.Text
-		var workspaceRole, permission, source, subjectType pgtype.Text
+		var issueID, issueTitle, projectRole, grantedBy, subjectID, grantID pgtype.Text
+		var workspaceRole, permission, source, subjectType, sourceResourceScope, sourceResourceID, projectAccessMode pgtype.Text
+		var createdAt, expiresAt pgtype.Timestamptz
 		var inherited bool
-		var total int64
+		var policyVersion, total int64
 		if err := rows.Scan(&row.Scope, &row.ProjectID, &row.ProjectTitle, &issueID, &issueTitle,
 			&row.UserID, &row.UserName, &row.UserEmail, &workspaceRole, &projectRole,
-			&permission, &source, &grantedBy, &subjectType, &subjectID, &inherited, &total); err != nil {
+			&permission, &source, &grantedBy, &subjectType, &subjectID, &inherited,
+			&grantID, &createdAt, &expiresAt, &sourceResourceScope, &sourceResourceID,
+			&projectAccessMode, &policyVersion, &total); err != nil {
 			return projectauth.PermissionReportResult{}, wrapProjectPermissionRepositoryError(err)
 		}
 		if issueID.Valid {
@@ -1925,9 +1971,35 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 		if projectRole.Valid {
 			row.ProjectRole = projectauth.ProjectRole(projectRole.String)
 		}
+		if row.ProjectRole != "" {
+			if inherited || row.Scope == "project" {
+				row.RoleScope = projectauth.RoleScopeProject
+			} else {
+				row.RoleScope = projectauth.RoleScopeTask
+			}
+		}
+		if grantID.Valid {
+			row.GrantID = grantID.String
+		}
 		if grantedBy.Valid {
 			row.GrantedBy = grantedBy.String
 		}
+		if createdAt.Valid {
+			row.CreatedAt = createdAt.Time.UTC().Format(time.RFC3339Nano)
+		}
+		if expiresAt.Valid {
+			row.ExpiresAt = expiresAt.Time.UTC().Format(time.RFC3339Nano)
+		}
+		if sourceResourceScope.Valid {
+			row.SourceResourceScope = projectauth.RoleScope(sourceResourceScope.String)
+		}
+		if sourceResourceID.Valid {
+			row.SourceResourceID = sourceResourceID.String
+		}
+		if projectAccessMode.Valid {
+			row.ProjectAccessMode = projectauth.ProjectAccessMode(projectAccessMode.String)
+		}
+		row.PolicyVersion = policyVersion
 		row.InheritedFromProject = inherited
 		result.Rows = append(result.Rows, row)
 		result.Total = total

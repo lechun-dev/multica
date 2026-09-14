@@ -132,9 +132,17 @@ export interface ProjectPermissionReportRow {
   subject_id?: string;
   workspace_role?: ProjectPermissionReportRole;
   project_role?: ProjectPermissionReportRole;
+  role_scope?: "workspace" | "project" | "task";
   permission: ProjectPermissionReportPermission;
   source: string;
+  grant_id?: string;
   granted_by?: string;
+  created_at?: string;
+  expires_at?: string;
+  source_resource_scope?: "workspace" | "project" | "task";
+  source_resource_id?: string;
+  project_access_mode?: "inherit" | "restricted";
+  policy_version?: number;
   inherited_from_project: boolean;
 }
 
@@ -149,6 +157,8 @@ export interface ProjectPermissionReportParams {
   scope?: "all" | "project" | "issue";
   limit?: number;
   offset?: number;
+  /** Records an authorization audit event and returns the exact exported row set. */
+  export?: boolean;
 }
 
 export interface ProjectPermissionReportResponse {

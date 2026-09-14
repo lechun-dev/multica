@@ -24,22 +24,30 @@ type PermissionReportFilter struct {
 	Offset      int
 }
 type PermissionReportRow struct {
-	Scope                string        `json:"scope"`
-	ProjectID            string        `json:"project_id"`
-	ProjectTitle         string        `json:"project_title"`
-	IssueID              string        `json:"issue_id,omitempty"`
-	IssueTitle           string        `json:"issue_title,omitempty"`
-	UserID               string        `json:"user_id"`
-	UserName             string        `json:"user_name"`
-	UserEmail            string        `json:"user_email"`
-	SubjectType          SubjectType   `json:"subject_type"`
-	SubjectID            string        `json:"subject_id,omitempty"`
-	WorkspaceRole        WorkspaceRole `json:"workspace_role"`
-	ProjectRole          ProjectRole   `json:"project_role,omitempty"`
-	Permission           Permission    `json:"permission"`
-	Source               string        `json:"source"`
-	GrantedBy            string        `json:"granted_by,omitempty"`
-	InheritedFromProject bool          `json:"inherited_from_project"`
+	Scope                string            `json:"scope"`
+	ProjectID            string            `json:"project_id"`
+	ProjectTitle         string            `json:"project_title"`
+	IssueID              string            `json:"issue_id,omitempty"`
+	IssueTitle           string            `json:"issue_title,omitempty"`
+	UserID               string            `json:"user_id"`
+	UserName             string            `json:"user_name"`
+	UserEmail            string            `json:"user_email"`
+	SubjectType          SubjectType       `json:"subject_type"`
+	SubjectID            string            `json:"subject_id,omitempty"`
+	WorkspaceRole        WorkspaceRole     `json:"workspace_role"`
+	ProjectRole          ProjectRole       `json:"project_role,omitempty"`
+	RoleScope            RoleScope         `json:"role_scope,omitempty"`
+	Permission           Permission        `json:"permission"`
+	Source               string            `json:"source"`
+	GrantID              string            `json:"grant_id,omitempty"`
+	GrantedBy            string            `json:"granted_by,omitempty"`
+	CreatedAt            string            `json:"created_at,omitempty"`
+	ExpiresAt            string            `json:"expires_at,omitempty"`
+	SourceResourceScope  RoleScope         `json:"source_resource_scope,omitempty"`
+	SourceResourceID     string            `json:"source_resource_id,omitempty"`
+	ProjectAccessMode    ProjectAccessMode `json:"project_access_mode,omitempty"`
+	PolicyVersion        int64             `json:"policy_version,omitempty"`
+	InheritedFromProject bool              `json:"inherited_from_project"`
 }
 
 type PermissionReportResult struct {
@@ -118,13 +126,32 @@ func (s *Service) ListPermissionReport(ctx context.Context, subject Subject, fil
 			return PermissionReportResult{}, ErrCrossWorkspace
 		}
 	}
-	if role != WorkspaceOwner {
-		if filter.ProjectID == "" {
+	fullWorkspaceReport := role == WorkspaceOwner
+	if role == WorkspaceOwner {
+		if bypassRepo, ok := s.repo.(WorkspaceOwnerBypassReader); ok {
+			fullWorkspaceReport, err = bypassRepo.WorkspaceOwnerBypassEnabled(ctx, subject.WorkspaceID)
+			if err != nil {
+				return PermissionReportResult{}, ErrStorageUnavailable
+			}
+		}
+	}
+	canManageProject := false
+	if filter.ProjectID != "" {
+		canManageProject = s.Check(ctx, subject, filter.ProjectID, SettingsManage) == nil
+	}
+	canManageIssue := false
+	if filter.IssueID != "" {
+		if effectiveRepo, ok := s.repo.(EffectiveAccessRepository); ok {
+			canManageIssue = NewEffectiveAccessResolver(effectiveRepo).CanIssue(ctx, subject, filter.IssueID, IssueManage) == nil
+		}
+	}
+	if !fullWorkspaceReport && !canManageProject && !canManageIssue {
+		// Ordinary users can inspect only their own effective access. This keeps
+		// the dashboard useful without disclosing restricted-resource membership.
+		if filter.UserID != "" && filter.UserID != subject.UserID {
 			return PermissionReportResult{}, ErrForbidden
 		}
-		if err := s.Check(ctx, subject, filter.ProjectID, SettingsManage); err != nil {
-			return PermissionReportResult{}, err
-		}
+		filter.UserID = subject.UserID
 	}
 	return rr.ListPermissionReport(ctx, filter)
 }
@@ -137,11 +164,18 @@ func validReportRole(ctx context.Context, repo Repository, workspaceID, role str
 		return true
 	}
 	roleRepo, ok := repo.(RoleRepository)
+	if ok {
+		definition, err := roleRepo.GetRoleDefinition(ctx, workspaceID, role)
+		if err == nil && definition.Key != "" {
+			return true
+		}
+	}
+	taskRepo, ok := repo.(TaskRolePermissionRepository)
 	if !ok {
 		return false
 	}
-	definition, err := roleRepo.GetRoleDefinition(ctx, workspaceID, role)
-	return err == nil && definition.Key != ""
+	_, found, err := taskRepo.TaskRolePermissions(ctx, workspaceID, TaskRole(role))
+	return err == nil && found
 }
 
 func validReportPermission(permission Permission) bool {

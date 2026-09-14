@@ -3962,6 +3962,7 @@ export class ApiClient {
     if (params.scope) q.set("scope", params.scope);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.offset !== undefined) q.set("offset", String(params.offset));
+    if (params.export) q.set("export", "true");
     return this.fetch(`/api/project-permissions/report?${q}`);
   }
 

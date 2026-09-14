@@ -36,9 +36,12 @@ func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 	filter := projectauth.PermissionReportFilter{
 		WorkspaceID: workspaceID,
 		ProjectID:   q.Get("project_id"),
+		IssueID:     q.Get("issue_id"),
 		UserID:      q.Get("user_id"),
 		Role:        q.Get("role"),
 		Permission:  projectauth.Permission(q.Get("permission")),
+		SubjectType: projectauth.SubjectType(q.Get("subject_type")),
+		SubjectID:   q.Get("subject_id"),
 		Scope:       q.Get("scope"),
 	}
 	if raw := q.Get("limit"); raw != "" {
@@ -94,6 +97,23 @@ func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
 			writeErrorCode(w, http.StatusInternalServerError, "project_permission_report_failed", "failed to load permission report")
 		}
 		return
+	}
+	if q.Get("export") == "true" {
+		audit := (&projectAuthRepository{db: h.DB}).RecordAuthorizationAudit(r.Context(), projectauth.AuthorizationAuditEvent{
+			WorkspaceID: workspaceID,
+			IssueID:     filter.IssueID,
+			ProjectID:   filter.ProjectID,
+			ActorUserID: userID,
+			Action:      "permission_report_exported",
+			Details: map[string]any{
+				"project_id": filter.ProjectID, "issue_id": filter.IssueID,
+				"user_id": filter.UserID, "scope": filter.Scope, "row_count": len(result.Rows),
+			},
+		})
+		if audit != nil {
+			writeErrorCode(w, http.StatusInternalServerError, "permission_report_audit_failed", "failed to audit permission report export")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rows":   result.Rows,
