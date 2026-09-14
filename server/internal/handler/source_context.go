@@ -918,7 +918,7 @@ func (h *Handler) writeSourceContextError(w http.ResponseWriter, err error, limi
 	case errors.Is(err, service.ErrActiveDuplicate):
 		status, code = http.StatusConflict, "active_duplicate_issue"
 		message = err.Error()
-	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrParentProjectMismatch), errors.Is(err, service.ErrProjectNotFound):
+	case errors.Is(err, service.ErrParentIssueNotFound), errors.Is(err, service.ErrProjectNotFound):
 		status = http.StatusBadRequest
 		message = err.Error()
 	case errors.Is(err, service.ErrArchivedParentIssue):

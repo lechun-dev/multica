@@ -164,13 +164,6 @@ var ErrParentIssueNotFound = errors.New("parent issue not found in this workspac
 // children remain available for history and comments.
 var ErrArchivedParentIssue = errors.New("cannot create a child issue under an archived parent")
 
-// ErrParentProjectMismatch signals that an explicitly supplied project does
-// not match the parent issue's project. A child issue cannot cross project
-// boundaries because task hierarchy is scoped to its owning project.
-// 2026-09-01 coder(lq): Enforce the project-binding invariant in the shared
-// service so HTTP, channel, and future adapters cannot diverge.
-var ErrParentProjectMismatch = errors.New("parent issue belongs to a different project")
-
 // ErrProjectNotFound signals that the supplied ProjectID does not exist
 // in the issue's workspace. Cross-workspace project IDs are rejected
 // here so every create entry (HTTP `POST /issues`, Lark `/issue`, future
@@ -313,15 +306,10 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		if parent.ArchivedAt.Valid {
 			return IssueCreateResult{}, ErrArchivedParentIssue
 		}
-		if projectID.Valid && parent.ProjectID.Valid && parent.ProjectID != projectID {
-			return IssueCreateResult{}, ErrParentProjectMismatch
-		}
-		// Back-fill project from parent when the caller did not pin
-		// one explicitly. Matches the long-standing HTTP behavior: a
-		// sub-issue inherits its parent's project unless overridden.
-		if !projectID.Valid {
-			projectID = parent.ProjectID
-		}
+		// A parent link and project ownership are independent dimensions. A
+		// child may target the same project, another project, or no project at
+		// all. Authorization for both resources is supplied by BeforeCommit;
+		// this shared service only enforces the workspace/archive boundary.
 	}
 	if projectID.Valid {
 		if _, err := qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{

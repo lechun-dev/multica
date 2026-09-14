@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
@@ -564,6 +565,78 @@ func (h *Handler) issueAccessBeforeCommit() func(context.Context, pgx.Tx, db.Iss
 	}
 }
 
+var errIssueRelationshipForbidden = errors.New("issue relationship permission denied")
+
+// validateIssueRelationshipWithExecutor re-checks the final relationship
+// while the write transaction is still open. The early HTTP checks provide a
+// useful response; this check closes project/parent/archive races and is the
+// authority used by create and update.
+func validateIssueRelationshipWithExecutor(ctx context.Context, executor dbExecutor, subject projectauth.Subject, issue db.Issue) error {
+	if issue.ParentIssueID.Valid {
+		var parentWorkspace pgtype.UUID
+		var archivedAt pgtype.Timestamptz
+		if err := executor.QueryRow(ctx, `
+			SELECT workspace_id, archived_at
+			FROM issue
+			WHERE id=$1::uuid AND workspace_id=$2::uuid`, issue.ParentIssueID, issue.WorkspaceID).Scan(&parentWorkspace, &archivedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return service.ErrParentIssueNotFound
+			}
+			return err
+		}
+		if archivedAt.Valid {
+			return service.ErrArchivedParentIssue
+		}
+
+		var cyclic bool
+		if err := executor.QueryRow(ctx, `
+			WITH RECURSIVE ancestors(id, parent_issue_id) AS (
+				SELECT id, parent_issue_id FROM issue WHERE id=$1::uuid AND workspace_id=$2::uuid
+				UNION
+				SELECT i.id, i.parent_issue_id
+				FROM issue i JOIN ancestors a ON i.id=a.parent_issue_id
+				WHERE i.workspace_id=$2::uuid
+			)
+			SELECT EXISTS (SELECT 1 FROM ancestors WHERE id=$3::uuid)`, issue.ParentIssueID, issue.WorkspaceID, issue.ID).Scan(&cyclic); err != nil {
+			return err
+		}
+		if cyclic {
+			return errors.New("circular parent relationship detected")
+		}
+
+		repo := &projectAuthRepository{db: executor}
+		access, err := projectauth.NewEffectiveAccessResolver(repo).ExplainIssue(ctx, subject, uuidToString(issue.ParentIssueID), projectauth.IssueChildCreate)
+		if err != nil {
+			return err
+		}
+		if !access.Allowed {
+			return errIssueRelationshipForbidden
+		}
+	}
+	if issue.ProjectID.Valid {
+		repo := &projectAuthRepository{db: executor}
+		if err := projectauth.New(repo, true).Check(ctx, subject, uuidToString(issue.ProjectID), projectauth.IssueCreate); err != nil {
+			if errors.Is(err, projectauth.ErrForbidden) || errors.Is(err, projectauth.ErrNoProjectAccess) || errors.Is(err, projectauth.ErrNotWorkspaceMember) {
+				return errIssueRelationshipForbidden
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) issueAccessBeforeCommitForSubject(subject projectauth.Subject) func(context.Context, pgx.Tx, db.Issue) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return nil
+	}
+	return func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
+		if err := validateIssueRelationshipWithExecutor(ctx, tx, subject, issue); err != nil {
+			return err
+		}
+		return syncIssueAccessWithExecutor(ctx, tx, nil, issue)
+	}
+}
+
 // IssueAccessBeforeCommitForChannel exposes the narrow transaction hook needed
 // by the channel engine without coupling that integration package to Handler's
 // projectauth implementation.
@@ -576,7 +649,7 @@ func (h *Handler) IssueAccessBeforeCommitForChannel() func(context.Context, pgx.
 // 2026-08-27 coder(lq): Ordinary issue updates do not otherwise need a
 // transaction. Open one only while project authorization is enabled so the
 // issue assignment/mention and its inherited project role cannot diverge.
-func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams) (db.Issue, error) {
+func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, subjects ...projectauth.Subject) (db.Issue, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		var issue db.Issue
 		err := h.runWithIssueStatusGuard(ctx, workspaceID, statusKey, func(q *db.Queries) error {
@@ -606,6 +679,11 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	issue, err := qtx.UpdateIssue(ctx, params)
 	if err != nil {
 		return db.Issue{}, err
+	}
+	if len(subjects) > 0 {
+		if err := validateIssueRelationshipWithExecutor(ctx, tx, subjects[0], issue); err != nil {
+			return db.Issue{}, err
+		}
 	}
 	if err := syncIssueAccessWithExecutor(ctx, tx, &previous, issue); err != nil {
 		return db.Issue{}, fmt.Errorf("promote issue project access: %w", err)

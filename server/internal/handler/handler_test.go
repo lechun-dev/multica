@@ -669,7 +669,7 @@ func TestCreateIssueRejectsCrossWorkspaceProject(t *testing.T) {
 	}
 }
 
-func TestCreateSubIssueInheritsParentProject(t *testing.T) {
+func TestCreateSubIssueWithoutProjectRemainsProjectless(t *testing.T) {
 	var projectID, parentID, childID string
 	defer func() {
 		for _, issueID := range []string{childID, parentID} {
@@ -719,15 +719,15 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
 		t.Fatalf("CreateIssue child: expected parent_issue_id %q, got %v", parentID, child.ParentIssueID)
 	}
-	if child.ProjectID == nil || *child.ProjectID != projectID {
-		t.Fatalf("CreateIssue child: expected inherited project_id %q, got %v", projectID, child.ProjectID)
+	if child.ProjectID != nil {
+		t.Fatalf("CreateIssue child: expected project_id to remain null, got %v", child.ProjectID)
 	}
 }
 
-func TestCreateSubIssueRejectsExplicitProjectDifferentFromParent(t *testing.T) {
-	var parentProjectID, childProjectID, parentID string
+func TestCreateSubIssueAllowsExplicitProjectDifferentFromParent(t *testing.T) {
+	var parentProjectID, childProjectID, parentID, childID string
 	defer func() {
-		for _, issueID := range []string{parentID} {
+		for _, issueID := range []string{childID, parentID} {
 			if issueID == "" {
 				continue
 			}
@@ -778,18 +778,17 @@ func TestCreateSubIssueRejectsExplicitProjectDifferentFromParent(t *testing.T) {
 		"parent_issue_id": parentID,
 		"project_id":      childProjectID,
 	})
-	w = testutil.Call(t, testHandler.CreateIssue, req).Want(http.StatusBadRequest)
-	// 2026-09-11 coder(lq): Parent/child hierarchy is scoped to one project;
-	// rejecting a mismatched explicit project prevents cross-project access leaks.
-	var count int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM issue
-		WHERE workspace_id = $1 AND title = 'Child with explicit project'
-	`, testWorkspaceID).Scan(&count); err != nil {
-		t.Fatalf("count rejected child issue: %v", err)
+	w = testutil.Call(t, testHandler.CreateIssue, req).Want(http.StatusCreated)
+	var child IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&child); err != nil {
+		t.Fatalf("decode child: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("CreateIssue child: created %d cross-project issue(s), want 0", count)
+	childID = child.ID
+	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
+		t.Fatalf("CreateIssue child: expected parent %q, got %v", parentID, child.ParentIssueID)
+	}
+	if child.ProjectID == nil || *child.ProjectID != childProjectID {
+		t.Fatalf("CreateIssue child: expected target project %q, got %v", childProjectID, child.ProjectID)
 	}
 }
 

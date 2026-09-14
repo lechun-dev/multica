@@ -1836,28 +1836,14 @@ func (h *Handler) requireNewIssueProjectPermission(w http.ResponseWriter, r *htt
 	return h.requireProjectPermission(w, r, uuidToString(projectID), workspaceID, permission)
 }
 
-// 2026-08-24 coder(lq): Parent-child links are task access edges too. When the
-// overlay is enabled, a parent must be visible to the caller and both tasks
-// must stay in the same project; otherwise a user could use a visible child
-// to discover or mutate an unrelated project's task tree.
-func (h *Handler) requireParentIssueProjectPermission(w http.ResponseWriter, r *http.Request, parent db.Issue, projectID pgtype.UUID) bool {
+// Parent-child links are task access edges independent of project ownership.
+// Linking requires the parent's task-scoped child-create permission. The
+// caller separately checks IssueCreate on an explicitly selected target
+// project, so same-project, cross-project and projectless children all share
+// one rule without treating a project role as a task role.
+func (h *Handler) requireParentIssueProjectPermission(w http.ResponseWriter, r *http.Request, parent db.Issue, _ pgtype.UUID) bool {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return true
 	}
-	// A missing project on the child inherits the parent's project in the
-	// service. Resolve that effective project before checking authorization so
-	// project-bound parents still require IssueCreate on their project, while a
-	// genuinely projectless parent remains valid.
-	effectiveProjectID := projectID
-	if !effectiveProjectID.Valid {
-		effectiveProjectID = parent.ProjectID
-	}
-	if effectiveProjectID.Valid && parent.ProjectID.Valid && parent.ProjectID != effectiveProjectID {
-		writeError(w, http.StatusBadRequest, "parent issue must belong to the same project")
-		return false
-	}
-	if effectiveProjectID.Valid && !h.requireProjectPermission(w, r, uuidToString(effectiveProjectID), uuidToString(parent.WorkspaceID), projectauth.IssueCreate) {
-		return false
-	}
-	return h.requireIssueProjectPermission(w, r, parent, projectauth.View)
+	return h.requireIssueProjectPermission(w, r, parent, projectauth.IssueChildCreate)
 }
