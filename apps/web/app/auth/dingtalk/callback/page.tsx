@@ -17,6 +17,10 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@mult
 import { Button } from "@multica/ui/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { useT } from "@multica/views/i18n";
+import {
+  clearDingTalkDWSAuthorizationAttempt,
+  dingtalkDWSStatusKey,
+} from "@multica/views/dingtalk";
 
 function CallbackContent() {
   const router = useRouter();
@@ -56,6 +60,14 @@ function CallbackContent() {
 
     loginWithDingTalk(code, state)
       .then(async (user) => {
+        try {
+          const dwsStatus = await api.getDingTalkDWSStatus();
+          qc.setQueryData(dingtalkDWSStatusKey, dwsStatus);
+        } catch {
+          qc.removeQueries({ queryKey: dingtalkDWSStatusKey });
+        } finally {
+          clearDingTalkDWSAuthorizationAttempt();
+        }
         const workspaces = await qc.ensureQueryData(workspaceListOptions());
         qc.setQueryData(workspaceKeys.list(), workspaces);
         const next = sanitizeNextUrl(dingtalkNextFromState(state));
@@ -64,6 +76,7 @@ function CallbackContent() {
         );
       })
       .catch((err) => {
+        clearDingTalkDWSAuthorizationAttempt();
         setError(err instanceof Error ? err.message : "DingTalk login failed");
       });
   }, [loginWithDingTalk, qc, router, searchParams]);

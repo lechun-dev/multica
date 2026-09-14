@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link2, LoaderCircle, ShieldAlert } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -16,6 +16,12 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { useT } from "../i18n";
+import {
+  beginDingTalkDWSAuthorizationAttempt,
+  clearDingTalkDWSAuthorizationAttempt,
+  dingTalkDWSAuthorizationTimeoutMs,
+  readDingTalkDWSAuthorizationAttempt,
+} from "./dws-authorization-attempt";
 
 export const dingtalkDWSStatusKey = ["me", "dingtalk-dws"] as const;
 
@@ -29,15 +35,46 @@ export function DingTalkDWSAuthorizationDialog({
   const { t } = useT("common");
   const authStatus = useAuthStore((state) => state.status);
   const [dismissed, setDismissed] = useState<string | null>(null);
-  const [authorizing, setAuthorizing] = useState(false);
+  const [authorizationStartedAt, setAuthorizationStartedAt] = useState<
+    number | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
+  const authorizing = authorizationStartedAt !== null;
   const { data: status } = useQuery({
     queryKey: dingtalkDWSStatusKey,
     queryFn: () => api.getDingTalkDWSStatus(),
     enabled: authStatus === "authenticated",
-    refetchInterval: 15_000,
+    refetchInterval: authorizing ? 2_000 : 15_000,
+    refetchIntervalInBackground: authorizing,
     refetchOnWindowFocus: true,
   });
+
+  const finishAuthorizationAttempt = useCallback(() => {
+    clearDingTalkDWSAuthorizationAttempt();
+    setAuthorizationStartedAt(null);
+  }, []);
+
+  useEffect(() => {
+    const startedAt = readDingTalkDWSAuthorizationAttempt();
+    if (startedAt !== null) setAuthorizationStartedAt(startedAt);
+  }, []);
+
+  useEffect(() => {
+    if (authorizationStartedAt === null) return;
+    const remaining =
+      dingTalkDWSAuthorizationTimeoutMs -
+      (Date.now() - authorizationStartedAt);
+    const handleTimeout = () => {
+      finishAuthorizationAttempt();
+      setError(t(($) => $.desktop.dws_auth.authorization_timeout));
+    };
+    if (remaining <= 0) {
+      handleTimeout();
+      return;
+    }
+    const timer = window.setTimeout(handleTimeout, remaining);
+    return () => window.clearTimeout(timer);
+  }, [authorizationStartedAt, finishAuthorizationAttempt, t]);
 
   const signature = useMemo(() => {
     if (!status) {
@@ -60,12 +97,23 @@ export function DingTalkDWSAuthorizationDialog({
   }, [status]);
 
   useEffect(() => {
-    if (!signature) {
+    if (status && !signature) {
       setDismissed(null);
-      setAuthorizing(false);
+      finishAuthorizationAttempt();
       setError(null);
     }
-  }, [signature]);
+  }, [finishAuthorizationAttempt, signature, status]);
+
+  useEffect(() => {
+    if (
+      authorizing &&
+      status &&
+      status.state !== "authorization_required" &&
+      status.state !== "connected"
+    ) {
+      finishAuthorizationAttempt();
+    }
+  }, [authorizing, finishAuthorizationAttempt, status]);
 
   const open = signature !== null && signature !== dismissed;
   const expired =
@@ -87,7 +135,9 @@ export function DingTalkDWSAuthorizationDialog({
     : status?.message || t(($) => $.desktop.dws_auth.delivery_error_description);
 
   const handleAuthorize = async () => {
-    setAuthorizing(true);
+    if (authorizing) return;
+    const startedAt = beginDingTalkDWSAuthorizationAttempt();
+    setAuthorizationStartedAt(startedAt);
     setError(null);
     try {
       const next =
@@ -96,9 +146,8 @@ export function DingTalkDWSAuthorizationDialog({
           : `${window.location.pathname}${window.location.search}${window.location.hash}`;
       const result = await api.startDingTalkDWSAuthorization(client, next);
       await openAuthorization(result.authorization_url);
-      setAuthorizing(false);
     } catch (authorizationError) {
-      setAuthorizing(false);
+      finishAuthorizationAttempt();
       setError(
         authorizationError instanceof Error && authorizationError.message
           ? authorizationError.message
@@ -111,14 +160,13 @@ export function DingTalkDWSAuthorizationDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && signature) {
+        if (!nextOpen && signature && !authorizing) {
           setDismissed(signature);
-          setAuthorizing(false);
           setError(null);
         }
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent showCloseButton={!authorizing} className="sm:max-w-md">
         <DialogHeader>
           <div className="flex items-start gap-3 pr-6">
             <div className="rounded-lg bg-brand/10 p-2 text-brand">
@@ -140,12 +188,6 @@ export function DingTalkDWSAuthorizationDialog({
             {t(($) => $.desktop.dws_auth.server_hint)}
           </p>
         ) : null}
-        {authorizing ? (
-          <div className="flex items-center gap-2 text-body text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" />
-            <span>{t(($) => $.desktop.dws_auth.authorizing)}</span>
-          </div>
-        ) : null}
         {error ? (
           <p role="alert" className="text-body text-destructive">
             {error}
@@ -163,9 +205,11 @@ export function DingTalkDWSAuthorizationDialog({
           {needsAuthorization ? (
             <Button disabled={authorizing} onClick={() => void handleAuthorize()}>
               {authorizing ? <LoaderCircle className="animate-spin" /> : null}
-              {expired
-                ? t(($) => $.desktop.dws_auth.reauthorize)
-                : t(($) => $.desktop.dws_auth.login)}
+              {authorizing
+                ? t(($) => $.desktop.dws_auth.authorizing)
+                : expired
+                  ? t(($) => $.desktop.dws_auth.reauthorize)
+                  : t(($) => $.desktop.dws_auth.login)}
             </Button>
           ) : null}
         </DialogFooter>

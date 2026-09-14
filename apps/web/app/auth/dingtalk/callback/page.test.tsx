@@ -10,7 +10,10 @@ const {
   mockDingTalkLogin,
   mockEnsureQueryData,
   mockSetQueryData,
+  mockRemoveQueries,
   mockLoginWithDingTalk,
+  mockGetDingTalkDWSStatus,
+  mockClearAuthorizationAttempt,
   mockPush,
   mockReplace,
   mockSearchParams,
@@ -18,7 +21,10 @@ const {
   mockDingTalkLogin: vi.fn(),
   mockEnsureQueryData: vi.fn(),
   mockSetQueryData: vi.fn(),
+  mockRemoveQueries: vi.fn(),
   mockLoginWithDingTalk: vi.fn(),
+  mockGetDingTalkDWSStatus: vi.fn(),
+  mockClearAuthorizationAttempt: vi.fn(),
   mockPush: vi.fn(),
   mockReplace: vi.fn(),
   mockSearchParams: new URLSearchParams(),
@@ -33,6 +39,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({
     ensureQueryData: mockEnsureQueryData,
     setQueryData: mockSetQueryData,
+    removeQueries: mockRemoveQueries,
   }),
 }));
 
@@ -49,12 +56,20 @@ vi.mock("@multica/core/auth", async () => {
 });
 
 vi.mock("@multica/core/api", () => ({
-  api: { dingTalkLogin: mockDingTalkLogin },
+  api: {
+    dingTalkLogin: mockDingTalkLogin,
+    getDingTalkDWSStatus: mockGetDingTalkDWSStatus,
+  },
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
   workspaceKeys: { list: () => ["workspaces"] },
   workspaceListOptions: () => ({ queryKey: ["workspaces"] }),
+}));
+
+vi.mock("@multica/views/dingtalk", () => ({
+  dingtalkDWSStatusKey: ["me", "dingtalk-dws"],
+  clearDingTalkDWSAuthorizationAttempt: mockClearAuthorizationAttempt,
 }));
 
 const TEST_RESOURCES = {
@@ -79,6 +94,12 @@ describe("DingTalkCallbackPage", () => {
     );
     mockSearchParams.set("code", "dingtalk-code");
     mockSearchParams.set("state", "trusted-random.desktop");
+    mockGetDingTalkDWSStatus.mockResolvedValue({
+      configured: true,
+      connected: true,
+      state: "connected",
+      pending_count: 0,
+    });
   });
 
   it("hands a successful desktop login back to the Multica app", async () => {
@@ -113,6 +134,7 @@ describe("DingTalkCallbackPage", () => {
         await screen.findByRole("button", { name: "Open Multica Desktop" }),
       ).toBeInTheDocument();
       expect(mockLoginWithDingTalk).not.toHaveBeenCalled();
+      expect(mockGetDingTalkDWSStatus).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(window, "location", {
         configurable: true,
@@ -186,7 +208,10 @@ describe("DingTalkCallbackPage", () => {
 
   it("returns a web login to the task and comment carried in state", async () => {
     const next = "/acme/issues/MUL-67#comment-comment-1";
-    const encoded = btoa(next).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const encoded = btoa(next)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
     mockSearchParams.set("state", `trusted-random.web.next.${encoded}`);
     mockLoginWithDingTalk.mockResolvedValue({ onboarded_at: "2026-01-01" });
     mockEnsureQueryData.mockResolvedValue([]);
@@ -196,5 +221,33 @@ describe("DingTalkCallbackPage", () => {
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith(next);
     });
+    expect(mockGetDingTalkDWSStatus).toHaveBeenCalledOnce();
+    expect(mockSetQueryData).toHaveBeenCalledWith(
+      ["me", "dingtalk-dws"],
+      expect.objectContaining({ state: "connected" }),
+    );
+    expect(mockClearAuthorizationAttempt).toHaveBeenCalledOnce();
+  });
+
+  it("drops stale DWS status when the post-authorization refresh fails", async () => {
+    const next = "/acme/issues/MUL-67";
+    const encoded = btoa(next)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    mockSearchParams.set("state", `trusted-random.web.next.${encoded}`);
+    mockLoginWithDingTalk.mockResolvedValue({ onboarded_at: "2026-01-01" });
+    mockGetDingTalkDWSStatus.mockRejectedValue(new Error("temporary failure"));
+    mockEnsureQueryData.mockResolvedValue([]);
+
+    render(<CallbackPage />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith(next);
+    });
+    expect(mockRemoveQueries).toHaveBeenCalledWith({
+      queryKey: ["me", "dingtalk-dws"],
+    });
+    expect(mockClearAuthorizationAttempt).toHaveBeenCalledOnce();
   });
 });

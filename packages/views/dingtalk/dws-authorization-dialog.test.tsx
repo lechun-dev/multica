@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../locales/en/common.json";
 
@@ -19,10 +19,15 @@ const state = vi.hoisted(() => ({
     message?: string;
     pending_count: number;
   },
+  queryOptions: null as Record<string, unknown> | null,
+  startAuthorization: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: state.status }),
+  useQuery: (options: Record<string, unknown>) => {
+    state.queryOptions = options;
+    return { data: state.status };
+  },
 }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -31,7 +36,7 @@ vi.mock("@multica/core/auth", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { startDingTalkDWSAuthorization: vi.fn() },
+  api: { startDingTalkDWSAuthorization: state.startAuthorization },
 }));
 
 import { DingTalkDWSAuthorizationDialog } from "./dws-authorization-dialog";
@@ -46,11 +51,11 @@ function Wrapper({ children }: { children: ReactNode }) {
   );
 }
 
-function renderDialog() {
+function renderDialog(openAuthorization = vi.fn()) {
   return render(
     <DingTalkDWSAuthorizationDialog
       client="web"
-      openAuthorization={vi.fn()}
+      openAuthorization={openAuthorization}
     />,
     { wrapper: Wrapper },
   );
@@ -58,6 +63,12 @@ function renderDialog() {
 
 describe("DingTalkDWSAuthorizationDialog", () => {
   beforeEach(() => {
+    window.sessionStorage.clear();
+    state.queryOptions = null;
+    state.startAuthorization.mockReset();
+    state.startAuthorization.mockResolvedValue({
+      authorization_url: "https://login.dingtalk.test/oauth",
+    });
     state.status = {
       configured: true,
       connected: false,
@@ -72,6 +83,75 @@ describe("DingTalkDWSAuthorizationDialog", () => {
 
     expect(screen.getByText("Authorize DingTalk direct messages")).toBeInTheDocument();
     expect(screen.getByText("Authorize sign-in")).toBeInTheDocument();
+  });
+
+  it("keeps the action disabled while authorization is pending", async () => {
+    const openAuthorization = vi.fn().mockResolvedValue(undefined);
+    renderDialog(openAuthorization);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize sign-in" }),
+    );
+
+    const waitingButton = await screen.findByRole("button", {
+      name: "Authorizing, please wait",
+    });
+    expect(waitingButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Later" })).toBeDisabled();
+    expect(openAuthorization).toHaveBeenCalledWith(
+      "https://login.dingtalk.test/oauth",
+    );
+    expect(state.queryOptions?.refetchInterval).toBe(2_000);
+    expect(state.queryOptions?.refetchIntervalInBackground).toBe(true);
+  });
+
+  it("restores the waiting state after the OAuth round trip", async () => {
+    const first = renderDialog(vi.fn().mockResolvedValue(undefined));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize sign-in" }),
+    );
+    await screen.findByRole("button", {
+      name: "Authorizing, please wait",
+    });
+    first.unmount();
+
+    renderDialog();
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Authorizing, please wait",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("closes automatically after the server reports a connected grant", async () => {
+    const view = renderDialog(vi.fn().mockResolvedValue(undefined));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Authorize sign-in" }),
+    );
+    await screen.findByRole("button", {
+      name: "Authorizing, please wait",
+    });
+
+    state.status = {
+      configured: true,
+      connected: true,
+      state: "connected",
+      pending_count: 0,
+    };
+    view.rerender(
+      <DingTalkDWSAuthorizationDialog
+        client="web"
+        openAuthorization={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Authorize DingTalk direct messages"),
+      ).toBeNull();
+    });
+    expect(window.sessionStorage.length).toBe(0);
   });
 
   it("shows a server configuration error without calling it logged out", () => {
