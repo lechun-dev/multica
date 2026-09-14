@@ -148,7 +148,20 @@ func (h *Handler) listIssueAccessGrants(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	grants, err := h.ProjectAuth.ListAccessGrants(r.Context(), subject, projectID, util.UUIDToString(issueUUID))
+	issueID = util.UUIDToString(issueUUID)
+	allowed, reason := h.effectiveIssueAccessAllowed(r.Context(), subject, issueID, projectauth.View, true)
+	if !allowed {
+		if reason == "internal" || reason == "unavailable" || reason == "migration" {
+			writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)
+		} else {
+			writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
+		}
+		return
+	}
+	// Authorization is performed by EffectiveAccessResolver above. Read the
+	// rows directly so a caller whose access comes only from the direct parent
+	// is not re-checked against the legacy project-only matrix.
+	grants, err := (&projectAuthRepository{db: h.DB}).ListAccessGrants(r.Context(), subject.WorkspaceID, projectID, issueID)
 	if err != nil {
 		writeProjectAccessGrantError(w, err)
 		return
@@ -173,11 +186,7 @@ func (h *Handler) listProjectlessIssueAccessGrants(ctx context.Context, subject 
 	if err != nil || issue.ProjectID.Valid {
 		return nil, projectauth.ErrNoProjectAccess
 	}
-	member, err := h.getWorkspaceMember(ctx, subject.UserID, subject.WorkspaceID)
-	if err != nil {
-		return nil, projectauth.ErrNotWorkspaceMember
-	}
-	allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(ctx, issue, subject.UserID, member, projectauth.View, true)
+	allowed, reason := h.effectiveIssueAccessAllowed(ctx, subject, issueID, projectauth.View, true)
 	if !allowed {
 		if reason == "internal" {
 			return nil, projectauth.ErrStorageUnavailable
@@ -527,7 +536,8 @@ func (h *Handler) mutateProjectlessIssueAccessGrantTx(ctx context.Context, tx db
 	if err != nil {
 		return projectauth.ErrNotWorkspaceMember
 	}
-	allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(ctx, issue, userID, member, projectauth.IssueManage, true)
+	subject := projectauth.Subject{UserID: userID, WorkspaceID: grant.WorkspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
+	allowed, reason := h.effectiveIssueAccessAllowed(ctx, subject, issueID, projectauth.IssueManage, true)
 	if !allowed {
 		if reason == "internal" {
 			return projectauth.ErrStorageUnavailable
@@ -703,11 +713,6 @@ func (h *Handler) revokeProjectlessIssueAccessGrant(w http.ResponseWriter, r *ht
 		writeProjectAccessGrantError(w, projectauth.ErrCrossWorkspace)
 		return
 	}
-	member, err := h.getWorkspaceMember(r.Context(), subject.UserID, workspaceID)
-	if err != nil {
-		writeProjectAccessGrantError(w, projectauth.ErrNotWorkspaceMember)
-		return
-	}
 	issueUUID, err := util.ParseUUID(issueID)
 	if err != nil {
 		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
@@ -723,7 +728,7 @@ func (h *Handler) revokeProjectlessIssueAccessGrant(w http.ResponseWriter, r *ht
 		writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
 		return
 	}
-	allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(r.Context(), issue, subject.UserID, member, projectauth.IssueManage, true)
+	allowed, reason := h.effectiveIssueAccessAllowed(r.Context(), subject, issueID, projectauth.IssueManage, true)
 	if !allowed {
 		if reason == "internal" {
 			writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)

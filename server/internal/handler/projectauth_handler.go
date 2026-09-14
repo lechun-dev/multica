@@ -36,17 +36,7 @@ func (h *Handler) cancelAgentTasksWithProjectPermission(ctx context.Context, age
 			if issueErr != nil {
 				continue
 			}
-			if !issue.ProjectID.Valid {
-				// 2026-09-05 coder(lq): Projectless tasks still have an
-				// immutable creator/assignee Owner-equivalent boundary. Do not
-				// let this aggregate operation accidentally skip work the task
-				// owner is allowed to manage.
-				if allowed, _ := h.projectlessIssueAllowedWithWorkspaceScope(ctx, issue, userID, member, projectauth.IssueManage, true); allowed {
-					allowedIDs = append(allowedIDs, task.ID)
-				}
-				continue
-			}
-			if err := h.ProjectAuth.CheckIssue(ctx, subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), projectauth.IssueManage); err == nil {
+			if allowed, _ := h.effectiveIssueAccessAllowed(ctx, subject, uuidToString(issue.ID), projectauth.IssueManage, true); allowed {
 				allowedIDs = append(allowedIDs, task.ID)
 			}
 		case task.ChatSessionID.Valid:
@@ -361,34 +351,54 @@ func issueProjectVisibilityPredicateWithWorkspaceScope(issueAlias, workspaceRef,
 }
 
 func (scope issueVisibilitySQL) predicate(issueAlias, workspaceRef, userRef string, includeWorkspaceOwned bool) string {
-	// 2026-09-05 coder(lq): Project-bound tasks also keep their creator's hard
-	// Owner visibility when historical creator grants were never backfilled.
-	// This is task-scoped and therefore cannot expose sibling tasks.
-	ownerProjectClause := "FALSE"
-	ownerProjectlessClause := "FALSE"
+	ownerClause := "FALSE"
 	if includeWorkspaceOwned {
-		ownerProjectClause = fmt.Sprintf("(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))", workspaceOwnerBypassPredicate(workspaceRef), workspaceRef, userRef)
-		ownerProjectlessClause = ownerProjectClause
+		ownerClause = fmt.Sprintf("(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))", workspaceOwnerBypassPredicate(workspaceRef), workspaceRef, userRef)
 	}
 	return fmt.Sprintf(`(
-		(%s.project_id IS NOT NULL AND (%s OR %s OR %s OR %s))
-		OR (%s.project_id IS NULL AND (
-			(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))
-			OR %s
-			OR (%s.assignee_type = 'member' AND %s.assignee_id = %s::uuid)
-			OR (%s.assignee_type = 'agent' AND EXISTS (
-				SELECT 1 FROM agent a WHERE a.id = %s.assignee_id AND a.workspace_id = %s AND a.kind = 'user' AND a.owner_id = %s::uuid
-			))
-			OR %s
+		%s
+		OR %s
+		OR EXISTS (
+			SELECT 1 FROM issue direct_parent
+			WHERE direct_parent.id = %s.parent_issue_id
+			  AND direct_parent.workspace_id = %s.workspace_id
+			  AND %s
+		)
+	)`, ownerClause, scope.base(""+issueAlias, workspaceRef, userRef), issueAlias, issueAlias,
+		scope.base("direct_parent", workspaceRef, userRef))
+}
+
+// base mirrors EffectiveAccessResolver.Base for the project.view permission.
+// The direct-parent clause above deliberately invokes base, never predicate,
+// which prevents a grandparent's permissions from reaching a grandchild.
+func (scope issueVisibilitySQL) base(issueAlias, workspaceRef, userRef string) string {
+	return fmt.Sprintf(`(
+		%s
+		OR (%s.assignee_type = 'member' AND %s.assignee_id = %s::uuid)
+		OR (%s.assignee_type = 'agent' AND EXISTS (
+			SELECT 1 FROM agent assignee_agent
+			WHERE assignee_agent.id = %s.assignee_id
+			  AND assignee_agent.workspace_id = %s.workspace_id
+			  AND assignee_agent.kind = 'user'
+			  AND assignee_agent.owner_id = %s::uuid
 		))
-	)`, issueAlias, ownerProjectClause, scope.projectAccess(issueAlias+".project_id", workspaceRef, userRef),
-		scope.directAccess(issueAlias+".id", workspaceRef, userRef),
-		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
-		issueAlias, ownerProjectlessClause, workspaceRef, userRef,
-		issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
+		OR %s
+		OR (
+			%s.project_id IS NOT NULL
+			AND NOT EXISTS (
+				SELECT 1 FROM projectauth_issue_policies access_policy
+				WHERE access_policy.workspace_id = %s.workspace_id
+				  AND access_policy.issue_id = %s.id
+				  AND access_policy.project_access_mode = 'restricted'
+			)
+			AND %s
+		)
+	)`, issueCreatorAccessPredicate(issueAlias, workspaceRef, userRef),
 		issueAlias, issueAlias, userRef,
-		issueAlias, issueAlias, workspaceRef, userRef,
-		scope.projectlessGrant(issueAlias, workspaceRef, userRef))
+		issueAlias, issueAlias, issueAlias, userRef,
+		scope.directAccess(issueAlias+".id", workspaceRef, userRef),
+		issueAlias, issueAlias, issueAlias,
+		scope.projectAccess(issueAlias+".project_id", workspaceRef, userRef))
 }
 
 // 2026-09-05 coder(lq): Projectless task grants are evaluated only against
@@ -411,11 +421,18 @@ func (scope issueVisibilitySQL) projectlessGrant(issueAlias, workspaceRef, userR
 		WHERE g.workspace_id = a.workspace_id
 		  AND g.issue_id = %s.id
 		  AND %s
+		  AND NOT EXISTS (
+			SELECT 1 FROM projectauth_grant_constraints constraint_row
+			WHERE constraint_row.workspace_id = g.workspace_id
+			  AND constraint_row.grant_id = g.id
+			  AND constraint_row.expires_at IS NOT NULL
+			  AND constraint_row.expires_at <= now()
+		  )
 		  AND (
 			EXISTS (
 				SELECT 1
-				FROM project_permission_roles rr
-				JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
+				FROM projectauth_task_roles rr
+				JOIN projectauth_task_role_permissions rp ON rp.role_id = rr.id
 				WHERE rr.workspace_id = a.workspace_id
 				  AND rr.role_key = g.role_key
 				  AND rp.permission = 'project.view'
@@ -423,7 +440,7 @@ func (scope issueVisibilitySQL) projectlessGrant(issueAlias, workspaceRef, userR
 			OR (
 				g.role_key IN ('owner', 'manager', 'member', 'viewer')
 				AND NOT EXISTS (
-					SELECT 1 FROM project_permission_roles rr
+					SELECT 1 FROM projectauth_task_roles rr
 					WHERE rr.workspace_id = a.workspace_id AND rr.role_key = g.role_key
 				)
 			)
@@ -521,6 +538,26 @@ func systemRoleViewPermissionPredicate(roleExpr, workspaceExpr string) string {
 	)`, workspaceExpr, roleExpr, roleExpr, workspaceExpr, roleExpr)
 }
 
+func taskRoleViewPermissionPredicate(roleExpr, workspaceExpr string) string {
+	return fmt.Sprintf(`(
+		EXISTS (
+			SELECT 1
+			FROM projectauth_task_roles rr
+			JOIN projectauth_task_role_permissions rp ON rp.role_id = rr.id
+			WHERE rr.workspace_id = %s
+			  AND rr.role_key = %s
+			  AND rp.permission = 'project.view'
+		)
+		OR (
+			%s IN ('owner', 'manager', 'member', 'viewer')
+			AND NOT EXISTS (
+				SELECT 1 FROM projectauth_task_roles rr
+				WHERE rr.workspace_id = %s AND rr.role_key = %s
+			)
+		)
+	)`, workspaceExpr, roleExpr, roleExpr, workspaceExpr, roleExpr)
+}
+
 // issueDirectAccessPredicate intentionally checks only grants attached to the
 // current task. It may reveal that task in a list, but never its project or a
 // sibling task. Role subjects match project roles and roles assigned directly
@@ -542,8 +579,8 @@ func (scope issueVisibilitySQL) directAccess(issueExpr, workspaceRef, userRef st
 		CROSS JOIN auth_subject a
 		WHERE direct_issue.id = %s
 		  AND direct_issue.workspace_id = a.workspace_id
-		  AND direct_issue.project_id IS NOT NULL
-		  AND EXISTS (
+		  AND (
+		   (direct_issue.project_id IS NOT NULL AND EXISTS (
 			SELECT 1
 			FROM projectauth_access_grants g
 			WHERE g.workspace_id = direct_issue.workspace_id
@@ -556,19 +593,36 @@ func (scope issueVisibilitySQL) directAccess(issueExpr, workspaceRef, userRef st
 					FROM projectauth_access_grants rg
 					WHERE rg.workspace_id = direct_issue.workspace_id
 					  AND rg.project_id = direct_issue.project_id
-					  AND (rg.issue_id IS NULL OR rg.issue_id = direct_issue.id)
+					  AND rg.issue_id = direct_issue.id
 					  AND rg.role_key IS NOT NULL
 					  AND %s
+					  AND NOT EXISTS (
+						SELECT 1 FROM projectauth_grant_constraints role_constraint
+						WHERE role_constraint.workspace_id = rg.workspace_id
+						  AND role_constraint.grant_id = rg.id
+						  AND role_constraint.expires_at IS NOT NULL
+						  AND role_constraint.expires_at <= now()
+					  )
 					  AND (rg.role_key = g.subject_id OR (g.subject_id = '' AND rg.role_key = g.role_key))
 				))
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM projectauth_grant_constraints grant_constraint
+				WHERE grant_constraint.workspace_id = g.workspace_id
+				  AND grant_constraint.grant_id = g.id
+				  AND grant_constraint.expires_at IS NOT NULL
+				  AND grant_constraint.expires_at <= now()
 			  )
 			  AND (
 				g.permission = 'project.view'
 				OR (g.role_key IS NOT NULL AND %s)
 			  )
-		)
+		   ))
+		   OR (direct_issue.project_id IS NULL AND %s)
+		  )
 	)`, workspaceRef, userRef, issueExpr, grantSubject, roleHolder,
-		systemRoleViewPermissionPredicate("g.role_key", "direct_issue.workspace_id"))
+		taskRoleViewPermissionPredicate("g.role_key", "direct_issue.workspace_id"),
+		scope.projectlessGrant("direct_issue", workspaceRef, userRef))
 }
 
 // 2026-08-31 coder(lq): Keep project-list visibility in one SQL adapter so
@@ -1712,11 +1766,24 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 	if err != nil {
 		return false, "denied"
 	}
-	if !issue.ProjectID.Valid {
-		return h.projectlessIssueAllowedWithWorkspaceScope(r.Context(), issue, userID, member, permission, includeWorkspaceOwned)
-	}
 	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
-	err = h.ProjectAuth.CheckIssueWithWorkspaceScope(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission, includeWorkspaceOwned)
+	return h.effectiveIssueAccessAllowed(r.Context(), subject, uuidToString(issue.ID), permission, includeWorkspaceOwned)
+}
+
+// effectiveIssueAccessAllowed is the single handler adapter from an
+// authenticated subject to an effective task decision. HTTP, plugin and
+// aggregate paths all use it so their inheritance semantics cannot drift.
+func (h *Handler) effectiveIssueAccessAllowed(ctx context.Context, subject projectauth.Subject, issueID string, permission projectauth.Permission, includeWorkspaceOwned bool) (bool, string) {
+	resolver := h.EffectiveIssueAccess
+	if resolver == nil && h.DB != nil {
+		if repo, ok := newProjectAuthRepository(h.DB).(projectauth.EffectiveAccessRepository); ok {
+			resolver = projectauth.NewEffectiveAccessResolver(repo)
+		}
+	}
+	if resolver == nil {
+		return false, "unavailable"
+	}
+	explanation, err := resolver.ExplainIssue(ctx, subject, issueID, permission)
 	if err != nil {
 		if errors.Is(err, projectauth.ErrMigrationRequired) {
 			return false, "migration"
@@ -1727,9 +1794,23 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 		if errors.Is(err, projectauth.ErrForbidden) {
 			return false, "forbidden"
 		}
+		if errors.Is(err, projectauth.ErrInvalidIssuePermission) || errors.Is(err, projectauth.ErrInvalidRoleScope) || errors.Is(err, projectauth.ErrCrossWorkspace) {
+			return false, "internal"
+		}
 		return false, "denied"
 	}
-	return true, ""
+	if !explanation.Allowed {
+		return false, "forbidden"
+	}
+	if includeWorkspaceOwned {
+		return true, ""
+	}
+	for _, source := range explanation.Sources {
+		if source.Source != projectauth.AccessSourceWorkspaceOwner {
+			return true, ""
+		}
+	}
+	return false, "forbidden"
 }
 
 // 2026-08-24 coder(lq): Agent runs are task side effects, so they inherit the

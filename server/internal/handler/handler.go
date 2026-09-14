@@ -190,6 +190,9 @@ type Handler struct {
 	DB           dbExecutor
 	TxStarter    txStarter
 	ProjectAuth  *projectauth.Service
+	// EffectiveIssueAccess is the single task-authorization decision engine.
+	// ProjectAuth remains the project-scoped administration service.
+	EffectiveIssueAccess projectauth.EffectiveAccessResolver
 	// issueTableWindowCache is initialized only on the request-local Handler
 	// copy used by a repeatable-read table request. It lets facets reuse one
 	// visible-id snapshot without adding mutable state to the shared Handler.
@@ -466,12 +469,14 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
 	// a disabled client, which turns the feature off rather than failing.
 	taskSvc.QuickActions = llmClient
+	projectAuthRepo := &projectAuthRepository{db: executor}
 	h := &Handler{
 		Queries:                      queries,
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
 		TxStarter:                    txStarter,
-		ProjectAuth:                  projectauth.New(newProjectAuthRepository(executor), cfg.ProjectPermissionEnabled),
+		ProjectAuth:                  projectauth.New(projectAuthRepo, cfg.ProjectPermissionEnabled),
+		EffectiveIssueAccess:         projectauth.NewEffectiveAccessResolver(projectAuthRepo),
 		Hub:                          hub,
 		DaemonHub:                    daemonHub,
 		DaemonProfileRefresh:         daemonProfileRefresh,
