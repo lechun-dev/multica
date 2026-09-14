@@ -340,11 +340,11 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		currentRows, err = executor.Query(ctx, `
 			SELECT subject_id FROM projectauth_access_grants
 			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user'
-			  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.ProjectMember))
+			  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.TaskMember))
 	} else {
 		currentRows, err = executor.Query(ctx, `
 			SELECT subject_id FROM projectauth_issue_access_grants
-			WHERE issue_id=$1 AND subject_type='user' AND role_key=$2 AND source='system'`, issueID, string(projectauth.ProjectMember))
+			WHERE issue_id=$1 AND subject_type='user' AND role_key=$2 AND source='system'`, issueID, string(projectauth.TaskMember))
 	}
 	if err != nil {
 		return err
@@ -371,11 +371,11 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		if projectID != "" {
 			_, deleteErr = executor.Exec(ctx, `DELETE FROM projectauth_access_grants
 				WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-				  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.ProjectMember))
+				  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.TaskMember))
 		} else {
 			_, deleteErr = executor.Exec(ctx, `DELETE FROM projectauth_issue_access_grants
 				WHERE issue_id=$1 AND subject_type='user' AND subject_id=$2
-				  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.ProjectMember))
+				  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.TaskMember))
 		}
 		if deleteErr != nil {
 			return deleteErr
@@ -384,9 +384,9 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 	for userID := range desired {
 		var upsertErr error
 		if projectID != "" {
-			upsertErr = upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.ProjectMember)
+			upsertErr = upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.TaskMember)
 		} else {
-			upsertErr = upsertProjectlessIssueAccessGrant(ctx, executor, issueID, userID, projectauth.ProjectMember)
+			upsertErr = upsertProjectlessIssueAccessGrant(ctx, executor, issueID, userID, projectauth.TaskMember)
 		}
 		if upsertErr != nil {
 			return upsertErr
@@ -420,7 +420,7 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 			return err
 		}
 		if creatorUserID != "" {
-			if err := upsertProjectlessIssueAccessGrant(ctx, executor, issueID, creatorUserID, projectauth.ProjectOwner); err != nil {
+			if err := upsertProjectlessIssueAccessGrant(ctx, executor, issueID, creatorUserID, projectauth.TaskOwner); err != nil {
 				return err
 			}
 		}
@@ -432,7 +432,7 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 		return err
 	}
 	if creatorUserID != "" {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, creatorUserID, projectauth.ProjectOwner); err != nil {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, creatorUserID, projectauth.TaskOwner); err != nil {
 			return err
 		}
 	}
@@ -450,12 +450,12 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 	if previousAssignee != "" && previousAssignee != currentAssignee {
 		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
 			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.ProjectMember)); err != nil {
+			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.TaskMember)); err != nil {
 			return err
 		}
 	}
 	if currentAssignee != "" {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.ProjectMember); err != nil {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.TaskMember); err != nil {
 			return err
 		}
 	}
@@ -465,7 +465,7 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 // 2026-09-05 coder(lq): Projectless issues need the same immutable creator,
 // assignee, and mention roles as project-bound issues, but cannot use the
 // project grant table because its project_id is intentionally NOT NULL.
-func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, userID string, role projectauth.ProjectRole) error {
+func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, userID string, role projectauth.TaskRole) error {
 	var workspaceID string
 	if err := executor.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id=$1`, issueID).Scan(&workspaceID); err != nil {
 		return err
@@ -486,12 +486,12 @@ func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor,
 		WHERE i.id=$1::uuid AND i.project_id IS NULL`, issueID).Scan(&creatorID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if creatorID != "" && creatorID == userID && role == projectauth.ProjectMember {
-		role = projectauth.ProjectOwner
+	if creatorID != "" && creatorID == userID && role == projectauth.TaskMember {
+		role = projectauth.TaskOwner
 		if _, err := executor.Exec(ctx, `
 			DELETE FROM projectauth_issue_access_grants
 			WHERE issue_id=$1::uuid AND subject_type='user' AND subject_id=$2
-			  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.ProjectMember)); err != nil {
+			  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.TaskMember)); err != nil {
 			return err
 		}
 	}
@@ -508,7 +508,7 @@ func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor,
 // the unified source while legacy issue_permissions remains available for
 // rollback and older handlers. The canonical grant is always a task role;
 // the legacy project.view row is compatibility data only.
-func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, role projectauth.ProjectRole) error {
+func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, role projectauth.TaskRole) error {
 	// 2026-09-05 coder(lq): Normalize every automatic task grant against the
 	// task creator, not only the initial create path. A creator can also be the
 	// assignee or a mention target; those events must not leave a duplicate
@@ -530,12 +530,12 @@ func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, p
 		return err
 	}
 	if creatorID != "" && creatorID == userID {
-		role = projectauth.ProjectOwner
+		role = projectauth.TaskOwner
 		if _, err := executor.Exec(ctx, `
 			DELETE FROM projectauth_access_grants
 			WHERE issue_id=$1::uuid AND project_id=$2::uuid AND subject_type='user'
 			  AND subject_id=$3 AND role_key=$4 AND permission IS NULL AND source='system'`,
-			issueID, projectID, userID, string(projectauth.ProjectMember)); err != nil {
+			issueID, projectID, userID, string(projectauth.TaskMember)); err != nil {
 			return err
 		}
 	}

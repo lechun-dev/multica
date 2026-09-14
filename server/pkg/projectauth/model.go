@@ -1,5 +1,7 @@
 package projectauth
 
+import "time"
+
 // 2026-08-24 coder(lq): Keep workspace roles sourced from Multica's native member table.
 type WorkspaceRole string
 
@@ -35,9 +37,18 @@ const (
 type RoleScope string
 
 const (
-	RoleScopeProject RoleScope = "project"
-	RoleScopeTask    RoleScope = "task"
+	RoleScopeWorkspace RoleScope = "workspace"
+	RoleScopeProject   RoleScope = "project"
+	RoleScopeTask      RoleScope = "task"
 )
+
+// RoleKey is the persistence-neutral role identifier carried by a grant. The
+// accompanying Scope is mandatory at domain boundaries: identical keys such
+// as "member" intentionally resolve against different project/task catalogs.
+// Keep this as a string-backed type so existing API payloads remain compatible
+// while compile-time conversions make catalog crossings visible in code review.
+// 2026-09-14 coder(lq): Remove the false ProjectRole typing from task grants.
+type RoleKey string
 
 // 2026-08-24 coder(lq): Carry the already-authenticated identity and native workspace
 // membership. The HTTP adapter can construct it from Multica's request context.
@@ -108,11 +119,40 @@ type AccessGrant struct {
 	IssueID     string      `json:"issue_id,omitempty"`
 	SubjectType SubjectType `json:"subject_type"`
 	SubjectID   string      `json:"subject_id,omitempty"`
-	Role        ProjectRole `json:"role,omitempty"`
+	Role        RoleKey     `json:"role,omitempty"`
+	Scope       RoleScope   `json:"scope,omitempty"`
 	Permission  Permission  `json:"permission,omitempty"`
 	Source      GrantSource `json:"source"`
 	GrantedBy   string      `json:"granted_by,omitempty"`
 	CreatedAt   string      `json:"created_at,omitempty"`
+	ExpiresAt   *time.Time  `json:"expires_at,omitempty"`
+	OriginKind  string      `json:"origin_kind,omitempty"`
+	OriginID    string      `json:"origin_id,omitempty"`
+}
+
+// ValidateRoleScope rejects a grant whose declared catalog/resource scope does
+// not match the resource carrying it. Exact-permission grants carry the same
+// scope so role subjects and API consumers never have to infer a catalog.
+func (g AccessGrant) ValidateRoleScope() error {
+	return (&g).NormalizeRoleScope()
+}
+
+// NormalizeRoleScope provides a compatibility boundary for existing API rows
+// whose unified string role predates the scope field. After this method every
+// grant is explicit; a conflicting supplied scope is rejected.
+func (g *AccessGrant) NormalizeRoleScope() error {
+	want := RoleScopeProject
+	if g.IssueID != "" {
+		want = RoleScopeTask
+	}
+	if g.Scope == "" {
+		g.Scope = want
+		return nil
+	}
+	if g.Scope != want {
+		return ErrInvalidRoleScope
+	}
+	return nil
 }
 
 // 2026-08-24 coder(lq): Use strings so new permissions can be added

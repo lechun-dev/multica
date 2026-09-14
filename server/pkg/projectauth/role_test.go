@@ -99,9 +99,31 @@ func TestUpdateSystemRoleDoesNotRequireSystemMarkerInRequest(t *testing.T) {
 }
 
 func TestListRolesAllowsWorkspaceMembersToReadCatalog(t *testing.T) {
-	repo := &fakeRoleRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember)}, roles: map[string]RoleDefinition{}}
-	if _, err := New(repo, true).ListRoles(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}); err != nil {
+	repo := &fakeRoleRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember)}, roles: map[string]RoleDefinition{
+		"reviewer": {Key: "reviewer", Name: "Reviewer"},
+	}}
+	roles, err := New(repo, true).ListRoles(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"})
+	if err != nil {
 		t.Fatalf("workspace member role catalog read: %v", err)
+	}
+	if len(roles) != 1 || roles[0].Scope != RoleScopeProject {
+		t.Fatalf("project catalog must return scope=project: %+v", roles)
+	}
+}
+
+func TestProjectRoleCatalogRejectsTaskScope(t *testing.T) {
+	repo := &fakeRoleRepo{
+		fakeRepo:    fakeRepo{workspace: string(WorkspaceOwner)},
+		roles:       map[string]RoleDefinition{"reviewer": {Key: "reviewer", Name: "Reviewer", Scope: RoleScopeProject}},
+		permissions: map[ProjectRole][]Permission{"reviewer": {View}},
+	}
+	service := New(repo, true)
+	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
+	if _, err := service.CreateRole(context.Background(), subject, RoleDefinition{Key: "auditor", Name: "Auditor", Scope: RoleScopeTask, Permissions: []Permission{View}}); !errors.Is(err, ErrInvalidRoleScope) {
+		t.Fatalf("task-scoped project role create error = %v, want %v", err, ErrInvalidRoleScope)
+	}
+	if _, err := service.UpdateRole(context.Background(), subject, "reviewer", RoleDefinition{Name: "Updated", Scope: RoleScopeTask, Permissions: []Permission{View}}); !errors.Is(err, ErrInvalidRoleScope) {
+		t.Fatalf("task-scoped project role update error = %v, want %v", err, ErrInvalidRoleScope)
 	}
 }
 

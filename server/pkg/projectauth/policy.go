@@ -24,7 +24,7 @@ func SystemRoleDefinitions() []RoleDefinition {
 				permissions = append(permissions, permission)
 			}
 		}
-		roles = append(roles, RoleDefinition{Key: role, Name: systemRoleNames[role], IsSystem: true, Permissions: permissions})
+		roles = append(roles, RoleDefinition{Key: role, Name: systemRoleNames[role], Scope: RoleScopeProject, IsSystem: true, Permissions: permissions})
 	}
 	return roles
 }

@@ -22,7 +22,8 @@ import (
 type projectAccessGrantRequest struct {
 	SubjectType projectauth.SubjectType `json:"subject_type"`
 	SubjectID   string                  `json:"subject_id"`
-	Role        projectauth.ProjectRole `json:"role"`
+	Role        projectauth.RoleKey     `json:"role"`
+	Scope       projectauth.RoleScope   `json:"scope,omitempty"`
 	Permission  projectauth.Permission  `json:"permission"`
 }
 
@@ -203,6 +204,7 @@ func (h *Handler) listProjectlessIssueAccessGrants(ctx context.Context, subject 
 			return nil, wrapProjectPermissionRepositoryError(err)
 		}
 		grant.ProjectID = ""
+		grant.Scope = projectauth.RoleScopeTask
 		grants = append(grants, grant)
 	}
 	if err := rows.Err(); err != nil {
@@ -234,7 +236,7 @@ func (h *Handler) listProjectlessIssueAccessGrants(ctx context.Context, subject 
 		if active {
 			creatorOwnerExists := false
 			for _, grant := range grants {
-				if grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == creatorID && grant.Role == projectauth.ProjectOwner {
+				if grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == creatorID && projectauth.TaskRole(grant.Role) == projectauth.TaskOwner {
 					creatorOwnerExists = true
 					break
 				}
@@ -243,7 +245,8 @@ func (h *Handler) listProjectlessIssueAccessGrants(ctx context.Context, subject 
 				grants = append(grants, projectauth.AccessGrant{
 					ID: "creator-owner-" + issueID + "-" + creatorID, WorkspaceID: subject.WorkspaceID,
 					IssueID: issueID, SubjectType: projectauth.SubjectUser, SubjectID: creatorID,
-					Role: projectauth.ProjectOwner, Source: projectauth.GrantSourceSystem, CreatedAt: createdAt,
+					Role: projectauth.RoleKey(projectauth.TaskOwner), Scope: projectauth.RoleScopeTask,
+					Source: projectauth.GrantSourceSystem, CreatedAt: createdAt,
 				})
 			}
 		}
@@ -264,6 +267,7 @@ func decodeProjectAccessGrant(r *http.Request) (projectauth.AccessGrant, error) 
 		SubjectType: req.SubjectType,
 		SubjectID:   strings.TrimSpace(req.SubjectID),
 		Role:        req.Role,
+		Scope:       req.Scope,
 		Permission:  req.Permission,
 	}, nil
 }
@@ -463,16 +467,16 @@ func (h *Handler) CreateIssueAccessGrant(w http.ResponseWriter, r *http.Request)
 // 2026-09-05 coder(lq): Projectless task grants intentionally support role
 // assignments only. Reuse the same built-in role names as project grants and
 // validate custom roles against the task-safe permission subset.
-func validateProjectlessIssueRole(ctx context.Context, executor dbExecutor, workspaceID string, role projectauth.ProjectRole) error {
+func validateProjectlessIssueRole(ctx context.Context, executor dbExecutor, workspaceID string, role projectauth.RoleKey) error {
 	if role == "" {
 		return projectauth.ErrInvalidRole
 	}
-	if role == projectauth.ProjectOwner || role == projectauth.ProjectManager || role == projectauth.ProjectMember || role == projectauth.ProjectViewer {
+	if projectauth.IsSystemTaskRole(projectauth.TaskRole(role)) {
 		return nil
 	}
 	var exists bool
 	if err := executor.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM project_permission_roles WHERE workspace_id=$1 AND role_key=$2)`, workspaceID, string(role)).Scan(&exists); err != nil {
+		SELECT EXISTS (SELECT 1 FROM projectauth_task_roles WHERE workspace_id=$1 AND role_key=$2)`, workspaceID, string(role)).Scan(&exists); err != nil {
 		return wrapProjectPermissionRepositoryError(err)
 	}
 	if !exists {
@@ -481,10 +485,10 @@ func validateProjectlessIssueRole(ctx context.Context, executor dbExecutor, work
 	var invalid int
 	if err := executor.QueryRow(ctx, `
 		SELECT COUNT(*)
-		FROM project_permission_role_permissions rp
-		JOIN project_permission_roles rr ON rr.id=rp.role_id
+		FROM projectauth_task_role_permissions rp
+		JOIN projectauth_task_roles rr ON rr.id=rp.role_id
 		WHERE rr.workspace_id=$1 AND rr.role_key=$2
-		  AND rp.permission NOT IN ('project.view', 'project.edit', 'project.issue.comment', 'project.issue.manage', 'project.issue.archive', 'project.agent.use')`, workspaceID, string(role)).Scan(&invalid); err != nil {
+		  AND rp.permission NOT IN ('project.view', 'project.edit', 'project.issue.comment', 'project.issue.manage', 'project.issue.archive', 'project.agent.use', 'project.issue.child.create')`, workspaceID, string(role)).Scan(&invalid); err != nil {
 		return wrapProjectPermissionRepositoryError(err)
 	}
 	if invalid > 0 {
@@ -496,6 +500,10 @@ func validateProjectlessIssueRole(ctx context.Context, executor dbExecutor, work
 // 2026-09-05 coder(lq): Write projectless grants in one transaction so the
 // task boundary, subject membership, ACL row, and audit event are consistent.
 func (h *Handler) mutateProjectlessIssueAccessGrantTx(ctx context.Context, tx dbExecutor, grant projectauth.AccessGrant, issueID string, r *http.Request) error {
+	grant.IssueID = issueID
+	if err := grant.NormalizeRoleScope(); err != nil {
+		return err
+	}
 	if grant.Permission != "" || grant.Role == "" {
 		return projectauth.ErrInvalidRole
 	}
@@ -605,6 +613,7 @@ func readProjectlessIssueAccessGrant(ctx context.Context, tx dbExecutor, grant p
 		return projectauth.AccessGrant{}, wrapProjectPermissionRepositoryError(err)
 	}
 	created.ProjectID = ""
+	created.Scope = projectauth.RoleScopeTask
 	return created, nil
 }
 
@@ -785,7 +794,7 @@ func validateProjectlessIssueAccessGrantSubject(ctx context.Context, tx dbExecut
 		if !exists {
 			return projectauth.ErrInvalidSubject
 		}
-		if grant.Role == projectauth.ProjectOwner {
+		if projectauth.TaskRole(grant.Role) == projectauth.TaskOwner {
 			creatorID, err := (&projectAuthRepository{db: tx}).IssueCreator(ctx, issueID)
 			if err != nil {
 				return err

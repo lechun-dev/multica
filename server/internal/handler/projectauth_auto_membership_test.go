@@ -196,7 +196,7 @@ func TestDeleteAccessGrantRemovesManualMemberGrant(t *testing.T) {
 	})
 
 	repo := &projectAuthRepository{db: testPool}
-	if err := repo.DeleteAccessGrant(ctx, testWorkspaceID, projectID, "", projectauth.SubjectUser, otherUserID, projectauth.ProjectMember, ""); err != nil {
+	if err := repo.DeleteAccessGrant(ctx, testWorkspaceID, projectID, "", projectauth.SubjectUser, otherUserID, projectauth.RoleKey(projectauth.ProjectMember), ""); err != nil {
 		t.Fatalf("DeleteAccessGrant: %v", err)
 	}
 
@@ -229,7 +229,7 @@ func TestListAccessGrantsIncludesProjectCreatorWithoutPhysicalGrant(t *testing.T
 
 	found := false
 	for _, grant := range grants {
-		if grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == testUserID && grant.Role == projectauth.ProjectOwner {
+		if grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == testUserID && projectauth.ProjectRole(grant.Role) == projectauth.ProjectOwner {
 			found = true
 			if grant.Source != projectauth.GrantSourceSystem {
 				t.Fatalf("creator grant source = %q, want %q", grant.Source, projectauth.GrantSourceSystem)
@@ -350,12 +350,12 @@ func TestUpsertProjectlessIssueAccessGrantUsesDistinctSubjectAndGranterParams(t 
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM projectauth_issue_access_grants WHERE issue_id = $1`, issueID)
 	})
 
-	if err := upsertProjectlessIssueAccessGrant(context.Background(), testPool, issueID, testUserID, projectauth.ProjectOwner); err != nil {
+	if err := upsertProjectlessIssueAccessGrant(context.Background(), testPool, issueID, testUserID, projectauth.TaskOwner); err != nil {
 		t.Fatalf("upsertProjectlessIssueAccessGrant: %v", err)
 	}
 	role, source := projectlessIssueSystemRoleForTest(t, issueID, testUserID)
-	if role != string(projectauth.ProjectOwner) || source != string(projectauth.GrantSourceSystem) {
-		t.Fatalf("projectless creator grant = (%q, %q), want (%q, %q)", role, source, projectauth.ProjectOwner, projectauth.GrantSourceSystem)
+	if role != string(projectauth.TaskOwner) || source != string(projectauth.GrantSourceSystem) {
+		t.Fatalf("projectless creator grant = (%q, %q), want (%q, %q)", role, source, projectauth.TaskOwner, projectauth.GrantSourceSystem)
 	}
 }
 

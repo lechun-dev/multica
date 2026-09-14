@@ -473,7 +473,7 @@ func (h *Handler) initializeProjectAccessInTx(ctx context.Context, tx pgx.Tx, wo
 			ProjectID:   projectID,
 			SubjectType: request.SubjectType,
 			SubjectID:   strings.TrimSpace(request.SubjectID),
-			Role:        request.Role,
+			Role:        projectauth.RoleKey(request.Role),
 			Permission:  request.Permission,
 		}
 		if err := service.GrantAccess(ctx, actor, grant); err != nil {

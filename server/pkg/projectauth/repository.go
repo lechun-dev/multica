@@ -58,7 +58,7 @@ type GrantRepository interface {
 	ListAccessGrants(ctx context.Context, workspaceID, projectID, issueID string) ([]AccessGrant, error)
 	ListUserOrganizations(ctx context.Context, workspaceID, userID string) ([]string, error)
 	UpsertAccessGrant(ctx context.Context, grant AccessGrant) error
-	DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType SubjectType, subjectID string, role ProjectRole, permission Permission) error
+	DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType SubjectType, subjectID string, role RoleKey, permission Permission) error
 }
 
 // ProjectCreatorRepository exposes the immutable project creator identity to
@@ -96,7 +96,7 @@ type AuditRepository interface {
 // provider-neutral API contract while older adapters remain source-compatible.
 type AccessGrantReader interface {
 	GetAccessGrant(ctx context.Context, workspaceID, projectID, issueID string,
-		subjectType SubjectType, subjectID string, role ProjectRole, permission Permission) (AccessGrant, error)
+		subjectType SubjectType, subjectID string, role RoleKey, permission Permission) (AccessGrant, error)
 }
 
 // ResourceRepository is an optional consistency seam for adapters that can
@@ -150,6 +150,7 @@ type RoleDefinition struct {
 	Key         ProjectRole  `json:"key"`
 	Name        string       `json:"name"`
 	Description string       `json:"description"`
+	Scope       RoleScope    `json:"scope"`
 	IsSystem    bool         `json:"is_system"`
 	Permissions []Permission `json:"permissions"`
 }

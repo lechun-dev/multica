@@ -8,6 +8,7 @@ var (
 	ErrNoProjectAccess        = errors.New("user is not a project member")
 	ErrForbidden              = errors.New("project permission denied")
 	ErrInvalidRole            = errors.New("invalid project role")
+	ErrInvalidRoleScope       = errors.New("role scope does not match resource")
 	ErrInvalidIssuePermission = errors.New("invalid issue permission")
 	ErrCrossWorkspace         = errors.New("project member is outside the project workspace")
 	ErrLastOwner              = errors.New("project must retain at least one owner")

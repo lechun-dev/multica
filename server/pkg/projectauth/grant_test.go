@@ -82,7 +82,7 @@ func (f *fakeGrantRepo) UpsertAccessGrant(_ context.Context, grant AccessGrant) 
 	f.upserted = &grant
 	return nil
 }
-func (f *fakeGrantRepo) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, ProjectRole, Permission) error {
+func (f *fakeGrantRepo) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, RoleKey, Permission) error {
 	f.deleted = true
 	return nil
 }
@@ -238,7 +238,7 @@ func TestGrantAccessProtectsTaskCreatorOwnerRole(t *testing.T) {
 	}{
 		{
 			name:          "cannot add member when owner grant exists",
-			creatorGrants: []AccessGrant{{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner}},
+			creatorGrants: []AccessGrant{{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(ProjectOwner)}},
 			role:          ProjectMember,
 			wantErr:       ErrLastOwner,
 		},
@@ -261,7 +261,7 @@ func TestGrantAccessProtectsTaskCreatorOwnerRole(t *testing.T) {
 			repo := &creatorGrantRepo{fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
 				workspace: string(WorkspaceOwner), projectWorkspace: "ws-1", issueWorkspace: "ws-1", issueProject: "p-1",
 			}, grants: tc.creatorGrants}, issueCreator: "creator-1"}
-			grant := AccessGrant{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: tc.role, Permission: tc.permission}
+			grant := AccessGrant{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(tc.role), Permission: tc.permission}
 			err := New(repo, true).GrantAccess(ctx, actor, grant)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -299,7 +299,7 @@ func TestGrantAccessProtectsProjectCreatorOwnerRole(t *testing.T) {
 			repo := &creatorGrantRepo{fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{
 				workspace: string(WorkspaceOwner), projectWorkspace: "ws-1",
 			}}, creator: "creator-1"}
-			grant := AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: tc.role, Permission: tc.permission}
+			grant := AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(tc.role), Permission: tc.permission}
 			err := New(repo, true).GrantAccess(ctx, actor, grant)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -336,7 +336,7 @@ func TestTaskDirectGrantCannotCreateAnotherTask(t *testing.T) {
 }
 
 func TestRoleGrantUsesConfiguredPermissionSet(t *testing.T) {
-	repo := &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember), projectWorkspace: "ws-1", project: string(ProjectViewer)}, grants: []AccessGrant{{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: ProjectManager}}}
+	repo := &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceMember), projectWorkspace: "ws-1", project: string(ProjectViewer)}, grants: []AccessGrant{{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: RoleKey(ProjectManager)}}}
 	service := New(repo, true)
 	if err := service.Check(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", IssueManage); err != nil {
 		t.Fatalf("role grant should use default manager permissions: %v", err)
@@ -396,12 +396,12 @@ func TestGrantAccessRequiresExactlyOneGrantKind(t *testing.T) {
 		},
 		{
 			name:  "role and permission together",
-			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: ProjectViewer, Permission: View},
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: RoleKey(ProjectViewer), Permission: View},
 			want:  ErrInvalidRole,
 		},
 		{
 			name:  "role only",
-			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: ProjectViewer},
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: RoleKey(ProjectViewer)},
 			want:  nil,
 		},
 		{
@@ -433,7 +433,7 @@ func TestGrantAccessRejectsRoleToRoleGrant(t *testing.T) {
 		ProjectID:   "p-1",
 		SubjectType: SubjectRole,
 		SubjectID:   string(ProjectViewer),
-		Role:        ProjectMember,
+		Role:        RoleKey(ProjectMember),
 	})
 	if !errors.Is(err, ErrInvalidRole) {
 		t.Fatalf("role-to-role grant error = %v, want %v", err, ErrInvalidRole)
@@ -466,12 +466,12 @@ func TestRevokeAccessValidatesGrantShapeBeforeDelete(t *testing.T) {
 		},
 		{
 			name:  "role and permission together",
-			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: ProjectMember, Permission: View},
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-2", Role: RoleKey(ProjectMember), Permission: View},
 			want:  ErrInvalidRole,
 		},
 		{
 			name:  "role subject with role grant",
-			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectRole, SubjectID: string(ProjectMember), Role: ProjectViewer},
+			grant: AccessGrant{ProjectID: "p-1", SubjectType: SubjectRole, SubjectID: string(ProjectMember), Role: RoleKey(ProjectViewer)},
 			want:  ErrInvalidRole,
 		},
 		{
@@ -492,12 +492,12 @@ func TestRevokeAccessValidatesGrantShapeBeforeDelete(t *testing.T) {
 func TestRevokeAccessCannotRevokeProjectCreatorOwner(t *testing.T) {
 	repo := &creatorGrantRepo{
 		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, grants: []AccessGrant{{
-			ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner,
+			ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(ProjectOwner),
 		}}},
 		creator: "creator-1",
 	}
 	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
-		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner,
+		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(ProjectOwner),
 	})
 	if !errors.Is(err, ErrLastOwner) {
 		t.Fatalf("creator owner revoke error = %v, want %v", err, ErrLastOwner)
@@ -510,12 +510,12 @@ func TestRevokeAccessCannotRevokeProjectCreatorOwner(t *testing.T) {
 func TestRevokeAccessCannotRemoveLastProjectOwner(t *testing.T) {
 	repo := &creatorGrantRepo{
 		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, grants: []AccessGrant{{
-			ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner,
+			ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: RoleKey(ProjectOwner),
 		}}},
 		creator: "creator-1",
 	}
 	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
-		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner,
+		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: RoleKey(ProjectOwner),
 	})
 	if !errors.Is(err, ErrLastOwner) {
 		t.Fatalf("last owner revoke error = %v, want %v", err, ErrLastOwner)
@@ -528,13 +528,13 @@ func TestRevokeAccessCannotRemoveLastProjectOwner(t *testing.T) {
 func TestRevokeAccessAllowsNonCreatorWhenAnotherOwnerRemains(t *testing.T) {
 	repo := &creatorGrantRepo{
 		fakeGrantRepo: &fakeGrantRepo{fakeRepo: fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, grants: []AccessGrant{
-			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner},
-			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner},
+			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(ProjectOwner)},
+			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: RoleKey(ProjectOwner)},
 		}},
 		creator: "creator-1",
 	}
 	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
-		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: ProjectOwner,
+		ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "owner-2", Role: RoleKey(ProjectOwner),
 	})
 	if err != nil {
 		t.Fatalf("non-creator owner revoke error = %v", err)
@@ -550,7 +550,7 @@ func TestRevokeAccessCannotRevokeTaskCreatorOwner(t *testing.T) {
 		issueCreator:  "creator-1",
 	}
 	err := New(repo, true).RevokeAccess(context.Background(), Subject{UserID: "workspace-owner", WorkspaceID: "ws-1"}, AccessGrant{
-		ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: ProjectOwner,
+		ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "creator-1", Role: RoleKey(ProjectOwner),
 	})
 	if !errors.Is(err, ErrLastOwner) {
 		t.Fatalf("task creator owner revoke error = %v, want %v", err, ErrLastOwner)
@@ -624,7 +624,7 @@ func TestTaskRoleGrantIsTaskScoped(t *testing.T) {
 		fakeRepo: fakeRepo{workspace: string(WorkspaceMember), projectWorkspace: "ws-1", issueProject: "p-1"},
 		grants: []AccessGrant{
 			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Permission: View},
-			{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: ProjectViewer},
+			{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: RoleKey(ProjectViewer)},
 			{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectRole, SubjectID: string(ProjectViewer), Permission: Edit},
 		},
 	}
@@ -638,24 +638,25 @@ func TestTaskRoleGrantIsTaskScoped(t *testing.T) {
 	}
 }
 
-func TestTaskRoleSubjectUsesProjectRoleAndStaysTaskScoped(t *testing.T) {
+func TestTaskRoleSubjectDoesNotUseSameNamedProjectRole(t *testing.T) {
 	repo := &fakeGrantRepo{
 		fakeRepo: fakeRepo{workspace: string(WorkspaceMember), projectWorkspace: "ws-1", issueProject: "p-1"},
 		grants: []AccessGrant{
-			// The caller is a Member on the project, so the task's minimum
-			// visibility check succeeds through project-role inheritance.
-			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: ProjectMember},
-			// This extra permission is granted to project Members, but only on i-1.
+			{ProjectID: "p-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: RoleKey(ProjectMember)},
 			{ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectRole, SubjectID: string(ProjectMember), Permission: Edit},
 		},
 	}
 	service := New(repo, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
-	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", Edit); err != nil {
-		t.Fatalf("task role subject should match the caller's project role: %v", err)
+	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", Edit); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("same-named project role must not satisfy task role subject: %v", err)
 	}
-	if err := service.CheckIssue(context.Background(), subject, "i-2", "p-1", Edit); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("task role subject leaked to another task: %v", err)
+
+	repo.grants = append(repo.grants, AccessGrant{
+		ProjectID: "p-1", IssueID: "i-1", SubjectType: SubjectUser, SubjectID: "u-1", Role: RoleKey(TaskMember),
+	})
+	if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", Edit); err != nil {
+		t.Fatalf("task role subject should match the caller's task role: %v", err)
 	}
 }
 

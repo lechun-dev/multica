@@ -102,7 +102,7 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 	})
 	// 2026-09-11 coder(lq): Model the production @mention rule with the
 	// canonical task-scoped Member grant. This must not create project membership.
-	if err := upsertIssueAccessGrant(ctx, testPool, mentionedIssueID, projectID, recipientID, projectauth.ProjectMember); err != nil {
+	if err := upsertIssueAccessGrant(ctx, testPool, mentionedIssueID, projectID, recipientID, projectauth.TaskMember); err != nil {
 		t.Fatalf("grant mentioned recipient task membership: %v", err)
 	}
 	var projectMemberCount int

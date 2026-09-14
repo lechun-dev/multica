@@ -56,7 +56,8 @@ func (f fakeRepo) ListAccessGrants(_ context.Context, _, projectID, _ string) ([
 		ProjectID:   projectID,
 		SubjectType: SubjectUser,
 		SubjectID:   "u-1",
-		Role:        ProjectRole(f.project),
+		Role:        RoleKey(f.project),
+		Scope:       RoleScopeProject,
 		Source:      GrantSourceMigration,
 	}}, nil
 }
@@ -67,7 +68,7 @@ func (f fakeRepo) ListUserOrganizations(context.Context, string, string) ([]stri
 
 func (f fakeRepo) UpsertAccessGrant(context.Context, AccessGrant) error { return nil }
 
-func (f fakeRepo) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, ProjectRole, Permission) error {
+func (f fakeRepo) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, RoleKey, Permission) error {
 	return nil
 }
 
