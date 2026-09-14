@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -639,8 +640,11 @@ func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID,
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, workspace_id::text, project_id::text, COALESCE(issue_id::text, ''),
 		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
-		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text
+		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text,
+		       constraint_row.expires_at, COALESCE(constraint_row.origin_kind, ''), COALESCE(constraint_row.origin_id::text, '')
 		FROM projectauth_access_grants g
+		LEFT JOIN projectauth_grant_constraints constraint_row
+		  ON constraint_row.workspace_id=g.workspace_id AND constraint_row.grant_id=g.id
 		WHERE workspace_id=$1 AND project_id=$2
 		  AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
 		  AND g.subject_type=$4 AND COALESCE(g.subject_id, '') = COALESCE($5, '')
@@ -648,7 +652,8 @@ func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID,
 		  AND g.permission IS NOT DISTINCT FROM NULLIF($7,'')
 		LIMIT 1`, workspaceID, projectID, issueID, string(subjectType), subjectID, string(role), string(permission)).
 		Scan(&grant.ID, &grant.WorkspaceID, &grant.ProjectID, &issue, &grant.SubjectType, &grant.SubjectID,
-			&roleKey, &permissionKey, &source, &grantedBy, &grant.CreatedAt)
+			&roleKey, &permissionKey, &source, &grantedBy, &grant.CreatedAt,
+			&grant.ExpiresAt, &grant.OriginKind, &grant.OriginID)
 	if err != nil {
 		return projectauth.AccessGrant{}, wrapProjectPermissionRepositoryError(err)
 	}
@@ -838,6 +843,31 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 		  AND permission IS NOT DISTINCT FROM NULLIF($7,'')`,
 		grant.WorkspaceID, grant.ProjectID, grant.IssueID, string(grant.SubjectType), grant.SubjectID,
 		string(grant.Role), string(grant.Permission), string(grant.Source), grant.GrantedBy)
+	if err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	persisted, err := r.GetAccessGrant(ctx, grant.WorkspaceID, grant.ProjectID, grant.IssueID,
+		grant.SubjectType, grant.SubjectID, grant.Role, grant.Permission)
+	if err != nil {
+		return err
+	}
+	return persistGrantConstraint(ctx, r.db, grant.WorkspaceID, persisted.ID, grant.ExpiresAt, grant.OriginKind, grant.OriginID)
+}
+
+func persistGrantConstraint(ctx context.Context, executor dbExecutor, workspaceID, grantID string, expiresAt *time.Time, originKind, originID string) error {
+	if expiresAt == nil && originKind == "" && originID == "" {
+		_, err := executor.Exec(ctx, `DELETE FROM projectauth_grant_constraints WHERE workspace_id=$1 AND grant_id=$2`, workspaceID, grantID)
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	if originKind == "" {
+		originKind = "manual"
+	}
+	_, err := executor.Exec(ctx, `
+		INSERT INTO projectauth_grant_constraints (workspace_id, grant_id, expires_at, origin_kind, origin_id)
+		VALUES ($1,$2,$3,$4,NULLIF($5,'')::uuid)
+		ON CONFLICT (workspace_id, grant_id) DO UPDATE
+		SET expires_at=EXCLUDED.expires_at, origin_kind=EXCLUDED.origin_kind,
+		    origin_id=EXCLUDED.origin_id, updated_at=now()`, workspaceID, grantID, expiresAt, originKind, originID)
 	return wrapProjectPermissionRepositoryError(err)
 }
 

@@ -1931,6 +1931,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/access-control", h.GetIssueAccessControl)
+					r.Post("/access-control/preview", h.PreviewIssueAccessControl)
+					r.Patch("/access-control", h.PatchIssueAccessControl)
 					r.Get("/access-grants", h.ListIssueAccessGrants)
 					r.Post("/access-grants", h.CreateIssueAccessGrant)
 					r.Delete("/access-grants", h.RevokeIssueAccessGrant)

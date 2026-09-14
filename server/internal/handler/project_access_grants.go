@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -25,6 +26,7 @@ type projectAccessGrantRequest struct {
 	Role        projectauth.RoleKey     `json:"role"`
 	Scope       projectauth.RoleScope   `json:"scope,omitempty"`
 	Permission  projectauth.Permission  `json:"permission"`
+	ExpiresAt   *time.Time              `json:"expires_at,omitempty"`
 }
 
 func (h *Handler) issueAccessSubject(w http.ResponseWriter, r *http.Request, issueID string) (projectauth.Subject, string, bool) {
@@ -135,6 +137,20 @@ func (h *Handler) listIssueAccessGrants(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "task id")
+	if !ok {
+		return
+	}
+	issueID = util.UUIDToString(issueUUID)
+	allowed, reason := h.effectiveIssueAccessAllowed(r.Context(), subject, issueID, projectauth.IssueManage, true)
+	if !allowed {
+		if reason == "internal" || reason == "unavailable" || reason == "migration" {
+			writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)
+		} else {
+			writeProjectAccessGrantError(w, projectauth.ErrForbidden)
+		}
+		return
+	}
 	if projectID == "" {
 		grants, err := h.listProjectlessIssueAccessGrants(r.Context(), subject, issueID)
 		if err != nil {
@@ -142,20 +158,6 @@ func (h *Handler) listIssueAccessGrants(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"grants": grants, "total": len(grants), "project_id": nil})
-		return
-	}
-	issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "task id")
-	if !ok {
-		return
-	}
-	issueID = util.UUIDToString(issueUUID)
-	allowed, reason := h.effectiveIssueAccessAllowed(r.Context(), subject, issueID, projectauth.View, true)
-	if !allowed {
-		if reason == "internal" || reason == "unavailable" || reason == "migration" {
-			writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)
-		} else {
-			writeProjectAccessGrantError(w, projectauth.ErrNoProjectAccess)
-		}
 		return
 	}
 	// Authorization is performed by EffectiveAccessResolver above. Read the
@@ -278,6 +280,7 @@ func decodeProjectAccessGrant(r *http.Request) (projectauth.AccessGrant, error) 
 		Role:        req.Role,
 		Scope:       req.Scope,
 		Permission:  req.Permission,
+		ExpiresAt:   req.ExpiresAt,
 	}, nil
 }
 
@@ -337,6 +340,11 @@ func (h *Handler) mutateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 			writeProjectAccessGrantError(w, err)
 			return
 		}
+		if err := persistGrantConstraint(r.Context(), tx, created.WorkspaceID, created.ID, grant.ExpiresAt, "manual", ""); err != nil {
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+		created.ExpiresAt = grant.ExpiresAt
 		if err := tx.Commit(r.Context()); err != nil {
 			logProjectAccessGrantFailure("commit_projectless_issue", grant, issueID, err)
 			writeProjectAccessGrantError(w, err)
