@@ -138,6 +138,11 @@ const (
 	// only repeat an isolation failure.
 	ReasonInvalidTaskIdentity Reason = "invalid_task_identity"
 
+	// ReasonTaskPermissionRevoked: the task's accountable human no longer has
+	// task.agent.use when the server rechecks a durable claim. The process is
+	// never launched and retrying without a new grant cannot succeed.
+	ReasonTaskPermissionRevoked Reason = "task_permission_revoked"
+
 	// Agent process side: failure surfaced by the agent CLI / SDK as
 	// an error string. Classify(rawError) is responsible for picking
 	// the right sub-reason from the string. IsAgentError returns true
@@ -213,7 +218,7 @@ const (
 	ReasonAgentUnknown Reason = "agent_error.unknown"
 )
 
-// allReasons is the canonical ordered list of the 25 reasons. Order is
+// allReasons is the canonical ordered list of the 26 reasons. Order is
 // stable so callers (e.g. Prometheus collectors that pre-warm series via
 // AllReasons) can build deterministic label sets across restarts.
 //
@@ -235,6 +240,7 @@ var allReasons = []Reason{
 	ReasonSkillBundleUnavailable,
 	ReasonRuntimeCLITimeout,
 	ReasonInvalidTaskIdentity,
+	ReasonTaskPermissionRevoked,
 
 	// Agent process side: provider errors.
 	ReasonAgentProviderAuthOrAccess,

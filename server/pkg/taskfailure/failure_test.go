@@ -118,8 +118,8 @@ func TestAllReasonsContents(t *testing.T) {
 	t.Parallel()
 
 	got := AllReasons()
-	if len(got) != 25 {
-		t.Fatalf("AllReasons() returned %d entries, want 25", len(got))
+	if len(got) != 26 {
+		t.Fatalf("AllReasons() returned %d entries, want 26", len(got))
 	}
 
 	seen := make(map[Reason]bool, len(got))
@@ -136,8 +136,8 @@ func TestAllReasonsContents(t *testing.T) {
 		}
 	}
 
-	if platformCount != 11 {
-		t.Errorf("AllReasons(): platform-side count = %d, want 11", platformCount)
+	if platformCount != 12 {
+		t.Errorf("AllReasons(): platform-side count = %d, want 12", platformCount)
 	}
 	if agentCount != 14 {
 		t.Errorf("AllReasons(): agent-side count = %d, want 14", agentCount)
@@ -152,7 +152,7 @@ func TestAllReasonsContents(t *testing.T) {
 		ReasonRuntimeRecovery,
 		ReasonTimeout, ReasonIterationLimit, ReasonAgentBlocked,
 		ReasonAPIInvalidRequest, ReasonSkillBundleUnavailable,
-		ReasonRuntimeCLITimeout, ReasonInvalidTaskIdentity,
+		ReasonRuntimeCLITimeout, ReasonInvalidTaskIdentity, ReasonTaskPermissionRevoked,
 		ReasonAgentProviderAuthOrAccess, ReasonAgentProviderQuotaLimit,
 		ReasonAgentProviderCapacityOrRateLimit, ReasonAgentProviderServerError,
 		ReasonAgentProviderNetwork, ReasonAgentProcessFailure,

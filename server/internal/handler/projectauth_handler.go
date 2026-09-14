@@ -1758,16 +1758,163 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return true, ""
 	}
-	userID := requestUserID(r)
-	if userID == "" {
-		return false, "denied"
+	subject, reason := h.issuePermissionSubject(r, issue)
+	if reason != "" {
+		return false, reason
 	}
-	member, err := h.getWorkspaceMember(r.Context(), userID, uuidToString(issue.WorkspaceID))
-	if err != nil {
-		return false, "denied"
-	}
-	subject := projectauth.Subject{UserID: userID, WorkspaceID: uuidToString(issue.WorkspaceID), WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
 	return h.effectiveIssueAccessAllowed(r.Context(), subject, uuidToString(issue.ID), permission, includeWorkspaceOwned)
+}
+
+// issuePermissionSubject binds agent-process traffic to the human who
+// originated the durable task. A task token therefore never inherits the
+// runtime owner/server credential's broader rights. It also rechecks AgentUse
+// on the source task for every issue read/write, so a revoke takes effect while
+// an agent is already running rather than only at enqueue/claim boundaries.
+func (h *Handler) issuePermissionSubject(r *http.Request, target db.Issue) (projectauth.Subject, string) {
+	workspaceID := uuidToString(target.WorkspaceID)
+	requestUser := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, requestUser, workspaceID)
+	userID := requestUser
+	if actorType == "agent" {
+		task, ok := h.taskFromRequestHeader(r)
+		if !ok || uuidToString(task.AgentID) != actorID || !task.IssueID.Valid || !task.OriginatorUserID.Valid {
+			return projectauth.Subject{}, "denied"
+		}
+		source, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+		if err != nil || source.WorkspaceID != target.WorkspaceID {
+			return projectauth.Subject{}, "denied"
+		}
+		userID = uuidToString(task.OriginatorUserID)
+		sourceSubject := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}
+		if allowed, sourceReason := h.effectiveIssueAccessAllowed(r.Context(), sourceSubject, uuidToString(source.ID), projectauth.AgentUse, true); !allowed {
+			return projectauth.Subject{}, sourceReason
+		}
+	}
+	if userID == "" {
+		return projectauth.Subject{}, "denied"
+	}
+	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+	if err != nil {
+		return projectauth.Subject{}, "denied"
+	}
+	return projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)}, ""
+}
+
+// authorizeIssueAgentUse is shared by enqueue and claim. Both phases call the
+// same EffectiveAccessResolver and record only identifiers/decision metadata;
+// issue bodies and ACL contents never enter authorization logs.
+func (h *Handler) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, originatorUserID pgtype.UUID, phase string) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return nil
+	}
+	if !originatorUserID.Valid {
+		return projectauth.ErrForbidden
+	}
+	subject := projectauth.Subject{UserID: uuidToString(originatorUserID), WorkspaceID: uuidToString(issue.WorkspaceID)}
+	resolver := h.EffectiveIssueAccess
+	if resolver == nil && h.DB != nil {
+		if repo, ok := newProjectAuthRepository(h.DB).(projectauth.EffectiveAccessRepository); ok {
+			resolver = projectauth.NewEffectiveAccessResolver(repo)
+		}
+	}
+	if resolver == nil {
+		return projectauth.ErrDisabled
+	}
+	err := resolver.CanIssue(ctx, subject, uuidToString(issue.ID), projectauth.AgentUse)
+	if err == nil {
+		return nil
+	}
+	if h.DB == nil {
+		return projectauth.ErrStorageUnavailable
+	}
+	auditErr := (&projectAuthRepository{db: h.DB}).RecordAuthorizationAudit(ctx, projectauth.AuthorizationAuditEvent{
+		WorkspaceID: subject.WorkspaceID,
+		IssueID:     issueIDString(issue),
+		ActorUserID: subject.UserID,
+		Action:      "task_agent_use_denied",
+		Details:     map[string]any{"phase": phase, "permission": projectauth.AgentUse},
+	})
+	if auditErr != nil {
+		return projectauth.ErrStorageUnavailable
+	}
+	return err
+}
+
+func issueIDString(issue db.Issue) string { return uuidToString(issue.ID) }
+
+// requireRestrictedSourcePublishAccess prevents a task running from a
+// restricted issue from using a broader issue as an output channel merely
+// because its originator inherits that target's project role. The destination
+// needs a task-local authorization source (or the explicit workspace-owner
+// bypass), which keeps restricted content inside its task boundary by default.
+func (h *Handler) requireRestrictedSourcePublishAccess(w http.ResponseWriter, r *http.Request, target db.Issue) bool {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return true
+	}
+	requestUser := requestUserID(r)
+	actorType, _ := h.resolveActor(r, requestUser, uuidToString(target.WorkspaceID))
+	if actorType != "agent" {
+		return true
+	}
+	task, ok := h.taskFromRequestHeader(r)
+	if !ok || !task.IssueID.Valid || !task.OriginatorUserID.Valid {
+		writeErrorCode(w, http.StatusForbidden, "task_publish_forbidden", "agent task authorization is unavailable")
+		return false
+	}
+	if uuidToString(task.IssueID) == uuidToString(target.ID) {
+		return true
+	}
+	source, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+	if err != nil || source.WorkspaceID != target.WorkspaceID {
+		writeErrorCode(w, http.StatusForbidden, "task_publish_forbidden", "agent task authorization is invalid")
+		return false
+	}
+	resolver := h.EffectiveIssueAccess
+	if resolver == nil && h.DB != nil {
+		if repo, repoOK := newProjectAuthRepository(h.DB).(projectauth.EffectiveAccessRepository); repoOK {
+			resolver = projectauth.NewEffectiveAccessResolver(repo)
+		}
+	}
+	if resolver == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "task authorization is unavailable")
+		return false
+	}
+	subject := projectauth.Subject{UserID: uuidToString(task.OriginatorUserID), WorkspaceID: uuidToString(target.WorkspaceID)}
+	sourceAccess, err := resolver.ResolveIssue(r.Context(), subject, uuidToString(source.ID))
+	if err != nil {
+		status := http.StatusForbidden
+		code := "task_publish_forbidden"
+		message := "agent task authorization is invalid"
+		if errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrMigrationRequired) || errors.Is(err, projectauth.ErrDisabled) {
+			status, code, message = http.StatusServiceUnavailable, "project_permission_unavailable", "task authorization is unavailable"
+		}
+		writeErrorCode(w, status, code, message)
+		return false
+	}
+	if sourceAccess.ProjectAccessMode != projectauth.ProjectAccessRestricted {
+		return true
+	}
+	explanation, err := resolver.ExplainIssue(r.Context(), subject, uuidToString(target.ID), projectauth.IssueComment)
+	if err != nil {
+		status := http.StatusForbidden
+		code := "task_publish_forbidden"
+		message := "restricted task cannot publish to this task"
+		if errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrMigrationRequired) || errors.Is(err, projectauth.ErrDisabled) {
+			status, code, message = http.StatusServiceUnavailable, "project_permission_unavailable", "task authorization is unavailable"
+		}
+		writeErrorCode(w, status, code, message)
+		return false
+	}
+	for _, source := range explanation.Sources {
+		if source.Source != projectauth.AccessSourceProjectDirect &&
+			source.Source != projectauth.AccessSourceProjectOrg &&
+			source.Source != projectauth.AccessSourceProjectEveryone &&
+			source.Source != projectauth.AccessSourceParentIssue {
+			return true
+		}
+	}
+	writeErrorCode(w, http.StatusForbidden, "task_publish_forbidden", "restricted task requires explicit target-task permission before publishing")
+	return false
 }
 
 // effectiveIssueAccessAllowed is the single handler adapter from an

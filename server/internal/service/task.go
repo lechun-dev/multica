@@ -74,6 +74,12 @@ type TaskService struct {
 	// exactly as before. Wired in router.go after composiointeg.NewService
 	// succeeds; the concrete type is *composio.Service.
 	Composio ComposioOverlayBuilder
+	// IssueAgentUseAuthorizer is the task-permission seam used by every
+	// issue-bound enqueue path. It deliberately lives as a callback rather than
+	// importing projectauth here: the service remains usable by self-hosted
+	// deployments with the overlay disabled, while the HTTP composition root
+	// supplies the single EffectiveAccessResolver-backed implementation.
+	IssueAgentUseAuthorizer IssueAgentUseAuthorizer
 	// QuickActions generates chat follow-up suggestions through the
 	// server-internal LLM layer. Optional: nil (or a disabled client) turns the
 	// whole feature off — no pending marker, no pills — which is the expected
@@ -91,6 +97,21 @@ type TaskService struct {
 	analyticsContextMu    sync.Mutex
 	analyticsContextCache map[string]analytics.TaskContext
 	analyticsContextOrder []string
+}
+
+// IssueAgentUseAuthorizer verifies that the accountable human represented by
+// originatorUserID may run an agent against issue. phase is a stable audit
+// dimension (currently enqueue or claim), never user-controlled text.
+type IssueAgentUseAuthorizer func(ctx context.Context, issue db.Issue, originatorUserID pgtype.UUID, phase string) error
+
+func (s *TaskService) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, originatorUserID pgtype.UUID, phase string) error {
+	if s == nil || s.IssueAgentUseAuthorizer == nil {
+		return nil
+	}
+	if !originatorUserID.Valid {
+		return errors.New("issue task originator is required for authorization")
+	}
+	return s.IssueAgentUseAuthorizer(ctx, issue, originatorUserID, phase)
 }
 
 type SourceContextObjectStore interface {
@@ -406,6 +427,16 @@ func (s *TaskService) buildRuntimeMCPOverlay(ctx context.Context, originatorUser
 		data.ConnectedApps = raw
 	}
 	return data
+}
+
+// RefreshRuntimeMCPOverlayForClaim recomputes the user/agent connector
+// intersection immediately before dispatch. Enqueue-time data is only a
+// snapshot; rebuilding here removes connectors revoked while the task waited
+// in the queue. A failed or empty refresh returns no overlay (fail closed for
+// delegated connector access while preserving the agent's own MCP config).
+func (s *TaskService) RefreshRuntimeMCPOverlayForClaim(ctx context.Context, originatorUserID pgtype.UUID, agent db.Agent) (json.RawMessage, json.RawMessage) {
+	data := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
+	return data.Overlay, data.ConnectedApps
 }
 
 // resolveOriginatorFromTriggerComment returns the top-of-chain HUMAN user
@@ -1094,7 +1125,7 @@ func (s *TaskService) EnqueueDeferredChannelIssueTask(ctx context.Context, issue
 // claimed while deferred, so the optional external overlay is hydrated after
 // commit without holding database locks across a network call.
 func (s *TaskService) createDeferredChannelIssueTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue, fireAt time.Time) (db.AgentTaskQueue, error) {
-	txService := &TaskService{Queries: q}
+	txService := &TaskService{Queries: q, IssueAgentUseAuthorizer: s.IssueAgentUseAuthorizer}
 	return txService.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{Time: fireAt, Valid: true})
 }
 
@@ -1226,6 +1257,9 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 		return db.AgentTaskQueue{}, err
 	}
 	originatorUserID := attr.UserID
+	if err := s.authorizeIssueAgentUse(ctx, issue, originatorUserID, "enqueue"); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("authorize issue agent use: %w", err)
+	}
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	createParams := db.CreateAgentTaskParams{
@@ -1381,6 +1415,9 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 		return db.AgentTaskQueue{}, err
 	}
 	originatorUserID := attr.UserID
+	if err := s.authorizeIssueAgentUse(ctx, issue, originatorUserID, "enqueue"); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("authorize issue agent use: %w", err)
+	}
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
@@ -6371,6 +6408,9 @@ func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, targ
 		}
 
 		originator, accountable := delegatedFailureRecoveryAttribution(target)
+		if err := s.authorizeIssueAgentUse(ctx, target.issue, originator, "enqueue"); err != nil {
+			return delegatedFailureRecoveryCovered, fmt.Errorf("authorize recovery issue agent use: %w", err)
+		}
 		source := attribution.SourceDelegation
 		if !originator.Valid && !accountable.Valid {
 			source = attribution.SourceUnattributed

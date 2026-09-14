@@ -528,6 +528,44 @@ DELETE FROM lark_installation WHERE lark_installation.workspace_id = $1;
 -- name: DeleteWorkspaceComments :exec
 DELETE FROM comment WHERE comment.workspace_id = $1;
 
+-- name: DeleteWorkspaceProjectAuthorization :exec
+-- Private authorization tables intentionally avoid foreign keys into upstream
+-- project/issue tables. Sweep their leaves before issue and project roots so a
+-- workspace deletion cannot leave ACL, request, or role-directory orphans.
+WITH
+deleted_request_notifications AS (
+    DELETE FROM projectauth_access_request_notifications WHERE workspace_id = $1
+),
+deleted_access_requests AS (
+    DELETE FROM projectauth_access_requests WHERE workspace_id = $1
+),
+deleted_grant_constraints AS (
+    DELETE FROM projectauth_grant_constraints WHERE workspace_id = $1
+),
+deleted_issue_access_grants AS (
+    DELETE FROM projectauth_issue_access_grants WHERE workspace_id = $1
+),
+deleted_access_grants AS (
+    DELETE FROM projectauth_access_grants WHERE workspace_id = $1
+),
+deleted_issue_policies AS (
+    DELETE FROM projectauth_issue_policies WHERE workspace_id = $1
+),
+workspace_task_roles AS MATERIALIZED (
+    SELECT id FROM projectauth_task_roles WHERE workspace_id = $1
+),
+deleted_task_role_permissions AS (
+    DELETE FROM projectauth_task_role_permissions
+    WHERE role_id IN (SELECT id FROM workspace_task_roles)
+),
+deleted_task_roles AS (
+    DELETE FROM projectauth_task_roles WHERE workspace_id = $1
+),
+deleted_organization_members AS (
+    DELETE FROM projectauth_organization_members WHERE workspace_id = $1
+)
+DELETE FROM projectauth_organizations WHERE workspace_id = $1;
+
 -- name: DeleteWorkspaceIssueRoots :exec
 WITH
 deleted_issues AS (

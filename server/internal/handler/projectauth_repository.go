@@ -638,15 +638,15 @@ func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID,
 	var grant projectauth.AccessGrant
 	var issue, roleKey, permissionKey, source, grantedBy string
 	err := r.db.QueryRow(ctx, `
-		SELECT id::text, workspace_id::text, project_id::text, COALESCE(issue_id::text, ''),
-		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
-		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text,
+		SELECT g.id::text, g.workspace_id::text, g.project_id::text, COALESCE(g.issue_id::text, ''),
+		       g.subject_type, COALESCE(g.subject_id, ''), COALESCE(g.role_key, ''),
+		       COALESCE(g.permission, ''), g.source, COALESCE(g.granted_by::text, ''), g.created_at::text,
 		       constraint_row.expires_at, COALESCE(constraint_row.origin_kind, ''), COALESCE(constraint_row.origin_id::text, '')
 		FROM projectauth_access_grants g
 		LEFT JOIN projectauth_grant_constraints constraint_row
 		  ON constraint_row.workspace_id=g.workspace_id AND constraint_row.grant_id=g.id
-		WHERE workspace_id=$1 AND project_id=$2
-		  AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
+		WHERE g.workspace_id=$1 AND g.project_id=$2
+		  AND g.issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
 		  AND g.subject_type=$4 AND COALESCE(g.subject_id, '') = COALESCE($5, '')
 		  AND g.role_key IS NOT DISTINCT FROM NULLIF($6,'')
 		  AND g.permission IS NOT DISTINCT FROM NULLIF($7,'')

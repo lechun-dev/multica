@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -98,6 +99,37 @@ func TestBuildRuntimeMCPOverlaySkipsBuilderWhenComposioFlagDisabled(t *testing.T
 	}
 	if len(got.Overlay) != 0 || len(got.ConnectedApps) != 0 {
 		t.Fatalf("flag-off overlay = %+v; want empty", got)
+	}
+}
+
+func TestRefreshRuntimeMCPOverlayForClaimDropsRevokedConnector(t *testing.T) {
+	var userBytes [16]byte
+	userBytes[15] = 1
+	var agentBytes [16]byte
+	agentBytes[15] = 2
+	userID := pgtype.UUID{Bytes: userBytes, Valid: true}
+	agent := db.Agent{ID: pgtype.UUID{Bytes: agentBytes, Valid: true}}
+	builder := &stubOverlayBuilder{
+		resp: json.RawMessage(`{"mcpServers":{"composio":{"type":"http","url":"https://mcp.example/session"}}}`),
+		apps: []runtimeapps.ConnectedApp{{Provider: "composio", ServerName: "composio", ToolkitSlug: "notion", ToolkitName: "Notion"}},
+	}
+	svc := &TaskService{Composio: builder, FeatureFlags: composioMCPAppsTestFlags(true)}
+
+	overlay, apps := svc.RefreshRuntimeMCPOverlayForClaim(context.Background(), userID, agent)
+	if len(overlay) == 0 || len(apps) == 0 {
+		t.Fatalf("initial claim overlay = %q apps = %q; want both populated", overlay, apps)
+	}
+
+	// Simulate revoking the user's connector authorization while the task is
+	// queued. Claim must rebuild the intersection rather than reuse the row's
+	// enqueue-time snapshot.
+	builder.respIsNil = true
+	overlay, apps = svc.RefreshRuntimeMCPOverlayForClaim(context.Background(), userID, agent)
+	if len(overlay) != 0 || len(apps) != 0 {
+		t.Fatalf("post-revoke claim overlay = %q apps = %q; want empty", overlay, apps)
+	}
+	if builder.calls != 2 {
+		t.Fatalf("BuildTaskOverlay calls = %d, want 2", builder.calls)
 	}
 }
 
@@ -498,7 +530,18 @@ func TestEnqueueTaskForIssueStoresRuntimeMCPOverlayInQueuedRow(t *testing.T) {
 			ToolkitName: "Notion",
 		}},
 	}
-	svc := &TaskService{Queries: q, TxStarter: pool, Bus: events.New(), Composio: builder, FeatureFlags: composioMCPAppsTestFlags(true)}
+	var authorizedIssueID string
+	var authorizedOriginator pgtype.UUID
+	var authorizationPhase string
+	svc := &TaskService{
+		Queries: q, TxStarter: pool, Bus: events.New(), Composio: builder, FeatureFlags: composioMCPAppsTestFlags(true),
+		IssueAgentUseAuthorizer: func(_ context.Context, issue db.Issue, originator pgtype.UUID, phase string) error {
+			authorizedIssueID = util.UUIDToString(issue.ID)
+			authorizedOriginator = originator
+			authorizationPhase = phase
+			return nil
+		},
+	}
 	userID := util.MustParseUUID(userIDStr)
 	task, err := svc.EnqueueTaskForIssue(ctx, db.Issue{
 		ID:           util.MustParseUUID(issueIDStr),
@@ -514,6 +557,9 @@ func TestEnqueueTaskForIssueStoresRuntimeMCPOverlayInQueuedRow(t *testing.T) {
 	}
 	if builder.calls != 1 {
 		t.Fatalf("BuildTaskOverlay calls = %d, want 1", builder.calls)
+	}
+	if authorizedIssueID != issueIDStr || authorizedOriginator != userID || authorizationPhase != "enqueue" {
+		t.Fatalf("authorization callback = issue %q originator %s phase %q", authorizedIssueID, util.UUIDToString(authorizedOriginator), authorizationPhase)
 	}
 	if len(task.RuntimeMcpOverlay) == 0 {
 		t.Fatalf("returned queued task has empty runtime_mcp_overlay")
@@ -538,6 +584,31 @@ func TestEnqueueTaskForIssueStoresRuntimeMCPOverlayInQueuedRow(t *testing.T) {
 	}
 	if len(apps) != 1 || apps[0].ToolkitSlug != "notion" {
 		t.Fatalf("stored connected apps = %+v; want notion", apps)
+	}
+
+	var before int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, issueIDStr).Scan(&before); err != nil {
+		t.Fatalf("count tasks before denial: %v", err)
+	}
+	denied := fmt.Errorf("agent use revoked")
+	svc.IssueAgentUseAuthorizer = func(context.Context, db.Issue, pgtype.UUID, string) error { return denied }
+	if _, err := svc.EnqueueTaskForIssue(ctx, db.Issue{
+		ID:           util.MustParseUUID(issueIDStr),
+		AssigneeID:   util.MustParseUUID(agentIDStr),
+		Priority:     "medium",
+		CreatorType:  "member",
+		CreatorID:    userID,
+		WorkspaceID:  util.MustParseUUID(workspaceIDStr),
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+	}); !errors.Is(err, denied) {
+		t.Fatalf("denied EnqueueTaskForIssue error = %v, want sentinel", err)
+	}
+	var after int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1`, issueIDStr).Scan(&after); err != nil {
+		t.Fatalf("count tasks after denial: %v", err)
+	}
+	if after != before {
+		t.Fatalf("task count after denied enqueue = %d, want %d", after, before)
 	}
 }
 

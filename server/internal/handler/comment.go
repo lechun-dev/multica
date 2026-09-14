@@ -1703,6 +1703,9 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePrivateCommentAccess(w, r, issue) {
 		return
 	}
+	if !h.requireRestrictedSourcePublishAccess(w, r, issue) {
+		return
+	}
 
 	userID, ok := requireUserID(w, r)
 	if !ok {

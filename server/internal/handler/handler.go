@@ -510,6 +510,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	taskSvc.IssueAgentUseAuthorizer = h.authorizeIssueAgentUse
 	// 2026-09-05 coder(lq): Keep autopilot-created tasks on the same project
 	// authorization path as HTTP and channel-created tasks.
 	h.AutopilotService.BeforeIssueCommit = h.issueAccessBeforeCommit()

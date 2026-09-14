@@ -2150,9 +2150,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// in the capability-aware response built below.
 	deliveredCommentIDs = []pgtype.UUID{}
 	composioMCPEnabled := h.composioMCPAppsEnabled(r.Context())
-	if composioMCPEnabled {
-		resp.ConnectedApps = parseRuntimeConnectedAppsForClaim(task.RuntimeConnectedApps, task.ID)
-	}
 	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -2218,6 +2215,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			taskfailure.ReasonInvalidTaskIdentity,
 			"error_runtime_access_denied", http.StatusForbidden, "private runtime does not permit task agent",
 		)
+	}
+	if composioMCPEnabled {
+		// The persisted overlay is an enqueue-time snapshot. Rebuild it from the
+		// current originator/agent intersection so connector revocation takes
+		// effect before a queued task starts.
+		task.RuntimeMcpOverlay, task.RuntimeConnectedApps = h.TaskService.RefreshRuntimeMCPOverlayForClaim(r.Context(), task.OriginatorUserID, agent)
+		resp.ConnectedApps = parseRuntimeConnectedAppsForClaim(task.RuntimeConnectedApps, task.ID)
 	}
 	useSkillRefs := requestHasClientCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
 	// A daemon older than the multica-platform merge assembles a brief that
@@ -2392,6 +2396,28 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if failure := h.rejectClaimOnWorkspaceMismatch(r.Context(), task, resp.WorkspaceID, runtimeID, runtimeWorkspaceID, false); failure != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
 		}
+		if authErr := h.authorizeIssueAgentUse(r.Context(), issue, task.OriginatorUserID, "claim"); authErr != nil {
+			if errors.Is(authErr, projectauth.ErrStorageUnavailable) || errors.Is(authErr, projectauth.ErrMigrationRequired) || errors.Is(authErr, projectauth.ErrDisabled) {
+				if _, requeueErr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); requeueErr != nil {
+					slog.Error("task claim: requeue after authorization storage failure failed", "task_id", uuidToString(task.ID), "error", requeueErr)
+				}
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{outcome: "error_task_authorization", status: http.StatusServiceUnavailable, message: "task authorization is temporarily unavailable"}
+			}
+			if errors.Is(authErr, projectauth.ErrCrossWorkspace) || errors.Is(authErr, projectauth.ErrInvalidRoleScope) || errors.Is(authErr, projectauth.ErrInvalidIssuePermission) {
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+					r.Context(), task,
+					"This task cannot run because its issue has an invalid authorization resource binding.",
+					taskfailure.ReasonInvalidTaskIdentity,
+					"error_invalid_task_identity", http.StatusConflict, "invalid task authorization resource binding",
+				)
+			}
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.failClaimedTaskBeforeLaunch(
+				r.Context(), task,
+				"This task cannot run because the original requester no longer has permission to use an agent on this task.",
+				taskfailure.ReasonTaskPermissionRevoked,
+				"error_task_permission_revoked", http.StatusForbidden, "task permission was revoked before claim",
+			)
+		}
 		resp.ThreadName = issue.Title
 		issueNumber = issue.Number
 
@@ -2488,8 +2514,22 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// the strict resolver for an explicitly project-bound Issue so stale or
 		// cross-workspace references still fail closed, while a NULL project_id
 		// receives the workspace context fallback.
-		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && issue.ProjectID.Valid {
-			projectCtx, projectErr = h.resolveRequiredIssueClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+			// Task permission and project-resource visibility are separate. A
+			// direct/parent task grant may authorize the run without authorizing
+			// repositories or other project resources. Projectless tasks likewise
+			// receive no workspace-repository fallback under the overlay.
+			if issue.ProjectID.Valid && task.OriginatorUserID.Valid {
+				subject := projectauth.Subject{UserID: uuidToString(task.OriginatorUserID), WorkspaceID: uuidToString(issue.WorkspaceID)}
+				projectAccessErr := h.ProjectAuth.Check(r.Context(), subject, uuidToString(issue.ProjectID), projectauth.View)
+				if projectAccessErr == nil {
+					projectCtx, projectErr = h.resolveRequiredIssueClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
+				} else if errors.Is(projectAccessErr, projectauth.ErrStorageUnavailable) ||
+					errors.Is(projectAccessErr, projectauth.ErrMigrationRequired) ||
+					errors.Is(projectAccessErr, projectauth.ErrDisabled) {
+					projectErr = projectAccessErr
+				}
+			}
 		} else {
 			projectCtx, projectErr = h.resolveClaimProjectContext(r.Context(), issue.ProjectID, issue.WorkspaceID)
 		}

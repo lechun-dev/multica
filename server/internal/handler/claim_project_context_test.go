@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // The claim path resolves project context from a SOFT reference: issue.project_id,
@@ -134,16 +136,18 @@ func TestClaimTask_IssueProjectInForeignWorkspace_CancelsTask(t *testing.T) {
 		"number":     88101,
 	})
 	dbfx.Task(t, agentID, testutil.Cols{
-		"runtime_id": runtimeID,
-		"issue_id":   issueID,
+		"runtime_id":          runtimeID,
+		"issue_id":            issueID,
+		"originator_user_id":  testUserID,
+		"accountable_user_id": testUserID,
 	})
 
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil,
 		testWorkspaceID, "test-claim-foreign-issue-project")
 	req = withURLParam(req, "runtimeId", runtimeID)
 	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusConflict)
-	if !strings.Contains(w.Text(), "valid project") {
-		t.Fatalf("claim error = %q, want invalid-project message", w.Text())
+	if !strings.Contains(w.Text(), "invalid task authorization resource binding") {
+		t.Fatalf("claim error = %q, want invalid authorization binding message", w.Text())
 	}
 	assertNoForeignContext(t, w.Text(), foreignProjectID)
 
@@ -154,11 +158,9 @@ func TestClaimTask_IssueProjectInForeignWorkspace_CancelsTask(t *testing.T) {
 	}
 }
 
-// 2026-08-29 coder(lq): Project permissions must not make a projectless Issue
-// unclaimable. The daemon should preserve the native workspace repository
-// fallback when project_id is NULL, while still enforcing strict validation for
-// explicit project references.
-func TestClaimTask_ProjectlessIssueUsesWorkspaceRepos(t *testing.T) {
+// Projectless issue tasks remain runnable through task-local authorization,
+// but they must not inherit the workspace's default repositories.
+func TestClaimTask_ProjectlessIssueDoesNotUseWorkspaceRepos(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -181,8 +183,10 @@ func TestClaimTask_ProjectlessIssueUsesWorkspaceRepos(t *testing.T) {
 		"priority": "medium",
 	})
 	dbfx.Task(t, agentID, testutil.Cols{
-		"runtime_id": runtimeID,
-		"issue_id":   issueID,
+		"runtime_id":          runtimeID,
+		"issue_id":            issueID,
+		"originator_user_id":  testUserID,
+		"accountable_user_id": testUserID,
 	})
 
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil,
@@ -203,8 +207,86 @@ func TestClaimTask_ProjectlessIssueUsesWorkspaceRepos(t *testing.T) {
 	if len(resp.Task.ProjectResources) != 0 {
 		t.Errorf("projectless issue project_resources = %+v, want none", resp.Task.ProjectResources)
 	}
-	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != localFallbackRepoURL {
-		t.Fatalf("projectless issue repos = %+v, want workspace fallback repo", resp.Task.Repos)
+	if len(resp.Task.Repos) != 0 {
+		t.Fatalf("projectless issue repos = %+v, want none", resp.Task.Repos)
+	}
+}
+
+// A task-local Manager role may authorize AgentUse without granting the
+// originator any access to the child project's repositories or resources.
+func TestClaimTask_TaskOnlyAccessDoesNotExposeProjectResources(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	originatorID := dbfx.User(t, "Task-only claim originator", "task-only-claim-originator@multica.test")
+	dbfx.Member(t, testWorkspaceID, originatorID, "member")
+	projectID := dbfx.Project(t, "Task-only claim project")
+	dbfx.Insert(t, "project_resource", testutil.Cols{
+		"project_id": projectID, "workspace_id": testWorkspaceID,
+		"resource_type": "github_repo", "resource_ref": `{"url":"https://github.com/example/private-child-project"}`,
+	})
+	issueID := dbfx.Issue(t, "Task-only authorized issue", testutil.Cols{"project_id": projectID})
+	if err := upsertIssueAccessGrant(context.Background(), testPool, issueID, projectID, originatorID, projectauth.TaskManager); err != nil {
+		t.Fatalf("grant task manager: %v", err)
+	}
+
+	var agentID, runtimeID string
+	dbfx.QueryRow(t, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID)
+	dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID, "issue_id": issueID, "originator_user_id": originatorID, "accountable_user_id": originatorID,
+	})
+
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-task-only-no-resource-leak")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusOK)
+	var resp struct {
+		Task *claimProjectFields `json:"task"`
+	}
+	w.JSON(&resp)
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if resp.Task.ProjectID != "" || len(resp.Task.ProjectResources) != 0 || len(resp.Task.Repos) != 0 {
+		t.Fatalf("task-only claim leaked project context: %+v", resp.Task)
+	}
+}
+
+func TestClaimTask_RevokedAgentUseFailsBeforeDeliveryAndAudits(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	enableProjectAuthForTest(t)
+
+	originatorID := dbfx.User(t, "Revoked claim originator", "revoked-claim-originator@multica.test")
+	dbfx.Member(t, testWorkspaceID, originatorID, "member")
+	projectID := dbfx.Project(t, "Revoked claim project")
+	issueID := dbfx.Issue(t, "Revoked before claim", testutil.Cols{"project_id": projectID})
+	if err := upsertIssueAccessGrant(context.Background(), testPool, issueID, projectID, originatorID, projectauth.TaskManager); err != nil {
+		t.Fatalf("grant task manager: %v", err)
+	}
+
+	var agentID, runtimeID string
+	dbfx.QueryRow(t, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID)
+	taskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id": runtimeID, "issue_id": issueID, "originator_user_id": originatorID, "accountable_user_id": originatorID,
+	})
+	dbfx.Exec(t, `DELETE FROM projectauth_access_grants WHERE issue_id=$1 AND subject_id=$2`, issueID, originatorID)
+
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-revoked-agent-use")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusForbidden)
+
+	var status, reason string
+	dbfx.QueryRow(t, `SELECT status, COALESCE(failure_reason,'') FROM agent_task_queue WHERE id=$1`, taskID).Scan(&status, &reason)
+	if status != "failed" || reason != string(taskfailure.ReasonTaskPermissionRevoked) {
+		t.Fatalf("revoked task = status %q reason %q", status, reason)
+	}
+	var auditCount int
+	dbfx.QueryRow(t, `SELECT count(*) FROM activity_log WHERE issue_id=$1 AND actor_id=$2 AND action='task_agent_use_denied'`, issueID, originatorID).Scan(&auditCount)
+	if auditCount != 1 {
+		t.Fatalf("authorization audit count = %d, want 1", auditCount)
 	}
 }
 

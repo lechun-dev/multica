@@ -1291,6 +1291,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			name: "delete project authorization data",
+			run:  func() error { return qtx.DeleteWorkspaceProjectAuthorization(ctx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete issue roots",
 			run:  func() error { return qtx.DeleteWorkspaceIssueRoots(ctx, requester.WorkspaceID) },
 		},
