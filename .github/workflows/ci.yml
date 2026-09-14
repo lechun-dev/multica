@@ -64,6 +64,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Require private feature inventory updates
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          bash scripts/check-private-feature-inventory.test.sh
+          bash scripts/check-private-feature-inventory.sh "$BASE_SHA" "$HEAD_SHA"
 
       - name: Filter paths
         id: filter
@@ -151,6 +161,8 @@ jobs:
               - 'server/pkg/db/generated/**'
               - 'server/migrations/**'
               - 'server/sqlc.yaml'
+              - 'scripts/check-private-migration-conflicts.sh'
+              - 'scripts/check-private-migration-conflicts.test.sh'
               - 'Makefile'
               - '.github/workflows/ci.yml'
             # Gates the image-budget job so the full-history checkout it
@@ -207,6 +219,15 @@ jobs:
       - name: Checkout
         if: ${{ needs.changes.outputs.sqlc == 'true' }}
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check private and official migration numbering
+        if: ${{ needs.changes.outputs.sqlc == 'true' }}
+        run: |
+          bash scripts/check-private-migration-conflicts.test.sh
+          git fetch --no-tags https://github.com/multica-ai/multica.git main:refs/remotes/official/main
+          bash scripts/check-private-migration-conflicts.sh HEAD refs/remotes/official/main
 
       - name: Setup Go
         if: ${{ needs.changes.outputs.sqlc == 'true' }}

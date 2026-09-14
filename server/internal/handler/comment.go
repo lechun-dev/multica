@@ -22,7 +22,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
-	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -1701,7 +1700,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	// 2026-09-02 coder(lq): Commenting is a dedicated task-conversation
 	// permission; members may write comments without project edit access.
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+	if !h.requirePrivateCommentAccess(w, r, issue) {
 		return
 	}
 
@@ -3256,7 +3255,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: existing.IssueID, WorkspaceID: existing.WorkspaceID})
-	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+	if err != nil || !h.requirePrivateCommentAccess(w, r, issue) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "comment not found")
 		}
@@ -3435,11 +3434,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil && promoteMentionAccess {
-			projectID := ""
-			if issue.ProjectID.Valid {
-				projectID = uuidToString(issue.ProjectID)
-			}
-			err = syncIssueMentionAccessWithExecutor(r.Context(), tx, uuidToString(issue.ID), projectID, issue.Description.String)
+			err = syncPrivateCommentMentionAccess(r.Context(), tx, issue)
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
@@ -3550,7 +3545,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
-	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+	if err != nil || !h.requirePrivateCommentAccess(w, r, issue) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "comment not found")
 		}
@@ -3778,7 +3773,7 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: comment.IssueID, WorkspaceID: comment.WorkspaceID})
-	if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.IssueComment) {
+	if err != nil || !h.requirePrivateCommentAccess(w, r, issue) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, "comment not found")
 		}
