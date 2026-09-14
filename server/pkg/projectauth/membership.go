@@ -19,7 +19,11 @@ type MemberRepository interface {
 // 2026-08-24 coder(lq): Seed the creator as project owner so enabling the
 // overlay cannot strand projects created by ordinary workspace members.
 func (s *Service) EnsureOwner(ctx context.Context, projectID, userID string) error {
-	if s == nil || !s.enabled {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
 		return nil
 	}
 	mr, ok := s.repo.(MemberRepository)
@@ -43,7 +47,11 @@ func (s *Service) EnsureOwner(ctx context.Context, projectID, userID string) err
 // raise a member's minimum project role, but must never overwrite a stronger
 // explicit grant made by a project owner.
 func (s *Service) PromoteMember(ctx context.Context, projectID, userID string, minimumRole ProjectRole) error {
-	if s == nil || !s.enabled {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
 		return nil
 	}
 	if !validProjectRole(minimumRole) {
@@ -67,7 +75,11 @@ func (s *Service) PromoteMember(ctx context.Context, projectID, userID string, m
 // simple project_members foreign key: the project exists and the user belongs
 // to the same native workspace.
 func (s *Service) AddMember(ctx context.Context, actor Subject, projectID, userID string, role ProjectRole) error {
-	if s == nil || !s.enabled {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
 		return nil
 	}
 	if err := s.Require(ctx, actor, projectID, MemberManage); err != nil {
@@ -126,7 +138,7 @@ func (s *Service) AddMember(ctx context.Context, actor Subject, projectID, userI
 }
 
 func (s *Service) ListMembers(ctx context.Context, actor Subject, projectID string) ([]ProjectMemberRecord, error) {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil, nil
 	}
 	// 2026-08-28 coder(lq): The settings matrix is read-only for ordinary
@@ -143,7 +155,11 @@ func (s *Service) ListMembers(ctx context.Context, actor Subject, projectID stri
 }
 
 func (s *Service) RemoveMember(ctx context.Context, actor Subject, projectID, userID string) error {
-	if s == nil || !s.enabled {
+	enabled, gateErr := s.mutationEnabled()
+	if gateErr != nil {
+		return gateErr
+	}
+	if !enabled {
 		return nil
 	}
 	if err := s.Require(ctx, actor, projectID, MemberManage); err != nil {

@@ -447,7 +447,7 @@ func (h *Handler) writeProjectWriteError(w http.ResponseWriter, r *http.Request,
 // so enabling project permissions cannot leave a committed project without an
 // owner when the membership insert fails.
 func (h *Handler) ensureProjectOwnerInTx(ctx context.Context, tx pgx.Tx, projectID, userID string) error {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+	if h.ProjectAuth == nil || !h.ProjectAuth.WriterEnabled() {
 		return nil
 	}
 	return projectauth.New(newProjectAuthRepository(tx), true).EnsureOwner(ctx, projectID, userID)
@@ -457,7 +457,7 @@ func (h *Handler) ensureProjectOwnerInTx(ctx context.Context, tx pgx.Tx, project
 // This keeps the project row, its owner, and every requested user/organization/
 // everyone grant atomic; a bad subject or role rolls back the whole create.
 func (h *Handler) initializeProjectAccessInTx(ctx context.Context, tx pgx.Tx, workspaceID, projectID, userID string, requests []CreateProjectAccessGrantRequest) error {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(requests) == 0 {
+	if h.ProjectAuth == nil || !h.ProjectAuth.WriterEnabled() || len(requests) == 0 {
 		return nil
 	}
 	repo := newProjectAuthRepository(tx)
@@ -491,6 +491,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	if len(req.AccessGrants) > 0 && !h.requireProjectAuthorizationWriter(w, false) {
 		return
 	}
 	workspaceID := h.resolveWorkspaceID(r)
@@ -611,7 +614,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Preserve the upstream non-transactional path while the overlay is off.
-	if len(req.Resources) == 0 && (h.ProjectAuth == nil || !h.ProjectAuth.Enabled()) {
+	if len(req.Resources) == 0 && (h.ProjectAuth == nil || !h.ProjectAuth.WriterEnabled()) {
 		project, err := h.Queries.CreateProject(r.Context(), createParams)
 		if err != nil {
 			h.writeProjectWriteError(w, r, err, "create")
@@ -648,12 +651,14 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeProjectAccessGrantError(w, err)
 			return
 		}
-		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
-			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-			writeProjectAccessGrantError(w, err)
-			return
+		if h.ProjectAuth.WriterEnabled() {
+			if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+				slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+				writeProjectAccessGrantError(w, err)
+				return
+			}
 		}
-		if project.Description.Valid {
+		if h.ProjectAuth.WriterEnabled() && project.Description.Valid {
 			if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
 				slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 				writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
@@ -725,12 +730,14 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeProjectAccessGrantError(w, err)
 		return
 	}
-	if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
-		slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-		writeProjectAccessGrantError(w, err)
-		return
+	if h.ProjectAuth != nil && h.ProjectAuth.WriterEnabled() {
+		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeProjectAccessGrantError(w, err)
+			return
+		}
 	}
-	if project.Description.Valid {
+	if h.ProjectAuth != nil && h.ProjectAuth.WriterEnabled() && project.Description.Valid {
 		if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
 			slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
@@ -889,7 +896,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var project db.Project
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+	if h.ProjectAuth != nil && h.ProjectAuth.WriterEnabled() {
 		// 2026-08-27 coder(lq): Project metadata and its automatic access grants
 		// commit together, so selecting a lead never produces an inaccessible project.
 		if h.TxStarter == nil {

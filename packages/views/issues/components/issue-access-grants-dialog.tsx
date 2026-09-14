@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, UserMinus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
+import { projectPermissionWritesEnabled, useConfigStore } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import type { IssueAccessControlGrant, TaskAccessMode, TaskAccessSubjectType } from "@multica/core/types";
@@ -35,6 +36,7 @@ const sourceLabel = (source: string) => ({
 export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrantsDialogProps) {
   const { t } = useT("projects");
   const workspaceId = useWorkspaceId();
+  const writesEnabled = useConfigStore((state) => projectPermissionWritesEnabled(state.projectPermissionRolloutPhase));
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [subjectType, setSubjectType] = useState<TaskAccessSubjectType>("user");
@@ -67,7 +69,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrant
   const memberByUser = useMemo(() => new Map(members.map((member) => [member.user_id, member])), [members]);
   const organizationById = useMemo(() => new Map(organizations.map((organization) => [organization.id, organization])), [organizations]);
   const availableRoles = rolesQuery.data?.roles ?? [];
-  const canManage = !!controlQuery.data;
+  const canManage = writesEnabled && !!controlQuery.data;
   const subjectTypes = useMemo<Array<{ value: TaskAccessSubjectType; label: string }>>(() => [
     { value: "user", label: t(($) => $.permissions.user) },
     { value: "organization", label: t(($) => $.permissions.organization) },

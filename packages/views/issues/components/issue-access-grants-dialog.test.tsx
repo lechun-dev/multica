@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { configStore } from "@multica/core/config";
 import { renderWithI18n } from "../../test/i18n";
 
 const mocks = vi.hoisted(() => ({
@@ -59,6 +60,11 @@ function renderDialog(projectId: string | null = "project-1") {
 describe("IssueAccessGrantsDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+      projectPermissionRolloutPhase: "restricted",
+    });
     mocks.getIssueAccessControl.mockResolvedValue(control);
     mocks.getIssueEffectiveAccess.mockResolvedValue({
       ...control,
@@ -197,6 +203,22 @@ describe("IssueAccessGrantsDialog", () => {
     expect(
       within(dialog).getByText(/only a user with task Manage permission/),
     ).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
+  });
+
+  it("keeps effective access readable before the writer rollout phase", async () => {
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+      projectPermissionRolloutPhase: "reader",
+    });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Task permissions" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Task permissions" });
+    expect(within(dialog).getByText("Project · direct")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
   });
 });

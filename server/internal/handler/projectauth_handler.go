@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1385,7 +1386,14 @@ func (h *Handler) filterTasksByProjectPermission(ctx context.Context, workspaceI
 // task projection, while the wrapper preserves compatibility for callers that
 // do not carry a task-page view setting.
 func (h *Handler) filterTasksByProjectPermissionWithWorkspaceScope(ctx context.Context, workspaceID, userID string, tasks []db.AgentTaskQueue, includeWorkspaceOwned bool) ([]db.AgentTaskQueue, error) {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || len(tasks) == 0 {
+	if h.ProjectAuth == nil || len(tasks) == 0 {
+		return tasks, nil
+	}
+	if h.ProjectAuth.ShadowEnabled() {
+		h.shadowIssueBatchVisibility(ctx, workspaceID, userID, tasks)
+		return tasks, nil
+	}
+	if !h.ProjectAuth.Enabled() {
 		return tasks, nil
 	}
 	if userID == "" {
@@ -1432,6 +1440,59 @@ func (h *Handler) filterTasksByProjectPermissionWithWorkspaceScope(ctx context.C
 		}
 	}
 	return filtered, nil
+}
+
+// shadowIssueBatchVisibility evaluates only issue-backed queue rows because
+// EffectiveAccessResolver's resource is a task Issue. Chat-only and unscoped
+// rows retain their legacy behavior and are intentionally excluded from the
+// comparison denominator. Shadow failures are observable but never affect the
+// response returned to the caller.
+func (h *Handler) shadowIssueBatchVisibility(ctx context.Context, workspaceID, userID string, tasks []db.AgentTaskQueue) {
+	started := time.Now()
+	defer func() { h.Metrics.ObserveProjectAuthorization("batch", time.Since(started)) }()
+	if workspaceID == "" || userID == "" || h.EffectiveIssueAccess == nil {
+		h.Metrics.RecordProjectAuthorizationShadow("batch", "error")
+		return
+	}
+	issueIDs := make([]string, 0, len(tasks))
+	seen := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		if !task.IssueID.Valid {
+			continue
+		}
+		issueID := uuidToString(task.IssueID)
+		if _, duplicate := seen[issueID]; duplicate {
+			continue
+		}
+		seen[issueID] = struct{}{}
+		issueIDs = append(issueIDs, issueID)
+	}
+	if len(issueIDs) == 0 {
+		return
+	}
+	accessByIssue, err := h.EffectiveIssueAccess.ResolveIssues(ctx, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}, issueIDs)
+	if err != nil {
+		h.Metrics.RecordProjectAuthorizationShadow("batch", "error")
+		return
+	}
+	result := "match_allow"
+	for _, issueID := range issueIDs {
+		access, ok := accessByIssue[issueID]
+		if !ok || !permissionListContains(access.Permissions, projectauth.View) {
+			result = "candidate_deny"
+			break
+		}
+	}
+	h.Metrics.RecordProjectAuthorizationShadow("batch", result)
+}
+
+func permissionListContains(permissions []projectauth.Permission, want projectauth.Permission) bool {
+	for _, permission := range permissions {
+		if permission == want {
+			return true
+		}
+	}
+	return false
 }
 
 // 2026-08-28 coder(lq): Unscoped queue rows have no Issue/ChatSession row to
@@ -1755,14 +1816,33 @@ func includeWorkspaceOwnedFromRequest(r *http.Request) bool {
 }
 
 func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue db.Issue, permission projectauth.Permission, includeWorkspaceOwned bool) (bool, string) {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+	if h.ProjectAuth == nil {
+		return true, ""
+	}
+	shadow := h.ProjectAuth.ShadowEnabled()
+	if !h.ProjectAuth.Enabled() && !shadow {
 		return true, ""
 	}
 	subject, reason := h.issuePermissionSubject(r, issue)
 	if reason != "" {
+		if shadow {
+			h.Metrics.RecordProjectAuthorizationShadow("single", "candidate_deny")
+			return true, ""
+		}
 		return false, reason
 	}
-	return h.effectiveIssueAccessAllowed(r.Context(), subject, uuidToString(issue.ID), permission, includeWorkspaceOwned)
+	allowed, reason := h.effectiveIssueAccessAllowed(r.Context(), subject, uuidToString(issue.ID), permission, includeWorkspaceOwned)
+	if shadow {
+		result := "candidate_deny"
+		if allowed {
+			result = "match_allow"
+		} else if reason == "unavailable" || reason == "migration" || reason == "internal" {
+			result = "error"
+		}
+		h.Metrics.RecordProjectAuthorizationShadow("single", result)
+		return true, ""
+	}
+	return allowed, reason
 }
 
 // issuePermissionSubject binds agent-process traffic to the human who
@@ -1804,10 +1884,18 @@ func (h *Handler) issuePermissionSubject(r *http.Request, target db.Issue) (proj
 // same EffectiveAccessResolver and record only identifiers/decision metadata;
 // issue bodies and ACL contents never enter authorization logs.
 func (h *Handler) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, originatorUserID pgtype.UUID, phase string) error {
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+	if h.ProjectAuth == nil {
+		return nil
+	}
+	shadow := h.ProjectAuth.ShadowEnabled()
+	if !h.ProjectAuth.Enabled() && !shadow {
 		return nil
 	}
 	if !originatorUserID.Valid {
+		h.Metrics.RecordProjectAuthorizationAgentClaim(phase, "deny")
+		if shadow {
+			return nil
+		}
 		return projectauth.ErrForbidden
 	}
 	subject := projectauth.Subject{UserID: uuidToString(originatorUserID), WorkspaceID: uuidToString(issue.WorkspaceID)}
@@ -1822,6 +1910,16 @@ func (h *Handler) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, or
 	}
 	err := resolver.CanIssue(ctx, subject, uuidToString(issue.ID), projectauth.AgentUse)
 	if err == nil {
+		h.Metrics.RecordProjectAuthorizationAgentClaim(phase, "allow")
+		return nil
+	}
+	result := "deny"
+	if errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrMigrationRequired) || errors.Is(err, projectauth.ErrDisabled) {
+		result = "error"
+	}
+	h.Metrics.RecordProjectAuthorizationAgentClaim(phase, result)
+	if shadow {
+		h.Metrics.RecordProjectAuthorizationShadow("single", "candidate_deny")
 		return nil
 	}
 	if h.DB == nil {
@@ -1921,6 +2019,12 @@ func (h *Handler) requireRestrictedSourcePublishAccess(w http.ResponseWriter, r 
 // authenticated subject to an effective task decision. HTTP, plugin and
 // aggregate paths all use it so their inheritance semantics cannot drift.
 func (h *Handler) effectiveIssueAccessAllowed(ctx context.Context, subject projectauth.Subject, issueID string, permission projectauth.Permission, includeWorkspaceOwned bool) (bool, string) {
+	started := time.Now()
+	result := "deny"
+	defer func() {
+		h.Metrics.ObserveProjectAuthorization("single", time.Since(started))
+		h.Metrics.RecordProjectAuthorizationDecision("resolve", result)
+	}()
 	resolver := h.EffectiveIssueAccess
 	if resolver == nil && h.DB != nil {
 		if repo, ok := newProjectAuthRepository(h.DB).(projectauth.EffectiveAccessRepository); ok {
@@ -1928,10 +2032,12 @@ func (h *Handler) effectiveIssueAccessAllowed(ctx context.Context, subject proje
 		}
 	}
 	if resolver == nil {
+		result = "error"
 		return false, "unavailable"
 	}
 	explanation, err := resolver.ExplainIssue(ctx, subject, issueID, permission)
 	if err != nil {
+		result = "error"
 		if errors.Is(err, projectauth.ErrMigrationRequired) {
 			return false, "migration"
 		}
@@ -1950,10 +2056,12 @@ func (h *Handler) effectiveIssueAccessAllowed(ctx context.Context, subject proje
 		return false, "forbidden"
 	}
 	if includeWorkspaceOwned {
+		result = "allow"
 		return true, ""
 	}
 	for _, source := range explanation.Sources {
 		if source.Source != projectauth.AccessSourceWorkspaceOwner {
+			result = "allow"
 			return true, ""
 		}
 	}

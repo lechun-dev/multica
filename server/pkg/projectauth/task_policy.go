@@ -16,7 +16,7 @@ func (s *Service) CheckIssue(ctx context.Context, subject Subject, issueID, proj
 // 2026-09-01 coder(lq): Keep direct issue checks aligned with list visibility
 // so a restricted workspace-owner request cannot open a hidden task by URL.
 func (s *Service) CheckIssueWithWorkspaceScope(ctx context.Context, subject Subject, issueID, projectID string, permission Permission, includeWorkspaceOwned bool) error {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil
 	}
 	if issueID == "" || projectID == "" {

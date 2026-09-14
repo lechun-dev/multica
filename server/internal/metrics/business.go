@@ -80,6 +80,11 @@ type BusinessMetrics struct {
 	autopilotQuotaDecision            *prometheus.CounterVec
 	issueWindowDecision               *prometheus.CounterVec
 	agentRuntimeLookup                *prometheus.CounterVec
+	projectAuthorizationDecision      *prometheus.CounterVec
+	projectAuthorizationShadow        *prometheus.CounterVec
+	projectAuthorizationDuration      *prometheus.HistogramVec
+	projectAuthorizationSlow          *prometheus.CounterVec
+	projectAuthorizationAgentClaim    *prometheus.CounterVec
 	// 2026-09-12 coder(lq): Preserve upstream issue metadata instrumentation alongside private metrics.
 	issueMetadataMutation         *prometheus.CounterVec
 	issueMetadataMutationDuration *prometheus.HistogramVec
@@ -314,6 +319,26 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Name:      "lookup_total",
 			Help:      "Total agent_runtime single-row lookups by call-site source and result.",
 		}, metricLabels("multica_agent_runtime_lookup_total")),
+		projectAuthorizationDecision: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "projectauth", Name: "decision_total",
+			Help: "Total authorization decisions by bounded action and result.",
+		}, metricLabels("multica_projectauth_decision_total")),
+		projectAuthorizationShadow: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "projectauth", Name: "shadow_comparison_total",
+			Help: "Total shadow comparisons between legacy and candidate authorization decisions.",
+		}, metricLabels("multica_projectauth_shadow_comparison_total")),
+		projectAuthorizationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: "multica", Subsystem: "projectauth", Name: "operation_duration_seconds",
+			Help: "Authorization resolver and permission-report duration by bounded surface.", Buckets: chatClaimResumeQueryDurationBuckets,
+		}, metricLabels("multica_projectauth_operation_duration_seconds")),
+		projectAuthorizationSlow: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "projectauth", Name: "slow_operation_total",
+			Help: "Authorization operations slower than the configured local alert threshold.",
+		}, metricLabels("multica_projectauth_slow_operation_total")),
+		projectAuthorizationAgentClaim: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "multica", Subsystem: "projectauth", Name: "agent_claim_total",
+			Help: "Agent enqueue and claim authorization results.",
+		}, metricLabels("multica_projectauth_agent_claim_total")),
 		issueMetadataMutation: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "multica", Subsystem: "issue_metadata", Name: "mutation_total",
 			Help: "Total issue metadata mutation attempts by operation and bounded result.",
@@ -373,9 +398,70 @@ func (m *BusinessMetrics) Collectors() []prometheus.Collector {
 		m.autopilotQuotaDecision,
 		m.issueWindowDecision,
 		m.agentRuntimeLookup,
+		m.projectAuthorizationDecision,
+		m.projectAuthorizationShadow,
+		m.projectAuthorizationDuration,
+		m.projectAuthorizationSlow,
+		m.projectAuthorizationAgentClaim,
 		m.issueMetadataMutation,
 		m.issueMetadataMutationDuration,
 	}, m.events.collectors()...)
+}
+
+func normalizeProjectAuthorizationAction(value string) string {
+	switch value {
+	case "resolve", "enqueue", "claim", "write":
+		return value
+	default:
+		return "other"
+	}
+}
+
+func normalizeProjectAuthorizationSurface(value string) string {
+	switch value {
+	case "single", "batch", "list", "search", "dashboard", "export", "preview", "explain":
+		return value
+	default:
+		return "other"
+	}
+}
+
+func normalizeProjectAuthorizationResult(value string) string {
+	switch value {
+	case "allow", "deny", "error", "match_allow", "match_deny", "candidate_allow", "candidate_deny", "disabled":
+		return value
+	default:
+		return "error"
+	}
+}
+
+func (m *BusinessMetrics) RecordProjectAuthorizationDecision(action, result string) {
+	if m != nil {
+		m.projectAuthorizationDecision.WithLabelValues(normalizeProjectAuthorizationAction(action), normalizeProjectAuthorizationResult(result)).Inc()
+	}
+}
+
+func (m *BusinessMetrics) RecordProjectAuthorizationShadow(surface, result string) {
+	if m != nil {
+		m.projectAuthorizationShadow.WithLabelValues(normalizeProjectAuthorizationSurface(surface), normalizeProjectAuthorizationResult(result)).Inc()
+	}
+}
+
+func (m *BusinessMetrics) ObserveProjectAuthorization(surface string, duration time.Duration) {
+	if m == nil || duration < 0 {
+		return
+	}
+	surface = normalizeProjectAuthorizationSurface(surface)
+	m.projectAuthorizationDuration.WithLabelValues(surface).Observe(duration.Seconds())
+	if duration >= 250*time.Millisecond {
+		m.projectAuthorizationSlow.WithLabelValues(surface).Inc()
+	}
+}
+
+func (m *BusinessMetrics) RecordProjectAuthorizationAgentClaim(action, result string) {
+	if m != nil {
+		m.projectAuthorizationAgentClaim.WithLabelValues(normalizeProjectAuthorizationAction(action), normalizeProjectAuthorizationResult(result)).Inc()
+	}
 }
 
 // RecordIssueMetadataMutation records the UPDATE and, for a no-row result, its

@@ -64,7 +64,7 @@ type PermissionReportRepository interface {
 // owners may report across the workspace; other users need project settings
 // permission and must scope the report to one project.
 func (s *Service) ListPermissionReport(ctx context.Context, subject Subject, filter PermissionReportFilter) (PermissionReportResult, error) {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return PermissionReportResult{}, nil
 	}
 	if s.repo == nil {

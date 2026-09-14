@@ -741,6 +741,8 @@ export interface AppConfigResponse {
   workspace_creation_disabled?: boolean;
   /** Whether the backend project-permission overlay is enabled. */
   project_permissions_enabled?: boolean;
+  /** Staged authorization rollout state. Absent on older servers. */
+  project_permission_rollout_phase?: "off" | "shadow" | "reader" | "writer" | "restricted";
   /** Whether this deployment offers the self-hosted Git provider integration
    * (self-host only; off on the managed cloud). Absent/false hides the whole
    * Settings → Integrations "Git providers" section. */
@@ -953,6 +955,7 @@ export const AppConfigSchema = z.object({
   daemon_app_url: OptionalStringSchema,
   workspace_creation_disabled: BooleanWithDefaultSchema(false).optional(),
   project_permissions_enabled: BooleanWithDefaultSchema(false).optional(),
+  project_permission_rollout_phase: z.enum(["off", "shadow", "reader", "writer", "restricted"]).optional(),
   vcs_integration_available: BooleanWithDefaultSchema(false).optional(),
   feature_flags: FeatureFlagsSchema,
   local_worktree_supported: BooleanWithDefaultSchema(false),

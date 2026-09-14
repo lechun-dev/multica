@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 type AppConfig struct {
@@ -35,6 +36,10 @@ type AppConfig struct {
 	// app does not render permission screens that are guaranteed to return 404.
 	// Omitted while disabled to preserve the response shape for older clients.
 	ProjectPermissionsEnabled bool `json:"project_permissions_enabled,omitempty"`
+	// ProjectPermissionRolloutPhase contains only a deployment enum and is safe
+	// to expose. Clients use it to keep ACL mutations hidden until the writer
+	// phase, without learning tenant authorization data.
+	ProjectPermissionRolloutPhase projectauth.RolloutPhase `json:"project_permission_rollout_phase,omitempty"`
 	// Public daemon setup config consumed by the web app at runtime so
 	// self-hosted instances can show `multica setup self-host` commands
 	// with the operator's own domains instead of Multica Cloud defaults.
@@ -107,6 +112,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		ProjectPermissionsEnabled:          h.cfg.ProjectPermissionEnabled,
+		ProjectPermissionRolloutPhase:      h.cfg.ProjectPermissionRolloutPhase,
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

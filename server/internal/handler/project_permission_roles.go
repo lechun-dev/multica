@@ -54,6 +54,9 @@ func (h *Handler) ListProjectPermissionRoles(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) CreateProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeError(w, http.StatusNotFound, "project permission roles not found")
 		return
@@ -82,6 +85,9 @@ func (h *Handler) CreateProjectPermissionRole(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) UpdateProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeError(w, http.StatusNotFound, "project permission roles not found")
 		return
@@ -111,6 +117,9 @@ func (h *Handler) UpdateProjectPermissionRole(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) DeleteProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeError(w, http.StatusNotFound, "project permission roles not found")
 		return

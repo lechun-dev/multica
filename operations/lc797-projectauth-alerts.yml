@@ -1,0 +1,31 @@
+groups:
+  - name: lc797-project-authorization
+    rules:
+      - alert: ProjectAuthorizationShadowMismatch
+        expr: sum(increase(multica_projectauth_shadow_comparison_total{result!="match_allow"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Project authorization shadow comparison differs or failed
+      - alert: ProjectAuthorizationDenialSpike
+        expr: sum(rate(multica_projectauth_decision_total{result="deny"}[10m])) / clamp_min(sum(rate(multica_projectauth_decision_total[10m])), 0.001) > 0.20 and sum(increase(multica_projectauth_decision_total[10m])) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Project authorization denial rate exceeds 20 percent
+      - alert: ProjectAuthorizationAgentClaimFailure
+        expr: sum(increase(multica_projectauth_agent_claim_total{result=~"error|deny"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Agent claim was denied or authorization evaluation failed
+      - alert: ProjectAuthorizationDashboardSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(multica_projectauth_operation_duration_seconds_bucket{surface=~"dashboard|export"}[10m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Permission dashboard or export P95 exceeds 500 milliseconds

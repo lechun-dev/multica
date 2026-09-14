@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
@@ -13,6 +14,12 @@ import (
 // in the workspace-scoped route group. Filter parsing stays at the HTTP edge;
 // authorization and effective-permission rules remain in projectauth.Service.
 func (h *Handler) ListPermissionReport(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	surface := "dashboard"
+	if r.URL.Query().Get("export") == "true" {
+		surface = "export"
+	}
+	defer func() { h.Metrics.ObserveProjectAuthorization(surface, time.Since(started)) }()
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeErrorCode(w, http.StatusNotFound, "project_permission_disabled", "project permission report is disabled")
 		return

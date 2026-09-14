@@ -89,6 +89,9 @@ func decodeAccessRequestReview(r *http.Request) (issueAccessRequestReview, error
 }
 
 func (h *Handler) CreateIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	request, err := decodeAccessRequestCreate(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid access request")
@@ -175,6 +178,9 @@ func (h *Handler) ListIssueAccessRequests(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) ReviewIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	request, err := decodeAccessRequestReview(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -218,6 +224,9 @@ func (h *Handler) ReviewIssueAccessRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) CancelIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	actor, issueID, _, ok := h.issueAccessRequestActor(w, r)
 	if !ok {
 		return

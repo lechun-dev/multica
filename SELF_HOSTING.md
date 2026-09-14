@@ -110,11 +110,13 @@ Changes to `ALLOW_SIGNUP`, `DISABLE_WORKSPACE_CREATION`, and `GOOGLE_CLIENT_ID` 
 
 ### Project permissions (optional)
 
-Project-level permissions are disabled by default for compatibility with the
-upstream workspace-only behavior. After applying the database migrations, set
-`PROJECT_PERMISSION_ENABLED=true` in `.env` and restart the backend/Compose
-stack. This is a backend feature flag; changing it does not require rebuilding
-the web image.
+Project/task permissions are disabled by default for compatibility with the
+upstream workspace-only behavior. After applying database migrations 509–526,
+roll out with `PROJECT_PERMISSION_ROLLOUT_PHASE=shadow`, then `reader`,
+`writer`, and finally `restricted`. Restart the backend/Compose stack after
+each change. The web UI reads the phase from `/api/config`, so no web rebuild
+is needed. Do not skip phases in production; see [the LC-797 rollout and
+recovery runbook](LC797_PERMISSION_ROLLOUT.md) for gates, alerts and rollback.
 
 When enabled:
 
@@ -123,12 +125,16 @@ When enabled:
   `PROJECT_OWNER_BYPASS_ENABLED`; set it to `false` to require explicit
   project access for workspace owners too.
 - Project owners can manage that project's authorization entries.
-- Project creators and member leads are automatically granted the `owner` role;
-  the migration also backfills owners for existing member-led projects.
-- Other members must have a project role to see its tasks and resources.
-- Tasks inherit project permissions and have no separate task-level ACL. A task
-  assignee is promoted to project `member`, and users mentioned in a project or
-  task are promoted to project `viewer`.
+- Project creators and member leads receive a project `owner` source only once
+  the writer phase is enabled; existing project owners are backfilled.
+- Project and task roles have independent catalogs and permission matrices.
+  Project permissions reach tasks only through the explicit project-to-task
+  projection.
+- Tasks can inherit their current project source or use `restricted` mode to
+  remove that source. Creator, assignee, mention, originator, direct task grant,
+  organization/Everyone grant and direct-parent Base sources remain task-local.
+- Switch back to `reader` for an emergency write stop. Never switch to `off`
+  after restricted policies exist, because that would remove read enforcement.
 
 > **Warning:** do **not** set `MULTICA_DEV_VERIFICATION_CODE` on a publicly reachable instance — anyone who knows an email address can then log in with that fixed code.
 

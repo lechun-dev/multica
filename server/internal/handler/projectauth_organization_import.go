@@ -89,6 +89,9 @@ func (h *Handler) PreviewProjectAuthorizationOrganizationImport(w http.ResponseW
 }
 
 func (h *Handler) ImportProjectAuthorizationOrganizations(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeErrorCode(w, http.StatusNotFound, "project_permission_disabled", "project permissions are disabled")
 		return

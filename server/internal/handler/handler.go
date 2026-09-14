@@ -70,9 +70,13 @@ type Config struct {
 	// ProjectPermissionEnabled enables the additive projectauth overlay. Keep
 	// false during rollout so upstream-compatible workspace behavior is retained.
 	ProjectPermissionEnabled bool
-	AllowSignup              bool
-	AllowedEmails            []string
-	AllowedEmailDomains      []string
+	// ProjectPermissionRolloutPhase separates shadow comparison, reader
+	// enforcement, ordinary ACL writes, and restricted-mode writes. Empty keeps
+	// the legacy boolean behavior for callers that have not migrated yet.
+	ProjectPermissionRolloutPhase projectauth.RolloutPhase
+	AllowSignup                   bool
+	AllowedEmails                 []string
+	AllowedEmailDomains           []string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
@@ -470,12 +474,16 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// a disabled client, which turns the feature off rather than failing.
 	taskSvc.QuickActions = llmClient
 	projectAuthRepo := &projectAuthRepository{db: executor}
+	rolloutPhase := cfg.ProjectPermissionRolloutPhase
+	if rolloutPhase == "" {
+		rolloutPhase = projectauth.LegacyRolloutPhase(cfg.ProjectPermissionEnabled)
+	}
 	h := &Handler{
 		Queries:                      queries,
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
 		TxStarter:                    txStarter,
-		ProjectAuth:                  projectauth.New(projectAuthRepo, cfg.ProjectPermissionEnabled),
+		ProjectAuth:                  projectauth.NewWithRollout(projectAuthRepo, rolloutPhase),
 		EffectiveIssueAccess:         projectauth.NewEffectiveAccessResolver(projectAuthRepo),
 		Hub:                          hub,
 		DaemonHub:                    daemonHub,

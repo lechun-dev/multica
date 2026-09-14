@@ -3392,7 +3392,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	// 2026-09-05 coder(lq): Mentions in comments are task-scoped grants for
 	// both project-bound and projectless tasks. Do not gate reconciliation on a
 	// project ID; the projectless adapter persists to its dedicated ACL table.
-	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.Enabled()
+	promoteMentionAccess := oldContent != req.Content && h.ProjectAuth != nil && h.ProjectAuth.WriterEnabled()
 	transactionalEdit := replaceAttachments || (oldContent != req.Content && strictContentEdit) || promoteMentionAccess
 	if transactionalEdit {
 		// Strict body edits, attachment-set edits, and cancellation of tasks built

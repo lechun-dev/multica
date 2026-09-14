@@ -76,6 +76,9 @@ func (h *Handler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
@@ -100,6 +103,9 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
+	if !h.requireProjectAuthorizationWriter(w, false) {
+		return
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		writeError(w, http.StatusNotFound, "project not found")
 		return

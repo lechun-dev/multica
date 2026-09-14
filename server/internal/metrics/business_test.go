@@ -93,6 +93,25 @@ func TestBusinessMetricsChatClaimResumeObservations(t *testing.T) {
 	}
 }
 
+func TestBusinessMetricsProjectAuthorizationUsesBoundedLabels(t *testing.T) {
+	m := NewBusinessMetrics()
+	m.RecordProjectAuthorizationDecision("resolve", "deny")
+	m.RecordProjectAuthorizationShadow("single", "candidate_deny")
+	m.RecordProjectAuthorizationAgentClaim("claim", "error")
+	m.ObserveProjectAuthorization("dashboard", 300*time.Millisecond)
+	m.RecordProjectAuthorizationDecision("user-supplied", "user-supplied")
+
+	if got := testutil.ToFloat64(m.projectAuthorizationDecision.WithLabelValues("resolve", "deny")); got != 1 {
+		t.Fatalf("authorization denial count = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.projectAuthorizationDecision.WithLabelValues("other", "error")); got != 1 {
+		t.Fatalf("unknown labels were not bounded: %v", got)
+	}
+	if got := testutil.ToFloat64(m.projectAuthorizationSlow.WithLabelValues("dashboard")); got != 1 {
+		t.Fatalf("slow dashboard count = %v, want 1", got)
+	}
+}
+
 func TestBusinessMetricsLLMPricingAndUnpricedTokens(t *testing.T) {
 	m := NewBusinessMetrics()
 
@@ -189,6 +208,10 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	m.RecordAutopilotQuotaDecision("observe", "manual", "admitted")
 	m.RecordIssueWindowDecision("observe", "list", "would_block")
 	m.ObserveRuntimeSweepStage(RuntimeSweepStageLiveness, time.Second, 2, 1)
+	m.RecordProjectAuthorizationDecision("resolve", "allow")
+	m.RecordProjectAuthorizationShadow("single", "match_allow")
+	m.RecordProjectAuthorizationAgentClaim("claim", "allow")
+	m.ObserveProjectAuthorization("dashboard", 300*time.Millisecond)
 
 	families, err := registry.Gather()
 	if err != nil {

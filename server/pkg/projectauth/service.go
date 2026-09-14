@@ -12,14 +12,30 @@ type Service struct {
 	repo       Repository
 	policy     Policy
 	taskPolicy TaskPolicy
-	enabled    bool
+	rollout    RolloutPhase
 }
 
 func New(repo Repository, enabled bool) *Service {
-	return &Service{repo: repo, policy: DefaultPolicy(), taskPolicy: DefaultTaskPolicy(), enabled: enabled}
+	return NewWithRollout(repo, LegacyRolloutPhase(enabled))
 }
 
-func (s *Service) Enabled() bool { return s != nil && s.enabled }
+func NewWithRollout(repo Repository, rollout RolloutPhase) *Service {
+	return &Service{repo: repo, policy: DefaultPolicy(), taskPolicy: DefaultTaskPolicy(), rollout: rollout}
+}
+
+func (s *Service) RolloutPhase() RolloutPhase {
+	if s == nil {
+		return RolloutOff
+	}
+	return s.rollout
+}
+
+func (s *Service) Enabled() bool       { return s != nil && s.rollout.ReaderEnabled() }
+func (s *Service) ShadowEnabled() bool { return s != nil && s.rollout.ShadowEnabled() }
+func (s *Service) WriterEnabled() bool { return s != nil && s.rollout.WriterEnabled() }
+func (s *Service) RestrictedWritesEnabled() bool {
+	return s != nil && s.rollout.RestrictedWritesEnabled()
+}
 
 // WorkspaceOwnerBypassEnabled resolves the workspace-level owner override.
 // The switch is deployment-scoped and now comes from the process environment
@@ -36,7 +52,7 @@ func (s *Service) WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID s
 // adapter is treated as an empty result so older adapters remain compatible.
 // 2026-08-28 coder(lq): Expose list metadata without coupling handlers to SQL.
 func (s *Service) CurrentProjectRoles(ctx context.Context, workspaceID, userID string) (map[string]ProjectRole, error) {
-	if s == nil || !s.enabled || s.repo == nil {
+	if s == nil || !s.Enabled() || s.repo == nil {
 		return map[string]ProjectRole{}, nil
 	}
 	reader, ok := s.repo.(ProjectRoleReader)
@@ -51,7 +67,7 @@ func (s *Service) CurrentProjectRoles(ctx context.Context, workspaceID, userID s
 // an adapter must synchronize organizations before this endpoint can serve
 // them. 2026-09-01 coder(lq): Add provider-neutral organization picker seam.
 func (s *Service) ListOrganizations(ctx context.Context, subject Subject) ([]Organization, error) {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil, nil
 	}
 	directory, ok := s.repo.(OrganizationDirectoryRepository)
@@ -73,7 +89,7 @@ func (s *Service) ListOrganizations(ctx context.Context, subject Subject) ([]Org
 // pickers from older deployments remain usable during rolling upgrades.
 // 2026-09-03 coder(lq): Add a read-only employee directory boundary.
 func (s *Service) ListOrganizationMembers(ctx context.Context, subject Subject) ([]OrganizationMember, error) {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil, nil
 	}
 	if _, err := s.requireWorkspaceMember(ctx, subject); err != nil {
@@ -104,7 +120,7 @@ func (s *Service) CheckWithWorkspaceScope(ctx context.Context, subject Subject, 
 }
 
 func (s *Service) checkWithWorkspaceScope(ctx context.Context, subject Subject, projectID string, permission Permission, includeWorkspaceOwned bool) error {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil
 	}
 	// 2026-08-24 coder(lq): Fail closed when the rollout flag is enabled but
@@ -425,6 +441,13 @@ func normalizeProjectRoleDefinition(role *RoleDefinition) error {
 }
 
 func (s *Service) CreateRole(ctx context.Context, subject Subject, role RoleDefinition) (RoleDefinition, error) {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return RoleDefinition{}, err
+	}
+	if !enabled {
+		return RoleDefinition{}, nil
+	}
 	rr, ok := s.repo.(RoleRepository)
 	if !ok {
 		return RoleDefinition{}, ErrDisabled
@@ -461,6 +484,13 @@ func (s *Service) CreateRole(ctx context.Context, subject Subject, role RoleDefi
 }
 
 func (s *Service) UpdateRole(ctx context.Context, subject Subject, key string, role RoleDefinition) (RoleDefinition, error) {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return RoleDefinition{}, err
+	}
+	if !enabled {
+		return RoleDefinition{}, nil
+	}
 	rr, ok := s.repo.(RoleRepository)
 	if !ok {
 		return RoleDefinition{}, ErrDisabled
@@ -512,6 +542,13 @@ func (s *Service) UpdateRole(ctx context.Context, subject Subject, key string, r
 }
 
 func (s *Service) DeleteRole(ctx context.Context, subject Subject, key string) error {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return nil
+	}
 	rr, ok := s.repo.(RoleRepository)
 	if !ok {
 		return ErrDisabled
@@ -606,7 +643,11 @@ func (s *Service) RequireWithWorkspaceScope(ctx context.Context, subject Subject
 // project and task authorization. Handlers can expose different UI flows
 // without duplicating validation or bypassing the project-management guard.
 func (s *Service) GrantAccess(ctx context.Context, actor Subject, grant AccessGrant) error {
-	if s == nil || !s.enabled {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
 		return nil
 	}
 	repo, ok := s.repo.(GrantRepository)
@@ -901,7 +942,11 @@ func (s *Service) taskRolePermissions(ctx context.Context, workspaceID string, r
 }
 
 func (s *Service) RevokeAccess(ctx context.Context, actor Subject, grant AccessGrant) error {
-	if s == nil || !s.enabled {
+	enabled, err := s.mutationEnabled()
+	if err != nil {
+		return err
+	}
+	if !enabled {
 		return nil
 	}
 	repo, ok := s.repo.(GrantRepository)
@@ -1052,7 +1097,7 @@ func (s *Service) recordAudit(ctx context.Context, event AuthorizationAuditEvent
 // 2026-08-31 coder(lq): Expose one read seam for project and task permission
 // dialogs without coupling HTTP handlers to SQL.
 func (s *Service) ListAccessGrants(ctx context.Context, subject Subject, projectID, issueID string) ([]AccessGrant, error) {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil, nil
 	}
 	repo, ok := s.repo.(GrantRepository)
@@ -1085,7 +1130,7 @@ func (s *Service) Scope(ctx context.Context, subject Subject) ([]string, error) 
 // 2026-08-28 coder(lq): ScopeWithWorkspaceOwned omits workspace-owner-only
 // visibility when requested while preserving explicit project grants.
 func (s *Service) ScopeWithWorkspaceOwned(ctx context.Context, subject Subject, includeWorkspaceOwned bool) ([]string, error) {
-	if s == nil || !s.enabled {
+	if s == nil || !s.Enabled() {
 		return nil, nil
 	}
 	if s.repo == nil {

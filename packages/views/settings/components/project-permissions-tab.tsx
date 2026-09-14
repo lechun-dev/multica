@@ -8,6 +8,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects";
 import { useAuthStore } from "@multica/core/auth";
+import { projectPermissionWritesEnabled, useConfigStore } from "@multica/core/config";
 import type { ProjectPermissionRole } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
@@ -38,6 +39,7 @@ function projectMembersKey(projectId: string) {
 // endpoints so the private authorization overlay remains low-conflict with
 // future upstream settings-page updates.
 export function ProjectPermissionsTab() {
+  const writesEnabled = useConfigStore((state) => projectPermissionWritesEnabled(state.projectPermissionRolloutPhase));
   const { t } = useT("settings");
   const workspaceId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -266,7 +268,7 @@ export function ProjectPermissionsTab() {
                                 const projectMembers = projectMembersByProject.get(project.id) ?? [];
                                 const explicit = projectMembers.find((projectMember) => projectMember.user_id === member.user_id);
                                 const value = projectPermissionCellValue(explicit?.role);
-                                const canManage = isWorkspaceOwner || canManageByProject.get(project.id) === true;
+                                const canManage = writesEnabled && (isWorkspaceOwner || canManageByProject.get(project.id) === true);
                                 const cellKey = `${project.id}:${member.user_id}`;
                                 const disabled = !canManage || savingCell === cellKey;
                                 return (

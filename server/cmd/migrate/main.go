@@ -331,6 +331,8 @@ var concurrentIndexCleanups = map[string]string{
 	"518_projectauth_access_requests_idempotency_unique":     "projectauth_access_requests_workspace_idempotency_uidx",
 	"520_projectauth_task_roles_unique":                      "projectauth_task_roles_workspace_key_uidx",
 	"522_projectauth_task_role_permissions_unique":           "projectauth_task_role_permissions_role_permission_uidx",
+	"525_projectauth_access_request_notifications_unique":    "projectauth_access_request_notifications_delivery_uidx",
+	"526_projectauth_access_requests_pending_unique":         "projectauth_access_requests_pending_subject_role_uidx",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

@@ -191,6 +191,9 @@ func (h *Handler) PatchIssueAccessControl(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !h.requireProjectAuthorizationWriter(w, request.ProjectAccessMode == projectauth.ProjectAccessRestricted) {
+		return
+	}
 	subject, issueID, projectID, ok := h.issueAccessControlActor(w, r, chi.URLParam(r, "id"))
 	if !ok {
 		return
