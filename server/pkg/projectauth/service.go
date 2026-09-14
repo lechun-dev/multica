@@ -9,13 +9,14 @@ import (
 )
 
 type Service struct {
-	repo    Repository
-	policy  Policy
-	enabled bool
+	repo       Repository
+	policy     Policy
+	taskPolicy TaskPolicy
+	enabled    bool
 }
 
 func New(repo Repository, enabled bool) *Service {
-	return &Service{repo: repo, policy: DefaultPolicy(), enabled: enabled}
+	return &Service{repo: repo, policy: DefaultPolicy(), taskPolicy: DefaultTaskPolicy(), enabled: enabled}
 }
 
 func (s *Service) Enabled() bool { return s != nil && s.enabled }
@@ -270,7 +271,13 @@ func (s *Service) checkGrants(ctx context.Context, repo GrantRepository, subject
 			return true, true, nil
 		}
 		if grant.Role != "" {
-			allowed, roleErr := s.roleAllows(ctx, subject.WorkspaceID, grant.Role, permission)
+			var allowed bool
+			var roleErr error
+			if grant.IssueID != "" {
+				allowed, roleErr = s.taskRoleAllows(ctx, subject.WorkspaceID, TaskRole(grant.Role), permission)
+			} else {
+				allowed, roleErr = s.roleAllows(ctx, subject.WorkspaceID, grant.Role, permission)
+			}
 			if roleErr != nil {
 				return false, matched, roleErr
 			}
@@ -312,11 +319,29 @@ func taskGrantPermissionAllowed(permission Permission) bool {
 	// 2026-09-03 coder(lq): Task grants may cover every task-scoped action,
 	// including comments and archive. Project administration remains scoped to
 	// the project and can never be delegated through one task.
-	case View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse:
+	case View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse, IssueChildCreate:
 		return true
 	default:
 		return false
 	}
+}
+
+func (s *Service) taskRoleAllows(ctx context.Context, workspaceID string, role TaskRole, permission Permission) (bool, error) {
+	if resolver, ok := s.repo.(TaskRolePermissionRepository); ok {
+		permissions, found, err := resolver.TaskRolePermissions(ctx, workspaceID, role)
+		if err != nil {
+			return false, authorizationStorageError(err)
+		}
+		if found {
+			for _, candidate := range permissions {
+				if candidate == permission {
+					return true, nil
+				}
+			}
+			return false, nil
+		}
+	}
+	return s.taskPolicy.Allows(role, permission), nil
 }
 
 func (s *Service) roleAllows(ctx context.Context, workspaceID string, role ProjectRole, permission Permission) (bool, error) {

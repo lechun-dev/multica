@@ -316,12 +316,21 @@ var concurrentIndexCleanups = map[string]string{
 	"483_dingtalk_personal_message_claim_index":                 "idx_dingtalk_personal_message_claim",
 	"486_dingtalk_personal_message_server_claim_index":          "idx_dingtalk_personal_message_server_claim",
 	// 2026-09-12 coder(lq): Upstream migrations 446-467 were shifted after the released private migration stream.
-	"487_issue_properties_bigm_index":                     "idx_issue_properties_bigm",
-	"493_agent_task_pending_thread_unique":                "idx_one_pending_task_per_issue_agent_thread",
-	"500_chat_message_assistant_task_index":               "idx_chat_message_assistant_task",
-	"501_agent_task_queue_autopilot_run_created_at_index": "idx_agent_task_queue_autopilot_run_created_at",
-	"506_agent_task_queue_chat_with_session_index":        "idx_agent_task_queue_chat_with_session_created_at",
-	"507_activity_log_member_assignee_frequency_index":    "idx_activity_log_member_assignee_frequency",
+	"487_issue_properties_bigm_index":                        "idx_issue_properties_bigm",
+	"493_agent_task_pending_thread_unique":                   "idx_one_pending_task_per_issue_agent_thread",
+	"500_chat_message_assistant_task_index":                  "idx_chat_message_assistant_task",
+	"501_agent_task_queue_autopilot_run_created_at_index":    "idx_agent_task_queue_autopilot_run_created_at",
+	"506_agent_task_queue_chat_with_session_index":           "idx_agent_task_queue_chat_with_session_created_at",
+	"507_activity_log_member_assignee_frequency_index":       "idx_activity_log_member_assignee_frequency",
+	"510_projectauth_issue_policies_unique":                  "projectauth_issue_policies_workspace_issue_uidx",
+	"512_projectauth_grant_constraints_unique":               "projectauth_grant_constraints_workspace_grant_uidx",
+	"513_projectauth_grant_constraints_expiry_index":         "projectauth_grant_constraints_workspace_expiry_idx",
+	"515_projectauth_access_requests_id_unique":              "projectauth_access_requests_id_uidx",
+	"516_projectauth_access_requests_pending_resource_index": "projectauth_access_requests_pending_resource_idx",
+	"517_projectauth_access_requests_principal_index":        "projectauth_access_requests_principal_idx",
+	"518_projectauth_access_requests_idempotency_unique":     "projectauth_access_requests_workspace_idempotency_uidx",
+	"520_projectauth_task_roles_unique":                      "projectauth_task_roles_workspace_key_uidx",
+	"522_projectauth_task_role_permissions_unique":           "projectauth_task_role_permissions_role_permission_uidx",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

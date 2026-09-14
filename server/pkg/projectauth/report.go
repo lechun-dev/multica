@@ -146,7 +146,7 @@ func validReportRole(ctx context.Context, repo Repository, workspaceID, role str
 
 func validReportPermission(permission Permission) bool {
 	switch permission {
-	case View, Edit, IssueCreate, IssueComment, IssueManage, IssueArchive, AgentUse, MemberManage, SettingsManage:
+	case View, Edit, IssueCreate, IssueComment, IssueManage, IssueArchive, AgentUse, IssueChildCreate, MemberManage, SettingsManage:
 		return true
 	default:
 		return false

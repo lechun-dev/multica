@@ -35,6 +35,14 @@ type RolePermissionRepository interface {
 	RolePermissions(ctx context.Context, workspaceID string, role ProjectRole) (permissions []Permission, found bool, err error)
 }
 
+// TaskRolePermissionRepository resolves only the task-scoped role catalog.
+// It is separate from RolePermissionRepository even though built-in keys are
+// the same, preventing project role customization from changing task ACLs.
+// 2026-09-14 coder(lq): Add a low-coupling persistence seam for task roles.
+type TaskRolePermissionRepository interface {
+	TaskRolePermissions(ctx context.Context, workspaceID string, role TaskRole) (permissions []Permission, found bool, err error)
+}
+
 // ProjectRoleReader is an optional batch read surface used by list views. It
 // keeps the SQL adapter outside this package while avoiding one permission
 // query per project row.

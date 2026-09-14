@@ -863,6 +863,78 @@ func (r *projectAuthRepository) RolePermissions(ctx context.Context, workspaceID
 	return permissions, found, wrapProjectPermissionRepositoryError(err)
 }
 
+// TaskRolePermissions resolves the task-specific role catalog. Keeping this
+// query separate from RolePermissions prevents a project role override from
+// silently changing task access for the same role key.
+// 2026-09-14 coder(lq): Wire the independent LC-797 task role persistence.
+func (r *projectAuthRepository) TaskRolePermissions(ctx context.Context, workspaceID string, role projectauth.TaskRole) ([]projectauth.Permission, bool, error) {
+	permissions, found, err := r.queryTaskRolePermissions(ctx, workspaceID, role)
+	if err != nil {
+		return nil, false, wrapProjectPermissionRepositoryError(err)
+	}
+	if found || !projectauth.IsSystemTaskRole(role) {
+		return permissions, found, nil
+	}
+	if err := r.ensureTaskSystemRoleDefinitions(ctx, workspaceID); err != nil {
+		return nil, false, wrapProjectPermissionRepositoryError(err)
+	}
+	permissions, found, err = r.queryTaskRolePermissions(ctx, workspaceID, role)
+	return permissions, found, wrapProjectPermissionRepositoryError(err)
+}
+
+func (r *projectAuthRepository) queryTaskRolePermissions(ctx context.Context, workspaceID string, role projectauth.TaskRole) ([]projectauth.Permission, bool, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT permission.permission
+		FROM projectauth_task_roles role
+		LEFT JOIN projectauth_task_role_permissions permission ON permission.role_id = role.id
+		WHERE role.workspace_id = $1 AND role.role_key = $2
+		ORDER BY permission.permission`, workspaceID, string(role))
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	permissions := make([]projectauth.Permission, 0)
+	found := false
+	for rows.Next() {
+		var permission *string
+		if err := rows.Scan(&permission); err != nil {
+			return nil, false, err
+		}
+		found = true
+		if permission != nil {
+			permissions = append(permissions, projectauth.Permission(*permission))
+		}
+	}
+	return permissions, found, wrapProjectPermissionRepositoryError(rows.Err())
+}
+
+func (r *projectAuthRepository) ensureTaskSystemRoleDefinitions(ctx context.Context, workspaceID string) error {
+	_, err := r.db.Exec(ctx, `
+		WITH system_roles(role_key, name) AS (
+			VALUES ('owner', 'Owner'), ('manager', 'Manager'), ('member', 'Member'), ('viewer', 'Viewer')
+		), upserted_roles AS (
+			INSERT INTO projectauth_task_roles (workspace_id, role_key, name, is_system)
+			SELECT $1, role_key, name, true FROM system_roles
+			ON CONFLICT (workspace_id, role_key) DO UPDATE
+			SET name = EXCLUDED.name, is_system = true, updated_at = now()
+			RETURNING id, role_key
+		)
+		INSERT INTO projectauth_task_role_permissions (role_id, permission)
+		SELECT role.id, defaults.permission
+		FROM upserted_roles role
+		JOIN (VALUES
+			('owner','project.view'), ('owner','project.edit'), ('owner','project.issue.comment'),
+			('owner','project.issue.manage'), ('owner','project.issue.archive'), ('owner','project.agent.use'),
+			('owner','project.issue.child.create'), ('manager','project.view'), ('manager','project.edit'),
+			('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'),
+			('manager','project.agent.use'), ('manager','project.issue.child.create'), ('member','project.view'),
+			('member','project.edit'), ('member','project.issue.comment'), ('member','project.issue.child.create'),
+			('viewer','project.view')
+		) AS defaults(role_key, permission) ON defaults.role_key = role.role_key
+		ON CONFLICT DO NOTHING`, workspaceID)
+	return wrapProjectPermissionRepositoryError(err)
+}
+
 func (r *projectAuthRepository) queryRolePermissions(ctx context.Context, workspaceID string, role projectauth.ProjectRole) ([]projectauth.Permission, bool, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT p.permission

@@ -572,7 +572,7 @@ func TestTaskCreatorHasHardOwnerTaskAccessWithoutGrant(t *testing.T) {
 	}
 	service := New(repo, true)
 	subject := Subject{UserID: "creator-1", WorkspaceID: "ws-1"}
-	for _, permission := range []Permission{View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse} {
+	for _, permission := range []Permission{View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse, IssueChildCreate} {
 		if err := service.CheckIssue(context.Background(), subject, "i-1", "p-1", permission); err != nil {
 			t.Fatalf("task creator permission %s = %v", permission, err)
 		}

@@ -182,7 +182,7 @@ func TestCheckIssueAllowsDirectTaskMemberWithoutProjectMembership(t *testing.T) 
 	service := New(repo, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
 
-	for _, permission := range []Permission{View, IssueComment} {
+	for _, permission := range []Permission{View, Edit, IssueComment, IssueChildCreate} {
 		if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", permission); err != nil {
 			t.Fatalf("direct task Member should allow %s without project membership: %v", permission, err)
 		}

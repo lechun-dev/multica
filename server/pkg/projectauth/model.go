@@ -19,6 +19,26 @@ const (
 	ProjectViewer  ProjectRole = "viewer"
 )
 
+// TaskRole is intentionally distinct from ProjectRole. The two catalogs use
+// the same built-in keys, but their permission matrices and persistence are
+// independent.
+// 2026-09-14 coder(lq): Prevent same-named project roles from defining task ACLs.
+type TaskRole string
+
+const (
+	TaskOwner   TaskRole = "owner"
+	TaskManager TaskRole = "manager"
+	TaskMember  TaskRole = "member"
+	TaskViewer  TaskRole = "viewer"
+)
+
+type RoleScope string
+
+const (
+	RoleScopeProject RoleScope = "project"
+	RoleScopeTask    RoleScope = "task"
+)
+
 // 2026-08-24 coder(lq): Carry the already-authenticated identity and native workspace
 // membership. The HTTP adapter can construct it from Multica's request context.
 type Subject struct {
@@ -109,8 +129,11 @@ const (
 	IssueManage  Permission = "project.issue.manage"
 	// 2026-09-02 coder(lq): Archive is isolated from issue management so
 	// deployments can grant retention control without granting task edits.
-	IssueArchive   Permission = "project.issue.archive"
-	AgentUse       Permission = "project.agent.use"
-	MemberManage   Permission = "project.member.manage"
-	SettingsManage Permission = "project.settings.manage"
+	IssueArchive Permission = "project.issue.archive"
+	AgentUse     Permission = "project.agent.use"
+	// 2026-09-14 coder(lq): Creating or linking a child is a task permission;
+	// creating the child in an explicit project is checked separately.
+	IssueChildCreate Permission = "project.issue.child.create"
+	MemberManage     Permission = "project.member.manage"
+	SettingsManage   Permission = "project.settings.manage"
 )
