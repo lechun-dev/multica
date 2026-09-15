@@ -55,6 +55,15 @@ import {
   reconcileIssueFullSnapshotRevision,
 } from "./ws-updaters";
 
+const dingtalkDWSStatusKey = ["me", "dingtalk-dws"] as const;
+
+function mayNeedDingTalkDWSDelivery(content: string): boolean {
+  return (
+    content.includes("](mention://member/") ||
+    content.includes("](mention://all/all)")
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Shared mutation variable types — used by both mutation hooks and
 // useMutationState consumers to keep the type assertion in sync.
@@ -879,9 +888,19 @@ export function useCreateComment(issueId: string) {
     }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
     onSuccess: (comment) => {
       // A human @mention can create a server-side DingTalk delivery that needs
-      // OAuth. Refresh the global authorization guard immediately instead of
-      // waiting for its background poll.
-      qc.invalidateQueries({ queryKey: ["me", "dingtalk-dws"] });
+      // OAuth. Check DWS only for comments that can require that delivery;
+      // the global dialog observes this cache but no longer polls while idle.
+      if (mayNeedDingTalkDWSDelivery(comment.content ?? "")) {
+        void qc
+          .fetchQuery({
+            queryKey: dingtalkDWSStatusKey,
+            queryFn: () => api.getDingTalkDWSStatus(),
+          })
+          .catch(() => {
+            // A transient status-check failure must not make the comment
+            // mutation look failed after the comment has already been saved.
+          });
+      }
       if (!isRenderableCommentSnapshot(comment)) {
         // 2026-09-07 coder(lq): A malformed success response must never become
         // a blank System/NaN timeline row. The write may still have succeeded,

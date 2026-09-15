@@ -83,6 +83,8 @@ describe("DingTalkDWSAuthorizationDialog", () => {
 
     expect(screen.getByText("Authorize DingTalk direct messages")).toBeInTheDocument();
     expect(screen.getByText("Authorize sign-in")).toBeInTheDocument();
+    expect(state.queryOptions?.enabled).toBe(false);
+    expect(state.queryOptions?.refetchInterval).toBe(false);
   });
 
   it("keeps the action disabled while authorization is pending", async () => {
