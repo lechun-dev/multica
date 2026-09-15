@@ -1,29 +1,17 @@
 name: Deploy Multica Test
 
 on:
-  # 2026-09-14 coder(lq): Deploy test only after both latest images have been
-  # published successfully, so frontend and backend always move together.
-  workflow_run:
-    workflows: ["Publish latest self-hosted images"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Optional image tag to deploy to test
-        required: false
-        type: string
-        default: ""
 
 jobs:
   deploy:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     uses: ./.github/workflows/deploy.yml
     with:
       deploy_path: /deploy/multica-test
       compose_project: multica-test
-      image_tag: ${{ inputs.image_tag || '' }}
+      # 2026-09-15 coder(lq): The selected workflow tag is also the immutable
+      # image tag, so operators choose the release version only once.
+      image_tag: ${{ github.ref_name }}
       environment_name: test
+      require_tag_ref: true
     secrets: inherit

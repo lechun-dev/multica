@@ -13,6 +13,10 @@ locale files under `apps/web/features/landing/i18n/`. For example, both
 `ko.ts`, and `zh.ts`. Run
 `node scripts/check-release-changelog.mjs v0.4.82` locally to verify it.
 
+A test or beta release does not have to originate from `main`; only a stable
+release does. Each named deployment workflow uses the selected tag as its image
+version, so release preparation does not maintain a second version list.
+
 The verification job requires those changelog entries, then runs the Go tests
 and `govulncheck` before any publishing job starts. The changelog and
 vulnerability checks are fail-closed by default.
@@ -35,13 +39,16 @@ download page, use a semver prerelease tag such as `v0.4.70-beta.1`:
    `v0.4.86-beta.2`; never create another `v0.4.85-beta.*` tag. The release
    checks reject a prerelease whose base version is not newer than the latest
    stable tag.
-2. Create and push the tag from the reviewed commit on `main`.
+2. Create and push the tag from the reviewed commit. Beta and test tags may
+   point to a non-`main` branch; the eventual stable tag must point to the
+   reviewed commit on `main`.
 3. The release workflows mark tags containing a suffix (`-beta.1`, `-rc.1`,
    etc.) as GitHub **Pre-release** and do not mark them **Latest**.
 4. Deploy the staging private environment first with the
-   `Deploy Multica Staging` workflow and pass the same tag as `image_tag`,
-   then let desktop prerelease builds point their API, Web, and WS endpoints
-   at that staging backend.
+   `Deploy Multica Staging` workflow. Select the release tag under **Use
+   workflow from**; that tag is also the image version. Then let desktop
+   prerelease builds point their API, Web, and WS endpoints at that staging
+   backend.
 5. Give testers the direct GitHub Release URL. Do not add the URL to the
    website or stable install instructions.
 6. Testers can download the CLI archive and run `missionos version` (or the
@@ -53,6 +60,28 @@ download page, use a semver prerelease tag such as `v0.4.70-beta.1`:
 The repository is public, so this is a visibility/channel separation rather
 than access control: anyone who obtains the prerelease URL can still download
 its assets. Do not put secrets or production-only data in a prerelease build.
+
+## Deployment environment policy
+
+All three deployment workflows derive the immutable image tag from GitHub's
+**Use workflow from** selection. Select the version tag once and run the
+workflow; there is no separate image-version field. Branches, `latest`, commit
+SHA tags, release candidates, and other unsupported suffixes are rejected
+before the workflow connects to a deployment host.
+
+The manual workflow must exist on the repository's default branch for GitHub to
+expose the **Run workflow** button, but the selected release and its application
+code do not have to come from that branch. Test and beta deployments may select
+tags created from their release branch.
+
+| Workflow | Allowed tags |
+| --- | --- |
+| `Deploy Multica Production` | Stable only: `vX.Y.Z` |
+| `Deploy Multica Staging` | Stable or beta: `vX.Y.Z`, `vX.Y.Z-beta.N` |
+| `Deploy Multica Test` | Stable, beta, or test: `vX.Y.Z`, `vX.Y.Z-beta.N`, `vX.Y.Z-test.N` |
+
+Test deployment is intentionally explicit. Publishing the mutable `latest`
+images from `main` no longer triggers a test deployment automatically.
 
 ## Emergency vulnerability-scan bypass
 

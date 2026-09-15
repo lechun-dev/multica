@@ -2,19 +2,6 @@ name: Deploy Multica Staging
 
 on:
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Optional image tag to deploy to staging
-        required: false
-        type: string
-        default: ""
-  workflow_call:
-    inputs:
-      image_tag:
-        description: Optional image tag to deploy to staging
-        required: false
-        type: string
-        default: ""
 
 jobs:
   deploy:
@@ -22,6 +9,9 @@ jobs:
     with:
       deploy_path: /deploy/multica-staging
       compose_project: multica-staging
-      image_tag: ${{ inputs.image_tag || '' }}
+      # 2026-09-15 coder(lq): The selected workflow tag is also the immutable
+      # image tag, so operators choose the release version only once.
+      image_tag: ${{ github.ref_name }}
       environment_name: staging
+      require_tag_ref: true
     secrets: inherit
