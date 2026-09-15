@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.86",
+          date: "2026-09-15",
+          title: "더 깔끔한 Agent 추론과 완전한 릴리스 노트",
+          changes: [],
+          features: [],
+          improvements: [
+            "실행 요약과 태스크 활동은 Agent 추론에 집중하고 도구 세부 정보는 전체 실행 로그에 유지합니다.",
+            "필요할 때만 DingTalk 인증 상태를 확인하여 태스크 실행 중 불필요한 작업을 줄였습니다.",
+            "프로덕션 릴리스에 이전 안정 버전 이후의 전체 커밋 기록을 포함합니다.",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.4.85",
           date: "2026-09-12",
           title: "데몬 업데이트 후에도 데스크톱 작업 CLI 사용 가능",

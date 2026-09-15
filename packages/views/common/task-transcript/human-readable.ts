@@ -1,7 +1,8 @@
-import type {
-  TraceCallStep,
-  TraceMessageStep,
-  TraceRow,
+import {
+  isNarrativeRow,
+  type TraceCallStep,
+  type TraceMessageStep,
+  type TraceRow,
 } from "./build-steps";
 import { traceToolArgSummary } from "./trace-event-presenter";
 
@@ -22,6 +23,12 @@ export interface HumanReadableStep {
   tool?: string;
   completed?: boolean;
   count?: number;
+}
+
+export interface HumanReadableNarrativeStep {
+  seq: number;
+  kind: "text" | "thinking";
+  text?: string;
 }
 
 function textOf(step: TraceMessageStep): string | undefined {
@@ -82,52 +89,14 @@ export function humanizeTraceRow(row: TraceRow): HumanReadableStep {
 }
 
 /**
- * 2026-09-12 coder(lq): Collapse adjacent actions in the summary view so a
- * long tool transcript reads as a few phases instead of one row per command.
- * The details view still receives the original technical rows.
+ * 2026-09-14 coder(lq): The execution summary is the agent's narrative only.
+ * Commands, file changes, other tools, and technical errors remain available
+ * in the details view without interrupting the readable train of thought.
  */
-export function humanizeTraceRows(rows: TraceRow[]): HumanReadableStep[] {
-  const summary: HumanReadableStep[] = [];
-
-  const flush = (run: HumanReadableStep[]) => {
-    if (run.length === 0) return;
-    if (run.length === 1) {
-      summary.push(run[0]!);
-      return;
-    }
-
-    const first = run[0]!;
-    const count = run.reduce((total, step) => total + (step.count ?? 1), 0);
-    summary.push({
-      ...first,
-      kind: "group",
-      count,
-      completed: run.every((step) => step.completed === true),
-    });
-  };
-
-  let actionRun: HumanReadableStep[] = [];
-  let action: HumanReadableAction | undefined;
-
-  for (const row of rows) {
-    const step = humanizeTraceRow(row);
-    const isAction = step.kind === "action" || step.kind === "group";
-    if (!isAction) {
-      flush(actionRun);
-      actionRun = [];
-      action = undefined;
-      summary.push(step);
-      continue;
-    }
-
-    if (actionRun.length > 0 && step.action !== action) {
-      flush(actionRun);
-      actionRun = [];
-    }
-    action = step.action;
-    actionRun.push(step);
-  }
-
-  flush(actionRun);
-  return summary;
+export function humanizeTraceRows(rows: TraceRow[]): HumanReadableNarrativeStep[] {
+  return rows.filter(isNarrativeRow).map((row) => ({
+    seq: row.seq,
+    kind: row.kind,
+    text: textOf(row),
+  }));
 }

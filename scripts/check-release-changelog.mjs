@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,9 +12,10 @@ export const CHANGELOG_LOCALE_FILES = [
   "apps/web/features/landing/i18n/zh.ts",
 ];
 
-const RELEASE_TAG_PATTERN = /^v(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/;
+const RELEASE_TAG_PATTERN =
+  /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 
-export function changelogVersionForTag(tag) {
+export function parseReleaseTag(tag) {
   const match = RELEASE_TAG_PATTERN.exec(tag);
   if (!match) {
     throw new Error(
@@ -21,7 +23,57 @@ export function changelogVersionForTag(tag) {
     );
   }
 
-  return match[1];
+  return {
+    tag,
+    version: `${match[1]}.${match[2]}.${match[3]}`,
+    parts: match.slice(1, 4).map(Number),
+    prerelease: match[4] ?? null,
+  };
+}
+
+export function changelogVersionForTag(tag) {
+  return parseReleaseTag(tag).version;
+}
+
+function compareVersionParts(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index];
+    }
+  }
+  return 0;
+}
+
+export function validateReleaseTagSequence({ tag, existingTags }) {
+  const candidate = parseReleaseTag(tag);
+  if (!candidate.prerelease) {
+    return { tag, latestStableTag: null };
+  }
+
+  const stableTags = existingTags
+    .map((existingTag) => {
+      try {
+        return parseReleaseTag(existingTag);
+      } catch {
+        return null;
+      }
+    })
+    .filter((existingTag) => existingTag && !existingTag.prerelease)
+    .sort((left, right) => compareVersionParts(right.parts, left.parts));
+  const latestStable = stableTags[0];
+
+  // 2026-09-15 coder(lq): Once a base version is stable, all later preview
+  // builds must move to a newer base so updater ordering remains monotonic.
+  if (
+    latestStable &&
+    compareVersionParts(candidate.parts, latestStable.parts) <= 0
+  ) {
+    throw new Error(
+      `Prerelease ${tag} must use a version newer than latest stable ${latestStable.tag}. Start the next preview line instead.`,
+    );
+  }
+
+  return { tag, latestStableTag: latestStable?.tag ?? null };
 }
 
 function escapeRegExp(value) {
@@ -66,6 +118,13 @@ if (isCli) {
 
     // 2026-09-11 coder(lq): Prereleases share the base version's product
     // notes, so v0.4.82-beta.1 intentionally validates the 0.4.82 entry.
+    const existingTags = execFileSync("git", ["tag", "--list"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+    validateReleaseTagSequence({ tag, existingTags });
     const result = validateReleaseChangelog({ tag, repoRoot });
     console.log(
       `Release changelog is ready: ${result.tag} -> ${result.version} (${CHANGELOG_LOCALE_FILES.length} locales).`,

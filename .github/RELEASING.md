@@ -17,23 +17,36 @@ The verification job requires those changelog entries, then runs the Go tests
 and `govulncheck` before any publishing job starts. The changelog and
 vulnerability checks are fail-closed by default.
 
+For a stable tag, GitHub Release notes are generated automatically from every
+non-merge commit between the previous stable tag and the new stable tag. Beta
+and release-candidate tags are deliberately excluded as comparison bases. Both
+the CLI and private desktop publishers apply the same generated body, so a
+retry or a different job completion order cannot leave a partial changelog.
+The localized entries above remain the curated product summary shown inside
+MissionOS; they are not used as the complete GitHub Release audit trail.
+
 ## Test / prerelease release
 
 To distribute a build to selected testers without showing it on the public
 download page, use a semver prerelease tag such as `v0.4.70-beta.1`:
 
-1. Create and push the tag from the reviewed commit on `main`.
-2. The release workflows mark tags containing a suffix (`-beta.1`, `-rc.1`,
+1. Start from the version after the latest stable release. If `v0.4.85` is
+   already stable, the next preview line is `v0.4.86-beta.1`, followed by
+   `v0.4.86-beta.2`; never create another `v0.4.85-beta.*` tag. The release
+   checks reject a prerelease whose base version is not newer than the latest
+   stable tag.
+2. Create and push the tag from the reviewed commit on `main`.
+3. The release workflows mark tags containing a suffix (`-beta.1`, `-rc.1`,
    etc.) as GitHub **Pre-release** and do not mark them **Latest**.
-3. Deploy the staging private environment first with the
+4. Deploy the staging private environment first with the
    `Deploy Multica Staging` workflow and pass the same tag as `image_tag`,
    then let desktop prerelease builds point their API, Web, and WS endpoints
    at that staging backend.
-4. Give testers the direct GitHub Release URL. Do not add the URL to the
+5. Give testers the direct GitHub Release URL. Do not add the URL to the
    website or stable install instructions.
-5. Testers can download the CLI archive and run `missionos version` (or the
+6. Testers can download the CLI archive and run `missionos version` (or the
    compatible `multica version`) against the normal server.
-6. After validation, create the corresponding stable tag (for example
+7. After validation, create the corresponding stable tag (for example
    `v0.4.70`). That stable release becomes **Latest** and is then picked up by
    the website and automatic update checks.
 
