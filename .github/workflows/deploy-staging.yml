@@ -4,17 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Optional image tag to deploy to staging
-        required: false
+        description: Stable or beta tag, for example v0.4.86-beta.1
+        required: true
         type: string
-        default: ""
   workflow_call:
     inputs:
       image_tag:
-        description: Optional image tag to deploy to staging
-        required: false
+        description: Stable or beta tag, for example v0.4.86-beta.1
+        required: true
         type: string
-        default: ""
 
 jobs:
   deploy:
@@ -22,6 +20,6 @@ jobs:
     with:
       deploy_path: /deploy/multica-staging
       compose_project: multica-staging
-      image_tag: ${{ inputs.image_tag || '' }}
+      image_tag: ${{ inputs.image_tag }}
       environment_name: staging
     secrets: inherit

@@ -54,6 +54,21 @@ The repository is public, so this is a visibility/channel separation rather
 than access control: anyone who obtains the prerelease URL can still download
 its assets. Do not put secrets or production-only data in a prerelease build.
 
+## Deployment environment policy
+
+All three deployment workflows require an explicit immutable image tag. Empty
+tags, `latest`, commit SHA tags, release candidates, and other suffixes are
+rejected before the workflow connects to a deployment host.
+
+| Workflow | Allowed tags |
+| --- | --- |
+| `Deploy Multica Production` | Stable only: `vX.Y.Z` |
+| `Deploy Multica Staging` | Stable or beta: `vX.Y.Z`, `vX.Y.Z-beta.N` |
+| `Deploy Multica Test` | Stable, beta, or test: `vX.Y.Z`, `vX.Y.Z-beta.N`, `vX.Y.Z-test.N` |
+
+Test deployment is intentionally explicit. Publishing the mutable `latest`
+images from `main` no longer triggers a test deployment automatically.
+
 ## Emergency vulnerability-scan bypass
 
 Use the bypass only when `govulncheck` itself or its live vulnerability database

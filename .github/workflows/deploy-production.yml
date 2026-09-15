@@ -4,17 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Optional image tag to deploy to production
-        required: false
+        description: Stable tag only, for example v0.4.86
+        required: true
         type: string
-        default: ""
   workflow_call:
     inputs:
       image_tag:
-        description: Optional image tag to deploy to production
-        required: false
+        description: Stable tag only, for example v0.4.86
+        required: true
         type: string
-        default: ""
 
 jobs:
   deploy:
@@ -22,6 +20,6 @@ jobs:
     with:
       deploy_path: /deploy/multica
       compose_project: multica
-      image_tag: ${{ inputs.image_tag || '' }}
+      image_tag: ${{ inputs.image_tag }}
       environment_name: production
     secrets: inherit
