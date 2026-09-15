@@ -141,17 +141,19 @@ describe("InlineCommentRun", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("uses a readable issue identifier in live progress and expanded activity", async () => {
+  it("keeps tool commands out of live progress and expanded activity", async () => {
     const issueId = "01a07eca-8e82-775e-be06-e4a97ccfa299";
     vi.mocked(api.getIssue).mockResolvedValue({ id: issueId, identifier: "DEV-17" } as Awaited<ReturnType<typeof api.getIssue>>);
     vi.mocked(api.listTaskMessages).mockResolvedValue([
       { task_id: id, issue_id: issueId, seq: 1, type: "tool_use", tool: "exec_command", input: { command: `multica issue get ${issueId} --output json` } },
     ]);
     setup(task({ issue_id: issueId }));
-    await screen.findByText("multica issue get DEV-17 --output json");
+    await screen.findByText("Waiting for the agent to respond.");
+    expect(screen.queryByText(/multica issue get/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /View activity/ }));
-    expect(screen.getAllByText("multica issue get DEV-17 --output json")).toHaveLength(2);
-    expect(api.getIssue).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("No reasoning recorded.")).toBeInTheDocument();
+    expect(screen.queryByText(/multica issue get/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open full log" })).toBeInTheDocument();
   });
 
   it.each(["completed", "queued"] as const)("keeps the same focused disclosure button for a %s run", async (status) => {
@@ -173,8 +175,8 @@ describe("InlineCommentRun", () => {
     vi.mocked(api.listTaskMessages).mockResolvedValue(messages);
     const current = task();
     const { client, rerender } = setup(current);
-    await screen.findByText("pnpm test");
-    const progress = screen.getByText("pnpm test");
+    await screen.findByText("Checking navigation.");
+    const progress = screen.getByText("Checking navigation.");
     expect(progress).not.toHaveClass("animate-chat-text-shimmer");
     expect(progress.closest("[data-run-summary]")).toHaveClass("h-[1lh]", "overflow-hidden");
     expect(document.querySelector("[data-run-loading-indicator]")).toHaveClass(
@@ -186,6 +188,7 @@ describe("InlineCommentRun", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByText("pnpm test")).not.toBeInTheDocument();
     const tail: TaskMessagePayload = { task_id: id, issue_id: "issue", seq: 3, type: "tool_result", tool: "exec_command", output: "12 passed" };
     act(() => client.setQueryData(chatKeys.taskMessages(id), [...messages, tail]));
     await waitFor(() => expect(screen.queryByText("Waiting for the agent to respond.")).not.toBeInTheDocument());
@@ -204,7 +207,7 @@ describe("InlineCommentRun", () => {
     ];
     vi.mocked(api.listTaskMessages).mockResolvedValue([...events]);
     const { client } = setup(task());
-    const summary = await screen.findByText("pnpm test");
+    const summary = await screen.findByText("Checking navigation.");
     const text = summary.firstChild;
     const container = summary.closest("[data-run-summary]")!;
     const mutations: MutationRecord[] = [];
@@ -226,8 +229,11 @@ describe("InlineCommentRun", () => {
           client.setQueryData(chatKeys.taskMessages(id), [...events]);
           await new Promise((resolve) => setTimeout(resolve, 0));
         });
-        const label = next.type === "text" ? next.content : next.input.command;
+        const label = next.type === "text" ? next.content : "Checking navigation.";
         await waitFor(() => expect(summary).toHaveTextContent(label));
+        if (next.type === "tool_use") {
+          expect(screen.queryByText(next.input.command)).not.toBeInTheDocument();
+        }
         expect(summary.isConnected).toBe(true);
         expect(summary.firstChild).toBe(text);
         expect(container).toHaveAttribute("title", label);
@@ -254,16 +260,17 @@ describe("InlineCommentRun", () => {
     await receive({ type: "text", content: "Checking navigation." });
     await screen.findByText("Checking navigation.");
     await receive({ type: "tool_use", tool: "exec_command", input: { command: "pnpm test" } });
-    await screen.findByText("pnpm test");
+    expect(screen.getByText("Checking navigation.")).toBeInTheDocument();
+    expect(screen.queryByText("pnpm test")).not.toBeInTheDocument();
     await receive({ type: "tool_result", tool: "exec_command", output: "12 passed" });
-    expect(screen.getByText("pnpm test")).toBeInTheDocument();
+    expect(screen.getByText("Checking navigation.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Waiting for the agent to respond.")).not.toBeInTheDocument());
     await receive({ type: "text", content: "  " });
-    expect(screen.getByText("pnpm test")).toBeInTheDocument();
+    expect(screen.getByText("Checking navigation.")).toBeInTheDocument();
     await receive({ type: "text", content: "Tests passed. Reviewing the changes." });
     await screen.findByText("Tests passed. Reviewing the changes.");
     await waitFor(() =>
-      expect(screen.queryByText("pnpm test")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Checking navigation.")).not.toBeInTheDocument(),
     );
   });
 
@@ -290,7 +297,7 @@ describe("InlineCommentRun", () => {
       expect(api.listTaskMessages).not.toHaveBeenCalled();
       vi.mocked(api.listTaskMessages).mockResolvedValue([]);
       fireEvent.click(screen.getByRole("button", { name: /View activity/ }));
-      await screen.findByText("No activity recorded yet.");
+      await screen.findByText("No reasoning recorded.");
       expect(screen.queryByText("Waiting for the agent to respond.")).not.toBeInTheDocument();
     }
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));

@@ -848,6 +848,7 @@
     "waiting_events": "Waiting for events...",
     "antigravity_live_unavailable": "Antigravity does not currently provide live execution events. The transcript will be available after the task completes.",
     "no_data": "No execution data recorded.",
+    "no_summary": "No reasoning recorded.",
     "sort_chronological": "Oldest first",
     "sort_newest_first": "Newest first",
     "show_all": "Show all",

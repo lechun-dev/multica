@@ -320,7 +320,7 @@ describe("AgentTranscriptDialog", () => {
     expect(screen.getByText(/"command": "pnpm test"/)).toBeInTheDocument();
   });
 
-  it("offers a plain-language tab for the same execution events", async () => {
+  it("shows only agent prose and thinking in the execution summary", async () => {
     renderDialog([
       { seq: 1, type: "text", content: "I found the issue." },
       { seq: 2, type: "thinking", content: "Checking the config." },
@@ -337,10 +337,23 @@ describe("AgentTranscriptDialog", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: "Execution summary" }));
 
+    expect(screen.getByTestId("rich-content")).toHaveTextContent("I found the issue.");
     expect(screen.getByText(/The agent is thinking.*Checking the config\./)).toBeInTheDocument();
-    expect(screen.getByText("Completed: run command pnpm test")).toBeInTheDocument();
-    expect(screen.getByText("Execution ran into a problem: The command failed.")).toBeInTheDocument();
+    expect(screen.queryByText("Completed: run command pnpm test")).not.toBeInTheDocument();
+    expect(screen.queryByText("Execution ran into a problem: The command failed.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /pnpm test/ })).not.toBeInTheDocument();
+  });
+
+  it("explains when a run has no reasoning to summarize", async () => {
+    renderDialog([
+      { seq: 1, type: "tool_use", tool: "Bash", input: { command: "pnpm test" } },
+      { seq: 2, type: "tool_result", tool: "Bash", output: "ok" },
+    ]);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Execution summary" }));
+
+    expect(screen.getByText("No reasoning recorded.")).toBeInTheDocument();
+    expect(screen.queryByText("Completed: run command pnpm test")).not.toBeInTheDocument();
   });
 
   // Regression, #7125: a run of short prose steps under a long agent name put

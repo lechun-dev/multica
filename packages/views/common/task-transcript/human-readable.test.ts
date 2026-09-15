@@ -14,7 +14,7 @@ describe("humanizeTraceRow", () => {
       ]),
     );
 
-    expect(humanizeTraceRows(rows)).toMatchObject([
+    expect(rows.map(humanizeTraceRow)).toMatchObject([
       { kind: "action", action: "command", subject: "pnpm test", completed: true },
       { kind: "action", action: "read", subject: "src/app.ts", completed: false },
       { kind: "action", action: "search", subject: "permission", completed: false },
@@ -81,25 +81,20 @@ describe("humanizeTraceRow", () => {
     });
   });
 
-  it("collapses adjacent actions in the summary while keeping their count", () => {
+  it("keeps only agent prose and thinking in the execution summary", () => {
     const rows = groupSteps(
       buildSteps([
-        { seq: 1, type: "tool_use", tool: "Bash", input: { command: "pwd" } },
-        { seq: 2, type: "tool_result", tool: "Bash", output: "ok" },
-        { seq: 3, type: "tool_use", tool: "Bash", input: { command: "pnpm test" } },
-        { seq: 4, type: "tool_result", tool: "Bash", output: "ok" },
-        { seq: 5, type: "tool_use", tool: "Bash", input: { command: "pnpm lint" } },
+        { seq: 1, type: "text", content: "I found the issue." },
+        { seq: 2, type: "tool_use", tool: "Bash", input: { command: "pnpm test" } },
+        { seq: 3, type: "tool_result", tool: "Bash", output: "ok" },
+        { seq: 4, type: "thinking", content: "Checking the result." },
+        { seq: 5, type: "error", content: "The command failed." },
       ]),
     );
 
-    expect(humanizeTraceRows(rows)).toMatchObject([
-      {
-        kind: "group",
-        action: "command",
-        count: 3,
-        completed: false,
-        subject: "pwd",
-      },
+    expect(humanizeTraceRows(rows)).toEqual([
+      { seq: 1, kind: "text", text: "I found the issue." },
+      { seq: 4, kind: "thinking", text: "Checking the result." },
     ]);
   });
 });

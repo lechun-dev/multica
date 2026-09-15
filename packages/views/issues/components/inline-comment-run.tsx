@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { AlertCircle, Brain, ChevronRight, CirclePause, Clock3, ExternalLink, Loader2, MessageSquare, RotateCcw, ScrollText, Square, Terminal } from "lucide-react";
+import { Brain, ChevronRight, CirclePause, Clock3, ExternalLink, Loader2, MessageSquare, RotateCcw, ScrollText, Square } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useTraceIssueLabels } from "../../common/task-transcript/use-trace-issue-labels";
@@ -16,8 +16,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/
 import { cn } from "@multica/ui/lib/utils";
 import { AgentTranscriptDialog, StepBody } from "../../common/task-transcript/agent-transcript-dialog";
 import { buildTimeline } from "../../common/task-transcript/build-timeline";
-import { buildSteps, groupSteps, isCallStep, isGroupRow, type TraceRow } from "../../common/task-transcript/build-steps";
-import { traceEventSummary, traceToolArgSummary } from "../../common/task-transcript/trace-event-presenter";
+import { buildSteps, isNarrativeRow, type TraceNarrativeRow } from "../../common/task-transcript/build-steps";
+import { traceEventSummary } from "../../common/task-transcript/trace-event-presenter";
 import { redactSecrets } from "../../common/task-transcript/redact";
 import { ReadonlyContent } from "../../editor";
 import { useT } from "../../i18n";
@@ -84,7 +84,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
   const items = useMemo(() => buildTimeline(data ?? []), [data]);
   const formatText = useTraceIssueLabels(useWorkspaceId(), task.issue_id, items, loadTranscript);
   const steps = useMemo(() => buildSteps(items), [items]);
-  const rows = useMemo(() => groupSteps(steps), [steps]);
+  const narrativeRows = useMemo(() => steps.filter(isNarrativeRow), [steps]);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -98,15 +98,15 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
     ? failureReasonLabel(task.failure_reason, tAgents)
     : cancelReasonLabel(task, tAgents);
   const output = !hasReply ? commentRunOutput(task) : null;
-  const latest = steps.findLast((step) => step.kind !== "text" || step.item.content?.trim());
-  const pendingCall = steps.findLast((step) => isCallStep(step) && !step.result);
-  const current = pendingCall ?? latest;
-  // Keep the last activity visible after a tool returns, until new progress arrives.
-  const activitySummary = current && isCallStep(current)
-    ? redactSecrets(traceToolArgSummary(current.call?.input, { formatText }) || current.tool)
-    : current?.kind === "text" ? redactSecrets(formatText(current.item.content ?? ""))
-    : current?.kind === "thinking" ? thinkingPreview(current.item.content, formatText) || t(($) => $.inline_run.thinking)
-    : current?.kind === "error" ? t(($) => $.inline_run.error)
+  // 2026-09-14 coder(lq): Tool activity stays in the full log; the task page
+  // follows the latest agent narrative even while commands continue running.
+  const latestNarrative = narrativeRows.findLast(
+    (row) => row.kind === "thinking" || row.item.content?.trim(),
+  );
+  const activitySummary = latestNarrative?.kind === "text"
+    ? redactSecrets(formatText(latestNarrative.item.content ?? ""))
+    : latestNarrative?.kind === "thinking"
+      ? thinkingPreview(latestNarrative.item.content, formatText) || t(($) => $.inline_run.thinking)
     : t(($) => $.inline_run.waiting_response);
   const summary = task.status === "queued" ? t(($) => $.inline_run.queued)
     : task.status === "dispatched" ? t(($) => $.inline_run.starting)
@@ -114,7 +114,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
     : activitySummary;
   const showProgress = active && !hasReply;
   const activityLabel = t(($) => $.inline_run.view_activity);
-  const stepLabel = steps.length > 0 ? t(($) => $.inline_run.steps, { count: steps.length }) : "";
+  const stepLabel = narrativeRows.length > 0 ? t(($) => $.inline_run.steps, { count: narrativeRows.length }) : "";
   const stopLabel = cancel.isPending || cancel.isSuccess ? t(($) => $.inline_run.stopping) : t(($) => $.inline_run.stop);
   const transcript = fullLogOpen && <AgentTranscriptDialog open onOpenChange={setFullLogOpen}
     task={task} items={items} agentName={name} isLive={active} finalFocus={logFromKeyboard}
@@ -187,10 +187,10 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
           {isPending && <p className="text-caption text-muted-foreground">{t(($) => $.inline_run.loading)}</p>}
           {isError && <div role="alert" className="text-caption text-destructive">{t(($) => $.inline_run.load_failed)}
             <button className="ml-2 underline" type="button" onClick={() => void refetch()}>{t(($) => $.inline_run.try_again)}</button></div>}
-          {!isPending && !isError && rows.length === 0 && <p className="text-caption text-muted-foreground">{t(($) => $.inline_run.empty)}</p>}
-          {rows.length > visibleCount && <button type="button" className="py-1 text-caption text-muted-foreground hover:text-foreground"
-            onClick={() => setVisibleCount((count) => count + 12)}>{t(($) => $.inline_run.show_earlier, { count: rows.length - visibleCount })}</button>}
-          {rows.slice(-visibleCount).map((row) => <InlineStep key={row.seq} row={row} live={active} formatText={formatText} />)}
+          {!isPending && !isError && narrativeRows.length === 0 && <p className="text-caption text-muted-foreground">{tAgents(($) => $.transcript.no_summary)}</p>}
+          {narrativeRows.length > visibleCount && <button type="button" className="py-1 text-caption text-muted-foreground hover:text-foreground"
+            onClick={() => setVisibleCount((count) => count + 12)}>{t(($) => $.inline_run.show_earlier, { count: narrativeRows.length - visibleCount })}</button>}
+          {narrativeRows.slice(-visibleCount).map((row) => <InlineStep key={row.seq} row={row} formatText={formatText} />)}
           <button type="button" className="flex items-center gap-1.5 rounded-xs py-2 text-caption text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={openFullLog}>{t(($) => $.inline_run.full_log)}<ExternalLink className="size-3" /></button>
         </div>}
@@ -201,43 +201,23 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
   );
 }
 
-function InlineStep({ row, live, formatText }: { row: TraceRow; live: boolean; formatText: (text: string) => string }) {
+function InlineStep({ row, formatText }: { row: TraceNarrativeRow; formatText: (text: string) => string }) {
   const { t } = useT("issues");
   const [open, setOpen] = useState(false);
   const disclosure = useRunDisclosureMotion(open);
-  const [limit, setLimit] = useState(12);
   const onToggle = (event: React.SyntheticEvent<HTMLDetailsElement>) => setOpen(event.currentTarget.open);
-  const grouped = isGroupRow(row);
-  const call = isCallStep(row);
-  const pending = call && live && !row.result;
-  const error = !grouped && !call && row.kind === "error";
-  const Icon = grouped || call ? Terminal : row.kind === "text" ? MessageSquare : row.kind === "thinking" ? Brain : AlertCircle;
-  const summary = call
-    ? redactSecrets(traceToolArgSummary(row.call?.input, { formatText }) || (row.result ? traceEventSummary(row.result, { formatText }) : "")) || row.tool
-    : grouped ? row.tool
-    : row.kind === "text" ? t(($) => $.inline_run.message)
-    : row.kind === "thinking" ? thinkingPreview(row.item.content, formatText) || t(($) => $.inline_run.thinking)
-    : t(($) => $.inline_run.error);
+  const Icon = row.kind === "text" ? MessageSquare : Brain;
+  const summary = row.kind === "text"
+    ? redactSecrets(formatText(row.item.content ?? "")) || t(($) => $.inline_run.message)
+    : thinkingPreview(row.item.content, formatText) || t(($) => $.inline_run.thinking);
   return <details className="min-w-0 text-caption" onToggle={onToggle}>
     <summary onClick={disclosure.onTrigger} className="flex cursor-pointer list-none items-center gap-2 rounded-xs py-1.5 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-      {pending ? <Loader2 aria-hidden className="size-3.5 shrink-0 animate-spin text-info motion-reduce:animate-none" />
-        : <Icon aria-hidden className={cn("size-3.5 shrink-0", error ? "text-destructive" : "text-muted-foreground")} />}
-      <span className={cn("min-w-0 flex-1 truncate", error && "text-destructive")} title={summary}>{summary}</span>
-      {(grouped || call) && <span className="shrink-0 text-micro text-muted-foreground">
-        {grouped ? t(($) => $.inline_run.steps, { count: row.steps.length }) : row.tool}
-      </span>}
+      <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate" title={summary}>{summary}</span>
       <ChevronRight ref={disclosure.chevronRef} aria-hidden className={cn("size-3 shrink-0 text-muted-foreground", open && "rotate-90")} />
     </summary>
     {open && <div className="min-w-0 space-y-2 overflow-hidden pl-5.5">
-      {grouped ? <>
-        {row.steps.length > limit && <button type="button" className="py-1 text-muted-foreground" onClick={() => setLimit((value) => value + 12)}>
-          {t(($) => $.inline_run.show_earlier, { count: row.steps.length - limit })}</button>}
-        {row.steps.slice(-limit).map((step) => <InlineStep key={step.seq} row={step} live={live} formatText={formatText} />)}
-      </> : call ? <>
-        {row.call && <StepBody item={row.call} />}
-        {row.result && <StepBody item={row.result} />}
-        {pending && <p className="text-muted-foreground">{t(($) => $.inline_run.waiting_result)}</p>}
-      </> : <StepBody item={row.item} />}
+      <StepBody item={row.item} />
     </div>}
   </details>;
 }

@@ -56,6 +56,8 @@ export interface TraceGroupRow {
 
 export type TraceRow = TraceStep | TraceGroupRow;
 
+export type TraceNarrativeRow = TraceMessageStep & { kind: "text" | "thinking" };
+
 /**
  * How many consecutive same-tool calls it takes to fold into one row.
  *
@@ -205,6 +207,11 @@ export function isCallStep(row: TraceRow): row is TraceCallStep {
 
 export function isMessageStep(row: TraceRow): row is TraceMessageStep {
   return row.kind === "text" || row.kind === "thinking" || row.kind === "error";
+}
+
+/** 2026-09-14 coder(lq): Keep concise activity surfaces focused on the agent narrative. */
+export function isNarrativeRow(row: TraceRow): row is TraceNarrativeRow {
+  return row.kind === "text" || row.kind === "thinking";
 }
 
 /** Every call inside a row, so a group and a lone call read the same way. */
