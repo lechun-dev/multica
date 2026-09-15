@@ -2494,7 +2494,10 @@ export class ApiClient {
 
   async listAgentTasks(agentId: string, includeWorkspaceOwned = true): Promise<AgentTask[]> {
     const query = includeWorkspaceOwned ? "" : "?include_workspace_owned=false";
-    return this.fetch(`/api/agents/${agentId}/tasks${query}`);
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/tasks${query}`);
+    return parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/agents/:id/tasks",
+    });
   }
 
   // Workspace-scoped agent task snapshot: every active task
