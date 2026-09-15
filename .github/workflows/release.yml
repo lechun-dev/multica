@@ -112,6 +112,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # A stable tag and its final prerelease may intentionally point at
+          # the same commit. GoReleaser otherwise asks git to choose one of
+          # those tags and can publish the stable run into the prerelease.
+          GORELEASER_CURRENT_TAG: ${{ needs.verify.outputs.tag_name }}
 
       - name: Publish complete production release notes
         if: ${{ needs.verify.outputs.is_stable == 'true' }}
