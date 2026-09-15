@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   CHANGELOG_LOCALE_FILES,
   changelogVersionForTag,
+  validateReleaseTagSequence,
   validateReleaseChangelog,
 } from "./check-release-changelog.mjs";
 
@@ -73,5 +74,36 @@ test("rejects malformed release tags", () => {
   assert.throws(
     () => changelogVersionForTag("release-0.4.82"),
     /Release tag must look like/,
+  );
+});
+
+test("accepts a prerelease newer than the latest stable version", () => {
+  assert.deepEqual(
+    validateReleaseTagSequence({
+      tag: "v0.4.86-beta.1",
+      existingTags: ["v0.4.85", "v0.4.85-beta.5"],
+    }),
+    { tag: "v0.4.86-beta.1", latestStableTag: "v0.4.85" },
+  );
+});
+
+test("rejects a prerelease on an already stable version", () => {
+  assert.throws(
+    () =>
+      validateReleaseTagSequence({
+        tag: "v0.4.85-beta.6",
+        existingTags: ["v0.4.84", "v0.4.85"],
+      }),
+    /must use a version newer than latest stable v0\.4\.85/,
+  );
+});
+
+test("ignores prereleases when finding the latest stable version", () => {
+  assert.deepEqual(
+    validateReleaseTagSequence({
+      tag: "v0.4.86-beta.2",
+      existingTags: ["v0.4.85", "v0.4.99-beta.1"],
+    }),
+    { tag: "v0.4.86-beta.2", latestStableTag: "v0.4.85" },
   );
 });

@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.86",
+          date: "2026-09-15",
+          title: "Agent の推論表示を整理し、リリースノートを完全化",
+          changes: [],
+          features: [],
+          improvements: [
+            "実行サマリーとタスク履歴では Agent の推論に集中し、ツールの詳細は完全な実行ログに残すようにしました。",
+            "必要な場合にのみ DingTalk の認証状態を確認し、タスク実行中の不要な処理を減らしました。",
+            "本番リリースに前回の安定版以降のコミット履歴をすべて掲載するようにしました。",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.4.85",
           date: "2026-09-12",
           title: "デーモン更新後もデスクトップのタスク CLI を利用可能に",

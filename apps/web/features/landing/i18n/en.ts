@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.86",
+        date: "2026-09-15",
+        title: "Cleaner Agent reasoning and more reliable release notes",
+        changes: [],
+        features: [],
+        improvements: [
+          "Execution summaries and task activity now focus on Agent reasoning while keeping tool details in the full execution log.",
+          "DingTalk authorization status is checked only when needed, reducing unnecessary work during task execution.",
+          "Production releases now include the complete commit history since the previous stable version.",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.4.85",
         date: "2026-09-12",
         title: "Keep the desktop task CLI available after daemon upgrades",

@@ -833,6 +833,7 @@
     "waiting_events": "等待事件中...",
     "antigravity_live_unavailable": "Antigravity 暂不提供实时执行事件。task 完成后即可查看执行记录。",
     "no_data": "未记录执行数据。",
+    "no_summary": "暂无思考内容。",
     "sort_chronological": "最早在前",
     "sort_newest_first": "最新在前",
     "show_all": "显示全部",

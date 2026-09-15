@@ -99,8 +99,7 @@ import {
 import { languageForPath } from "./diff-highlight";
 import {
   humanizeTraceRows,
-  type HumanReadableAction,
-  type HumanReadableStep,
+  type HumanReadableNarrativeStep,
 } from "./human-readable";
 import { useT } from "../../i18n";
 import {
@@ -1337,7 +1336,7 @@ export function AgentTranscriptDialog({
                     {t(($) => $.transcript.waiting_events)}
                   </div>
                 ) : (
-                  t(($) => $.transcript.no_data)
+                  t(($) => $.transcript.no_summary)
                 )}
               </div>
             ) : (
@@ -1730,16 +1729,8 @@ function firstLineOf(value: string | undefined): string {
   return value?.split("\n").find((line) => line.trim().length > 0) ?? "";
 }
 
-function HumanActionIcon({ action, className }: { action?: HumanReadableAction; className?: string }) {
-  if (action === "command") return <Terminal className={className} />;
-  if (action === "edit") return <FilePen className={className} />;
-  if (action === "read") return <FileText className={className} />;
-  if (action === "search") return <Search className={className} />;
-  return <Wrench className={className} />;
-}
-
 /** A concise narrative row for readers who do not need provider terminology. */
-function HumanReadableRow({ step }: { step: HumanReadableStep }) {
+function HumanReadableRow({ step }: { step: HumanReadableNarrativeStep }) {
   const { t } = useT("agents");
 
   if (step.kind === "text") {
@@ -1759,52 +1750,12 @@ function HumanReadableRow({ step }: { step: HumanReadableStep }) {
     );
   }
 
-  if (step.kind === "thinking") {
-    return (
-      <div className="flex items-start gap-2 px-4 py-2.5 text-muted-foreground">
-        <Brain className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden />
-        <span className="min-w-0 text-body">
-          {t(($) => $.transcript.human_thinking)}
-          {step.text ? `：${step.text}` : ""}
-        </span>
-      </div>
-    );
-  }
-
-  if (step.kind === "error") {
-    return (
-      <div className="flex items-start gap-2 bg-destructive/5 px-4 py-2.5 text-destructive">
-        <CircleAlert className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden />
-        <span className="min-w-0 text-body">
-          {t(($) => $.transcript.human_error, { text: step.text || t(($) => $.transcript.human_agent_message) })}
-        </span>
-      </div>
-    );
-  }
-
-  const subject = step.subject || step.tool || t(($) => $.transcript.kind_tool);
-  const actionText =
-    step.action === "command"
-      ? t(($) => $.transcript.human_command, { subject })
-      : step.action === "read"
-        ? t(($) => $.transcript.human_read, { subject })
-        : step.action === "search"
-          ? t(($) => $.transcript.human_search, { subject })
-          : step.action === "edit"
-            ? t(($) => $.transcript.human_edit, { subject })
-            : t(($) => $.transcript.human_tool, { subject });
-  const displayAction =
-    step.kind === "group" && step.count && step.count > 1
-      ? `${actionText} × ${step.count}`
-      : actionText;
-
   return (
-    <div className="flex items-start gap-2 px-4 py-2.5">
-      <HumanActionIcon action={step.action} className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 text-body text-foreground">
-        {step.completed
-          ? t(($) => $.transcript.human_completed, { action: displayAction })
-          : t(($) => $.transcript.human_running, { action: displayAction })}
+    <div className="flex items-start gap-2 px-4 py-2.5 text-muted-foreground">
+      <Brain className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 text-body">
+        {t(($) => $.transcript.human_thinking)}
+        {step.text ? `：${step.text}` : ""}
       </span>
     </div>
   );

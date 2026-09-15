@@ -43,10 +43,10 @@ export function DingTalkDWSAuthorizationDialog({
   const { data: status } = useQuery({
     queryKey: dingtalkDWSStatusKey,
     queryFn: () => api.getDingTalkDWSStatus(),
-    enabled: authStatus === "authenticated",
-    refetchInterval: authorizing ? 2_000 : 15_000,
+    enabled: authStatus === "authenticated" && authorizing,
+    refetchInterval: authorizing ? 2_000 : false,
     refetchIntervalInBackground: authorizing,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: authorizing,
   });
 
   const finishAuthorizationAttempt = useCallback(() => {

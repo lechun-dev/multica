@@ -125,6 +125,16 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Generate complete production release notes
+        if: ${{ !contains(env.RELEASE_TAG, '-') }}
+        run: node scripts/generate-release-notes.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
+
       - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
@@ -186,19 +196,36 @@ jobs:
               --repo "$GITHUB_REPOSITORY"
               --verify-tag
               --title "MissionOS Lechun $RELEASE_TAG"
-              --notes "MissionOS Lechun desktop installers for macOS and Windows."
             )
             # A prerelease must never become GitHub's Latest release: the
             # public download page and CLI updater intentionally consume the
             # stable /releases/latest channel only.
             if [[ "$RELEASE_TAG" == *-* ]]; then
-              release_args+=(--prerelease)
+              release_args+=(
+                --notes "MissionOS Lechun desktop installers for macOS and Windows."
+                --prerelease
+              )
             else
-              release_args+=(--latest)
+              release_args+=(
+                --notes-file "$RUNNER_TEMP/release-notes.md"
+                --latest
+              )
             fi
             gh release create "${release_args[@]}"
           else
             echo "Reusing existing Release $RELEASE_TAG"
+          fi
+
+          # 2026-09-14 coder(lq): Both CLI and desktop workflows can create
+          # the same Release. Always refresh stable notes from the complete
+          # stable-to-stable range so whichever workflow finishes last wins
+          # with identical, complete content.
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "MissionOS Lechun $RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --latest
           fi
 
           for file in "${files[@]}"; do
