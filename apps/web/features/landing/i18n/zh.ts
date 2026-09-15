@@ -294,6 +294,17 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.87",
+        date: "2026-09-15",
+        title: "严格按当前 Tag 发布版本",
+        changes: [],
+        features: [],
+        improvements: [],
+        fixes: [
+          "确保发布资产始终使用触发发布的当前 Tag，不再选择同一提交上的其他 Tag。",
+        ],
+      },
+      {
         version: "0.4.86",
         date: "2026-09-15",
         title: "更清晰的智能体思考过程与更完整的发布日志",

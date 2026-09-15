@@ -269,6 +269,17 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.87",
+          date: "2026-09-15",
+          title: "현재 Tag를 정확히 사용하여 릴리스",
+          changes: [],
+          features: [],
+          improvements: [],
+          fixes: [
+            "릴리스 결과물이 같은 커밋의 다른 Tag가 아니라 릴리스를 트리거한 현재 Tag를 항상 사용하도록 수정했습니다.",
+          ],
+        },
+        {
           version: "0.4.86",
           date: "2026-09-15",
           title: "더 깔끔한 Agent 추론과 완전한 릴리스 노트",
