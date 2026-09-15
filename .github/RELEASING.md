@@ -17,6 +17,14 @@ The verification job requires those changelog entries, then runs the Go tests
 and `govulncheck` before any publishing job starts. The changelog and
 vulnerability checks are fail-closed by default.
 
+For a stable tag, GitHub Release notes are generated automatically from every
+non-merge commit between the previous stable tag and the new stable tag. Beta
+and release-candidate tags are deliberately excluded as comparison bases. Both
+the CLI and private desktop publishers apply the same generated body, so a
+retry or a different job completion order cannot leave a partial changelog.
+The localized entries above remain the curated product summary shown inside
+MissionOS; they are not used as the complete GitHub Release audit trail.
+
 ## Test / prerelease release
 
 To distribute a build to selected testers without showing it on the public
