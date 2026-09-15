@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.86",
+        date: "2026-09-15",
+        title: "更清晰的智能体思考过程与更完整的发布日志",
+        changes: [],
+        features: [],
+        improvements: [
+          "执行摘要和任务动态现在聚焦智能体的思考内容，工具细节仍保留在完整执行日志中。",
+          "仅在需要时检查钉钉授权状态，减少任务执行期间不必要的处理。",
+          "生产发布现在会完整列出自上一个正式版本以来的提交记录。",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.4.85",
         date: "2026-09-12",
         title: "修复桌面端 daemon 升级后的任务 CLI",
