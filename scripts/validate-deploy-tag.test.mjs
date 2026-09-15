@@ -68,6 +68,8 @@ test("rejects unknown deployment environments", () => {
 test("routes every named deployment through the shared policy guard", () => {
   const sharedWorkflow = readWorkflow("deploy.yml");
   assert.doesNotMatch(sharedWorkflow, /^  workflow_dispatch:/m);
+  assert.match(sharedWorkflow, /SOURCE_REF_TYPE: \$\{\{ github\.ref_type \}\}/);
+  assert.match(sharedWorkflow, /branches cannot be deployed/);
   assert.match(
     sharedWorkflow,
     /node scripts\/validate-deploy-tag\.mjs "\$DEPLOY_ENVIRONMENT" "\$IMAGE_TAG"/,
@@ -79,8 +81,11 @@ test("routes every named deployment through the shared policy guard", () => {
     ["deploy-test.yml", "test"],
   ]) {
     const workflow = readWorkflow(name);
-    assert.match(workflow, /image_tag:\n\s+description:.*\n\s+required: true/);
+    assert.doesNotMatch(workflow, /^  workflow_call:/m);
+    assert.doesNotMatch(workflow, /^    inputs:/m);
     assert.match(workflow, /uses: \.\/\.github\/workflows\/deploy\.yml/);
+    assert.match(workflow, /image_tag: \$\{\{ github\.ref_name \}\}/);
+    assert.match(workflow, /require_tag_ref: true/);
     assert.match(workflow, new RegExp(`environment_name: ${environment}`));
   }
 });

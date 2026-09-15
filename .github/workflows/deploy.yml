@@ -17,6 +17,11 @@ on:
         description: Immutable release image tag to deploy
         required: true
         type: string
+      require_tag_ref:
+        description: Require the workflow to be dispatched from a tag
+        required: false
+        type: boolean
+        default: false
       environment_name:
         description: GitHub environment name
         required: false
@@ -37,7 +42,16 @@ jobs:
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment_name || 'production' }}
           IMAGE_TAG: ${{ inputs.image_tag }}
-        run: node scripts/validate-deploy-tag.mjs "$DEPLOY_ENVIRONMENT" "$IMAGE_TAG"
+          REQUIRE_TAG_REF: ${{ inputs.require_tag_ref }}
+          SOURCE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          # 2026-09-15 coder(lq): Named manual deployments derive the image
+          # version from the selected ref and must never accept a branch.
+          if [[ "$REQUIRE_TAG_REF" == "true" && "$SOURCE_REF_TYPE" != "tag" ]]; then
+            echo "::error::Select a release tag in 'Use workflow from'; branches cannot be deployed."
+            exit 1
+          fi
+          node scripts/validate-deploy-tag.mjs "$DEPLOY_ENVIRONMENT" "$IMAGE_TAG"
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.2.0

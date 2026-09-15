@@ -2,11 +2,6 @@ name: Deploy Multica Test
 
 on:
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Stable, beta, or test tag, for example v0.4.86-test.1
-        required: true
-        type: string
 
 jobs:
   deploy:
@@ -14,6 +9,9 @@ jobs:
     with:
       deploy_path: /deploy/multica-test
       compose_project: multica-test
-      image_tag: ${{ inputs.image_tag }}
+      # 2026-09-15 coder(lq): The selected workflow tag is also the immutable
+      # image tag, so operators choose the release version only once.
+      image_tag: ${{ github.ref_name }}
       environment_name: test
+      require_tag_ref: true
     secrets: inherit
