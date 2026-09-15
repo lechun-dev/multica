@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ShieldCheck, UserMinus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
-import { projectPermissionWritesEnabled, useConfigStore } from "@multica/core/config";
+import { useProjectPermissionWritesEnabled } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import type { IssueAccessControlGrant, TaskAccessMode, TaskAccessSubjectType } from "@multica/core/types";
@@ -36,7 +36,7 @@ const sourceLabel = (source: string) => ({
 export function IssueAccessGrantsDialog({ issueId, projectId }: IssueAccessGrantsDialogProps) {
   const { t } = useT("projects");
   const workspaceId = useWorkspaceId();
-  const writesEnabled = useConfigStore((state) => projectPermissionWritesEnabled(state.projectPermissionRolloutPhase));
+  const writesEnabled = useProjectPermissionWritesEnabled();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [subjectType, setSubjectType] = useState<TaskAccessSubjectType>("user");

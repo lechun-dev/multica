@@ -25,7 +25,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
+import { useFeatureEnabled, useProjectPermissionsEnabled } from "@multica/core/config";
 import {
   BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
   PLUGINS_V1_FLAG,
@@ -81,9 +81,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
     useCurrentWorkspace()?.name ?? t(($) => $.page.workspace_fallback);
   const navigation = useNavigation();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
-  const projectPermissionsEnabled = useConfigStore(
-    (state) => state.projectPermissionsEnabled,
-  );
+  const projectPermissionsEnabled = useProjectPermissionsEnabled();
   const billingEnabled = useFeatureEnabled(
     BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
     false,

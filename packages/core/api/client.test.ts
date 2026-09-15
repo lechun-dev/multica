@@ -293,6 +293,69 @@ describe("ApiClient Plugin preview response schema", () => {
   });
 });
 
+describe("ApiClient task permission response schemas", () => {
+  const malformedResponse = () => new Response(JSON.stringify({
+    scope: "project",
+    roles: "not-an-array",
+    grants: "not-an-array",
+    permissions: "not-an-array",
+    items: "not-an-array",
+    rows: "not-an-array",
+  }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+
+  it("fails closed for every UI-consumed task permission response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => malformedResponse()));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listTaskPermissionRoles()).resolves.toEqual({ scope: "task", roles: [] });
+    await expect(client.getIssueAccessControl("issue-1")).resolves.toMatchObject({
+      issue_id: "issue-1",
+      scope: "task",
+      project_access_mode: "restricted",
+      grants: [],
+    });
+    await expect(client.previewIssueAccessControl("issue-1", {
+      expected_version: 1,
+      project_access_mode: "restricted",
+      grants: [],
+    })).resolves.toMatchObject({
+      before: { issue_id: "issue-1", scope: "task", grants: [] },
+      after: { issue_id: "issue-1", scope: "task", grants: [] },
+      subjects_losing_access: [],
+    });
+    await expect(client.updateIssueAccessControl("issue-1", {
+      expected_version: 1,
+      project_access_mode: "restricted",
+      grants: [],
+    })).resolves.toMatchObject({ issue_id: "issue-1", scope: "task", grants: [] });
+    await expect(client.getIssueEffectiveAccess("issue-1")).resolves.toMatchObject({
+      issue_id: "issue-1",
+      project_access_mode: "restricted",
+      permissions: [],
+      sources: [],
+    });
+    await expect(client.getIssueAccessRequestTarget("route-1")).resolves.toEqual({ id: "", identifier: "" });
+    await expect(client.listIssueAccessRequests("issue-1", true)).resolves.toEqual({ items: [] });
+    await expect(client.createIssueAccessRequest("issue-1", {
+      requested_role: "viewer",
+      idempotency_key: "request-1",
+    })).resolves.toMatchObject({ issue_id: "issue-1", status: "expired" });
+    await expect(client.cancelIssueAccessRequest("issue-1", "request-1"))
+      .resolves.toMatchObject({ issue_id: "issue-1", status: "expired" });
+    await expect(client.reviewIssueAccessRequest("issue-1", "request-1", { action: "approve" }))
+      .resolves.toMatchObject({ issue_id: "issue-1", status: "expired" });
+    await expect(client.listProjectPermissionReport()).resolves.toEqual({
+      rows: [],
+      total: 0,
+      limit: 0,
+      offset: 0,
+    });
+  });
+});
+
 describe("ApiClient Plugin surface bridge routes", () => {
   it("relays Action API calls through the session-only bridge prefix", async () => {
     const fetchMock = vi.fn().mockResolvedValue(

@@ -420,6 +420,16 @@ import {
   ProjectAccessGrantSchema,
   ProjectAccessGrantsResponseSchema,
   EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE,
+  TaskPermissionRolesResponseSchema,
+  EMPTY_TASK_PERMISSION_ROLES_RESPONSE,
+  IssueAccessControlSchema,
+  IssueAccessControlPreviewSchema,
+  EffectiveIssueAccessSchema,
+  IssueAccessRequestSchema,
+  IssueAccessRequestsResponseSchema,
+  IssueAccessRequestTargetSchema,
+  ProjectPermissionReportResponseSchema,
+  EMPTY_PROJECT_PERMISSION_REPORT_RESPONSE,
   ProjectAuthorizationOrganizationsResponseSchema,
   ProjectAuthorizationDingTalkSyncResultSchema,
   ProjectAuthorizationImportPreviewSchema,
@@ -692,6 +702,41 @@ function workspaceHeader(
   slug?: string,
 ): Record<string, string> | undefined {
   return slug ? { "X-Workspace-Slug": slug } : undefined;
+}
+
+function emptyIssueAccessControl(issueId: string): IssueAccessControl {
+  return {
+    workspace_id: "",
+    issue_id: issueId,
+    scope: "task",
+    project_access_mode: "restricted",
+    policy_version: 0,
+    grants: [],
+  };
+}
+
+function emptyEffectiveIssueAccess(issueId: string): EffectiveIssueAccess {
+  return {
+    workspace_id: "",
+    issue_id: issueId,
+    project_access_mode: "restricted",
+    policy_version: 0,
+    permissions: [],
+    sources: [],
+  };
+}
+
+function emptyIssueAccessRequest(issueId: string): IssueAccessRequest {
+  return {
+    id: "",
+    workspace_id: "",
+    issue_id: issueId,
+    requester_user_id: "",
+    requested_role: "",
+    status: "expired",
+    created_at: "",
+    updated_at: "",
+  };
 }
 
 function dingTalkGroupSearch(params: ListDingTalkGroupsParams): string {
@@ -3881,43 +3926,91 @@ export class ApiClient {
   }
 
   async listTaskPermissionRoles(): Promise<TaskPermissionRolesResponse> {
-    return this.fetch("/api/task-permission-roles");
+    const raw = await this.fetch<unknown>("/api/task-permission-roles");
+    return parseWithFallback(
+      raw,
+      TaskPermissionRolesResponseSchema,
+      EMPTY_TASK_PERMISSION_ROLES_RESPONSE,
+      { endpoint: "GET /api/task-permission-roles" },
+    );
   }
 
   async getIssueAccessControl(issueId: string): Promise<IssueAccessControl> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-control`);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-control`,
+    );
+    return parseWithFallback(raw, IssueAccessControlSchema, emptyIssueAccessControl(issueId), {
+      endpoint: "GET /api/issues/:id/access-control",
+    });
   }
 
   async previewIssueAccessControl(
     issueId: string,
     data: IssueAccessControlUpdate,
   ): Promise<IssueAccessControlPreview> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-control/preview`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-control/preview`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    const fallback = emptyIssueAccessControl(issueId);
+    return parseWithFallback(
+      raw,
+      IssueAccessControlPreviewSchema,
+      {
+        before: fallback,
+        after: fallback,
+        subjects_losing_access: [],
+        subjects_with_other_source: [],
+        affected_effects: [],
+      },
+      { endpoint: "POST /api/issues/:id/access-control/preview" },
+    );
   }
 
   async updateIssueAccessControl(
     issueId: string,
     data: IssueAccessControlUpdate,
   ): Promise<IssueAccessControl> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-control`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-control`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(raw, IssueAccessControlSchema, emptyIssueAccessControl(issueId), {
+      endpoint: "PATCH /api/issues/:id/access-control",
     });
   }
 
   async getIssueEffectiveAccess(issueId: string): Promise<EffectiveIssueAccess> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/effective-access`);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/effective-access`,
+    );
+    return parseWithFallback(raw, EffectiveIssueAccessSchema, emptyEffectiveIssueAccess(issueId), {
+      endpoint: "GET /api/issues/:id/effective-access",
+    });
   }
 
   async getIssueAccessRequestTarget(routeId: string): Promise<IssueAccessRequestTarget> {
-    return this.fetch(`/api/issues/access-request-target/${encodeURIComponent(routeId)}`);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/access-request-target/${encodeURIComponent(routeId)}`,
+    );
+    return parseWithFallback(raw, IssueAccessRequestTargetSchema, { id: "", identifier: "" }, {
+      endpoint: "GET /api/issues/access-request-target/:routeId",
+    });
   }
 
   async listIssueAccessRequests(issueId: string, mine = false): Promise<{ items: IssueAccessRequest[] }> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests${mine ? "?mine=true" : ""}`);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-requests${mine ? "?mine=true" : ""}`,
+    );
+    return parseWithFallback(raw, IssueAccessRequestsResponseSchema, { items: [] }, {
+      endpoint: "GET /api/issues/:id/access-requests",
+    });
   }
 
   async createIssueAccessRequest(issueId: string, data: {
@@ -3926,15 +4019,22 @@ export class ApiClient {
     expires_at?: string;
     idempotency_key: string;
   }): Promise<IssueAccessRequest> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${encodeURIComponent(issueId)}/access-requests`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssueAccessRequestSchema, emptyIssueAccessRequest(issueId), {
+      endpoint: "POST /api/issues/:id/access-requests",
     });
   }
 
   async cancelIssueAccessRequest(issueId: string, requestId: string): Promise<IssueAccessRequest> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests/${encodeURIComponent(requestId)}/cancel`, {
-      method: "POST",
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-requests/${encodeURIComponent(requestId)}/cancel`,
+      { method: "POST" },
+    );
+    return parseWithFallback(raw, IssueAccessRequestSchema, emptyIssueAccessRequest(issueId), {
+      endpoint: "POST /api/issues/:id/access-requests/:requestId/cancel",
     });
   }
 
@@ -3942,9 +4042,15 @@ export class ApiClient {
     action: "approve" | "reject";
     comment?: string;
   }): Promise<IssueAccessRequest> {
-    return this.fetch(`/api/issues/${encodeURIComponent(issueId)}/access-requests/${encodeURIComponent(requestId)}/review`, {
-      method: "POST",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-requests/${encodeURIComponent(requestId)}/review`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(raw, IssueAccessRequestSchema, emptyIssueAccessRequest(issueId), {
+      endpoint: "POST /api/issues/:id/access-requests/:requestId/review",
     });
   }
 
@@ -3963,7 +4069,13 @@ export class ApiClient {
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.offset !== undefined) q.set("offset", String(params.offset));
     if (params.export) q.set("export", "true");
-    return this.fetch(`/api/project-permissions/report?${q}`);
+    const raw = await this.fetch<unknown>(`/api/project-permissions/report?${q}`);
+    return parseWithFallback(
+      raw,
+      ProjectPermissionReportResponseSchema,
+      EMPTY_PROJECT_PERMISSION_REPORT_RESPONSE,
+      { endpoint: "GET /api/project-permissions/report" },
+    );
   }
 
   async listProjectPermissionRoles(): Promise<ProjectPermissionRolesResponse> {

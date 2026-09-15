@@ -133,3 +133,14 @@ export function useFeatureEnabled(key: string, defaultValue = false): boolean {
     featureFlagEnabled(state.featureFlags, key, defaultValue),
   );
 }
+
+/** Read-only rollout adapters keep view packages independent of config-store internals. */
+export function useProjectPermissionsEnabled(): boolean {
+  return useConfigStore((state) => state.projectPermissionsEnabled);
+}
+
+export function useProjectPermissionWritesEnabled(): boolean {
+  return useConfigStore((state) =>
+    projectPermissionWritesEnabled(state.projectPermissionRolloutPhase),
+  );
+}

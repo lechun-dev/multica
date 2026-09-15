@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, UserMinus } from "lucide-react";
 import { api } from "@multica/core/api";
-import { projectPermissionWritesEnabled, useConfigStore } from "@multica/core/config";
+import { useProjectPermissionsEnabled, useProjectPermissionWritesEnabled } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
@@ -65,8 +65,8 @@ export function ProjectPermissionsDialog({
   // 2026-09-01 coder(lq): Keep the compatibility switch sourced from the
   // server-advertised capability so older deployments continue using their
   // legacy membership endpoint without an untyped runtime probe.
-  const unifiedApi = useConfigStore((state) => state.projectPermissionsEnabled);
-  const writesEnabled = useConfigStore((state) => projectPermissionWritesEnabled(state.projectPermissionRolloutPhase));
+  const unifiedApi = useProjectPermissionsEnabled();
+  const writesEnabled = useProjectPermissionWritesEnabled();
   const queryClient = useQueryClient();
   const [internalOpen, setInternalOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());

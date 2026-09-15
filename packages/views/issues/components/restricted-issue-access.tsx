@@ -6,18 +6,28 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import { projectPermissionWritesEnabled, useConfigStore } from "@multica/core/config";
+import { useProjectPermissionWritesEnabled } from "@multica/core/config";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { Button } from "@multica/ui/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { toast } from "sonner";
 
 export function RestrictedIssueAccess({ issueId, identifier }: { issueId: string; identifier: string }) {
-  const writesEnabled = useConfigStore((state) => projectPermissionWritesEnabled(state.projectPermissionRolloutPhase));
+  const workspaceId = useWorkspaceId();
+  const writesEnabled = useProjectPermissionWritesEnabled();
   const [role, setRole] = useState("viewer");
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const roles = useQuery({ queryKey: ["task-permission-roles", "restricted"], queryFn: () => api.listTaskPermissionRoles() });
-  const requests = useQuery({ queryKey: ["issue-access-requests", issueId, "mine"], queryFn: () => api.listIssueAccessRequests(issueId, true) });
+  const roles = useQuery({
+    queryKey: ["task-permission-roles", workspaceId, "restricted"],
+    queryFn: () => api.listTaskPermissionRoles(),
+    enabled: !!workspaceId,
+  });
+  const requests = useQuery({
+    queryKey: ["issue-access-requests", workspaceId, issueId, "mine"],
+    queryFn: () => api.listIssueAccessRequests(issueId, true),
+    enabled: !!workspaceId,
+  });
 
   const submit = async () => {
     setSubmitting(true);

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -509,9 +510,12 @@ func (h *Handler) enqueueAccessRequestNotification(ctx context.Context, tx pgx.T
 		body = fmt.Sprintf("任务角色 %s 的申请已%s", item.RequestedRole, map[string]string{accessRequestApproved: "批准", accessRequestRejected: "拒绝", accessRequestCancelled: "取消", accessRequestExpired: "过期"}[event])
 		severity = "info"
 	}
-	details, _ := json.Marshal(map[string]any{"access_request_id": item.ID, "event": event, "requested_role": item.RequestedRole})
+	details, err := json.Marshal(map[string]any{"access_request_id": item.ID, "event": event, "requested_role": item.RequestedRole})
+	if err != nil {
+		return fmt.Errorf("marshal task access request notification details: %w", err)
+	}
 	var inboxID string
-	err := tx.QueryRow(ctx, `WITH delivery AS (INSERT INTO projectauth_access_request_notifications (workspace_id,request_id,recipient_user_id,event,inbox_item_id) VALUES ($1,$2,$3,$4,gen_random_uuid()) ON CONFLICT (workspace_id,request_id,recipient_user_id,event) DO NOTHING RETURNING inbox_item_id) INSERT INTO inbox_item (id,workspace_id,recipient_type,recipient_id,type,severity,issue_id,title,body,actor_type,actor_id,details) SELECT inbox_item_id,$1,'member',$3,'task_access_request',$5,$6,$7,$8,'member',$9,$10::jsonb FROM delivery RETURNING id::text`, item.WorkspaceID, item.ID, recipientID, deliveryEvent, severity, item.IssueID, title, body, senderID, details).Scan(&inboxID)
+	err = tx.QueryRow(ctx, `WITH delivery AS (INSERT INTO projectauth_access_request_notifications (workspace_id,request_id,recipient_user_id,event,inbox_item_id) VALUES ($1,$2,$3,$4,gen_random_uuid()) ON CONFLICT (workspace_id,request_id,recipient_user_id,event) DO NOTHING RETURNING inbox_item_id) INSERT INTO inbox_item (id,workspace_id,recipient_type,recipient_id,type,severity,issue_id,title,body,actor_type,actor_id,details) SELECT inbox_item_id,$1,'member',$3,'task_access_request',$5,$6,$7,$8,'member',$9,$10::jsonb FROM delivery RETURNING id::text`, item.WorkspaceID, item.ID, recipientID, deliveryEvent, severity, item.IssueID, title, body, senderID, details).Scan(&inboxID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return wrapProjectPermissionRepositoryError(err)
 	}
@@ -526,10 +530,23 @@ func (h *Handler) enqueueAccessRequestNotification(ctx context.Context, tx pgx.T
 	}
 	_, dingErr := tx.Exec(ctx, `INSERT INTO dingtalk_personal_message (workspace_id,comment_id,sender_user_id,sender_ding_user_id,sender_union_id,sender_corp_id,recipient_user_id,recipient_ding_user_id,markdown,idempotency_key) SELECT $1,$2,$3,sender.ding_user_id,NULLIF(sender.union_id,''),NULL,$4,recipient.ding_user_id,$5,'task-access-request:'||$2::text||':'||$4::text||':'||$6 FROM LATERAL (SELECT COALESCE(ding_user_id,'') ding_user_id,COALESCE(union_id,'') union_id FROM dingtalk_notify_identities WHERE multica_user_id=$3 AND active=true ORDER BY updated_at DESC LIMIT 1) sender CROSS JOIN LATERAL (SELECT ding_user_id FROM dingtalk_notify_identities WHERE multica_user_id=$4 AND active=true AND login_only=false AND COALESCE(ding_user_id,'')<>'' ORDER BY updated_at DESC LIMIT 1) recipient ON CONFLICT (idempotency_key) DO NOTHING`, item.WorkspaceID, item.ID, senderID, recipientID, body, event)
 	if dingErr != nil {
-		_, _ = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT access_request_dingtalk`)
-		_ = (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(ctx, projectauth.AuthorizationAuditEvent{WorkspaceID: item.WorkspaceID, IssueID: item.IssueID, ActorUserID: senderID, Action: "task_access_request_dingtalk_enqueue_failed", Details: map[string]any{"request_id": item.ID, "recipient_user_id": recipientID}})
+		if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT access_request_dingtalk`); rollbackErr != nil {
+			return fmt.Errorf("rollback task access request DingTalk savepoint after %v: %w", dingErr, rollbackErr)
+		}
+		if auditErr := (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(ctx, projectauth.AuthorizationAuditEvent{WorkspaceID: item.WorkspaceID, IssueID: item.IssueID, ActorUserID: senderID, Action: "task_access_request_dingtalk_enqueue_failed", Details: map[string]any{"request_id": item.ID, "recipient_user_id": recipientID, "error": dingErr.Error()}}); auditErr != nil {
+			slog.ErrorContext(ctx, "record task access request DingTalk enqueue failure",
+				"workspace_id", item.WorkspaceID,
+				"issue_id", item.IssueID,
+				"request_id", item.ID,
+				"recipient_user_id", recipientID,
+				"enqueue_error", dingErr,
+				"audit_error", auditErr,
+			)
+		}
 	}
-	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT access_request_dingtalk`)
+	if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT access_request_dingtalk`); err != nil {
+		return fmt.Errorf("release task access request DingTalk savepoint: %w", err)
+	}
 	return nil
 }
 

@@ -5,7 +5,7 @@ import { Download, FileText, Loader2, RefreshCw, Upload } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { projectPermissionWritesEnabled, useConfigStore } from "@multica/core/config";
+import { useProjectPermissionWritesEnabled } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -32,7 +32,7 @@ export function ProjectAuthorizationOrganizationsTab() {
   const workspaceId = useWorkspaceId();
   const workspaceName = useCurrentWorkspace()?.name;
   const currentUser = useAuthStore((state) => state.user);
-  const writesEnabled = useConfigStore((state) => projectPermissionWritesEnabled(state.projectPermissionRolloutPhase));
+  const writesEnabled = useProjectPermissionWritesEnabled();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);

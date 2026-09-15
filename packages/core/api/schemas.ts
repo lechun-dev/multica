@@ -3470,6 +3470,153 @@ export const ProjectAccessGrantsResponseSchema = z.object({
 export type ProjectAccessGrantsResponse = z.infer<typeof ProjectAccessGrantsResponseSchema>;
 export const EMPTY_PROJECT_ACCESS_GRANTS_RESPONSE: ProjectAccessGrantsResponse = { grants: [], total: 0 };
 
+const PermissionResourceScopeSchema = z.enum(["workspace", "project", "task"]);
+
+export const TaskPermissionRoleSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  key: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  is_system: z.boolean().default(false),
+  scope: z.literal("task"),
+  permissions: z.array(z.string()).default([]),
+}).loose();
+
+export const TaskPermissionRolesResponseSchema = z.object({
+  scope: z.literal("task"),
+  roles: z.array(TaskPermissionRoleSchema).default([]),
+}).loose();
+
+export const EMPTY_TASK_PERMISSION_ROLES_RESPONSE = { scope: "task" as const, roles: [] };
+
+export const IssueAccessControlGrantSchema = z.object({
+  subject_type: z.enum(["user", "organization", "everyone"]),
+  subject_id: z.string().optional(),
+  role: z.string(),
+  scope: z.literal("task"),
+  expires_at: z.string().optional(),
+}).loose();
+
+export const IssueAccessControlSchema = z.object({
+  workspace_id: z.string(),
+  issue_id: z.string(),
+  project_id: z.string().optional(),
+  scope: z.literal("task"),
+  project_access_mode: z.enum(["inherit", "restricted"]),
+  policy_version: z.number(),
+  grants: z.array(IssueAccessControlGrantSchema).default([]),
+}).loose();
+
+const EffectiveAccessResourceRefSchema = z.object({
+  scope: PermissionResourceScopeSchema,
+  id: z.string(),
+}).loose();
+
+export const EffectiveTaskPermissionSourceSchema = z.object({
+  permission: z.string(),
+  source: z.string(),
+  underlying_source: z.string().optional(),
+  subject_type: z.string().optional(),
+  subject_id: z.string().optional(),
+  role: z.string().optional(),
+  scope: PermissionResourceScopeSchema.optional(),
+  grant_id: z.string().optional(),
+  grant_source: z.string().optional(),
+  granted_by: z.string().optional(),
+  origin_kind: z.string().optional(),
+  origin_id: z.string().optional(),
+  expires_at: z.string().optional(),
+  source_resource: EffectiveAccessResourceRefSchema,
+  underlying_resource: EffectiveAccessResourceRefSchema.optional(),
+  target_resource: EffectiveAccessResourceRefSchema,
+  policy_version: z.number(),
+}).loose();
+
+export const EffectiveIssueAccessSchema = z.object({
+  workspace_id: z.string(),
+  issue_id: z.string(),
+  project_id: z.string().optional(),
+  project_access_mode: z.enum(["inherit", "restricted"]),
+  policy_version: z.number(),
+  permissions: z.array(z.string()).default([]),
+  sources: z.array(EffectiveTaskPermissionSourceSchema).default([]),
+}).loose();
+
+export const IssueAccessControlPreviewSchema = z.object({
+  before: IssueAccessControlSchema,
+  after: IssueAccessControlSchema,
+  subjects_losing_access: z.array(z.string()).default([]),
+  subjects_with_other_source: z.array(z.string()).default([]),
+  affected_effects: z.array(z.string()).default([]),
+}).loose();
+
+export const IssueAccessRequestSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  issue_id: z.string(),
+  requester_user_id: z.string(),
+  requested_role: z.string(),
+  reason: z.string().optional(),
+  status: z.enum(["pending", "approved", "rejected", "cancelled", "expired"]),
+  reviewer_user_id: z.string().optional(),
+  review_comment: z.string().optional(),
+  expires_at: z.string().optional(),
+  reviewed_at: z.string().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const IssueAccessRequestsResponseSchema = z.object({
+  items: z.array(IssueAccessRequestSchema).default([]),
+}).loose();
+
+export const IssueAccessRequestTargetSchema = z.object({
+  id: z.string(),
+  identifier: z.string(),
+}).loose();
+
+export const ProjectPermissionReportRowSchema = z.object({
+  scope: z.enum(["project", "issue"]),
+  project_id: z.string(),
+  project_title: z.string(),
+  issue_id: z.string().optional(),
+  issue_title: z.string().optional(),
+  user_id: z.string(),
+  user_name: z.string(),
+  user_email: z.string(),
+  subject_type: z.enum(["user", "role", "organization", "everyone"]),
+  subject_id: z.string().optional(),
+  workspace_role: z.string().optional(),
+  project_role: z.string().optional(),
+  role_scope: PermissionResourceScopeSchema.optional(),
+  permission: z.string(),
+  source: z.string(),
+  grant_id: z.string().optional(),
+  granted_by: z.string().optional(),
+  created_at: z.string().optional(),
+  expires_at: z.string().optional(),
+  source_resource_scope: PermissionResourceScopeSchema.optional(),
+  source_resource_id: z.string().optional(),
+  project_access_mode: z.enum(["inherit", "restricted"]).optional(),
+  policy_version: z.number().optional(),
+  inherited_from_project: z.boolean(),
+}).loose();
+
+export const ProjectPermissionReportResponseSchema = z.object({
+  rows: z.array(ProjectPermissionReportRowSchema).default([]),
+  total: z.number().default(0),
+  limit: z.number().default(0),
+  offset: z.number().default(0),
+}).loose();
+
+export const EMPTY_PROJECT_PERMISSION_REPORT_RESPONSE = {
+  rows: [],
+  total: 0,
+  limit: 0,
+  offset: 0,
+};
+
 export const ProjectAuthorizationOrganizationSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
