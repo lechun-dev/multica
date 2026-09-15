@@ -5398,6 +5398,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		"reuse_workdir", task.PriorWorkDir != "",
 	)
 
+	phaseRecorder := newTaskPhaseRecorder(taskLog, time.Now)
+	phaseRecorder.Mark(taskPhaseClaimed)
+	defer phaseRecorder.Mark(taskPhaseFinished)
+	ctx = withTaskPhaseRecorder(ctx, phaseRecorder)
+
 	// If the task targets a project_resource of type local_directory that
 	// is pinned to this daemon, acquire the path mutex before runner.run
 	// so the server-side state machine is dispatched →

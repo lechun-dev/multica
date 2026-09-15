@@ -211,6 +211,7 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityPlatformSkillV1,
 		protocol.DaemonCapabilityDingTalkPersonalMessageV1,
+		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 	}
 }
 
