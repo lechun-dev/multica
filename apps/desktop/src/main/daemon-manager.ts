@@ -1,4 +1,11 @@
-import { app, ipcMain, BrowserWindow, Notification, shell } from "electron";
+import {
+  app,
+  ipcMain,
+  BrowserWindow,
+  dialog,
+  Notification,
+  shell,
+} from "electron";
 import { execFile } from "child_process";
 import {
   readFile,
@@ -19,6 +26,7 @@ import { homedir, hostname } from "os";
 import type {
   DaemonStatus,
   DaemonPrefs,
+  DaemonActionResult,
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
 import { daemonStatusAlive } from "../shared/daemon-types";
@@ -66,9 +74,21 @@ import {
   isAuthStatusError,
   type AuthProbeResult,
 } from "./daemon-auth-probe";
+import {
+  codexCandidatesForSelection,
+  codexDiscoveryCandidates,
+  findUsableCodexCli,
+  isAgentCliMissingError,
+  verifyCodexCli,
+} from "./agent-cli-repair";
 
 const POLL_INTERVAL_MS = 5_000;
 const PREFS_PATH = join(homedir(), ".multica", "desktop_prefs.json");
+const AGENT_PATHS_PATH = join(
+  homedir(),
+  ".multica",
+  "desktop_agent_paths.json",
+);
 const LOG_TAIL_RETRY_MS = 2_000;
 const LOG_TAIL_MAX_RETRIES = 5;
 // How long a start may sit in "starting" (with no /health) before we probe the
@@ -89,6 +109,10 @@ const HEALTH_PROBE_TIMEOUT_MS = 2_000;
 const RECOVERY_HEALTH_PROBE_TIMEOUT_MS = 10_000;
 
 const DEFAULT_PREFS: DaemonPrefs = { autoStart: true, autoStop: false };
+
+interface StoredAgentPaths {
+  codex?: string;
+}
 
 // Always a resolved Desktop-owned profile. "Not resolved yet" is represented by
 // `null` at every call site, never by an empty name — see daemon-profile.ts.
@@ -987,6 +1011,42 @@ async function savePrefs(prefs: DaemonPrefs): Promise<void> {
   await writeFile(PREFS_PATH, JSON.stringify(prefs, null, 2), "utf-8");
 }
 
+async function loadStoredAgentPaths(): Promise<StoredAgentPaths> {
+  try {
+    const raw = await readFile(AGENT_PATHS_PATH, "utf-8");
+    const parsed = JSON.parse(raw) as StoredAgentPaths;
+    return typeof parsed.codex === "string" ? { codex: parsed.codex } : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveCodexPath(codexPath: string | null): Promise<void> {
+  const current = await loadStoredAgentPaths();
+  if (codexPath) current.codex = codexPath;
+  else delete current.codex;
+  await mkdir(join(homedir(), ".multica"), { recursive: true });
+  await writeFile(
+    AGENT_PATHS_PATH,
+    JSON.stringify(current, null, 2),
+    "utf-8",
+  );
+}
+
+async function validatedStoredCodexPath(): Promise<string | null> {
+  const stored = (await loadStoredAgentPaths()).codex;
+  if (!stored) return null;
+  if (await verifyCodexCli(stored)) return stored;
+
+  // 2026-09-16 coder(lq): Never inject a stale explicit path into the daemon.
+  try {
+    await saveCodexPath(null);
+  } catch (error) {
+    console.warn("[daemon] failed to clear stale Codex CLI path", error);
+  }
+  return null;
+}
+
 async function clearToken(): Promise<void> {
   const active = await ensureActiveProfile();
   // Nothing of ours to clear yet, and the default CLI profile is not ours to
@@ -1081,11 +1141,18 @@ async function probeLocalRuntimes(): Promise<LocalRuntimeProbe> {
   if (!bin) return { probeResult: "error" };
   const active = await ensureActiveProfile();
   if (!active) return { probeResult: "error" };
+  const storedCodexPath = process.env.MULTICA_CODEX_PATH?.trim()
+    ? null
+    : await validatedStoredCodexPath();
   return new Promise((resolve) => {
     execFile(
       bin,
       ["daemon", "probe-runtimes", ...profileArgs(active.name)],
-      { timeout: 15_000, env: desktopSpawnEnv(), maxBuffer: 64 * 1024 },
+      {
+        timeout: 15_000,
+        env: desktopSpawnEnv(storedCodexPath),
+        maxBuffer: 64 * 1024,
+      },
       (error, stdout) => {
         if (error) {
           resolve({ probeResult: "error" });
@@ -1140,17 +1207,71 @@ async function probeLocalRuntimes(): Promise<LocalRuntimeProbe> {
 // hide CLI self-update UI. Computed lazily so it picks up the PATH fix
 // applied by fix-path in main/index.ts — as a top-level const it would
 // snapshot process.env at import time, before that block runs.
-function desktopSpawnEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, MULTICA_LAUNCHED_BY: "desktop" };
+function desktopSpawnEnv(codexPath?: string | null): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    MULTICA_LAUNCHED_BY: "desktop",
+  };
+  if (codexPath) env.MULTICA_CODEX_PATH = codexPath;
+  return env;
+}
+
+async function discoverUsableCodexPath(): Promise<string | null> {
+  const candidates = await codexDiscoveryCandidates({
+    home: homedir(),
+  });
+  return findUsableCodexCli(candidates);
 }
 
 function scheduleStatusRefresh(): void {
   setTimeout(() => void pollOnce(), 0);
 }
 
+interface DaemonStartAttempt {
+  success: boolean;
+  error?: string;
+  agentCliMissing?: boolean;
+}
+
+function executeDaemonStart(
+  bin: string,
+  args: string[],
+  codexPath?: string | null,
+): Promise<DaemonStartAttempt> {
+  return new Promise((resolve) => {
+    execFile(
+      bin,
+      args,
+      {
+        timeout: DAEMON_START_EXEC_TIMEOUT_MS,
+        env: desktopSpawnEnv(codexPath),
+      },
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolve({ success: true });
+          return;
+        }
+        const details = [error.message, stderr?.trim(), stdout?.trim()]
+          .filter(Boolean)
+          .join("\n");
+        resolve({
+          success: false,
+          error: details || error.message,
+          agentCliMissing: isAgentCliMissingError(
+            error.message,
+            stderr,
+            stdout,
+          ),
+        });
+      },
+    );
+  });
+}
+
 async function startDaemon(
   recoveryProfile?: ActiveProfile,
-): Promise<{ success: boolean; error?: string }> {
+  selectedCodexPath?: string,
+): Promise<DaemonActionResult> {
   const bin = await resolveCliBinary();
   if (!bin) return { success: false, error: "multica CLI is not installed" };
 
@@ -1202,27 +1323,88 @@ async function startDaemon(
   sendStatus({ state: "starting" });
 
   const args = ["daemon", "start", ...profileArgs(active.name)];
+  const explicitCodexPath = process.env.MULTICA_CODEX_PATH?.trim();
+  const storedCodexPath =
+    selectedCodexPath ??
+    (explicitCodexPath ? null : await validatedStoredCodexPath());
+  let attempt = await executeDaemonStart(bin, args, storedCodexPath);
 
-  return new Promise((resolve) => {
-    execFile(
-      bin,
-      args,
-      { timeout: DAEMON_START_EXEC_TIMEOUT_MS, env: desktopSpawnEnv() },
-      (err) => {
-        if (err) {
-          currentState = "stopped";
-          sendStatus({ state: "stopped" });
-          resolve({ success: false, error: err.message });
-          return;
-        }
-        // Stay in "starting" until pollOnce confirms /health — the CLI
-        // returning 0 only means the supervisor was spawned, not that the
-        // daemon process is already listening.
+  if (
+    !attempt.success &&
+    attempt.agentCliMissing &&
+    !selectedCodexPath &&
+    !explicitCodexPath
+  ) {
+    const discoveredCodexPath = await discoverUsableCodexPath();
+    if (discoveredCodexPath) {
+      // 2026-09-16 coder(lq): Persist only a CLI that passed `codex --version`.
+      try {
+        await saveCodexPath(discoveredCodexPath);
+      } catch (error) {
+        console.warn("[daemon] failed to persist repaired Codex CLI path", error);
+      }
+      console.log(
+        `[daemon] repaired Codex CLI path: ${discoveredCodexPath}; retrying startup`,
+      );
+      attempt = await executeDaemonStart(bin, args, discoveredCodexPath);
+      if (attempt.success) {
         scheduleStatusRefresh();
-        resolve({ success: true });
-      },
-    );
-  });
+        return { success: true, repaired: true };
+      }
+    }
+  }
+
+  if (!attempt.success) {
+    currentState = "stopped";
+    sendStatus({ state: "stopped" });
+    return {
+      success: false,
+      error: attempt.error,
+      reason: attempt.agentCliMissing ? "agent_cli_not_found" : undefined,
+    };
+  }
+
+  // Stay in "starting" until pollOnce confirms /health — the CLI returning 0
+  // only means the supervisor was spawned, not that it is already listening.
+  scheduleStatusRefresh();
+  return { success: true };
+}
+
+async function selectCodexAndStart(): Promise<DaemonActionResult> {
+  const options: Electron.OpenDialogOptions = {
+    title: "Select Codex",
+    message: "Select ChatGPT.app, Codex.app, or the codex executable.",
+    buttonLabel: "Use Codex",
+    properties: ["openFile"],
+  };
+  const owner = getMainWindow();
+  const selection = owner
+    ? await dialog.showOpenDialog(owner, options)
+    : await dialog.showOpenDialog(options);
+
+  if (selection.canceled || !selection.filePaths[0]) {
+    return { success: false, reason: "selection_cancelled" };
+  }
+
+  const codexPath = await findUsableCodexCli(
+    codexCandidatesForSelection(selection.filePaths[0]),
+  );
+  if (!codexPath) {
+    return {
+      success: false,
+      reason: "agent_cli_not_found",
+      error: "The selected app does not contain a working Codex CLI.",
+    };
+  }
+
+  try {
+    await saveCodexPath(codexPath);
+  } catch (error) {
+    console.warn("[daemon] failed to persist selected Codex CLI path", error);
+  }
+  externalDaemonObserved = false;
+  setDesiredDaemonRunning(true, true);
+  return startDaemon(undefined, codexPath);
 }
 
 /**
@@ -1574,6 +1756,9 @@ export function setupDaemonManager(
     setDesiredDaemonRunning(true, true);
     return lifecycleOperations.runForeground(() => startDaemon());
   });
+  ipcMain.handle("daemon:select-codex", () =>
+    lifecycleOperations.runForeground(() => selectCodexAndStart()),
+  );
   ipcMain.handle("daemon:stop", () => {
     setDesiredDaemonRunning(false, true);
     return lifecycleOperations.runForeground(() => stopDaemon());

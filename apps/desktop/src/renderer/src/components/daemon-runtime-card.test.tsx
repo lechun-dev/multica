@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import type { DaemonStatus } from "../../../shared/daemon-types";
 
@@ -9,6 +9,9 @@ const translations = {
       view_logs: "查看日志",
       managed_externally: "由应用外部管理",
       start: "启动",
+      start_failed: "启动守护进程失败",
+      agent_cli_missing_description: "没有找到可用的 Codex。",
+      select_codex: "选择 Codex",
       restart: "重启",
       stop: "停止",
     },
@@ -45,12 +48,18 @@ vi.mock("sonner", () => ({
 
 import { DaemonRuntimeActions } from "./daemon-runtime-card";
 
-function stubDaemonAPI(status: DaemonStatus) {
+function stubDaemonAPI(
+  status: DaemonStatus,
+  overrides: Record<string, unknown> = {},
+) {
   Object.defineProperty(window, "daemonAPI", {
     configurable: true,
     value: {
       getStatus: vi.fn().mockResolvedValue(status),
       onStatusChange: vi.fn(() => () => {}),
+      start: vi.fn().mockResolvedValue({ success: true }),
+      selectCodex: vi.fn().mockResolvedValue({ success: true }),
+      ...overrides,
     },
   });
 }
@@ -90,5 +99,22 @@ describe("DaemonRuntimeActions — recovery budget", () => {
     render(<DaemonRuntimeActions />);
 
     expect(await screen.findByText("启动")).toBeInTheDocument();
+  });
+
+  it("offers Codex selection after startup reports that no agent CLI is available", async () => {
+    stubDaemonAPI(
+      { state: "stopped" },
+      {
+        start: vi.fn().mockResolvedValue({
+          success: false,
+          reason: "agent_cli_not_found",
+        }),
+      },
+    );
+    render(<DaemonRuntimeActions />);
+
+    fireEvent.click(await screen.findByText("启动"));
+
+    expect(await screen.findByText("选择 Codex")).toBeInTheDocument();
   });
 });

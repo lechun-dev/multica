@@ -8,6 +8,7 @@ import {
   ScrollText,
   LogIn,
   Info,
+  FolderOpen,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -39,6 +40,7 @@ export function DaemonRuntimeActions() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [agentCliMissing, setAgentCliMissing] = useState(false);
 
   const wsId = useWorkspaceId();
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
@@ -70,17 +72,51 @@ export function DaemonRuntimeActions() {
     const unsub = window.daemonAPI.onStatusChange((s) => {
       setStatus(s);
       setActionLoading(false);
+      if (s.state === "running") setAgentCliMissing(false);
     });
     return unsub;
   }, []);
+
+  const handleSelectCodex = useCallback(async () => {
+    setActionLoading(true);
+    const result = await window.daemonAPI.selectCodex();
+    setActionLoading(false);
+    if (result.reason === "selection_cancelled") return;
+    if (!result.success) {
+      setAgentCliMissing(result.reason === "agent_cli_not_found");
+      toast.error(t(($) => $.desktop.daemon.start_failed), {
+        description:
+          result.reason === "agent_cli_not_found"
+            ? t(($) => $.desktop.daemon.selected_codex_invalid)
+            : result.error,
+      });
+      return;
+    }
+
+    setAgentCliMissing(false);
+    toast.success(t(($) => $.desktop.daemon.agent_cli_repaired), {
+      description: t(($) => $.desktop.daemon.agent_cli_repaired_description),
+    });
+  }, [t]);
 
   const handleStart = useCallback(async () => {
     setActionLoading(true);
     const result = await window.daemonAPI.start();
     if (!result.success) {
       setActionLoading(false);
+      setAgentCliMissing(result.reason === "agent_cli_not_found");
       toast.error(t(($) => $.desktop.daemon.start_failed), {
-        description: result.error,
+        description:
+          result.reason === "agent_cli_not_found"
+            ? t(($) => $.desktop.daemon.agent_cli_missing_description)
+            : result.error,
+      });
+      return;
+    }
+    setAgentCliMissing(false);
+    if (result.repaired) {
+      toast.success(t(($) => $.desktop.daemon.agent_cli_repaired), {
+        description: t(($) => $.desktop.daemon.agent_cli_repaired_description),
       });
     }
   }, [t]);
@@ -189,14 +225,27 @@ export function DaemonRuntimeActions() {
         )}
 
         {isStopped && (
-          <Button size="sm" onClick={handleStart} disabled={actionLoading}>
-            {actionLoading ? (
-              <Activity className="size-3.5 mr-1.5 animate-pulse" />
-            ) : (
-              <Play className="size-3.5 mr-1.5" />
+          <>
+            {agentCliMissing && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSelectCodex}
+                disabled={actionLoading}
+              >
+                <FolderOpen className="size-3.5 mr-1.5" />
+                {t(($) => $.desktop.daemon.select_codex)}
+              </Button>
             )}
-            {t(($) => $.desktop.daemon.start)}
-          </Button>
+            <Button size="sm" onClick={handleStart} disabled={actionLoading}>
+              {actionLoading ? (
+                <Activity className="size-3.5 mr-1.5 animate-pulse" />
+              ) : (
+                <Play className="size-3.5 mr-1.5" />
+              )}
+              {t(($) => $.desktop.daemon.start)}
+            </Button>
+          </>
         )}
 
         {isCliMissing && (
