@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.88",
+          date: "2026-09-16",
+          title: "MissionOS 태스크 권한 단계적 롤아웃",
+          changes: [],
+          features: [
+            "reader, writer, restricted 단계에 맞춘 태스크 권한 롤아웃 제어를 추가했습니다.",
+          ],
+          improvements: [
+            "권한 대시보드, 접근 요청, 공유 UI, Agent 태스크 클레임을 동일한 유효 권한 판단 흐름에 맞췄습니다.",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.4.87",
           date: "2026-09-15",
           title: "현재 Tag를 정확히 사용하여 릴리스",

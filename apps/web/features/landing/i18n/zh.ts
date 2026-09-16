@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.88",
+        date: "2026-09-16",
+        title: "分阶段上线 MissionOS 任务权限",
+        changes: [],
+        features: [
+          "新增任务权限分阶段上线控制，支持 reader、writer 和 restricted 阶段。",
+        ],
+        improvements: [
+          "权限看板、权限申请、共享界面和智能体任务领取统一复用同一套有效权限判断。",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.4.87",
         date: "2026-09-15",
         title: "严格按当前 Tag 发布版本",

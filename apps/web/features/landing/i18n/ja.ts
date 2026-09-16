@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.88",
+          date: "2026-09-16",
+          title: "MissionOS タスク権限の段階的ロールアウト",
+          changes: [],
+          features: [
+            "reader、writer、restricted の各段階に対応したタスク権限ロールアウト制御を追加しました。",
+          ],
+          improvements: [
+            "権限ダッシュボード、アクセス申請、共有 UI、Agent のタスク取得を同じ有効権限判定に揃えました。",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.4.87",
           date: "2026-09-15",
           title: "現在の Tag を厳密に使用してリリース",

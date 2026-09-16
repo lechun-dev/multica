@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.88",
+        date: "2026-09-16",
+        title: "Stage MissionOS task permissions rollout",
+        changes: [],
+        features: [
+          "Added staged task permission rollout controls for reader, writer, and restricted access phases.",
+        ],
+        improvements: [
+          "Kept permission dashboards, access requests, sharing UI, and Agent task claims aligned with the same effective-access decision path.",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.4.87",
         date: "2026-09-15",
         title: "Publish every release under its exact tag",
