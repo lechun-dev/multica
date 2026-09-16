@@ -406,6 +406,15 @@ func (s *Service) deliver(ctx context.Context, message queuedMessage) {
 	if message.OpenTaskID != "" {
 		messageID, pending, queryErr := s.querySendStatus(ctx, token, message.OpenTaskID)
 		if queryErr != nil {
+			if refreshed, refreshErr, ok := s.refreshAfterAccessTokenExpired(ctx, message, queryErr); ok {
+				if refreshErr != nil {
+					s.settle(ctx, message, refreshErr)
+					return
+				}
+				messageID, pending, queryErr = s.querySendStatus(ctx, refreshed, message.OpenTaskID)
+			}
+		}
+		if queryErr != nil {
 			s.settle(ctx, message, queryErr)
 			return
 		}
@@ -418,10 +427,31 @@ func (s *Service) deliver(ctx context.Context, message queuedMessage) {
 	}
 	openID, err := s.resolveRecipient(ctx, token, message.RecipientDingUserID)
 	if err != nil {
+		if refreshed, refreshErr, ok := s.refreshAfterAccessTokenExpired(ctx, message, err); ok {
+			if refreshErr != nil {
+				s.settle(ctx, message, refreshErr)
+				return
+			}
+			openID, err = s.resolveRecipient(ctx, refreshed, message.RecipientDingUserID)
+			if err == nil {
+				token = refreshed
+			}
+		}
+	}
+	if err != nil {
 		s.settle(ctx, message, err)
 		return
 	}
 	openTaskID, openMessageID, err := s.send(ctx, token, openID, message.Markdown, message.IdempotencyKey)
+	if err != nil {
+		if refreshed, refreshErr, ok := s.refreshAfterAccessTokenExpired(ctx, message, err); ok {
+			if refreshErr != nil {
+				s.settle(ctx, message, refreshErr)
+				return
+			}
+			openTaskID, openMessageID, err = s.send(ctx, refreshed, openID, message.Markdown, message.IdempotencyKey)
+		}
+	}
 	if err != nil {
 		s.settle(ctx, message, err)
 		return
@@ -439,6 +469,19 @@ func (s *Service) deliver(ctx context.Context, message queuedMessage) {
 			lease_owner = NULL, leased_until = NULL, dws_open_task_id = $2,
 			last_error_code = 'delivery_pending', last_error_message = '钉钉正在投递消息，将继续查询。', updated_at = now()
 		WHERE id = $1 AND status = 'leased' AND lease_owner = $3`, message.ID, openTaskID, workerLeaseOwner)
+}
+
+func (s *Service) refreshAfterAccessTokenExpired(ctx context.Context, message queuedMessage, err error) (string, error, bool) {
+	var deliveryErr *DeliveryError
+	if !errors.As(err, &deliveryErr) || !deliveryErr.AuthRequired || deliveryErr.Code != "authorization_expired" {
+		return "", nil, false
+	}
+	slog.Info("dingtalk access token rejected; refreshing before requesting reauthorization", "sender_user_id", message.SenderUserID, "message_id", message.ID)
+	token, refreshErr := s.refreshAccessToken(ctx, message.SenderUserID, message.SenderCorpID)
+	if refreshErr != nil {
+		return "", refreshErr, true
+	}
+	return token, nil, true
 }
 
 func (s *Service) settle(ctx context.Context, message queuedMessage, err error) {
@@ -501,6 +544,14 @@ func (s *Service) markDelivered(ctx context.Context, id, senderUserID, taskID, m
 }
 
 func (s *Service) accessToken(ctx context.Context, userID, messageCorpID string) (string, error) {
+	return s.accessTokenWithRefresh(ctx, userID, messageCorpID, false)
+}
+
+func (s *Service) refreshAccessToken(ctx context.Context, userID, messageCorpID string) (string, error) {
+	return s.accessTokenWithRefresh(ctx, userID, messageCorpID, true)
+}
+
+func (s *Service) accessTokenWithRefresh(ctx context.Context, userID, messageCorpID string, forceRefresh bool) (string, error) {
 	if messageCorpID != "" && messageCorpID != s.corpID {
 		return "", &DeliveryError{Code: "organization_mismatch", Message: "消息所属钉钉组织与服务器配置不一致，请联系管理员检查部署配置。"}
 	}
@@ -538,7 +589,7 @@ func (s *Service) accessToken(ctx context.Context, userID, messageCorpID string)
 	if err != nil {
 		return "", &DeliveryError{Code: "credential_decryption_failed", Message: "服务器无法读取钉钉授权，请重新授权。", AuthRequired: true, Cause: err}
 	}
-	if time.Now().Add(5 * time.Minute).Before(accessExpiresAt) {
+	if !forceRefresh && time.Now().Add(5*time.Minute).Before(accessExpiresAt) {
 		if err := tx.Commit(ctx); err != nil {
 			return "", err
 		}

@@ -294,6 +294,17 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.87",
+        date: "2026-09-15",
+        title: "Publish every release under its exact tag",
+        changes: [],
+        features: [],
+        improvements: [],
+        fixes: [
+          "Ensure release artifacts always use the tag that triggered the release instead of another tag on the same commit.",
+        ],
+      },
+      {
         version: "0.4.86",
         date: "2026-09-15",
         title: "Cleaner Agent reasoning and more reliable release notes",

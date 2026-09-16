@@ -270,6 +270,17 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.87",
+          date: "2026-09-15",
+          title: "現在の Tag を厳密に使用してリリース",
+          changes: [],
+          features: [],
+          improvements: [],
+          fixes: [
+            "リリース成果物が、同じコミット上の別の Tag ではなく、リリースをトリガーした現在の Tag を常に使用するようにしました。",
+          ],
+        },
+        {
           version: "0.4.86",
           date: "2026-09-15",
           title: "Agent の推論表示を整理し、リリースノートを完全化",
