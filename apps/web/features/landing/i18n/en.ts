@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.88",
+        date: "2026-09-17",
+        title: "Configure Codex runtime models per workspace",
+        changes: [],
+        features: [
+          "Workspace owners can manage the Codex models available to their Agents from Settings.",
+        ],
+        improvements: [
+          "Configured models now flow consistently from Agent selection through daemon task execution.",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.4.87",
         date: "2026-09-15",
         title: "Publish every release under its exact tag",

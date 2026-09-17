@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.88",
+          date: "2026-09-17",
+          title: "ワークスペースごとに Codex ランタイムモデルを設定",
+          changes: [],
+          features: [
+            "ワークスペース Owner が設定画面から Agent で利用できる Codex モデルを管理できるようになりました。",
+          ],
+          improvements: [
+            "設定したモデルが Agent の選択から daemon のタスク実行まで一貫して反映されるようになりました。",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.4.87",
           date: "2026-09-15",
           title: "現在の Tag を厳密に使用してリリース",

@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.88",
+        date: "2026-09-17",
+        title: "按空间配置 Codex 运行时模型",
+        changes: [],
+        features: [
+          "空间 Owner 现在可以在设置中管理智能体可使用的 Codex 模型。",
+        ],
+        improvements: [
+          "空间配置的模型会从智能体选择一致传递到 daemon 任务执行。",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.4.87",
         date: "2026-09-15",
         title: "严格按当前 Tag 发布版本",

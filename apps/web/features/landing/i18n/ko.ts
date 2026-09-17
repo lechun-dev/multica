@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.88",
+          date: "2026-09-17",
+          title: "워크스페이스별 Codex 런타임 모델 설정",
+          changes: [],
+          features: [
+            "워크스페이스 Owner가 설정에서 Agent가 사용할 수 있는 Codex 모델을 관리할 수 있습니다.",
+          ],
+          improvements: [
+            "설정한 모델이 Agent 선택부터 daemon 태스크 실행까지 일관되게 반영됩니다.",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.4.87",
           date: "2026-09-15",
           title: "현재 Tag를 정확히 사용하여 릴리스",
