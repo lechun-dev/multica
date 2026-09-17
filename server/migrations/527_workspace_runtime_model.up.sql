@@ -1,4 +1,8 @@
-CREATE TABLE workspace_runtime_model (
+-- 2026-09-17 coder(lq): Use 527 because the independently released project
+-- authorization stream already owns migration numbers 509 through 526.
+-- Keep this migration idempotent for databases that applied the briefly
+-- released 509_workspace_runtime_model migration before it was renumbered.
+CREATE TABLE IF NOT EXISTS workspace_runtime_model (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL,
     runtime_provider TEXT NOT NULL,
@@ -23,7 +27,7 @@ CREATE TABLE workspace_runtime_model (
     CONSTRAINT workspace_runtime_model_sort_order_nonnegative CHECK (sort_order >= 0)
 );
 
-CREATE INDEX workspace_runtime_model_workspace_provider_idx
+CREATE INDEX IF NOT EXISTS workspace_runtime_model_workspace_provider_idx
     ON workspace_runtime_model (workspace_id, runtime_provider, enabled, sort_order, model_id);
 
 -- 2026-09-17 coder(lq): Preserve the two gateway models that were previously

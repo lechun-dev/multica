@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -457,16 +458,68 @@ func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) workspaceModelCatalog(ctx context.Context, workspaceID pgtype.UUID, runtimeProvider string, discovered []ModelEntry, supported bool) ([]ModelEntry, bool) {
+	base := runtimeModelCatalogBase(runtimeProvider, discovered, supported)
+	if len(discovered) == 0 && len(base) > 0 {
+		slog.Warn("runtime reported an empty model catalog; using server fallback", "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
+	}
 	configured, err := h.Queries.ListEnabledWorkspaceRuntimeModelsByProvider(ctx, db.ListEnabledWorkspaceRuntimeModelsByProviderParams{
 		WorkspaceID:     workspaceID,
 		RuntimeProvider: runtimeProvider,
 	})
 	if err != nil {
 		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
-		return cloneModelEntries(discovered), supported
+		return base, supported
 	}
-	models := mergeWorkspaceRuntimeModels(discovered, configured)
+	models := mergeWorkspaceRuntimeModels(base, configured)
 	return models, supported || len(configured) > 0
+}
+
+func runtimeModelCatalogBase(runtimeProvider string, discovered []ModelEntry, supported bool) []ModelEntry {
+	if len(discovered) > 0 || !supported || runtimeProvider != "codex" {
+		return cloneModelEntries(discovered)
+	}
+
+	// 2026-09-17 coder(lq): Daemons released before the current Codex discovery
+	// fallback can report a successful but empty catalog. Repair only that
+	// compatibility case; genuine non-empty discovery remains authoritative.
+	return modelEntriesFromAgentModels(agent.CodexFallbackModels())
+}
+
+func modelEntriesFromAgentModels(models []agent.Model) []ModelEntry {
+	entries := make([]ModelEntry, 0, len(models))
+	for _, model := range models {
+		entry := ModelEntry{
+			ID:                                  model.ID,
+			Label:                               model.Label,
+			Provider:                            model.Provider,
+			Default:                             model.Default,
+			SupportsExplicitStandardServiceTier: model.SupportsExplicitStandardServiceTier,
+			ServiceTiers:                        make([]ModelServiceTier, 0, len(model.ServiceTiers)),
+		}
+		for _, tier := range model.ServiceTiers {
+			entry.ServiceTiers = append(entry.ServiceTiers, ModelServiceTier{
+				ID:          tier.ID,
+				Name:        tier.Name,
+				Description: tier.Description,
+			})
+		}
+		if model.Thinking != nil {
+			thinking := &ModelThinking{
+				DefaultLevel:    model.Thinking.DefaultLevel,
+				SupportedLevels: make([]ThinkingLevel, 0, len(model.Thinking.SupportedLevels)),
+			}
+			for _, level := range model.Thinking.SupportedLevels {
+				thinking.SupportedLevels = append(thinking.SupportedLevels, ThinkingLevel{
+					Value:       level.Value,
+					Label:       level.Label,
+					Description: level.Description,
+				})
+			}
+			entry.Thinking = thinking
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func mergeWorkspaceRuntimeModels(discovered []ModelEntry, configured []db.WorkspaceRuntimeModel) []ModelEntry {

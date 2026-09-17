@@ -118,3 +118,42 @@ func TestMergeWorkspaceRuntimeModels(t *testing.T) {
 		t.Fatalf("merge mutated the discovered catalog: %+v", discovered[0])
 	}
 }
+
+func TestRuntimeModelCatalogBase(t *testing.T) {
+	t.Run("repairs an empty supported Codex catalog", func(t *testing.T) {
+		models := runtimeModelCatalogBase("codex", nil, true)
+		if len(models) == 0 {
+			t.Fatal("expected the Codex fallback catalog")
+		}
+
+		var sol *ModelEntry
+		for i := range models {
+			if models[i].ID == "gpt-5.6-sol" {
+				sol = &models[i]
+			}
+			if models[i].ID == "grok-4.6" || models[i].ID == "grok-4.5" {
+				t.Fatalf("workspace-configured models must not be hardcoded into the fallback: %+v", models[i])
+			}
+		}
+		if sol == nil || sol.Thinking == nil || len(sol.Thinking.SupportedLevels) == 0 {
+			t.Fatalf("expected the fallback to preserve Codex thinking metadata: %+v", sol)
+		}
+	})
+
+	t.Run("keeps a discovered catalog authoritative", func(t *testing.T) {
+		discovered := []ModelEntry{{ID: "account-model", Label: "Account model"}}
+		models := runtimeModelCatalogBase("codex", discovered, true)
+		if len(models) != 1 || models[0].ID != "account-model" {
+			t.Fatalf("expected the discovered catalog unchanged, got %+v", models)
+		}
+	})
+
+	t.Run("does not invent catalogs for unsupported or other runtimes", func(t *testing.T) {
+		if models := runtimeModelCatalogBase("codex", nil, false); len(models) != 0 {
+			t.Fatalf("unsupported Codex runtime should remain empty, got %+v", models)
+		}
+		if models := runtimeModelCatalogBase("claude", nil, true); len(models) != 0 {
+			t.Fatalf("non-Codex runtime should remain empty, got %+v", models)
+		}
+	})
+}

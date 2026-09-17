@@ -293,6 +293,14 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2026-09-17 coder(lq): The migration backfills existing workspaces; seed
+	// new ones in the creation transaction so the former hardcoded Grok catalog
+	// remains available without a deployment-time gap.
+	if err := seedDefaultWorkspaceRuntimeModels(r.Context(), qtx, ws.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to seed runtime models: "+err.Error())
+		return
+	}
+
 	// NOTE: CreateWorkspace deliberately does NOT mark the user as
 	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
 	// (Step 3 of the flow) and by AcceptInvitation (invitee joining an

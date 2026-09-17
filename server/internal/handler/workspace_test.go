@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -76,6 +77,83 @@ func TestCreateWorkspace_DoesNotMarkOnboarded(t *testing.T) {
 	dbfx.QueryRow(t, `SELECT onboarded_at FROM "user" WHERE id = $1`, testUserID).Scan(&onboardedAt)
 	if onboardedAt != nil {
 		t.Fatalf("CreateWorkspace marked user as onboarded; expected NULL, got %q. The workspace layout hard gate relies on this staying NULL until Step 3 CompleteOnboarding fires.", *onboardedAt)
+	}
+}
+
+func TestCreateWorkspace_SeedsLegacyCodexGatewayModels(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	const slug = "handler-tests-runtime-model-seed"
+	_, _ = testPool.Exec(ctx, `
+		DELETE FROM workspace_runtime_model
+		WHERE workspace_id IN (SELECT id FROM workspace WHERE slug = $1)
+	`, slug)
+	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM workspace_runtime_model
+			WHERE workspace_id IN (SELECT id FROM workspace WHERE slug = $1)
+		`, slug)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE slug = $1`, slug)
+	})
+
+	req := newRequest("POST", "/api/workspaces", map[string]any{
+		"name": "Runtime Model Seed Probe",
+		"slug": slug,
+	})
+	testutil.Call(t, testHandler.CreateWorkspace, req).Want(http.StatusCreated)
+
+	rows, err := testPool.Query(ctx, `
+		SELECT m.model_id, m.display_name, m.model_provider, m.description,
+		       m.thinking_levels, m.default_thinking_level, m.service_tiers,
+		       m.supports_explicit_standard_service_tier, m.enabled, m.sort_order
+		FROM workspace_runtime_model m
+		JOIN workspace w ON w.id = m.workspace_id
+		WHERE w.slug = $1 AND m.runtime_provider = 'codex'
+		ORDER BY m.sort_order, m.model_id
+	`, slug)
+	if err != nil {
+		t.Fatalf("query seeded runtime models: %v", err)
+	}
+	defer rows.Close()
+
+	got := make([]workspaceRuntimeModelInput, 0, 2)
+	for rows.Next() {
+		var model workspaceRuntimeModelInput
+		var thinkingLevels, serviceTiers []byte
+		if err := rows.Scan(
+			&model.ModelID,
+			&model.DisplayName,
+			&model.ModelProvider,
+			&model.Description,
+			&thinkingLevels,
+			&model.DefaultThinkingLevel,
+			&serviceTiers,
+			&model.SupportsExplicitStandardServiceTier,
+			&model.Enabled,
+			&model.SortOrder,
+		); err != nil {
+			t.Fatalf("scan seeded runtime model: %v", err)
+		}
+		model.RuntimeProvider = workspaceRuntimeProviderCodex
+		if err := json.Unmarshal(thinkingLevels, &model.ThinkingLevels); err != nil {
+			t.Fatalf("decode thinking levels: %v", err)
+		}
+		if err := json.Unmarshal(serviceTiers, &model.ServiceTiers); err != nil {
+			t.Fatalf("decode service tiers: %v", err)
+		}
+		got = append(got, model)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate seeded runtime models: %v", err)
+	}
+
+	want := defaultWorkspaceRuntimeModelInputs()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("seeded runtime models mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

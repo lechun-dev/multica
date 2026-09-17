@@ -613,6 +613,16 @@ func codexStaticModels() []Model {
 	}
 }
 
+// CodexFallbackModels returns the server-safe catalog used when Codex model
+// discovery is unavailable. The returned slice and nested metadata are newly
+// allocated by codexStaticModels, so callers can adapt them without sharing
+// mutable state.
+// 2026-09-17 coder(lq): Export the daemon's fallback so older daemons that
+// report an empty catalog can receive the same compatibility behavior server-side.
+func CodexFallbackModels() []Model {
+	return codexStaticModels()
+}
+
 // discoverTraecliModels spins up a throwaway `traecli acp serve --yolo` process
 // and parses the model catalog traecli returns from session/new (same shape as
 // Kiro/Qoder). The official TRAE CLI must be logged in for the catalog to be

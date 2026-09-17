@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -55,6 +57,72 @@ type workspaceRuntimeModelInput struct {
 	SupportsExplicitStandardServiceTier bool
 	Enabled                             bool
 	SortOrder                           int32
+}
+
+// 2026-09-17 coder(lq): Keep newly created workspaces behaviorally aligned
+// with the Grok entries that Codex previously hardcoded for every workspace.
+func defaultWorkspaceRuntimeModelInputs() []workspaceRuntimeModelInput {
+	return []workspaceRuntimeModelInput{
+		{
+			RuntimeProvider: workspaceRuntimeProviderCodex,
+			ModelID:         "grok-4.6",
+			DisplayName:     "Grok 4.6",
+			ModelProvider:   "openai",
+			Description:     "Grok 4.6 routed through the configured Codex API gateway.",
+			ThinkingLevels: []ThinkingLevel{
+				{Value: "low", Label: "Low"},
+				{Value: "medium", Label: "Medium"},
+				{Value: "high", Label: "High"},
+				{Value: "xhigh", Label: "Extra high"},
+			},
+			ServiceTiers: []ModelServiceTier{},
+			Enabled:      true,
+			SortOrder:    10,
+		},
+		{
+			RuntimeProvider: workspaceRuntimeProviderCodex,
+			ModelID:         "grok-4.5",
+			DisplayName:     "Grok 4.5",
+			ModelProvider:   "openai",
+			Description:     "Grok 4.5 routed through the configured Codex API gateway.",
+			ThinkingLevels: []ThinkingLevel{
+				{Value: "low", Label: "Low"},
+				{Value: "medium", Label: "Medium"},
+				{Value: "high", Label: "High"},
+			},
+			ServiceTiers: []ModelServiceTier{},
+			Enabled:      true,
+			SortOrder:    20,
+		},
+	}
+}
+
+func createWorkspaceRuntimeModelRow(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, input workspaceRuntimeModelInput) (db.WorkspaceRuntimeModel, error) {
+	thinkingLevels, _ := json.Marshal(input.ThinkingLevels)
+	serviceTiers, _ := json.Marshal(input.ServiceTiers)
+	return queries.CreateWorkspaceRuntimeModel(ctx, db.CreateWorkspaceRuntimeModelParams{
+		WorkspaceID:                         workspaceID,
+		RuntimeProvider:                     input.RuntimeProvider,
+		ModelID:                             input.ModelID,
+		DisplayName:                         input.DisplayName,
+		ModelProvider:                       input.ModelProvider,
+		Description:                         input.Description,
+		ThinkingLevels:                      thinkingLevels,
+		DefaultThinkingLevel:                input.DefaultThinkingLevel,
+		ServiceTiers:                        serviceTiers,
+		SupportsExplicitStandardServiceTier: input.SupportsExplicitStandardServiceTier,
+		Enabled:                             input.Enabled,
+		SortOrder:                           input.SortOrder,
+	})
+}
+
+func seedDefaultWorkspaceRuntimeModels(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) error {
+	for _, input := range defaultWorkspaceRuntimeModelInputs() {
+		if _, err := createWorkspaceRuntimeModelRow(ctx, queries, workspaceID, input); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func workspaceRuntimeModelResponseFor(model db.WorkspaceRuntimeModel) workspaceRuntimeModelResponse {
@@ -239,22 +307,7 @@ func (h *Handler) CreateWorkspaceRuntimeModel(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	thinkingLevels, _ := json.Marshal(input.ThinkingLevels)
-	serviceTiers, _ := json.Marshal(input.ServiceTiers)
-	model, err := h.Queries.CreateWorkspaceRuntimeModel(r.Context(), db.CreateWorkspaceRuntimeModelParams{
-		WorkspaceID:                         workspaceID,
-		RuntimeProvider:                     input.RuntimeProvider,
-		ModelID:                             input.ModelID,
-		DisplayName:                         input.DisplayName,
-		ModelProvider:                       input.ModelProvider,
-		Description:                         input.Description,
-		ThinkingLevels:                      thinkingLevels,
-		DefaultThinkingLevel:                input.DefaultThinkingLevel,
-		ServiceTiers:                        serviceTiers,
-		SupportsExplicitStandardServiceTier: input.SupportsExplicitStandardServiceTier,
-		Enabled:                             input.Enabled,
-		SortOrder:                           input.SortOrder,
-	})
+	model, err := createWorkspaceRuntimeModelRow(r.Context(), h.Queries, workspaceID, input)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "this model already exists for the runtime")
