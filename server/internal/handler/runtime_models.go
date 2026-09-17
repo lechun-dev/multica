@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -334,6 +336,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		if age >= modelCatalogRevalidateAfter {
 			h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
 		}
+		models, supported := h.workspaceModelCatalog(r.Context(), rt.WorkspaceID, rt.Provider, cached.Models, cached.Supported)
 		storedAt := cached.StoredAt
 		writeJSON(w, http.StatusOK, &ModelListRequest{
 			// Synthetic ID: no store record backs a cache hit. Clients only poll
@@ -342,8 +345,8 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 			ID:        randomID(),
 			RuntimeID: resolvedRuntimeID,
 			Status:    ModelListCompleted,
-			Models:    cached.Models,
-			Supported: cached.Supported,
+			Models:    models,
+			Supported: supported,
 			CreatedAt: storedAt,
 			UpdatedAt: storedAt,
 			Cached:    true,
@@ -446,7 +449,56 @@ func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, req)
+	response := *req
+	if req.Status == ModelListCompleted {
+		response.Models, response.Supported = h.workspaceModelCatalog(r.Context(), rt.WorkspaceID, rt.Provider, req.Models, req.Supported)
+	}
+	writeJSON(w, http.StatusOK, &response)
+}
+
+func (h *Handler) workspaceModelCatalog(ctx context.Context, workspaceID pgtype.UUID, runtimeProvider string, discovered []ModelEntry, supported bool) ([]ModelEntry, bool) {
+	configured, err := h.Queries.ListEnabledWorkspaceRuntimeModelsByProvider(ctx, db.ListEnabledWorkspaceRuntimeModelsByProviderParams{
+		WorkspaceID:     workspaceID,
+		RuntimeProvider: runtimeProvider,
+	})
+	if err != nil {
+		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
+		return cloneModelEntries(discovered), supported
+	}
+	models := mergeWorkspaceRuntimeModels(discovered, configured)
+	return models, supported || len(configured) > 0
+}
+
+func mergeWorkspaceRuntimeModels(discovered []ModelEntry, configured []db.WorkspaceRuntimeModel) []ModelEntry {
+	models := cloneModelEntries(discovered)
+	indices := make(map[string]int, len(models))
+	for i := range models {
+		indices[models[i].ID] = i
+	}
+	for _, model := range configured {
+		response := workspaceRuntimeModelResponseFor(model)
+		entry := ModelEntry{
+			ID:                                  response.ModelID,
+			Label:                               response.DisplayName,
+			Provider:                            response.ModelProvider,
+			ServiceTiers:                        append([]ModelServiceTier(nil), response.ServiceTiers...),
+			SupportsExplicitStandardServiceTier: response.SupportsExplicitStandardServiceTier,
+		}
+		if len(response.ThinkingLevels) > 0 {
+			entry.Thinking = &ModelThinking{
+				SupportedLevels: append([]ThinkingLevel(nil), response.ThinkingLevels...),
+				DefaultLevel:    response.DefaultThinkingLevel,
+			}
+		}
+		if index, exists := indices[entry.ID]; exists {
+			entry.Default = models[index].Default
+			models[index] = entry
+			continue
+		}
+		indices[entry.ID] = len(models)
+		models = append(models, entry)
+	}
+	return models
 }
 
 // ReportModelListResult receives the list result from the daemon.

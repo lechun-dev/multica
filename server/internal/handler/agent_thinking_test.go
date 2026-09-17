@@ -487,6 +487,40 @@ func TestUpdateAgent_RuntimeSwitch_ClearsKnownIncompatibleModel(t *testing.T) {
 		}
 	})
 
+	t.Run("runtime-only switch keeps enabled workspace model", func(t *testing.T) {
+		const modelID = "grok-workspace-only-test"
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO workspace_runtime_model (
+				workspace_id, runtime_provider, model_id, display_name, model_provider,
+				description, thinking_levels, default_thinking_level, service_tiers,
+				supports_explicit_standard_service_tier, enabled, sort_order
+			) VALUES ($1, 'codex', $2, 'Workspace Grok', 'xAI', '', '["low"]', 'low', '[]', false, true, 0)
+			ON CONFLICT (workspace_id, runtime_provider, model_id)
+			DO UPDATE SET enabled = true
+		`, testWorkspaceID, modelID); err != nil {
+			t.Fatalf("configure workspace model: %v", err)
+		}
+		t.Cleanup(func() {
+			testPool.Exec(ctx, `DELETE FROM workspace_runtime_model WHERE workspace_id = $1 AND runtime_provider = 'codex' AND model_id = $2`, testWorkspaceID, modelID)
+		})
+
+		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-workspace", claudeRuntimeID, modelID)
+		body := map[string]any{
+			"runtime_id": codexRuntimeID,
+		}
+		w := httptest.NewRecorder()
+		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
+		testHandler.UpdateAgent(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 preserving workspace model, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		_ = json.NewDecoder(w.Body).Decode(&resp)
+		if resp["model"] != modelID {
+			t.Errorf("expected workspace model preserved, got %v", resp["model"])
+		}
+	})
+
 	t.Run("runtime-only switch keeps context-tagged target model", func(t *testing.T) {
 		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-context-tag", claudeRuntimeID, "claude-opus-5[1m]")
 		body := map[string]any{

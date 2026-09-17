@@ -23,8 +23,10 @@ import {
   MessageCircle,
   RotateCcw,
   ShieldCheck,
+  BrainCircuit,
 } from "lucide-react";
 import { useCurrentWorkspace } from "@multica/core/paths";
+import { useCurrentMember } from "@multica/core/permissions";
 import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
 import {
   BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
@@ -56,6 +58,7 @@ import { ProjectPermissionsTab } from "./project-permissions-tab";
 import { ProjectPermissionRolesTab } from "./project-permission-roles-tab";
 import { ProjectAuthorizationOrganizationsTab } from "./project-authorization-organizations-tab";
 import { TaskRetryPoliciesTab } from "./task-retry-policies-tab";
+import { RuntimeModelsTab } from "./runtime-models-tab";
 import { McpTab } from "./mcp-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
@@ -77,8 +80,10 @@ type SettingsEntry = ExtraSettingsTab & { wide?: boolean };
 
 export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
   const { t } = useT("settings");
-  const workspaceName =
-    useCurrentWorkspace()?.name ?? t(($) => $.page.workspace_fallback);
+  const workspace = useCurrentWorkspace();
+  const workspaceName = workspace?.name ?? t(($) => $.page.workspace_fallback);
+  const { role } = useCurrentMember(workspace?.id ?? "");
+  const isWorkspaceOwner = role === "owner";
   const navigation = useNavigation();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const projectPermissionsEnabled = useConfigStore(
@@ -194,6 +199,17 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
           <TaskRetryPoliciesTab />,
           true,
         ),
+        ...(isWorkspaceOwner
+          ? [
+              entry(
+                "runtime-models",
+                t(($) => $.page.tabs.runtime_models),
+                BrainCircuit,
+                <RuntimeModelsTab />,
+                true,
+              ),
+            ]
+          : []),
       ],
     },
     {

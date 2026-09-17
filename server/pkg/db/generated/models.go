@@ -1731,6 +1731,24 @@ type WorkspaceMcpServer struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkspaceRuntimeModel struct {
+	ID                                  pgtype.UUID        `json:"id"`
+	WorkspaceID                         pgtype.UUID        `json:"workspace_id"`
+	RuntimeProvider                     string             `json:"runtime_provider"`
+	ModelID                             string             `json:"model_id"`
+	DisplayName                         string             `json:"display_name"`
+	ModelProvider                       string             `json:"model_provider"`
+	Description                         string             `json:"description"`
+	ThinkingLevels                      []byte             `json:"thinking_levels"`
+	DefaultThinkingLevel                string             `json:"default_thinking_level"`
+	ServiceTiers                        []byte             `json:"service_tiers"`
+	SupportsExplicitStandardServiceTier bool               `json:"supports_explicit_standard_service_tier"`
+	Enabled                             bool               `json:"enabled"`
+	SortOrder                           int32              `json:"sort_order"`
+	CreatedAt                           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkspaceShareLink struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

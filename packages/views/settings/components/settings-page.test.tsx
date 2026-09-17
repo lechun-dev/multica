@@ -35,9 +35,20 @@ vi.mock("./project-permissions-tab", stub("ProjectPermissionsTab"));
 vi.mock("./project-permission-roles-tab", stub("ProjectPermissionRolesTab"));
 vi.mock("./project-authorization-organizations-tab", stub("ProjectAuthorizationOrganizationsTab"));
 vi.mock("./task-retry-policies-tab", stub("TaskRetryPoliciesTab"));
+vi.mock("./runtime-models-tab", stub("RuntimeModelsTab"));
 
 vi.mock("@multica/core/paths", () => ({
-  useCurrentWorkspace: () => ({ name: "Acme" }),
+  useCurrentWorkspace: () => ({ id: "workspace-1", name: "Acme" }),
+}));
+
+const memberState = { role: "owner" as "owner" | "admin" | "member" | null };
+vi.mock("@multica/core/permissions", () => ({
+  useCurrentMember: () => ({
+    userId: "user-1",
+    role: memberState.role,
+    member: null,
+    isLoading: false,
+  }),
 }));
 
 const replace = vi.fn();
@@ -76,6 +87,7 @@ function trigger() {
 beforeEach(() => {
   layout.compact = true;
   navigationState.search = "";
+  memberState.role = "owner";
   configStore.getState().setFeatureFlags({});
   configStore.getState().setAuthConfig({
     allowSignup: true,
@@ -237,5 +249,31 @@ describe("SettingsPage retry policies tab", () => {
 
     expect(screen.getByRole("link", { name: "Retry Policies" })).toBeInTheDocument();
     expect(screen.getByText("TaskRetryPoliciesTab")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage runtime models ownership", () => {
+  it("shows and mounts runtime model settings for workspace owners", () => {
+    navigationState.search = "tab=runtime-models";
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(
+      screen.getByRole("link", { name: "Runtime Models" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("RuntimeModelsTab")).toBeInTheDocument();
+  });
+
+  it("hides runtime model settings and falls back for non-owners", () => {
+    navigationState.search = "tab=runtime-models";
+    memberState.role = "admin";
+
+    renderWithI18n(<SettingsPage />);
+
+    expect(
+      screen.queryByRole("link", { name: "Runtime Models" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("RuntimeModelsTab")).not.toBeInTheDocument();
+    expect(screen.getByText("AccountTab")).toBeInTheDocument();
   });
 });

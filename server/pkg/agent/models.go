@@ -163,9 +163,7 @@ func ListModels(ctx context.Context, providerType string, runtimeCmd Command) (C
 		return Catalog{Models: models}, nil
 	case "codex":
 		return cachedDiscovery(discoveryCacheKey(providerType, runtimeCmd), func() (Catalog, error) {
-			// 2026-09-06 coder(lq): Codex always exposes the supplemental
-			// xAI models; their visibility must not depend on CLI discovery.
-			return discovered(ensureCodexModels(discoverCodexModels(ctx, runtimeCmd)), nil)
+			return discovered(discoverCodexModels(ctx, runtimeCmd), nil)
 		})
 	case "antigravity":
 		// agy 1.0.6 added a `--model` flag plus an `agy models` catalog
@@ -601,9 +599,8 @@ func codexStaticModels() []Model {
 			},
 		}
 	}
-	models := []Model{
-		// 2026-09-12 coder(lq): Keep the upstream flagship first while preserving
-		// the private gateway models appended by ensureCodexModels below.
+	return []Model{
+		// 2026-09-12 coder(lq): Keep the upstream flagship first.
 		{ID: "gpt-6-astra", Label: "GPT-6 Astra", Provider: "openai", Default: true, Thinking: standardThinking("low", true, true)},
 		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai", Thinking: standardThinking("low", true, true)},
 		{ID: "gpt-5.6-terra", Label: "GPT-5.6 Terra", Provider: "openai", Thinking: standardThinking("medium", true, true)},
@@ -614,49 +611,6 @@ func codexStaticModels() []Model {
 		{ID: "gpt-5.3-codex", Label: "GPT-5.3-Codex", Provider: "openai", Thinking: standardThinking("medium", false, false)},
 		{ID: "gpt-5.2", Label: "GPT-5.2", Provider: "openai", Thinking: gpt52Thinking()},
 	}
-	return ensureCodexModels(models)
-}
-
-// ensureCodexModels keeps the Codex catalog extensible for model IDs accepted
-// by the configured Codex API gateway but not present in the bundled catalog.
-// 2026-09-06 coder(lq): Keep the Grok IDs in the Codex catalog; the API
-// gateway routes them downstream, so they must not become a Grok runtime.
-func ensureCodexModels(models []Model) []Model {
-	result := make([]Model, 0, len(models)+2)
-	seen := make(map[string]struct{}, len(models)+2)
-	for _, model := range models {
-		if strings.TrimSpace(model.ID) == "" {
-			continue
-		}
-		if _, exists := seen[model.ID]; exists {
-			continue
-		}
-		// 2026-09-06 coder(lq): Codex discovery and fallback catalogs use the
-		// same provider namespace. Keep gateway-routed entries there even if a
-		// future Codex CLI reports one with a provider-specific annotation.
-		if model.ID == "grok-4.6" || model.ID == "grok-4.5" {
-			model.Provider = "openai"
-			// 2026-09-11 coder(lq): codex2api translates Codex reasoning effort
-			// for gateway-routed Grok models. Keep an empty default so the
-			// existing blank selection continues to mean "follow CLI config".
-			if model.Thinking == nil {
-				model.Thinking = grokThinkingCatalog(model.ID == "grok-4.6")
-			}
-		}
-		seen[model.ID] = struct{}{}
-		result = append(result, model)
-	}
-	for _, model := range []Model{
-		{ID: "grok-4.6", Label: "Grok 4.6", Provider: "openai", Thinking: grokThinkingCatalog(true)},
-		{ID: "grok-4.5", Label: "Grok 4.5", Provider: "openai", Thinking: grokThinkingCatalog(false)},
-	} {
-		if _, exists := seen[model.ID]; exists {
-			continue
-		}
-		seen[model.ID] = struct{}{}
-		result = append(result, model)
-	}
-	return result
 }
 
 // discoverTraecliModels spins up a throwaway `traecli acp serve --yolo` process

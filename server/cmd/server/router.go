@@ -1692,6 +1692,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Owner-only access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
+					r.Get("/runtime-models", h.ListWorkspaceRuntimeModels)
+					r.Post("/runtime-models", h.CreateWorkspaceRuntimeModel)
+					r.Patch("/runtime-models/{modelId}", h.UpdateWorkspaceRuntimeModel)
+					r.Put("/runtime-models/{modelId}", h.UpdateWorkspaceRuntimeModel)
+					r.Delete("/runtime-models/{modelId}", h.DeleteWorkspaceRuntimeModel)
 					r.Post("/task-retry-policies", h.CreateTaskRetryPolicy)
 					r.Patch("/task-retry-policies/{policyId}", h.UpdateTaskRetryPolicy)
 					r.Put("/task-retry-policies/{policyId}", h.UpdateTaskRetryPolicy)

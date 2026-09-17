@@ -240,6 +240,9 @@ import type {
   TaskRetryPolicy,
   TaskRetryPolicyRequest,
   UpdateTaskRetryPolicyRequest,
+  WorkspaceRuntimeModel,
+  WorkspaceRuntimeModelRequest,
+  UpdateWorkspaceRuntimeModelRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type {
@@ -3956,6 +3959,48 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/task-retry-policies/${encodeURIComponent(policyId)}`, {
       method: "DELETE",
     });
+  }
+
+  // Owner-managed models exposed by a workspace runtime.
+  async listWorkspaceRuntimeModels(workspaceId: string): Promise<WorkspaceRuntimeModel[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-models`,
+    );
+    return Array.isArray(raw) ? (raw as WorkspaceRuntimeModel[]) : [];
+  }
+
+  async createWorkspaceRuntimeModel(
+    workspaceId: string,
+    data: WorkspaceRuntimeModelRequest,
+  ): Promise<WorkspaceRuntimeModel> {
+    return this.fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-models`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async updateWorkspaceRuntimeModel(
+    workspaceId: string,
+    modelId: string,
+    data: UpdateWorkspaceRuntimeModelRequest,
+  ): Promise<WorkspaceRuntimeModel> {
+    return this.fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-models/${encodeURIComponent(modelId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async deleteWorkspaceRuntimeModel(workspaceId: string, modelId: string): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-models/${encodeURIComponent(modelId)}`,
+      { method: "DELETE" },
+    );
   }
 
   // Project resources

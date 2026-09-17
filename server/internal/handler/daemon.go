@@ -2286,6 +2286,36 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
 		runtimeConfig = json.RawMessage(agent.RuntimeConfig)
 	}
+	var runtimeModel *TaskRuntimeModelData
+	if agent.Model.Valid && strings.TrimSpace(agent.Model.String) != "" {
+		configuredModel, err := h.Queries.GetEnabledWorkspaceRuntimeModelByKey(r.Context(), db.GetEnabledWorkspaceRuntimeModelByKeyParams{
+			WorkspaceID:     agent.WorkspaceID,
+			RuntimeProvider: runtime.Provider,
+			ModelID:         agent.Model.String,
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			slog.Error("daemon claim: load configured runtime model failed; preserving task for redelivery",
+				"task_id", uuidToString(task.ID), "agent_id", uuidToString(agent.ID), "error", err)
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, &claimBuildFailure{
+				outcome: "error_runtime_model_load",
+				status:  http.StatusInternalServerError,
+				message: "failed to load configured runtime model",
+			}
+		}
+		if err == nil {
+			model := workspaceRuntimeModelResponseFor(configuredModel)
+			runtimeModel = &TaskRuntimeModelData{
+				ID:                                  model.ModelID,
+				DisplayName:                         model.DisplayName,
+				ModelProvider:                       model.ModelProvider,
+				Description:                         model.Description,
+				ThinkingLevels:                      model.ThinkingLevels,
+				DefaultThinkingLevel:                model.DefaultThinkingLevel,
+				ServiceTiers:                        model.ServiceTiers,
+				SupportsExplicitStandardServiceTier: model.SupportsExplicitStandardServiceTier,
+			}
+		}
+	}
 	resp.Agent = &TaskAgentData{
 		ID:                    uuidToString(agent.ID),
 		Name:                  agent.Name,
@@ -2294,6 +2324,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		CustomArgs:            customArgs,
 		McpConfig:             mcpConfig,
 		Model:                 agent.Model.String,
+		RuntimeModel:          runtimeModel,
 		ThinkingLevel:         agent.ThinkingLevel.String,
 		ServiceTier:           agent.ServiceTier.String,
 		RuntimeConfig:         runtimeConfig,

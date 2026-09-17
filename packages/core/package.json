@@ -99,6 +99,7 @@
     "./quick-actions/queries": "./quick-actions/queries.ts",
     "./quick-actions/mutations": "./quick-actions/mutations.ts",
     "./task-retry-policies": "./task-retry-policies/index.ts",
+    "./workspace-runtime-models": "./workspace-runtime-models/index.ts",
     "./autopilots": "./autopilots/index.ts",
     "./autopilots/queries": "./autopilots/queries.ts",
     "./autopilots/mutations": "./autopilots/mutations.ts",

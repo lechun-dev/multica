@@ -135,6 +135,44 @@
       "error_contains": "错误文本包含"
     }
   },
+  "runtime_models": {
+    "title": "运行时模型",
+    "description": "管理当前空间内 Codex 智能体可以使用的额外模型。",
+    "loading": "正在加载运行时模型…",
+    "load_failed": "加载运行时模型失败。",
+    "empty": "还没有配置额外的运行时模型。",
+    "add": "添加模型",
+    "enabled": "已启用",
+    "disabled": "已停用",
+    "edit": "编辑运行时模型",
+    "delete": "删除运行时模型",
+    "toggle_enabled": "切换 {{name}} 的启用状态",
+    "delete_confirm": "删除“{{name}}”？",
+    "create_title": "添加运行时模型",
+    "edit_title": "编辑运行时模型",
+    "form_description": "模型 ID 必须与当前 Codex API 网关实际支持的 ID 一致。",
+    "model_id": "模型 ID",
+    "model_id_placeholder": "grok-4.6",
+    "display_name": "显示名称",
+    "display_name_placeholder": "Grok 4.6",
+    "model_provider": "模型提供方",
+    "sort_order": "排序",
+    "description_label": "说明",
+    "description_placeholder": "可选，将显示在模型选择器中。",
+    "thinking_levels": "思考档位",
+    "thinking_levels_hint": "只选择该模型实际支持的档位。",
+    "thinking_summary": "思考档位：{{levels}}",
+    "default_thinking_level": "默认思考档位",
+    "runtime_default": "使用运行时默认值",
+    "enabled_on_save": "允许智能体使用",
+    "cancel": "取消",
+    "save": "保存",
+    "saved": "运行时模型已保存。",
+    "save_failed": "无法保存运行时模型。",
+    "deleted": "运行时模型已删除。",
+    "delete_failed": "无法删除运行时模型。",
+    "invalid": "请检查模型 ID、显示名称、提供方和排序。"
+  },
   "auto_save": {
     "saving": "正在保存…",
     "saved": "已保存",
@@ -397,7 +435,8 @@
       "project_permissions": "项目权限",
       "project_permission_roles": "权限角色",
       "project_authorization_organizations": "组织目录",
-      "task_retry_policies": "重试策略"
+      "task_retry_policies": "重试策略",
+      "runtime_models": "运行时模型"
     }
   },
   "plugins": {

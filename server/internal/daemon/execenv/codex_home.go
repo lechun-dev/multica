@@ -33,8 +33,6 @@ var codexCopiedFiles = []string{
 const (
 	codexModelsCacheFile        = "models_cache.json"
 	codexModelsCacheBindingFile = ".models_cache_config.sha256"
-	codexGatewayModelGrok46     = "grok-4.6"
-	codexGatewayModelGrok45     = "grok-4.5"
 )
 
 // Files whose contents select the model provider/catalog used by Codex. The
@@ -49,6 +47,7 @@ var codexModelsCacheConfigFiles = []string{
 // CodexHomeOptions carries optional inputs for prepareCodexHomeWithOpts that
 // affect the generated per-task config.toml.
 type CodexHomeOptions struct {
+	SupplementalModels []CodexSupplementalModel
 	// CodexVersion is the detected Codex CLI version (e.g. "0.121.0"). Empty
 	// means unknown; on macOS, unknown is treated as "probably broken" so the
 	// daemon falls back to danger-full-access for network access. See
@@ -265,7 +264,7 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	// provider/catalog configuration is still the one that cache was bound to.
 	// If binding fails, discard the optional cache so Codex refreshes it instead
 	// of potentially using models from the wrong provider.
-	if err := syncCodexModelsCache(codexHome, sharedHome, freshHome); err != nil {
+	if err := syncCodexModelsCache(codexHome, sharedHome, freshHome, opts.SupplementalModels); err != nil {
 		logger.Warn("execenv: codex-home models cache sync failed; discarding cache", "error", err)
 		if removeErr := os.RemoveAll(filepath.Join(codexHome, codexModelsCacheFile)); removeErr != nil {
 			return fmt.Errorf("sync codex models cache: %v; discard unsafe cache: %w", err, removeErr)
@@ -1067,7 +1066,7 @@ func materialiseInCodexHome(codexHome, relPath, src, key string) error {
 // let Codex fetch a catalog for the new effective configuration. We
 // deliberately do not seed the shared cache in this case because it carries
 // the same provider-identity ambiguity.
-func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
+func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool, supplementalModels []CodexSupplementalModel) error {
 	fingerprint, err := codexModelsCacheConfigFingerprint(sharedHome)
 	if err != nil {
 		return err
@@ -1095,7 +1094,7 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 				return fmt.Errorf("remove non-regular codex models cache %s: %w", cachePath, err)
 			}
 		}
-		return ensureCodexGatewayModels(cachePath)
+		return ensureCodexGatewayModels(cachePath, supplementalModels)
 	}
 
 	if cacheExists {
@@ -1117,7 +1116,7 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 	if err := writeCodexModelsCacheBinding(bindingPath, fingerprint); err != nil {
 		return err
 	}
-	return ensureCodexGatewayModels(cachePath)
+	return ensureCodexGatewayModels(cachePath, supplementalModels)
 }
 
 // ensureCodexGatewayModels adds gateway-routed models to the task-local Codex
@@ -1126,7 +1125,10 @@ func syncCodexModelsCache(codexHome, sharedHome string, freshHome bool) error {
 // API gateway still receives the bare Grok ID and is responsible for routing
 // it to xAI. 2026-09-06 coder(lq): Keep this injection local to each task so
 // the user's shared Codex installation and its own catalog remain untouched.
-func ensureCodexGatewayModels(cachePath string) error {
+func ensureCodexGatewayModels(cachePath string, supplementalModels []CodexSupplementalModel) error {
+	if len(supplementalModels) == 0 {
+		return nil
+	}
 	data, err := os.ReadFile(cachePath)
 	if os.IsNotExist(err) {
 		return nil
@@ -1158,7 +1160,7 @@ func ensureCodexGatewayModels(cachePath string) error {
 		models = append(models, model)
 	}
 
-	seen := make(map[string]bool, len(models)+2)
+	seen := make(map[string]bool, len(models)+len(supplementalModels))
 	var template map[string]any
 	for _, model := range models {
 		if slug, ok := model["slug"].(string); ok && slug != "" {
@@ -1173,28 +1175,26 @@ func ensureCodexGatewayModels(cachePath string) error {
 	}
 
 	changed := false
-	for _, spec := range []struct {
-		slug        string
-		displayName string
-		description string
-	}{
-		{codexGatewayModelGrok46, "Grok 4.6", "Grok 4.6 routed through the configured Codex API gateway."},
-		{codexGatewayModelGrok45, "Grok 4.5", "Grok 4.5 routed through the configured Codex API gateway."},
-	} {
-		if seen[spec.slug] {
+	for _, spec := range supplementalModels {
+		slug := strings.TrimSpace(spec.ID)
+		if slug == "" || seen[slug] {
 			continue
+		}
+		displayName := strings.TrimSpace(spec.DisplayName)
+		if displayName == "" {
+			displayName = slug
 		}
 		model := make(map[string]any, len(template)+5)
 		for key, value := range template {
 			model[key] = value
 		}
-		model["slug"] = spec.slug
-		model["display_name"] = spec.displayName
-		model["description"] = spec.description
+		model["slug"] = slug
+		model["display_name"] = displayName
+		model["description"] = strings.TrimSpace(spec.Description)
 		model["visibility"] = "list"
 		model["supported_in_api"] = true
 		models = append(models, model)
-		seen[spec.slug] = true
+		seen[slug] = true
 		changed = true
 	}
 	if !changed {

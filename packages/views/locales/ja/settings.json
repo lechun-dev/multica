@@ -135,6 +135,44 @@
       "error_contains": "エラーに含まれる文字列"
     }
   },
+  "runtime_models": {
+    "title": "ランタイムモデル",
+    "description": "このワークスペースの Codex エージェントで利用できる追加モデルを管理します。",
+    "loading": "ランタイムモデルを読み込んでいます…",
+    "load_failed": "ランタイムモデルを読み込めませんでした。",
+    "empty": "追加のランタイムモデルは設定されていません。",
+    "add": "モデルを追加",
+    "enabled": "有効",
+    "disabled": "無効",
+    "edit": "ランタイムモデルを編集",
+    "delete": "ランタイムモデルを削除",
+    "toggle_enabled": "{{name}} の有効状態を切り替える",
+    "delete_confirm": "{{name}} を削除しますか？",
+    "create_title": "ランタイムモデルを追加",
+    "edit_title": "ランタイムモデルを編集",
+    "form_description": "モデル ID は、設定済みの Codex API ゲートウェイが受け付ける ID と一致する必要があります。",
+    "model_id": "モデル ID",
+    "model_id_placeholder": "grok-4.6",
+    "display_name": "表示名",
+    "display_name_placeholder": "Grok 4.6",
+    "model_provider": "モデルプロバイダー",
+    "sort_order": "並び順",
+    "description_label": "説明",
+    "description_placeholder": "モデル選択画面に表示する任意の説明です。",
+    "thinking_levels": "思考レベル",
+    "thinking_levels_hint": "このモデルが実際に対応するレベルだけを選択してください。",
+    "thinking_summary": "思考レベル：{{levels}}",
+    "default_thinking_level": "既定の思考レベル",
+    "runtime_default": "ランタイムの既定値を使用",
+    "enabled_on_save": "エージェントで利用可能",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "saved": "ランタイムモデルを保存しました。",
+    "save_failed": "ランタイムモデルを保存できませんでした。",
+    "deleted": "ランタイムモデルを削除しました。",
+    "delete_failed": "ランタイムモデルを削除できませんでした。",
+    "invalid": "モデル ID、表示名、プロバイダー、並び順を確認してください。"
+  },
   "auto_save": {
     "saving": "保存中…",
     "saved": "保存済み",
@@ -397,7 +435,8 @@
       "project_permissions": "プロジェクト権限",
       "project_permission_roles": "権限ロール",
       "project_authorization_organizations": "組織ディレクトリ",
-      "task_retry_policies": "再試行ポリシー"
+      "task_retry_policies": "再試行ポリシー",
+      "runtime_models": "ランタイムモデル"
     }
   },
   "plugins": {

@@ -224,6 +224,7 @@ type AgentData struct {
 	CustomArgs            []string                   `json:"custom_args,omitempty"`
 	McpConfig             json.RawMessage            `json:"mcp_config,omitempty"`
 	Model                 string                     `json:"model,omitempty"`
+	RuntimeModel          *RuntimeModelData          `json:"runtime_model,omitempty"`
 	ThinkingLevel         string                     `json:"thinking_level,omitempty"`
 	ServiceTier           string                     `json:"service_tier,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkillData `json:"disabled_runtime_skills,omitempty"`
@@ -232,6 +233,29 @@ type AgentData struct {
 	// daemon decodes provider-specific fields (e.g. openclaw mode +
 	// gateway endpoint, see issue #3260); other backends ignore it.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+}
+
+type RuntimeModelData struct {
+	ID                                  string                    `json:"id"`
+	DisplayName                         string                    `json:"display_name"`
+	ModelProvider                       string                    `json:"model_provider"`
+	Description                         string                    `json:"description,omitempty"`
+	ThinkingLevels                      []RuntimeThinkingLevel    `json:"thinking_levels,omitempty"`
+	DefaultThinkingLevel                string                    `json:"default_thinking_level,omitempty"`
+	ServiceTiers                        []RuntimeModelServiceTier `json:"service_tiers,omitempty"`
+	SupportsExplicitStandardServiceTier bool                      `json:"supports_explicit_standard_service_tier,omitempty"`
+}
+
+type RuntimeThinkingLevel struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+type RuntimeModelServiceTier struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 // DisabledRuntimeSkillData is the task-wire identity of one runtime-local

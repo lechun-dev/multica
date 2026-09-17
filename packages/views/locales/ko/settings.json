@@ -135,6 +135,44 @@
       "error_contains": "오류에 포함된 텍스트"
     }
   },
+  "runtime_models": {
+    "title": "런타임 모델",
+    "description": "이 워크스페이스의 Codex 에이전트가 사용할 추가 모델을 관리합니다.",
+    "loading": "런타임 모델을 불러오는 중…",
+    "load_failed": "런타임 모델을 불러오지 못했습니다.",
+    "empty": "추가 런타임 모델이 설정되지 않았습니다.",
+    "add": "모델 추가",
+    "enabled": "사용",
+    "disabled": "사용 안 함",
+    "edit": "런타임 모델 편집",
+    "delete": "런타임 모델 삭제",
+    "toggle_enabled": "{{name}} 사용 상태 전환",
+    "delete_confirm": "{{name}}을(를) 삭제할까요?",
+    "create_title": "런타임 모델 추가",
+    "edit_title": "런타임 모델 편집",
+    "form_description": "모델 ID는 설정된 Codex API 게이트웨이가 허용하는 ID와 일치해야 합니다.",
+    "model_id": "모델 ID",
+    "model_id_placeholder": "grok-4.6",
+    "display_name": "표시 이름",
+    "display_name_placeholder": "Grok 4.6",
+    "model_provider": "모델 제공자",
+    "sort_order": "정렬 순서",
+    "description_label": "설명",
+    "description_placeholder": "모델 선택 화면에 표시할 선택 설명입니다.",
+    "thinking_levels": "사고 수준",
+    "thinking_levels_hint": "이 모델이 실제로 지원하는 수준만 선택하세요.",
+    "thinking_summary": "사고 수준: {{levels}}",
+    "default_thinking_level": "기본 사고 수준",
+    "runtime_default": "런타임 기본값 사용",
+    "enabled_on_save": "에이전트가 사용 가능",
+    "cancel": "취소",
+    "save": "저장",
+    "saved": "런타임 모델을 저장했습니다.",
+    "save_failed": "런타임 모델을 저장하지 못했습니다.",
+    "deleted": "런타임 모델을 삭제했습니다.",
+    "delete_failed": "런타임 모델을 삭제하지 못했습니다.",
+    "invalid": "모델 ID, 표시 이름, 제공자와 정렬 순서를 확인하세요."
+  },
   "auto_save": {
     "saving": "저장 중…",
     "saved": "저장됨",
@@ -397,7 +435,8 @@
       "project_permissions": "프로젝트 권한",
       "project_permission_roles": "권한 역할",
       "project_authorization_organizations": "조직 디렉터리",
-      "task_retry_policies": "재시도 정책"
+      "task_retry_policies": "재시도 정책",
+      "runtime_models": "런타임 모델"
     }
   },
   "plugins": {

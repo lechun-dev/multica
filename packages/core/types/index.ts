@@ -6,6 +6,11 @@ export type {
   UpdateTaskRetryPolicyRequest,
 } from "./task-retry-policy";
 export type {
+  WorkspaceRuntimeModel,
+  WorkspaceRuntimeModelRequest,
+  UpdateWorkspaceRuntimeModelRequest,
+} from "./workspace-runtime-model";
+export type {
   IssueStatusCategory,
   IssueStatusEntry,
   ListIssueStatusesResponse,

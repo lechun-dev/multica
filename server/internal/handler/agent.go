@@ -758,6 +758,7 @@ type TaskAgentData struct {
 	CustomArgs            []string                    `json:"custom_args,omitempty"`
 	McpConfig             json.RawMessage             `json:"mcp_config,omitempty"`
 	Model                 string                      `json:"model,omitempty"`
+	RuntimeModel          *TaskRuntimeModelData       `json:"runtime_model,omitempty"`
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
 	DisabledRuntimeSkills []DisabledRuntimeSkill      `json:"disabled_runtime_skills,omitempty"`
@@ -767,6 +768,20 @@ type TaskAgentData struct {
 	// (issue #3260). Other providers ignore the payload entirely. Sent
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+}
+
+// TaskRuntimeModelData carries workspace-owned model metadata needed by the
+// daemon to make a configured gateway model available in an isolated runtime.
+// 2026-09-17 coder(lq): Send only the selected model to avoid cross-space leakage.
+type TaskRuntimeModelData struct {
+	ID                                  string             `json:"id"`
+	DisplayName                         string             `json:"display_name"`
+	ModelProvider                       string             `json:"model_provider"`
+	Description                         string             `json:"description,omitempty"`
+	ThinkingLevels                      []ThinkingLevel    `json:"thinking_levels,omitempty"`
+	DefaultThinkingLevel                string             `json:"default_thinking_level,omitempty"`
+	ServiceTiers                        []ModelServiceTier `json:"service_tiers,omitempty"`
+	SupportsExplicitStandardServiceTier bool               `json:"supports_explicit_standard_service_tier,omitempty"`
 }
 
 // visibleTaskHistory omits unused assignee fallbacks created by older versions.
@@ -2027,13 +2042,26 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model != nil {
 		params.Model = pgtype.Text{String: *req.Model, Valid: true}
-	} else if req.RuntimeID != nil && existing.Model.Valid && agent.ModelKnownIncompatibleWithProvider(targetProvider, existing.Model.String) {
-		// Model is runtime-native. When moving an agent across known provider
-		// families and the caller did not choose a replacement model, clear the
-		// old value so the new runtime falls back to its own default instead of
-		// receiving an obvious foreign model ID (e.g. Claude Code -> Codex).
-		// Unknown/custom model strings are preserved by the helper.
-		params.Model = pgtype.Text{String: "", Valid: true}
+	} else if req.RuntimeID != nil && existing.Model.Valid {
+		incompatible, err := h.modelKnownIncompatibleWithWorkspaceProvider(
+			r.Context(),
+			existing.WorkspaceID,
+			targetProvider,
+			existing.Model.String,
+		)
+		if err != nil {
+			slog.Error("update agent: check workspace runtime model compatibility",
+				append(logger.RequestAttrs(r), "agent_id", id, "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to validate model compatibility")
+			return
+		}
+		if incompatible {
+			// Model is runtime-native. When moving an agent across known provider
+			// families and the caller did not choose a replacement model, clear the
+			// old value so the new runtime falls back to its own default instead of
+			// receiving an obvious foreign model ID (e.g. Claude Code -> Codex).
+			params.Model = pgtype.Text{String: "", Valid: true}
+		}
 	}
 
 	// thinking_level handling (MUL-2339). Tri-state semantics:
@@ -2285,6 +2313,32 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		redactComposioToolkitAllowlist(&resp)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) modelKnownIncompatibleWithWorkspaceProvider(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	provider string,
+	model string,
+) (bool, error) {
+	if !agent.ModelKnownIncompatibleWithProvider(provider, model) {
+		return false, nil
+	}
+
+	// 2026-09-17 coder(lq): Workspace models extend the static runtime catalog.
+	// A configured model must survive a runtime switch within the same provider.
+	_, err := h.Queries.GetEnabledWorkspaceRuntimeModelByKey(ctx, db.GetEnabledWorkspaceRuntimeModelByKeyParams{
+		WorkspaceID:     workspaceID,
+		RuntimeProvider: provider,
+		ModelID:         model,
+	})
+	if err == nil {
+		return false, nil
+	}
+	if isNotFound(err) {
+		return true, nil
+	}
+	return false, err
 }
 
 // attachAgentSkills populates resp.Skills from the agent_skill junction

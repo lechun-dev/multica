@@ -135,6 +135,44 @@
       "error_contains": "Error contains"
     }
   },
+  "runtime_models": {
+    "title": "Runtime models",
+    "description": "Manage additional models available to Codex agents in this workspace.",
+    "loading": "Loading runtime models…",
+    "load_failed": "Failed to load runtime models.",
+    "empty": "No additional runtime models configured.",
+    "add": "Add model",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "edit": "Edit runtime model",
+    "delete": "Delete runtime model",
+    "toggle_enabled": "Toggle {{name}}",
+    "delete_confirm": "Delete {{name}}?",
+    "create_title": "Add runtime model",
+    "edit_title": "Edit runtime model",
+    "form_description": "The model ID must match the ID accepted by the configured Codex API gateway.",
+    "model_id": "Model ID",
+    "model_id_placeholder": "grok-4.6",
+    "display_name": "Display name",
+    "display_name_placeholder": "Grok 4.6",
+    "model_provider": "Model provider",
+    "sort_order": "Sort order",
+    "description_label": "Description",
+    "description_placeholder": "Optional context shown in the model picker.",
+    "thinking_levels": "Thinking levels",
+    "thinking_levels_hint": "Select only the levels supported by this model.",
+    "thinking_summary": "Thinking: {{levels}}",
+    "default_thinking_level": "Default thinking level",
+    "runtime_default": "Use runtime default",
+    "enabled_on_save": "Available to agents",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saved": "Runtime model saved.",
+    "save_failed": "Could not save the runtime model.",
+    "deleted": "Runtime model deleted.",
+    "delete_failed": "Could not delete the runtime model.",
+    "invalid": "Check the model ID, display name, provider, and sort order."
+  },
   "auto_save": {
     "saving": "Saving…",
     "saved": "Saved",
@@ -397,7 +435,8 @@
       "project_permissions": "Project Permissions",
       "project_permission_roles": "Permission Roles",
       "project_authorization_organizations": "Organization Directory",
-      "task_retry_policies": "Retry Policies"
+      "task_retry_policies": "Retry Policies",
+      "runtime_models": "Runtime Models"
     }
   },
   "plugins": {
