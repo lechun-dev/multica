@@ -21,6 +21,12 @@ vi.mock("@multica/core/config", () => ({
 }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("../../i18n", async () => {
+  const issues = (await import("../../locales/en/issues.json")).default;
+  return {
+    useT: () => ({ t: (select: (bundle: typeof issues) => string) => select(issues) }),
+  };
+});
 
 import { RestrictedIssueAccess } from "./restricted-issue-access";
 
@@ -28,11 +34,18 @@ describe("RestrictedIssueAccess", () => {
   it("isolates role and request caches by workspace", () => {
     mocks.useQuery
       .mockReturnValueOnce({ data: { scope: "task", roles: [] } })
-      .mockReturnValueOnce({ data: { items: [] }, refetch: vi.fn() });
+      .mockReturnValueOnce({
+        data: { items: [{ id: "request-1", requested_role: "viewer", status: "pending" }] },
+        refetch: vi.fn(),
+      });
 
     render(<RestrictedIssueAccess issueId="issue-1" identifier="LC-797" />);
 
     expect(screen.getByText("LC-797")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "You don't have access" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Request access" })).toBeInTheDocument();
+    expect(screen.getByText("Can view · Pending approval")).toBeInTheDocument();
+    expect(screen.queryByText(/task:viewer|pending/)).not.toBeInTheDocument();
     expect(mocks.useQuery).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

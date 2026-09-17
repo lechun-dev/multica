@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useCanonicalIssue } from "@multica/core/issues/canonical-id";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { Button } from "@multica/ui/components/ui/button";
+import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 import { IssueDetail, IssueDetailSkeleton, IssueNotFound } from "./issue-detail";
 import { useWorkspaceTaskVisibility } from "../surface/visibility-context";
@@ -79,6 +81,7 @@ function useCommentHighlightHash(): { hash: string; commentId?: string } {
  *    panel, where replacing the URL would navigate the user out of the inbox.
  */
 export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
+  const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const { includeWorkspaceOwned, ready: visibilityReady } =
     useWorkspaceTaskVisibility();
@@ -104,6 +107,20 @@ export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
   // refetch it, and restart this component's resolve/remount cycle — an
   // unbounded request loop that never settles. See `CanonicalIssue.notFound`.
   if (notFound && restrictedTarget.data) return <RestrictedIssueAccess issueId={restrictedTarget.data.id} identifier={restrictedTarget.data.identifier} />;
+  if (
+    notFound &&
+    restrictedTarget.isError &&
+    (!(restrictedTarget.error instanceof ApiError) || restrictedTarget.error.status !== 404)
+  ) {
+    return (
+      <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-body text-muted-foreground">
+        <p>{t(($) => $.detail.access_check_failed)}</p>
+        <Button variant="outline" size="sm" onClick={() => void restrictedTarget.refetch()}>
+          {t(($) => $.detail.try_again)}
+        </Button>
+      </div>
+    );
+  }
   if (notFound || !canonicalId) return <IssueNotFound showBackLink={!onDelete} />;
 
   return (

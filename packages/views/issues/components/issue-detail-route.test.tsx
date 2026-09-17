@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, renderHook, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { setApiInstance } from "@multica/core/api";
+import { ApiError, setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
 import { NavigationProvider } from "../../navigation";
 import type { NavigationAdapter } from "../../navigation";
@@ -16,8 +16,24 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
+vi.mock("../../i18n", async () => {
+  const issues = (await import("../../locales/en/issues.json")).default;
+  return {
+    useT: () => ({ t: (select: (bundle: typeof issues) => string) => select(issues) }),
+  };
+});
+
 vi.mock("../surface/visibility-context", () => ({
   useWorkspaceTaskVisibility: () => ({ includeWorkspaceOwned: true, ready: true }),
+}));
+
+vi.mock("./restricted-issue-access", () => ({
+  RestrictedIssueAccess: ({ identifier }: { identifier: string }) => (
+    <div>
+      <p>没有访问权限：{identifier}</p>
+      <button type="button">申请权限</button>
+    </div>
+  ),
 }));
 
 vi.mock("@multica/core/paths", async () => {
@@ -132,7 +148,7 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
     const getIssue = vi.fn().mockRejectedValue(new Error("issue not found"));
     const getIssueAccessRequestTarget = vi
       .fn()
-      .mockRejectedValue(new Error("task not found"));
+      .mockRejectedValue(new ApiError("task not found", 404, "Not Found"));
     setApiInstance({ getIssue, getIssueAccessRequestTarget } as unknown as ApiClient);
     const qc = new QueryClient({
       defaultOptions: { queries: { staleTime: Infinity, retry: false } },
@@ -157,6 +173,7 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
     );
 
     await waitFor(() => expect(getIssue).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("Task deleted")).toBeInTheDocument());
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(getIssue).toHaveBeenCalledTimes(1);
     expect(getIssueAccessRequestTarget).toHaveBeenCalledTimes(1);
@@ -183,6 +200,75 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
 
     // A failed resolve must never rewrite the URL.
     expect(replace).not.toHaveBeenCalled();
+    qc.clear();
+  });
+
+  it("shows an access request action when the task still exists", async () => {
+    const getIssue = vi.fn().mockRejectedValue(new Error("forbidden"));
+    const getIssueAccessRequestTarget = vi.fn().mockResolvedValue({
+      id: "issue-1",
+      identifier: "LC-797",
+    });
+    setApiInstance({ getIssue, getIssueAccessRequestTarget } as unknown as ApiClient);
+    const qc = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <NavigationProvider
+          value={{
+            push,
+            replace,
+            back: vi.fn(),
+            pathname: "/acme/issues/LC-797",
+            searchParams: new URLSearchParams(),
+            hash: "",
+            getShareableUrl: (p: string) => `https://app.multica.com${p}`,
+          }}
+        >
+          <IssueDetailRoute routeId="LC-797" />
+        </NavigationProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("没有访问权限：LC-797")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "申请权限" })).toBeInTheDocument();
+    expect(screen.queryByText("Task deleted")).not.toBeInTheDocument();
+    qc.clear();
+  });
+
+  it("does not report a temporary access check failure as deletion", async () => {
+    const getIssue = vi.fn().mockRejectedValue(new Error("forbidden"));
+    const getIssueAccessRequestTarget = vi
+      .fn()
+      .mockRejectedValue(new ApiError("unavailable", 503, "Service Unavailable"));
+    setApiInstance({ getIssue, getIssueAccessRequestTarget } as unknown as ApiClient);
+    const qc = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <NavigationProvider
+          value={{
+            push,
+            replace,
+            back: vi.fn(),
+            pathname: "/acme/issues/LC-797",
+            searchParams: new URLSearchParams(),
+            hash: "",
+            getShareableUrl: (p: string) => `https://app.multica.com${p}`,
+          }}
+        >
+          <IssueDetailRoute routeId="LC-797" />
+        </NavigationProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Could not check task access.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByText("Task deleted")).not.toBeInTheDocument();
     qc.clear();
   });
 });
