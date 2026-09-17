@@ -165,12 +165,14 @@ describe("ProjectPermissionsDialog", () => {
     await user.click(await screen.findByRole("button", { name: "Access" }));
     expect(await screen.findByRole("dialog", { name: "Project access" })).toBeInTheDocument();
 
+    await user.click(await screen.findByRole("button", { name: "Already granted 2" }));
     const currentAccess = await screen.findByRole("region", { name: "Current project access" });
     expect(within(currentAccess).getByText("Alice Owner")).toBeInTheDocument();
     expect(within(currentAccess).getByText("Bob Builder")).toBeInTheDocument();
     expect(within(currentAccess).queryByText("Carol Reviewer")).not.toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
 
-    const addMembers = screen.getByRole("region", { name: "Add members" });
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
     expect(within(addMembers).queryByText("Alice Owner")).not.toBeInTheDocument();
     expect(within(addMembers).queryByText("Bob Builder")).not.toBeInTheDocument();
     await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
@@ -187,6 +189,7 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
+    await user.click(await screen.findByRole("button", { name: "Already granted 2" }));
     await user.click(await screen.findByRole("combobox", { name: "Change role for Bob Builder" }));
     await user.click(await screen.findByRole("option", { name: "Manager" }));
 
@@ -201,7 +204,7 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
     await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
     await screen.findByRole("option", { name: /Carol Reviewer/ });
     await user.click(screen.getByRole("checkbox", { name: "Carol Reviewer" }));
@@ -209,7 +212,7 @@ describe("ProjectPermissionsDialog", () => {
     expect(screen.getByRole("checkbox", { name: "Carol Reviewer" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Dave Designer" })).toBeChecked();
 
-    const rolePicker = screen.getByRole("combobox", { name: "Role for selected members" });
+    const rolePicker = screen.getByRole("combobox", { name: "Project role to grant" });
     await user.click(rolePicker);
     const viewerOption = await screen.findByRole("option", { name: "Viewer" });
     expect(viewerOption.closest('[data-slot="select-content"]')).toHaveAttribute("data-align-trigger", "false");
@@ -230,7 +233,7 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
     await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
     await screen.findByRole("option", { name: /Carol Reviewer/ });
     await user.click(screen.getByRole("checkbox", { name: "Carol Reviewer" }));
@@ -250,6 +253,7 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
+    await user.click(await screen.findByRole("button", { name: "Already granted 2" }));
     await user.click(await screen.findByRole("button", { name: "Remove project access for Alice Owner" }));
 
     await waitFor(() => expect(removeProjectMember).toHaveBeenCalledWith("project-1", "alice"));
@@ -266,12 +270,10 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
-    await user.click(within(addMembers).getAllByRole("combobox")[0]!);
-    await user.click(await screen.findByRole("option", { name: "Organization" }));
-    await user.click(within(addMembers).getByRole("button", { name: "Organization" }));
-    await user.click(await screen.findByRole("button", { name: "Department A" }));
-    await user.click(within(addMembers).getByRole("combobox", { name: "Role for selected members" }));
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
+    await user.click(within(addMembers).getByRole("button", { name: "Select organization" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Department A" }));
+    await user.click(within(addMembers).getByRole("combobox", { name: "Project role to grant" }));
     await user.click(await screen.findByRole("option", { name: "Member" }));
     await user.click(screen.getByRole("button", { name: "Grant access" }));
 
@@ -287,10 +289,10 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
     await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
     await user.click(await screen.findByRole("checkbox", { name: "Carol Reviewer" }));
-    await user.click(within(addMembers).getByRole("combobox", { name: "Role for selected members" }));
+    await user.click(within(addMembers).getByRole("combobox", { name: "Project role to grant" }));
     await user.click(await screen.findByRole("option", { name: "Member" }));
     await user.click(screen.getByRole("button", { name: "Grant access" }));
 
@@ -311,7 +313,7 @@ describe("ProjectPermissionsDialog", () => {
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
     await user.click(within(addMembers).getByRole("button", { name: "Search by name or email" }));
     expect(await screen.findByRole("option", { name: /Alice Owner/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Bob Builder/ })).toBeInTheDocument();
@@ -331,6 +333,7 @@ describe("ProjectPermissionsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
     await user.click(await screen.findByRole("button", { name: "Access" }));
+    await user.click(await screen.findByRole("button", { name: "Already granted 1" }));
     const currentAccess = await screen.findByRole("region", { name: "Current project access" });
     await user.click(within(currentAccess).getByRole("combobox", { name: /Change role for Organization: Department A/ }));
     await user.click(await screen.findByRole("option", { name: "Member" }));
@@ -349,9 +352,8 @@ describe("ProjectPermissionsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
-    await user.click(within(addMembers).getAllByRole("combobox")[0]!);
-    await user.click(await screen.findByRole("option", { name: "Everyone" }));
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
+    await user.click(within(addMembers).getByRole("checkbox", { name: /Everyone/ }));
     await user.click(screen.getByRole("button", { name: "Grant access" }));
 
     await waitFor(() => expect(createProjectAccessGrant).toHaveBeenCalledWith("project-1", {
@@ -359,18 +361,33 @@ describe("ProjectPermissionsDialog", () => {
     }));
   });
 
-  it("does not offer role as a project authorization subject", async () => {
+  it("keeps people and departments selected together and lets everyone override without clearing them", async () => {
     configStore.getState().setAuthConfig({ allowSignup: true, projectPermissionsEnabled: true });
+    listProjectAuthorizationOrganizations.mockResolvedValue({
+      organizations: [{ id: "org-a", workspace_id: "workspace-1", provider: "manual", external_id: "dept-a", name: "Department A", status: "active" }],
+      members: [], total: 1, member_total: 0,
+    });
     const user = userEvent.setup();
     renderDialog();
 
     await user.click(await screen.findByRole("button", { name: "Access" }));
-    const addMembers = screen.getByRole("region", { name: "Add members" });
-    await user.click(within(addMembers).getAllByRole("combobox")[0]!);
+    const addMembers = screen.getByRole("region", { name: "Grant access" });
+    const peoplePicker = within(addMembers).getByRole("button", { name: "Search by name or email" });
+    const organizationPicker = within(addMembers).getByRole("button", { name: "Select organization" });
+    await user.click(peoplePicker);
+    await user.click(await screen.findByRole("checkbox", { name: "Carol Reviewer" }));
+    await user.click(organizationPicker);
+    await user.click(await screen.findByRole("checkbox", { name: "Department A" }));
 
-    expect(await screen.findByRole("option", { name: "User" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Organization" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Everyone" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Role" })).not.toBeInTheDocument();
+    await user.click(within(addMembers).getByRole("checkbox", { name: /Everyone/ }));
+    expect(peoplePicker).toHaveAttribute("aria-disabled", "true");
+    expect(organizationPicker).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("button", { name: "Grant access" }));
+
+    await waitFor(() => expect(createProjectAccessGrant).toHaveBeenCalledWith("project-1", {
+      subject_type: "everyone", subject_id: undefined, role: "member",
+    }));
+    expect(createProjectAccessGrant).not.toHaveBeenCalledWith("project-1", expect.objectContaining({ subject_type: "user" }));
+    expect(createProjectAccessGrant).not.toHaveBeenCalledWith("project-1", expect.objectContaining({ subject_type: "organization" }));
   });
 });

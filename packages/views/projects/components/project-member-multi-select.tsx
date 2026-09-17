@@ -38,6 +38,7 @@ type ProjectMemberMultiSelectProps = {
   removeLabel: string;
   isLoading?: boolean;
   hasError?: boolean;
+  disabled?: boolean;
   ariaLabel?: string;
 };
 
@@ -59,6 +60,7 @@ export function ProjectMemberMultiSelect({
   removeLabel,
   isLoading = false,
   hasError = false,
+  disabled = false,
   ariaLabel,
 }: ProjectMemberMultiSelectProps) {
   const { t } = useT("settings");
@@ -97,36 +99,42 @@ export function ProjectMemberMultiSelect({
       // 2026-09-04 coder(lq): Keep the multi-select non-modal so the role
       // selector in the surrounding authorization row remains clickable.
       modal={false}
-      open={open}
-      onOpenChange={setOpen}
+      open={disabled ? false : open}
+      onOpenChange={(next) => {
+        if (!disabled) setOpen(next);
+      }}
     >
       <PopoverTrigger
         nativeButton={false}
         render={
           <div
             role="button"
-            tabIndex={0}
-            className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-body outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            tabIndex={disabled ? -1 : 0}
+            className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-body outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:bg-muted/40 data-[disabled=true]:text-muted-foreground data-[disabled=true]:hover:bg-muted/40"
             aria-label={ariaLabel || triggerLabel}
             aria-haspopup="listbox"
-            aria-expanded={open}
+            aria-expanded={disabled ? false : open}
+            aria-disabled={disabled}
+            data-disabled={disabled ? "true" : undefined}
           >
             <span className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap">
               {selectedMembers.length === 0 ? <span className="text-muted-foreground">{placeholder}</span> : selectedMembers.map((member) => (
                 <span key={member.id} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-caption">
                   <span className="max-w-40 truncate">{member.label}</span>
-                  <button
-                    type="button"
-                    className="rounded-full text-muted-foreground hover:text-foreground"
-                    aria-label={`${removeLabel} ${member.label}`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onToggle(member.id);
-                    }}
-                  >
-                    ×
-                  </button>
+                  {disabled ? null : (
+                    <button
+                      type="button"
+                      className="rounded-full text-muted-foreground hover:text-foreground"
+                      aria-label={`${removeLabel} ${member.label}`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onToggle(member.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
                 </span>
               ))}
               <span className="sr-only">{triggerLabel}</span>

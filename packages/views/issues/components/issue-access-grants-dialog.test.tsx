@@ -107,9 +107,20 @@ describe("IssueAccessGrantsDialog", () => {
       ],
     });
     mocks.listProjectAuthorizationOrganizations.mockResolvedValue({
-      organizations: [],
+      organizations: [
+        {
+          id: "org-sales",
+          workspace_id: "workspace-1",
+          name: "销售部",
+          external_id: "dept-sales",
+          parent_id: null,
+          sort_order: 0,
+          created_at: "2026-09-03T00:00:00Z",
+          updated_at: "2026-09-03T00:00:00Z",
+        },
+      ],
       members: [],
-      total: 0,
+      total: 1,
       member_total: 0,
     });
     mocks.listMembers.mockResolvedValue([
@@ -138,35 +149,44 @@ describe("IssueAccessGrantsDialog", () => {
     mocks.updateIssueAccessControl.mockResolvedValue(control);
   });
 
-  it("shows project projection, source scope, and the exact restricted semantics", async () => {
+  it("shows a share-first access dialog without source diagnostics", async () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Task permissions" }));
+    await user.click(screen.getByRole("button", { name: "Share task" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Task permissions" });
-    expect(within(dialog).getByText("Project · direct")).toBeInTheDocument();
-    expect(within(dialog).getByText("project:viewer")).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(/Direct-parent access still applies in both modes/),
-    ).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(within(dialog).getByText("Task link")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(within(dialog).getByText("Grant access")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Already granted 0" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("group", { name: "Object type" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Select people" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Select departments" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: /Everyone/ })).toBeInTheDocument();
+    expect(within(dialog).getByText("Grant settings")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Add to access list" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Preview & save" })).toBeDisabled();
+    expect(within(dialog).getByText("My access")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("View task").length).toBeGreaterThan(0);
+    expect(within(dialog).queryByText("Allowed")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Permission source details")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Project direct grant")).not.toBeInTheDocument();
   });
 
   it("supports a projectless task, role bundle and expiry through preview then confirmation", async () => {
     const user = userEvent.setup();
     renderDialog(null);
 
-    await user.click(screen.getByRole("button", { name: "Task permissions" }));
+    await user.click(screen.getByRole("button", { name: "Share task" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Task permissions" });
-    expect(within(dialog).getByText(/Projectless task/)).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(within(dialog).getByText(/Projectless tasks use direct grants only/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Select people" }));
     await user.click(await screen.findByRole("checkbox", { name: "李四" }));
-    await user.click(within(dialog).getByRole("combobox", { name: "Task role" }));
-    await user.click(await screen.findByRole("option", { name: "Member" }));
+    await user.click(within(dialog).getByRole("combobox", { name: "Access level" }));
+    await user.click(await screen.findByRole("option", { name: "Can edit" }));
     await user.type(within(dialog).getByLabelText("Grant expiry"), "2026-09-20T12:00");
-    await user.click(within(dialog).getByRole("button", { name: "Add" }));
-    expect(within(dialog).getByText("project.view, project.edit")).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: "Preview & save" }));
 
@@ -192,16 +212,88 @@ describe("IssueAccessGrantsDialog", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Task permissions updated");
   });
 
+  it("disables people and department pickers while saving everyone access", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Share task" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    await user.click(within(dialog).getByRole("button", { name: "Select people" }));
+    await user.click(await screen.findByRole("checkbox", { name: "李四" }));
+    await user.click(within(dialog).getByRole("button", { name: "Select departments" }));
+    await user.click(await screen.findByRole("checkbox", { name: "销售部" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: /Everyone/ }));
+
+    expect(within(dialog).getByRole("button", { name: "Select people" })).toHaveAttribute("aria-disabled", "true");
+    expect(within(dialog).getByRole("button", { name: "Select departments" })).toHaveAttribute("aria-disabled", "true");
+    expect(within(dialog).queryByRole("button", { name: "Add to access list" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Preview & save" }));
+
+    await waitFor(() => expect(mocks.previewIssueAccessControl).toHaveBeenCalledWith(
+      "issue-1",
+      expect.objectContaining({
+        grants: [expect.objectContaining({ subject_type: "everyone", role: "member" })],
+      }),
+    ));
+  });
+
+  it("moves an approved access request into direct grants", async () => {
+    const pendingRequest = {
+      id: "request-1",
+      workspace_id: "workspace-1",
+      issue_id: "issue-1",
+      requester_user_id: "li-4",
+      requested_role: "viewer",
+      reason: "Need task context",
+      status: "pending" as const,
+      created_at: "2026-09-16T00:00:00Z",
+      updated_at: "2026-09-16T00:00:00Z",
+    };
+    mocks.listIssueAccessRequests
+      .mockResolvedValueOnce({ items: [pendingRequest] })
+      .mockResolvedValue({ items: [{ ...pendingRequest, status: "approved" }] });
+    mocks.reviewIssueAccessRequest.mockResolvedValue({
+      ...pendingRequest,
+      status: "approved",
+      reviewer_user_id: "reviewer-1",
+      reviewed_at: "2026-09-16T00:01:00Z",
+      updated_at: "2026-09-16T00:01:00Z",
+    });
+
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Share task" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    await user.click(await within(dialog).findByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(mocks.reviewIssueAccessRequest).toHaveBeenCalledWith(
+      "issue-1",
+      "request-1",
+      { action: "approve" },
+    ));
+    expect(await within(dialog).findByRole("button", { name: "Already granted 1" })).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).queryByText("Need task context")).not.toBeInTheDocument());
+
+    await user.click(within(dialog).getByRole("button", { name: "Already granted 1" }));
+    const grantsDialog = await screen.findByRole("dialog", { name: "Direct task access" });
+    expect(within(grantsDialog).getByText("李四")).toBeInTheDocument();
+    expect(within(grantsDialog).getByText("Can view")).toBeInTheDocument();
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Access request approved");
+  });
+
   it("keeps explanation read-only when the caller has no Manage permission", async () => {
     mocks.getIssueAccessControl.mockRejectedValue(new Error("forbidden"));
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Task permissions" }));
+    await user.click(screen.getByRole("button", { name: "Share task" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Task permissions" });
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
     expect(
-      within(dialog).getByText(/only a user with task Manage permission/),
+      within(dialog).getByText(/only someone with Manage task permission/),
     ).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
   });
@@ -215,10 +307,12 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Task permissions" }));
+    await user.click(screen.getByRole("button", { name: "Share task" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Task permissions" });
-    expect(within(dialog).getByText("Project · direct")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(within(dialog).getByText(/Task permission changes are read-only/)).toBeInTheDocument();
+    expect(within(dialog).getByText("My access")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Project direct grant")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
   });
 });
