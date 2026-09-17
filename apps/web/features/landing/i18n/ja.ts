@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.89",
+          date: "2026-09-17",
+          title: "タスク共有とテスト環境へのデプロイを改善",
+          changes: [],
+          features: [],
+          improvements: [
+            "タスク共有、直接付与、アクセス申請の操作を簡素化しました。",
+          ],
+          fixes: [
+            "レジストリが低速な場合でも、テスト環境へのデプロイでイメージ取得を継続できるようにしました。",
+          ],
+        },
+        {
           version: "0.4.88",
           date: "2026-09-16",
           title: "MissionOS タスク権限の段階的ロールアウト",

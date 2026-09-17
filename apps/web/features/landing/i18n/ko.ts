@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.89",
+          date: "2026-09-17",
+          title: "태스크 공유 및 테스트 배포 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "태스크 공유, 직접 권한 부여, 접근 요청 처리 흐름을 간소화했습니다.",
+          ],
+          fixes: [
+            "레지스트리 속도가 느린 경우에도 테스트 배포에서 이미지 가져오기를 계속할 수 있도록 했습니다.",
+          ],
+        },
+        {
           version: "0.4.88",
           date: "2026-09-16",
           title: "MissionOS 태스크 권한 단계적 롤아웃",

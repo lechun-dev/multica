@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.89",
+        date: "2026-09-17",
+        title: "优化任务分享与测试环境部署",
+        changes: [],
+        features: [],
+        improvements: [
+          "简化任务分享、直接授权和权限申请处理流程。",
+        ],
+        fixes: [
+          "测试环境拉取镜像较慢时允许部署继续执行，避免过早超时。",
+        ],
+      },
+      {
         version: "0.4.88",
         date: "2026-09-16",
         title: "分阶段上线 MissionOS 任务权限",

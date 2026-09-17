@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.89",
+        date: "2026-09-17",
+        title: "Simplify task sharing and test deployments",
+        changes: [],
+        features: [],
+        improvements: [
+          "Streamlined task sharing, direct grants, and access-request handling.",
+        ],
+        fixes: [
+          "Allow test deployments more time to pull images when registry throughput is low.",
+        ],
+      },
+      {
         version: "0.4.88",
         date: "2026-09-16",
         title: "Stage MissionOS task permissions rollout",
