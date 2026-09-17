@@ -7,18 +7,21 @@ the linked change record.
 
 ## Phase contract
 
-| Phase | New reader | Shadow comparison | ACL writes | `restricted` writes |
-| --- | --- | --- | --- | --- |
-| `off` | no | no | no-op legacy compatibility | no |
-| `shadow` | no; legacy result returned | yes | rejected | no |
-| `reader` | yes | no | rejected | no |
-| `writer` | yes | no | yes | no |
-| `restricted` | yes | no | yes | yes |
+| Phase | New reader | Shadow comparison | Authorization changes |
+| --- | --- | --- | --- |
+| `off` | no | no | feature inactive |
+| `shadow` | no; legacy result returned | yes | feature inactive |
+| `reader` | yes | no | controlled by business permissions |
+| `writer` | yes | no | controlled by business permissions |
+| `restricted` | yes | no | controlled by business permissions |
 
 Set `PROJECT_PERMISSION_ROLLOUT_PHASE` explicitly. The old
 `PROJECT_PERMISSION_ENABLED=true` maps directly to `restricted` only for
 backward compatibility and must not be used for a staged production rollout.
-An invalid phase prevents server startup.
+An invalid phase prevents server startup. The historical `reader`, `writer`
+and `restricted` names remain for deployment compatibility; they do not grant
+or revoke a user's ability to change authorization. Task/project management
+permissions are the only write authority.
 
 ## Preflight
 
@@ -46,15 +49,15 @@ linked to its resolution; do not average mismatches away.
 
 Verify the permission dashboard against sampled known grants before enforcing
 reads. Test inherited, restricted, projectless, direct-parent and expired-grant
-cases. Reader mode must reject all authorization writes with a retryable
-service-unavailable response; the UI remains read-only.
+cases. Also verify that authorized managers can update access and unauthorized
+users remain read-only.
 
 ### `reader` to `writer`
 
-After read enforcement is stable, enable ordinary project/task ACL mutations.
-Verify direct user, organization, Everyone, custom-role, mention, assignee and
-access-request changes become visible without a stale authorization window.
-`restricted` policy writes must still be rejected.
+After read enforcement is stable, verify direct user, organization, Everyone,
+custom-role, mention, assignee and access-request changes become visible without
+a stale authorization window. This phase change is operational only; mutation
+eligibility continues to come from business permissions.
 
 ### `writer` to `restricted`
 
@@ -98,8 +101,8 @@ go test -run '^$' -bench 'BenchmarkEffectiveAccess' -benchmem ./pkg/projectauth
 ## Emergency rollback
 
 1. Set `PROJECT_PERMISSION_ROLLOUT_PHASE=reader` and restart the service.
-2. Confirm the public config reports `reader`; ACL writes and access-request
-   mutations must fail, while restricted task reads remain protected.
+2. Confirm the public config reports `reader`; restricted task reads remain
+   protected and authorization changes still follow business permissions.
 3. Do not set `off` and do not deploy a pre-reader binary while restricted
    policies or task grants exist.
 4. Diagnose with bounded metrics and audit identifiers. Do not log or export
@@ -128,7 +131,8 @@ Run and record these drills before final acceptance:
   mismatched resource binding, confirming fail-closed behavior;
 - terminate/restart an app instance during ACL update and verify transaction,
   audit record and policy version remain atomic;
-- exercise `restricted` → emergency `reader` → restored `restricted`.
+- exercise `restricted` → emergency `reader` → restored `restricted` and
+  confirm business-authorized mutations behave consistently throughout.
 
 ## Acceptance record
 

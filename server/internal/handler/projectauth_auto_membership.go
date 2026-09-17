@@ -557,7 +557,7 @@ func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, p
 // 2026-08-27 coder(lq): All IssueService.Create transports use the same
 // optional transaction hook, keeping projectauth out of the upstream service.
 func (h *Handler) issueAccessBeforeCommit() func(context.Context, pgx.Tx, db.Issue) error {
-	if h.ProjectAuth == nil || !h.ProjectAuth.WriterEnabled() {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return nil
 	}
 	return func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
@@ -633,7 +633,7 @@ func (h *Handler) issueAccessBeforeCommitForSubject(subject projectauth.Subject)
 		if err := validateIssueRelationshipWithExecutor(ctx, tx, subject, issue); err != nil {
 			return err
 		}
-		if !h.ProjectAuth.WriterEnabled() {
+		if !h.ProjectAuth.Enabled() {
 			return nil
 		}
 		return syncIssueAccessWithExecutor(ctx, tx, nil, issue)
@@ -688,7 +688,7 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 			return db.Issue{}, err
 		}
 	}
-	if h.ProjectAuth.WriterEnabled() {
+	if h.ProjectAuth.Enabled() {
 		if err := syncIssueAccessWithExecutor(ctx, tx, &previous, issue); err != nil {
 			return db.Issue{}, fmt.Errorf("promote issue project access: %w", err)
 		}
@@ -704,7 +704,7 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 // execution; this adapter also maps Agent mentions to their owner's Member
 // grant without creating a separate Agent permission record.
 func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.Issue, params db.CreateCommentParams) (db.CreateCommentRow, error) {
-	if h.ProjectAuth == nil || !h.ProjectAuth.WriterEnabled() {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return h.Queries.CreateComment(ctx, params)
 	}
 	if h.TxStarter == nil {

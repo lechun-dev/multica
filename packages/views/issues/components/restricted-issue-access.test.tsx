@@ -17,9 +17,7 @@ vi.mock("@multica/core/api", () => ({
   },
 }));
 vi.mock("@multica/core/config", () => ({
-  projectPermissionWritesEnabled: () => true,
   useConfigStore: () => true,
-  useProjectPermissionWritesEnabled: () => true,
 }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

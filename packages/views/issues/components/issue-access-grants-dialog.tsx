@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Copy, ShieldCheck, UserMinus, Users } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
-import { useProjectPermissionWritesEnabled } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import type { IssueAccessControlGrant, IssueAccessRequest, TaskAccessMode } from "@multica/core/types";
@@ -40,7 +39,6 @@ function mergeTaskGrants(current: IssueAccessControlGrant[], additions: IssueAcc
 export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = false }: IssueAccessGrantsDialogProps) {
   const { t } = useT("projects");
   const workspaceId = useWorkspaceId();
-  const writesEnabled = useProjectPermissionWritesEnabled();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(defaultOpen);
   const [selectedUserIds, setSelectedUserIds] = useState<ReadonlySet<string>>(new Set());
@@ -80,7 +78,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
   const memberByUser = useMemo(() => new Map(members.map((member) => [member.user_id, member])), [members]);
   const organizationById = useMemo(() => new Map(organizations.map((organization) => [organization.id, organization])), [organizations]);
   const availableRoles = rolesQuery.data?.roles ?? [];
-  const canManage = writesEnabled && !!controlQuery.data;
+  const canManage = !!controlQuery.data;
   const effectivePermissions = useMemo(() => new Set(effectiveQuery.data?.permissions ?? []), [effectiveQuery.data?.permissions]);
   const permissionLabel = (permission: string) => {
     switch (permission) {
@@ -108,9 +106,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     { permission: "project.issue.manage", label: t(($) => $.permissions.manage_task) },
   ];
   const allowedAccessLabels = accessSummary.filter((item) => effectivePermissions.has(item.permission)).map((item) => item.label);
-  const readonlyReason = !writesEnabled
-    ? t(($) => $.permissions.task_permissions_readonly_rollout)
-    : t(($) => $.permissions.task_permissions_readonly_manage);
+  const readonlyReason = t(($) => $.permissions.task_permissions_readonly_manage);
   const taskPolicyDescription = projectId
     ? t(($) => $.permissions.task_policy_project_task, { version: controlQuery.data?.policy_version ?? "—" })
     : t(($) => $.permissions.task_policy_projectless_task, { version: controlQuery.data?.policy_version ?? "—" });

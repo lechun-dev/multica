@@ -435,7 +435,7 @@ func projectPermissionSQLState(err error) string {
 }
 
 func (h *Handler) createProjectAccessGrant(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
@@ -459,7 +459,7 @@ func (h *Handler) CreateProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) createIssueAccessGrant(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
@@ -650,7 +650,7 @@ func requireUserIDValue(r *http.Request) (string, bool) {
 }
 
 func (h *Handler) revokeProjectAccessGrant(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	h.revokeAccessGrant(w, r, chi.URLParam(r, "id"), "")
@@ -661,7 +661,7 @@ func (h *Handler) RevokeProjectAccessGrant(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) revokeIssueAccessGrant(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	issueID := chi.URLParam(r, "id")

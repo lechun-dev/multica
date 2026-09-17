@@ -7,7 +7,6 @@ import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
-import { useProjectPermissionWritesEnabled } from "@multica/core/config";
 import type { ProjectPermissionReportPermission, ProjectPermissionRole } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -60,7 +59,6 @@ export function ProjectPermissionRolesTab() {
   const { t } = useT("settings");
   const workspaceId = useWorkspaceId();
   const currentUser = useAuthStore((state) => state.user);
-  const writesEnabled = useProjectPermissionWritesEnabled();
   const queryClient = useQueryClient();
   const { data: workspaceMembers = [] } = useQuery({
     ...memberListOptions(workspaceId),
@@ -93,7 +91,7 @@ export function ProjectPermissionRolesTab() {
   // 2026-08-28 coder(lq): Role definitions apply across the workspace. Keep
   // their management surface owner-only; project owners still consume this
   // catalog from the project-permission matrix.
-  const canManage = writesEnabled && workspaceMembers.some(
+  const canManage = workspaceMembers.some(
     (member) => member.user_id === currentUser?.id && member.role === "owner",
   );
   const permissionLabel = (permission: ProjectPermissionReportPermission) =>

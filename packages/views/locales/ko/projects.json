@@ -278,7 +278,6 @@
     "task_select_subjects_first": "먼저 사용자, 부서 또는 전체 선택",
     "task_checking": "확인 중…",
     "task_preview_save": "미리 보고 저장",
-    "task_permissions_readonly_rollout": "현재 출시 단계에서는 작업 권한 변경이 읽기 전용입니다.",
     "task_permissions_readonly_manage": "권한 출처는 볼 수 있지만 공유 변경은 작업 관리 권한이 있는 사용자만 할 수 있습니다.",
     "task_preview_title": "작업 권한 변경 확인",
     "task_preview_description": "이 서버 미리보기는 정책 버전 {{version}} 기준입니다.",

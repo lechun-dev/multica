@@ -32,10 +32,6 @@ func (s *Service) RolloutPhase() RolloutPhase {
 
 func (s *Service) Enabled() bool       { return s != nil && s.rollout.ReaderEnabled() }
 func (s *Service) ShadowEnabled() bool { return s != nil && s.rollout.ShadowEnabled() }
-func (s *Service) WriterEnabled() bool { return s != nil && s.rollout.WriterEnabled() }
-func (s *Service) RestrictedWritesEnabled() bool {
-	return s != nil && s.rollout.RestrictedWritesEnabled()
-}
 
 // WorkspaceOwnerBypassEnabled resolves the workspace-level owner override.
 // The switch is deployment-scoped and now comes from the process environment

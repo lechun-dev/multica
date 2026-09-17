@@ -3,10 +3,6 @@ import { useStore } from "zustand";
 
 export type ProjectPermissionRolloutPhase = "off" | "shadow" | "reader" | "writer" | "restricted";
 
-export function projectPermissionWritesEnabled(phase: ProjectPermissionRolloutPhase): boolean {
-  return phase === "writer" || phase === "restricted";
-}
-
 interface ConfigState {
   cdnDomain: string;
   // True when cdnDomain serves private content via time-bounded signed URLs
@@ -137,10 +133,4 @@ export function useFeatureEnabled(key: string, defaultValue = false): boolean {
 /** Read-only rollout adapters keep view packages independent of config-store internals. */
 export function useProjectPermissionsEnabled(): boolean {
   return useConfigStore((state) => state.projectPermissionsEnabled);
-}
-
-export function useProjectPermissionWritesEnabled(): boolean {
-  return useConfigStore((state) =>
-    projectPermissionWritesEnabled(state.projectPermissionRolloutPhase),
-  );
 }

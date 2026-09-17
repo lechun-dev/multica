@@ -90,7 +90,7 @@ func decodeAccessRequestReview(r *http.Request) (issueAccessRequestReview, error
 }
 
 func (h *Handler) CreateIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	request, err := decodeAccessRequestCreate(r)
@@ -179,7 +179,7 @@ func (h *Handler) ListIssueAccessRequests(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) ReviewIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	request, err := decodeAccessRequestReview(r)
@@ -225,7 +225,7 @@ func (h *Handler) ReviewIssueAccessRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) CancelIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	actor, issueID, _, ok := h.issueAccessRequestActor(w, r)

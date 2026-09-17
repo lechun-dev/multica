@@ -5,10 +5,9 @@ import (
 	"strings"
 )
 
-// RolloutPhase is the deployment-wide authorization activation boundary. The
-// ordered phases deliberately separate comparison, read enforcement, ordinary
-// ACL writes, and restricted-mode writes so rollback can stop mutations while
-// retaining the reader that protects already-restricted tasks.
+// RolloutPhase is the deployment-wide authorization activation boundary.
+// Historical phase names remain accepted for configuration compatibility, but
+// business permissions now decide whether an enabled user may mutate access.
 type RolloutPhase string
 
 const (
@@ -45,18 +44,15 @@ func (p RolloutPhase) ShadowEnabled() bool { return p == RolloutShadow }
 func (p RolloutPhase) ReaderEnabled() bool {
 	return p == RolloutReader || p == RolloutWriter || p == RolloutRestricted
 }
-func (p RolloutPhase) WriterEnabled() bool           { return p == RolloutWriter || p == RolloutRestricted }
-func (p RolloutPhase) RestrictedWritesEnabled() bool { return p == RolloutRestricted }
 
-// mutationEnabled is the package-level write boundary. RolloutOff preserves
-// the historical no-op behavior used by deployments without the overlay;
-// shadow/reader explicitly reject direct callers so an internal integration
-// cannot bypass the HTTP mutation gate during a staged rollout.
+// mutationEnabled is the package-level activation boundary. Once authorization
+// is active, mutation eligibility is determined by the normal permission checks.
+// 2026-09-17 coder(lq): Remove rollout-only write protection from business ACLs.
 func (s *Service) mutationEnabled() (bool, error) {
 	if s == nil || s.rollout == RolloutOff {
 		return false, nil
 	}
-	if !s.WriterEnabled() {
+	if !s.Enabled() {
 		return false, ErrDisabled
 	}
 	return true, nil

@@ -278,7 +278,6 @@
     "task_select_subjects_first": "先选择人员、部门或全员",
     "task_checking": "检查中…",
     "task_preview_save": "预览并保存",
-    "task_permissions_readonly_rollout": "当前发布阶段只允许查看任务权限，暂时不能修改授权。",
     "task_permissions_readonly_manage": "你可以查看自己的权限来源，但只有拥有“管理任务”权限的人才能修改共享。",
     "task_preview_title": "确认任务权限变更",
     "task_preview_description": "服务端预览基于策略版本 {{version}}。",

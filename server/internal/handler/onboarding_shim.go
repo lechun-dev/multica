@@ -281,7 +281,7 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
 			return
 		}
-		if h.ProjectAuth != nil && h.ProjectAuth.WriterEnabled() {
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 			// 2026-09-05 coder(lq): This deprecated path predates
 			// IssueService.Create; keep its task creator Owner grant atomic with
 			// the direct issue insert.
@@ -455,7 +455,7 @@ func (h *Handler) BootstrapOnboardingNoRuntime(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
 			return
 		}
-		if h.ProjectAuth != nil && h.ProjectAuth.WriterEnabled() {
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 			// 2026-09-05 coder(lq): This deprecated path predates
 			// IssueService.Create; keep its task creator Owner grant atomic with
 			// the direct issue insert.

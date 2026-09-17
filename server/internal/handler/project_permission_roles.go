@@ -54,7 +54,7 @@ func (h *Handler) ListProjectPermissionRoles(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) CreateProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
@@ -85,7 +85,7 @@ func (h *Handler) CreateProjectPermissionRole(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) UpdateProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
@@ -117,7 +117,7 @@ func (h *Handler) UpdateProjectPermissionRole(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) DeleteProjectPermissionRole(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {

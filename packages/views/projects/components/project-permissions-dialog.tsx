@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, UserMinus, Users } from "lucide-react";
 import { api } from "@multica/core/api";
-import { useProjectPermissionsEnabled, useProjectPermissionWritesEnabled } from "@multica/core/config";
+import { useProjectPermissionsEnabled } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
@@ -67,7 +67,6 @@ export function ProjectPermissionsDialog({
   // server-advertised capability so older deployments continue using their
   // legacy membership endpoint without an untyped runtime probe.
   const unifiedApi = useProjectPermissionsEnabled();
-  const writesEnabled = useProjectPermissionWritesEnabled();
   const queryClient = useQueryClient();
   const [internalOpen, setInternalOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -102,10 +101,7 @@ export function ProjectPermissionsDialog({
     enabled: open && unifiedApi && !!workspaceId,
     staleTime: 60_000,
   });
-  // The rollout phase only governs the additive authorization tables. Keep the
-  // legacy project-member editor available while the overlay is disabled so an
-  // emergency rollback does not also disable the pre-existing write path.
-  const canManage = (!unifiedApi || writesEnabled) && (projectMembersQuery.data?.can_manage ?? false);
+  const canManage = projectMembersQuery.data?.can_manage ?? false;
   const { data: workspaceMembers = [], isLoading: membersLoading, isError: membersError } = useQuery({
     ...memberListOptions(workspaceId),
     enabled: open && canManage && !!workspaceId,

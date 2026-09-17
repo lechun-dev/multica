@@ -298,7 +298,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
   });
 
-  it("keeps effective access readable before the writer rollout phase", async () => {
+  it("allows a task manager to change access in any active rollout phase", async () => {
     configStore.getState().setAuthConfig({
       allowSignup: true,
       projectPermissionsEnabled: true,
@@ -310,9 +310,8 @@ describe("IssueAccessGrantsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Share task" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
-    expect(within(dialog).getByText(/Task permission changes are read-only/)).toBeInTheDocument();
     expect(within(dialog).getByText("My access")).toBeInTheDocument();
-    expect(within(dialog).queryByText("Project direct grant")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Grant access")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Preview & save" })).toBeInTheDocument();
   });
 });

@@ -95,7 +95,7 @@ describe("ProjectPermissionRolesTab", () => {
     },
   );
 
-  it("keeps the role catalog read-only before the writer rollout phase", () => {
+  it("allows the workspace owner to manage roles in any active rollout phase", () => {
     configStore.getState().setAuthConfig({
       allowSignup: true,
       projectPermissionsEnabled: true,
@@ -105,7 +105,7 @@ describe("ProjectPermissionRolesTab", () => {
     render(<ProjectPermissionRolesTab />, { wrapper: Wrapper });
 
     expect(screen.getByText("Owner")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add role" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add role" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(4);
   });
 });

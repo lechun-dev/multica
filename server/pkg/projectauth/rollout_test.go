@@ -30,17 +30,17 @@ func TestParseRolloutPhase(t *testing.T) {
 
 func TestRolloutPhaseCapabilities(t *testing.T) {
 	tests := []struct {
-		phase                        RolloutPhase
-		shadow, reader, writer, mode bool
+		phase          RolloutPhase
+		shadow, reader bool
 	}{
-		{RolloutOff, false, false, false, false},
-		{RolloutShadow, true, false, false, false},
-		{RolloutReader, false, true, false, false},
-		{RolloutWriter, false, true, true, false},
-		{RolloutRestricted, false, true, true, true},
+		{RolloutOff, false, false},
+		{RolloutShadow, true, false},
+		{RolloutReader, false, true},
+		{RolloutWriter, false, true},
+		{RolloutRestricted, false, true},
 	}
 	for _, tt := range tests {
-		if tt.phase.ShadowEnabled() != tt.shadow || tt.phase.ReaderEnabled() != tt.reader || tt.phase.WriterEnabled() != tt.writer || tt.phase.RestrictedWritesEnabled() != tt.mode {
+		if tt.phase.ShadowEnabled() != tt.shadow || tt.phase.ReaderEnabled() != tt.reader {
 			t.Errorf("capabilities for %q do not match expected rollout boundary", tt.phase)
 		}
 	}
@@ -63,7 +63,7 @@ func TestMutationBoundary(t *testing.T) {
 	}{
 		{RolloutOff, false, nil},
 		{RolloutShadow, false, ErrDisabled},
-		{RolloutReader, false, ErrDisabled},
+		{RolloutReader, true, nil},
 		{RolloutWriter, true, nil},
 		{RolloutRestricted, true, nil},
 	}

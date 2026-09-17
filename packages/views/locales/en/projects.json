@@ -279,7 +279,6 @@
     "task_select_subjects_first": "Select people, departments, or everyone first",
     "task_checking": "Checking…",
     "task_preview_save": "Preview & save",
-    "task_permissions_readonly_rollout": "Task permission changes are read-only in the current rollout phase.",
     "task_permissions_readonly_manage": "You can view your access sources, but only someone with Manage task permission can change sharing.",
     "task_preview_title": "Confirm task permission changes",
     "task_preview_description": "This server preview is based on policy version {{version}}.",

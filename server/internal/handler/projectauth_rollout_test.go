@@ -33,26 +33,24 @@ func (r *rolloutEffectiveResolver) PreviewIssuePolicyChange(context.Context, pro
 	return projectauth.PolicyImpact{}, nil
 }
 
-func TestProjectAuthorizationWriterRolloutGate(t *testing.T) {
+func TestProjectAuthorizationActivationGate(t *testing.T) {
 	tests := []struct {
-		phase      projectauth.RolloutPhase
-		restricted bool
-		want       bool
-		status     int
+		phase  projectauth.RolloutPhase
+		want   bool
+		status int
 	}{
-		{projectauth.RolloutOff, false, false, 404},
-		{projectauth.RolloutShadow, false, false, 503},
-		{projectauth.RolloutReader, false, false, 503},
-		{projectauth.RolloutWriter, false, true, 200},
-		{projectauth.RolloutWriter, true, false, 503},
-		{projectauth.RolloutRestricted, true, true, 200},
+		{projectauth.RolloutOff, false, 404},
+		{projectauth.RolloutShadow, false, 404},
+		{projectauth.RolloutReader, true, 200},
+		{projectauth.RolloutWriter, true, 200},
+		{projectauth.RolloutRestricted, true, 200},
 	}
 	for _, tt := range tests {
 		h := &Handler{ProjectAuth: projectauth.NewWithRollout(nil, tt.phase)}
 		response := httptest.NewRecorder()
-		got := h.requireProjectAuthorizationWriter(response, tt.restricted)
+		got := h.requireProjectAuthorizationEnabled(response)
 		if got != tt.want || response.Code != tt.status {
-			t.Errorf("phase=%s restricted=%v: got (%v,%d), want (%v,%d)", tt.phase, tt.restricted, got, response.Code, tt.want, tt.status)
+			t.Errorf("phase=%s: got (%v,%d), want (%v,%d)", tt.phase, got, response.Code, tt.want, tt.status)
 		}
 	}
 }

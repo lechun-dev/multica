@@ -278,7 +278,6 @@
     "task_select_subjects_first": "先にユーザー、部署、または全員を選択",
     "task_checking": "確認中…",
     "task_preview_save": "プレビューして保存",
-    "task_permissions_readonly_rollout": "現在のロールアウト段階ではタスク権限の変更は読み取り専用です。",
     "task_permissions_readonly_manage": "権限ソースは確認できますが、共有を変更できるのはタスク管理権限を持つユーザーだけです。",
     "task_preview_title": "タスク権限の変更を確認",
     "task_preview_description": "このサーバープレビューはポリシーバージョン {{version}} に基づきます。",

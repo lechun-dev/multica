@@ -76,7 +76,7 @@ func (h *Handler) ListProjectMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
@@ -103,7 +103,7 @@ func (h *Handler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RemoveProjectMember(w http.ResponseWriter, r *http.Request) {
-	if !h.requireProjectAuthorizationWriter(w, false) {
+	if !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
