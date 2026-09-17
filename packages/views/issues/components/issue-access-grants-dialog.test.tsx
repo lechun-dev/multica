@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   listProjectAuthorizationOrganizations: vi.fn(),
   listMembers: vi.fn(),
   listIssueAccessRequests: vi.fn(),
-  previewIssueAccessControl: vi.fn(),
   updateIssueAccessControl: vi.fn(),
   reviewIssueAccessRequest: vi.fn(),
   toastSuccess: vi.fn(),
@@ -137,15 +136,6 @@ describe("IssueAccessGrantsDialog", () => {
       },
     ]);
     mocks.listIssueAccessRequests.mockResolvedValue({ items: [] });
-    mocks.previewIssueAccessControl.mockImplementation((_id, update) =>
-      Promise.resolve({
-        before: control,
-        after: { ...control, ...update },
-        subjects_losing_access: [],
-        subjects_with_other_source: [],
-        affected_effects: ["notifications"],
-      }),
-    );
     mocks.updateIssueAccessControl.mockResolvedValue(control);
   });
 
@@ -166,7 +156,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).getByRole("checkbox", { name: /Everyone/ })).toBeInTheDocument();
     expect(within(dialog).getByText("Grant settings")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Add to access list" })).not.toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Preview & save" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(within(dialog).getByText("My access")).toBeInTheDocument();
     expect(within(dialog).getAllByText("View task").length).toBeGreaterThan(0);
     expect(within(dialog).queryByText("Allowed")).not.toBeInTheDocument();
@@ -174,7 +164,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).queryByText("Project direct grant")).not.toBeInTheDocument();
   });
 
-  it("supports a projectless task, role bundle and expiry through preview then confirmation", async () => {
+  it("saves a projectless task grant directly", async () => {
     const user = userEvent.setup();
     renderDialog(null);
 
@@ -188,27 +178,20 @@ describe("IssueAccessGrantsDialog", () => {
     await user.click(await screen.findByRole("option", { name: "Can edit" }));
     await user.type(within(dialog).getByLabelText("Grant expiry"), "2026-09-20T12:00");
 
-    await user.click(within(dialog).getByRole("button", { name: "Preview & save" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(
-      await screen.findByRole("dialog", { name: "Confirm task permission changes" }),
-    ).toBeInTheDocument();
-    expect(mocks.previewIssueAccessControl).toHaveBeenCalledWith(
-      "issue-1",
-      expect.objectContaining({
-        expected_version: 4,
-        grants: [
-          expect.objectContaining({
-            subject_id: "li-4",
-            role: "member",
-            scope: "task",
-            expires_at: expect.any(String),
-          }),
-        ],
-      }),
-    );
-    await user.click(screen.getByRole("button", { name: "Confirm update" }));
-    await waitFor(() => expect(mocks.updateIssueAccessControl).toHaveBeenCalledTimes(1));
+    const expectedUpdate = expect.objectContaining({
+      expected_version: 4,
+      grants: [
+        expect.objectContaining({
+          subject_id: "li-4",
+          role: "member",
+          scope: "task",
+          expires_at: expect.any(String),
+        }),
+      ],
+    });
+    await waitFor(() => expect(mocks.updateIssueAccessControl).toHaveBeenCalledWith("issue-1", expectedUpdate));
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Task permissions updated");
   });
 
@@ -228,9 +211,9 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).getByRole("button", { name: "Select people" })).toHaveAttribute("aria-disabled", "true");
     expect(within(dialog).getByRole("button", { name: "Select departments" })).toHaveAttribute("aria-disabled", "true");
     expect(within(dialog).queryByRole("button", { name: "Add to access list" })).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "Preview & save" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(mocks.previewIssueAccessControl).toHaveBeenCalledWith(
+    await waitFor(() => expect(mocks.updateIssueAccessControl).toHaveBeenCalledWith(
       "issue-1",
       expect.objectContaining({
         grants: [expect.objectContaining({ subject_type: "everyone", role: "member" })],
@@ -295,7 +278,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(
       within(dialog).getByText(/only someone with Manage task permission/),
     ).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Preview & save" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
   it("allows a task manager to change access in any active rollout phase", async () => {
@@ -312,6 +295,6 @@ describe("IssueAccessGrantsDialog", () => {
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     expect(within(dialog).getByText("My access")).toBeInTheDocument();
     expect(within(dialog).getByText("Grant access")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Preview & save" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeInTheDocument();
   });
 });

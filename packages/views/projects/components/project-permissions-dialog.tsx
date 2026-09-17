@@ -474,7 +474,7 @@ export function ProjectPermissionsDialog({
             <div className="space-y-4 rounded-lg border bg-muted/10 p-3">
               <div className="space-y-3">
                 <div className="text-caption font-medium text-muted-foreground">{t(($) => $.permissions.task_permission_object)}</div>
-                <div className={unifiedApi ? "grid gap-3 md:grid-cols-2" : "grid gap-3"}>
+                <div className={unifiedApi ? "grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" : "grid gap-3"}>
                   <div className="space-y-1.5">
                     <div className="text-caption text-muted-foreground">{t(($) => $.permissions.user)}</div>
                     <ProjectMemberMultiSelect
@@ -519,12 +519,12 @@ export function ProjectPermissionsDialog({
                       ariaLabel={t(($) => $.permissions.select_organization)}
                     />
                   </div>}
+                  {unifiedApi && <label className="flex min-h-9 cursor-pointer items-center gap-2 self-end rounded-md border bg-background px-3 py-2 text-body md:whitespace-nowrap">
+                    <Checkbox checked={selectedEveryone} onCheckedChange={(checked) => setSelectedEveryone(checked === true)} />
+                    <span className="font-medium">{t(($) => $.permissions.everyone)}</span>
+                    <span className="text-caption text-muted-foreground">{t(($) => $.permissions.current_workspace_everyone)}</span>
+                  </label>}
                 </div>
-                {unifiedApi && <label className="flex cursor-pointer items-center gap-3 rounded-md border bg-background px-3 py-2 text-body">
-                  <Checkbox checked={selectedEveryone} onCheckedChange={(checked) => setSelectedEveryone(checked === true)} />
-                  <span className="font-medium">{t(($) => $.permissions.everyone)}</span>
-                  <span className="text-caption text-muted-foreground">{t(($) => $.permissions.current_workspace_everyone)}</span>
-                </label>}
               </div>
               <div className="space-y-2 border-t pt-3">
                 <div className="text-caption font-medium text-muted-foreground">{t(($) => $.permissions.task_grant_settings)}</div>
