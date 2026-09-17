@@ -64,10 +64,22 @@ jobs:
             cd "${{ inputs.deploy_path || '/deploy/multica' }}"
             image_tag="${{ inputs.image_tag }}"
             export MULTICA_IMAGE_TAG="$image_tag"
+            # 2026-09-17 coder(lq): Test acceptance needs task ACL writes
+            # enabled; production can still set or roll back this phase from
+            # its own .env without changing the deployment workflow.
+            if [ "${{ inputs.environment_name || 'production' }}" = "test" ] && [ -z "${PROJECT_PERMISSION_ROLLOUT_PHASE:-}" ]; then
+              export PROJECT_PERMISSION_ROLLOUT_PHASE=writer
+            fi
+            cat > /tmp/multica-project-permission-rollout.yml <<'YAML'
+            services:
+              backend:
+                environment:
+                  PROJECT_PERMISSION_ROLLOUT_PHASE: ${PROJECT_PERMISSION_ROLLOUT_PHASE:-}
+            YAML
             # 2026-09-02 coder(lq): Keep the compose sequence identical between
             # staging and production. Only the target directory and compose
             # project name vary, so both environments reuse the same image pull
             # and recreate flow.
-            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml pull backend frontend
-            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml up -d --no-build backend frontend
+            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml -f /tmp/multica-project-permission-rollout.yml pull backend frontend
+            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml -f /tmp/multica-project-permission-rollout.yml up -d --no-build backend frontend
             docker image prune -f
