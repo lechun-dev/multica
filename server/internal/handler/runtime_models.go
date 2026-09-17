@@ -69,13 +69,13 @@ type ModelListRequest struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 	RunStartedAt *time.Time      `json:"-"`
-	// Cached marks a response answered from the server-side catalog cache
+	// Cached marks a response answered from a server-side catalog snapshot
 	// instead of a live daemon round trip (MUL-5444). Purely informational —
 	// Status is already "completed" and Models is already populated, so a client
 	// that ignores this field behaves exactly as before. CachedAt carries the
 	// snapshot's capture time for clients that want to surface freshness.
 	// Neither field is ever persisted in the request store; they only exist on
-	// the synthetic cache-hit response.
+	// synthetic immediately-completed responses.
 	Cached   bool       `json:"cached,omitempty"`
 	CachedAt *time.Time `json:"cached_at,omitempty"`
 }
@@ -317,6 +317,9 @@ func modelListRequestTerminal(status ModelListStatus) bool {
 // modelCatalogRevalidateAfter also enqueues a background refresh, which nobody
 // polls — its only job is to warm the cache for the next open.
 //
+// Configured path: workspace-configured models are returned immediately while
+// daemon discovery continues in the background and warms the shared catalog.
+//
 // Slow path: enqueue a pending request the daemon claims on its next heartbeat,
 // and push a wakeup hint so "next heartbeat" is now rather than up to one
 // HeartbeatInterval away.
@@ -352,6 +355,31 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt: storedAt,
 			Cached:    true,
 			CachedAt:  &storedAt,
+		})
+		return
+	}
+
+	configured, err := h.enabledWorkspaceRuntimeModels(r.Context(), rt.WorkspaceID, rt.Provider)
+	if err != nil {
+		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(rt.WorkspaceID), "runtime_provider", rt.Provider)
+	} else if len(configured) > 0 {
+		// 2026-09-17 coder(lq): Workspace-configured models are authoritative
+		// enough for the picker to render immediately. Keep daemon discovery in
+		// the background so a later refresh can merge its live catalog without
+		// making the first open wait on an offline or slow daemon.
+		now := time.Now()
+		models := mergeWorkspaceRuntimeModels(runtimeModelCatalogBase(rt.Provider, nil, true), configured)
+		h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
+		writeJSON(w, http.StatusOK, &ModelListRequest{
+			ID:        randomID(),
+			RuntimeID: resolvedRuntimeID,
+			Status:    ModelListCompleted,
+			Models:    models,
+			Supported: true,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Cached:    true,
+			CachedAt:  &now,
 		})
 		return
 	}
@@ -462,16 +490,20 @@ func (h *Handler) workspaceModelCatalog(ctx context.Context, workspaceID pgtype.
 	if len(discovered) == 0 && len(base) > 0 {
 		slog.Warn("runtime reported an empty model catalog; using server fallback", "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
 	}
-	configured, err := h.Queries.ListEnabledWorkspaceRuntimeModelsByProvider(ctx, db.ListEnabledWorkspaceRuntimeModelsByProviderParams{
-		WorkspaceID:     workspaceID,
-		RuntimeProvider: runtimeProvider,
-	})
+	configured, err := h.enabledWorkspaceRuntimeModels(ctx, workspaceID, runtimeProvider)
 	if err != nil {
 		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
 		return base, supported
 	}
 	models := mergeWorkspaceRuntimeModels(base, configured)
 	return models, supported || len(configured) > 0
+}
+
+func (h *Handler) enabledWorkspaceRuntimeModels(ctx context.Context, workspaceID pgtype.UUID, runtimeProvider string) ([]db.WorkspaceRuntimeModel, error) {
+	return h.Queries.ListEnabledWorkspaceRuntimeModelsByProvider(ctx, db.ListEnabledWorkspaceRuntimeModelsByProviderParams{
+		WorkspaceID:     workspaceID,
+		RuntimeProvider: runtimeProvider,
+	})
 }
 
 func runtimeModelCatalogBase(runtimeProvider string, discovered []ModelEntry, supported bool) []ModelEntry {

@@ -1,11 +1,88 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestInitiateListModels_ConfiguredCatalogReturnsImmediately(t *testing.T) {
+	ctx := context.Background()
+	withModelListStores(t)
+
+	var runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider, status,
+			device_info, metadata, owner_id, last_seen_at
+		)
+		VALUES ($1, NULL, 'Configured Catalog Test Runtime', 'cloud', 'codex', 'online',
+			'test', '{}'::jsonb, $2, now())
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("insert runtime: %v", err)
+	}
+	modelID := "configured-immediate-model-test"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO workspace_runtime_model (
+			workspace_id, runtime_provider, model_id, display_name, model_provider,
+			description, thinking_levels, default_thinking_level, service_tiers,
+			supports_explicit_standard_service_tier, enabled, sort_order
+		)
+		VALUES ($1, 'codex', $2, 'Configured Immediate Model', 'test', '',
+			'[{"value":"low","label":"Low"}]'::jsonb, 'low', '[]'::jsonb,
+			false, true, 9999)
+		ON CONFLICT (workspace_id, runtime_provider, model_id)
+		DO UPDATE SET enabled = true
+	`, testWorkspaceID, modelID); err != nil {
+		t.Fatalf("insert configured model: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM workspace_runtime_model WHERE workspace_id = $1 AND runtime_provider = 'codex' AND model_id = $2`, testWorkspaceID, modelID)
+		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	})
+
+	originalPendingWork := testHandler.DaemonPendingWork
+	recorder := &pendingWorkRecorder{}
+	testHandler.DaemonPendingWork = recorder
+	t.Cleanup(func() { testHandler.DaemonPendingWork = originalPendingWork })
+
+	req := withURLParam(newRequest(http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil), "runtimeId", runtimeID)
+	w := httptest.NewRecorder()
+	testHandler.InitiateListModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response ModelListRequest
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Status != ModelListCompleted || !response.Supported || !response.Cached {
+		t.Fatalf("expected an immediately completed configured catalog, got %+v", response)
+	}
+	var found bool
+	for _, model := range response.Models {
+		if model.ID == modelID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("configured model missing from immediate catalog: %+v", response.Models)
+	}
+	pending, err := testHandler.ModelListStore.HasPending(ctx, runtimeID)
+	if err != nil {
+		t.Fatalf("check background discovery: %v", err)
+	}
+	if !pending || recorder.count() != 1 {
+		t.Fatalf("expected one background daemon discovery: pending=%v hints=%d", pending, recorder.count())
+	}
+}
 
 func TestNormalizeWorkspaceRuntimeModelInput(t *testing.T) {
 	stringPtr := func(value string) *string { return &value }
