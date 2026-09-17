@@ -523,10 +523,14 @@ func modelEntriesFromAgentModels(models []agent.Model) []ModelEntry {
 }
 
 func mergeWorkspaceRuntimeModels(discovered []ModelEntry, configured []db.WorkspaceRuntimeModel) []ModelEntry {
-	models := cloneModelEntries(discovered)
-	indices := make(map[string]int, len(models))
-	for i := range models {
-		indices[models[i].ID] = i
+	models := make([]ModelEntry, 0, len(discovered)+len(configured))
+	seen := make(map[string]struct{}, len(discovered)+len(configured))
+	for _, entry := range cloneModelEntries(discovered) {
+		if _, exists := seen[entry.ID]; exists {
+			continue
+		}
+		seen[entry.ID] = struct{}{}
+		models = append(models, entry)
 	}
 	for _, model := range configured {
 		response := workspaceRuntimeModelResponseFor(model)
@@ -543,12 +547,10 @@ func mergeWorkspaceRuntimeModels(discovered []ModelEntry, configured []db.Worksp
 				DefaultLevel:    response.DefaultThinkingLevel,
 			}
 		}
-		if index, exists := indices[entry.ID]; exists {
-			entry.Default = models[index].Default
-			models[index] = entry
+		if _, exists := seen[entry.ID]; exists {
 			continue
 		}
-		indices[entry.ID] = len(models)
+		seen[entry.ID] = struct{}{}
 		models = append(models, entry)
 	}
 	return models
