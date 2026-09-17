@@ -59,6 +59,9 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # 2026-09-17 coder(lq): Image pulls on the test host can exceed the
+          # action's 10-minute default when registry throughput is low.
+          command_timeout: 30m
           script: |
             set -e
             cd "${{ inputs.deploy_path || '/deploy/multica' }}"
