@@ -23,6 +23,57 @@ and `restricted` names remain for deployment compatibility; they do not grant
 or revoke a user's ability to change authorization. Task/project management
 permissions are the only write authority.
 
+## Task permission levels
+
+Task authorization is decided by the effective permission the caller holds on
+the task being acted on. The levels are literal:
+
+| Level | Grants |
+| --- | --- |
+| View | Read the task and its activity. |
+| Edit | View, plus editing fields, commenting and creating child tasks. |
+| Manage | Edit, plus granting access, revoking access, approving and rejecting access requests. |
+
+`Edit` never implies `Manage`. A user who can edit a task cannot authorize
+another person on it, nor decide that person's access request. Task-level roles
+use their own matrix, independent of project roles, in
+`server/pkg/projectauth/task_role_policy.go`.
+
+Granting, revoking, previewing, listing and approving all evaluate the same
+`IssueManage` check, so the surfaces cannot disagree. Whether a workspace Owner
+is additionally exempt from that check is decided only by the switch below.
+
+## Owner bypass
+
+`PROJECT_OWNER_BYPASS_ENABLED` is the single deployment-level switch for the
+workspace-owner override, parsed in `server/pkg/projectauth/service.go`. It is
+read from the process environment, so changing it takes a restart; it is no
+longer read from workspace settings.
+
+- Unset, empty, or any value other than `false` (case-insensitive, surrounding
+  whitespace ignored) keeps the historical permissive behavior: a workspace
+  Owner passes task `Manage` checks without an explicit grant.
+- `PROJECT_OWNER_BYPASS_ENABLED=false` removes that override. A workspace Owner
+  then receives no automatic right to view, grant on, or approve access to a
+  task, and must obtain access like any other member.
+
+Set the switch explicitly in every environment instead of relying on the
+permissive default, and confirm the intended value after any restart.
+
+## Access requests with several approvers
+
+A request is offered to every user who currently holds `Manage` on that task,
+not only to the requester's manager or the workspace Owner. Each recipient gets
+an inbox entry of type `task_access_request`, deduplicated on
+`(workspace_id, request_id, recipient_user_id, event)` (migration `525`).
+
+A request is decided exactly once. The first approval or rejection wins, and
+every later attempt returns `409` with code `access_request_state_conflict` plus
+the current status, so a stale decision cannot overwrite a settled one.
+Approvers who did not act see the settled outcome instead of action buttons.
+Opening the inbox entry navigates to the task with the authorization dialog
+focused on that request.
+
 ## Preflight
 
 1. Back up PostgreSQL and record the restore point.
@@ -34,6 +85,8 @@ permissions are the only write authority.
 5. Confirm the metrics listener is private and scraped. Authorization logs and
    metrics must never include subject IDs, resource IDs, task/comment bodies,
    email addresses, grant payloads, or ACL membership lists.
+6. Set `PROJECT_OWNER_BYPASS_ENABLED` explicitly for the environment and record
+   the intended value. An unset variable keeps the permissive owner override.
 
 ## Promotion gates
 
@@ -126,7 +179,9 @@ Run and record these drills before final acceptance:
 - revoke one of several sources and confirm remaining sources still authorize;
 - expire a grant and confirm reads, search and Agent claims fail closed;
 - change organization ancestry and confirm the next request reflects it;
-- switch Owner bypass at runtime and confirm both outcomes;
+- restart with `PROJECT_OWNER_BYPASS_ENABLED` set to the opposite value and
+  confirm both outcomes, then restart again and confirm the setting is read
+  from the environment rather than from stored workspace state;
 - inject storage failure, cross-workspace binding, unknown role/permission and
   mismatched resource binding, confirming fail-closed behavior;
 - terminate/restart an app instance during ACL update and verify transaction,
@@ -141,3 +196,79 @@ dashboards, traffic window, performance artifact, drill results and deviations.
 The feature remains awaiting acceptance while any contract test, real-scale
 performance result, shadow window, recovery drill, security review or release
 owner sign-off is missing.
+
+## Verification state at 2026-09-20
+
+Measured on a freshly created database with migrations `509` through `527`
+applied plus the optional DingTalk extension schema. That extension schema is
+not optional for the backend suite: handler tests assume its tables exist, and
+`scripts/dingtalk-notify-migrate.sh --apply` is the supported way to create
+them. Set `DATABASE_URL` explicitly when running those tests, because the test
+main exits successfully without it and the run then proves nothing.
+
+Passing on that database:
+
+- `go build ./...`, `go vet ./internal/handler/ ./pkg/projectauth/
+  ./internal/service/` and `gofmt` are clean.
+- `go test ./internal/handler/... ./pkg/projectauth/...` is **green: zero
+  failing tests**, down from the 40 this branch carried before this pass.
+- The task-authorization contracts pass, including `TestIssueAccessControl*`,
+  `TestApplyIssueAccessControl*` and `TestIssueAccessRequest*`.
+- The concurrency contracts pass repeatedly, not just once:
+  `FailTaskAndRerunConcurrently*` and `TaskWriteFence*` were run three times
+  over (81 s) with no failure.
+- Frontend `pnpm typecheck` and the full `packages/views` Vitest suite pass
+  (441 files, 5330 tests).
+
+The 40 failures were not caused by the task-authorization change itself. Most
+were collateral from an earlier commit on this branch that enforced agent-use
+authorization without reconciling the paths the attribution model already
+documents as carrying no authorizing human; the rest were contracts that had
+gone stale against the code they guard, or gaps the enforcement exposed. What
+this pass changed:
+
+- Agent use is judged by the human the run acts for — its originator when one
+  exists, otherwise its accountable human (`AuthorizationSubject`) — instead of
+  refusing every run the attribution model documents as carrying none.
+- The Autopilot read gate judges the human an agent-originated request acts for
+  in addition to the authenticated member, so a mediated request is not hidden
+  from the member who ordered the autopilot.
+- `CreateAutopilotTrigger` stamps the immutable `created_by` principal that
+  migration 490 documents as written-once-at-creation.
+- Webhook admission resolves the principal a run fires as from the trigger's
+  `created_by_id` and fails closed when there is none, which migration 490
+  documented but no code implemented — the column was never read.
+- Deleting a task now removes its source-context row and snapshot clones in the
+  same transaction and leaves one durable deletion intent per clone, wiring up
+  `DeleteIssueSourceContextByIssue` and
+  `RecordSourceContextDeletionObjectIntent`, which had no caller.
+- `FailTask` retries its transaction on a concurrency conflict
+  (`40P01`/`40001`) instead of surfacing the deadlock and stranding the parent
+  in `running`. `RerunIssue` already reclaimed and retried under this race;
+  failing a task now tolerates the same contention.
+- Migration `527` drops `agent_daily_stats.workspace_id`'s foreign key. That
+  constraint made every task status write take `FOR KEY SHARE` on the workspace
+  row through the stats trigger, so a status-only update stalled behind the
+  workspace-delete fence's `FOR UPDATE` — contradicting the fence's own design,
+  in which `lock_task_owner_rows` governs ownership writes only. Cleanup is
+  unaffected: teardown deletes the workspace's agents and the remaining
+  `agent_id` cascade takes the stats rows with them.
+- The table-rows property filter accepts operator members, which it previously
+  could not even express.
+- A list-count failure now answers `500 failed to count issues` instead of
+  degrading to a page-sized total behind a `200`.
+- Stale contracts were aligned with the code they guard: the search parity
+  scanner's column count, the visibility predicate markers, the grant-predicate
+  assertions, the count-failure injection matcher, the owner-scope list fixture,
+  the squad-briefing heading, the comment-fold fixture's thread, and one test
+  that replaced its own route context before reading a URL param.
+
+Two things to keep in mind when re-running this suite. Run it against one
+database at a time, and prefer a freshly created database: a reused one
+accumulates rows from earlier failed runs, fixed member emails then collide, and
+four collaborator tests fail on a `user_email_key` duplicate that has nothing to
+do with the code under test. And `make sqlc` currently fails on this branch —
+sqlc reports `column reference "workspace_id" is ambiguous` for
+`workspace_delete.sql` while PostgreSQL executes the same statement without
+complaint — so regenerating requires working around that or hand-editing the
+generated file, as was done for `CreateAutopilotTrigger`.
