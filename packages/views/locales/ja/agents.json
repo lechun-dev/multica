@@ -726,6 +726,7 @@
     "waiting_events": "イベントを待機中...",
     "antigravity_live_unavailable": "Antigravity は現在、リアルタイム実行イベントを提供していません。作業完了後に実行記録を確認できます。",
     "no_data": "記録された実行データがありません。",
+    "no_summary": "思考内容の記録がありません。",
     "sort_chronological": "古い順",
     "sort_newest_first": "新しい順",
     "show_all": "すべて表示",
