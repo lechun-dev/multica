@@ -78,6 +78,10 @@ jobs:
               backend:
                 environment:
                   PROJECT_PERMISSION_ROLLOUT_PHASE: ${PROJECT_PERMISSION_ROLLOUT_PHASE:-}
+                  # 2026-09-18 coder(lq): The deployment host keeps its own
+                  # compose files, so forward this policy in the generated
+                  # override to ensure the host .env value reaches the backend.
+                  PROJECT_OWNER_BYPASS_ENABLED: ${PROJECT_OWNER_BYPASS_ENABLED:-true}
             YAML
             # 2026-09-02 coder(lq): Keep the compose sequence identical between
             # staging and production. Only the target directory and compose
@@ -85,4 +89,17 @@ jobs:
             # and recreate flow.
             docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml -f /tmp/multica-project-permission-rollout.yml pull backend frontend
             docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml -f /tmp/multica-project-permission-rollout.yml up -d --no-build backend frontend
+            # 2026-09-18 coder(lq): Verify the policy inside the recreated
+            # backend container; checking only the host .env misses compose
+            # forwarding mistakes and stale containers.
+            expected_owner_bypass="${PROJECT_OWNER_BYPASS_ENABLED:-}"
+            if [ -z "$expected_owner_bypass" ] && [ -f .env ]; then
+              expected_owner_bypass="$(sed -n 's/^[[:space:]]*PROJECT_OWNER_BYPASS_ENABLED[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | tr -d '\r' | xargs)"
+            fi
+            expected_owner_bypass="${expected_owner_bypass:-true}"
+            actual_owner_bypass="$(docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml -f /tmp/multica-project-permission-rollout.yml exec -T backend sh -c 'printf %s "$PROJECT_OWNER_BYPASS_ENABLED"')"
+            if [ "$actual_owner_bypass" != "$expected_owner_bypass" ]; then
+              echo "PROJECT_OWNER_BYPASS_ENABLED mismatch: expected '$expected_owner_bypass', backend received '$actual_owner_bypass'" >&2
+              exit 1
+            fi
             docker image prune -f

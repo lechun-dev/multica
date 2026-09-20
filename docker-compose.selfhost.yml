@@ -106,6 +106,9 @@ services:
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
       PROJECT_PERMISSION_ROLLOUT_PHASE: ${PROJECT_PERMISSION_ROLLOUT_PHASE:-}
       PROJECT_PERMISSION_ENABLED: ${PROJECT_PERMISSION_ENABLED:-false}
+      # 2026-09-18 coder(lq): Forward the workspace-owner bypass policy so a
+      # deployment-level false value actually reaches the backend process.
+      PROJECT_OWNER_BYPASS_ENABLED: ${PROJECT_OWNER_BYPASS_ENABLED:-true}
       # Managed entitlement policy is explicitly opt-in. The false/empty
       # defaults keep self-hosted installs on the legacy path with no Cloud
       # request and no quota-table access.

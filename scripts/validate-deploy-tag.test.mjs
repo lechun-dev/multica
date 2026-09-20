@@ -74,6 +74,14 @@ test("routes every named deployment through the shared policy guard", () => {
     sharedWorkflow,
     /node scripts\/validate-deploy-tag\.mjs "\$DEPLOY_ENVIRONMENT" "\$IMAGE_TAG"/,
   );
+  assert.match(
+    sharedWorkflow,
+    /PROJECT_OWNER_BYPASS_ENABLED: \$\{PROJECT_OWNER_BYPASS_ENABLED:-true\}/,
+  );
+  assert.match(
+    sharedWorkflow,
+    /PROJECT_OWNER_BYPASS_ENABLED mismatch: expected/,
+  );
 
   for (const [name, environment] of [
     ["deploy-production.yml", "production"],
