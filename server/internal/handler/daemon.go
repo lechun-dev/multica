@@ -2396,7 +2396,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if failure := h.rejectClaimOnWorkspaceMismatch(r.Context(), task, resp.WorkspaceID, runtimeID, runtimeWorkspaceID, false); failure != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
 		}
-		if authErr := h.authorizeIssueAgentUse(r.Context(), issue, task.OriginatorUserID, "claim"); authErr != nil {
+		if authErr := h.authorizeIssueAgentUse(r.Context(), issue, service.AuthorizationSubject(task.OriginatorUserID, task.AccountableUserID), "claim"); authErr != nil {
 			if errors.Is(authErr, projectauth.ErrStorageUnavailable) || errors.Is(authErr, projectauth.ErrMigrationRequired) || errors.Is(authErr, projectauth.ErrDisabled) {
 				if _, requeueErr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); requeueErr != nil {
 					slog.Error("task claim: requeue after authorization storage failure failed", "task_id", uuidToString(task.ID), "error", requeueErr)
