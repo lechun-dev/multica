@@ -161,6 +161,17 @@ func TestWorkspaceOwnerBypassCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOwnerBypassEnvironmentParsing(t *testing.T) {
+	for _, value := range []string{"false", "FALSE", " false "} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", value)
+			if WorkspaceOwnerBypassEnabledFromEnvironment() {
+				t.Fatalf("owner bypass should be disabled for %q", value)
+			}
+		})
+	}
+}
+
 func TestWorkspaceOwnerBypassDefaultsEnabledForLegacyRepository(t *testing.T) {
 	s := New(fakeRepo{workspace: string(WorkspaceOwner), projectWorkspace: "ws-1"}, true)
 	if err := s.Check(context.Background(), Subject{UserID: "u-1", WorkspaceID: "ws-1"}, "p-1", SettingsManage); err != nil {
