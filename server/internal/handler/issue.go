@@ -1779,7 +1779,14 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			countQuery := visibilityCTEs + fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
 			countArgs := args[:len(args)-2]
 			if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-				total = int64(len(issues))
+				// 2026-09-20 coder(lq): Surface the failure instead of degrading to
+				// len(issues). A swallowed count error answered HTTP 200 with a total
+				// that described the page rather than the result set, so pagination
+				// silently lied and callers could not tell a broken count from a
+				// genuinely short page.
+				slog.Warn("ListIssues count failed", "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to count issues")
+				return
 			}
 		}
 	}
