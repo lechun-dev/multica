@@ -474,7 +474,11 @@ func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
 		"## Squad Operating Protocol",
 		"## Squad Roster",
 		"Leader (you):",
-		"## Squad Instructions (Briefing Claim Squad)",
+		// 2026-09-20 coder(lq): Quote the fixture's real squad name instead of a
+		// hand-written literal — the heading was already correct and the test
+		// only failed because it capitalised a name the fixture creates as
+		// "<name> squad".
+		"## Squad Instructions (" + fx.SquadName + ")",
 		"Be terse.",
 		"`[@Briefing Helper](mention://agent/" + helper + ")`",
 	} {

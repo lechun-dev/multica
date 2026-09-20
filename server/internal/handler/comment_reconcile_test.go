@@ -480,11 +480,15 @@ func TestConsecutiveCommentsDifferentOriginatorsFullEnqueuePath(t *testing.T) {
 		t.Fatalf("load issue: %v", err)
 	}
 
-	insertMemberComment := func(authorID, content string) db.Comment {
+	insertMemberComment := func(authorID, content string, parentID ...string) db.Comment {
 		t.Helper()
-		id := dbfx.Comment(t, issueID, content, testutil.Cols{
+		cols := testutil.Cols{
 			"author_id": authorID,
-		})
+		}
+		if len(parentID) > 0 && parentID[0] != "" {
+			cols["parent_id"] = parentID[0]
+		}
+		id := dbfx.Comment(t, issueID, content, cols)
 		c, err := testHandler.Queries.GetComment(ctx, util.MustParseUUID(id))
 		if err != nil {
 			t.Fatalf("load comment: %v", err)
@@ -500,7 +504,12 @@ func TestConsecutiveCommentsDifferentOriginatorsFullEnqueuePath(t *testing.T) {
 	}
 
 	// B's comment (different originator) before start → must fold in, NOT drop.
-	cB := insertMemberComment(userB, "second, from B — different user")
+	// 2026-09-20 coder(lq): Both the pending check and the atomic merge are
+	// thread-scoped (#5914/TEN-356 — a top-level comment is its own thread root),
+	// so a mismatched-originator comment can only fold when it arrives inside the
+	// queued task's thread. B replies to A rather than starting a second thread,
+	// which is precisely the fold this test exists to protect.
+	cB := insertMemberComment(userB, "second, from B — different user", uuidToString(cA.ID))
 	testHandler.triggerTasksForComment(ctx, issue, cB, nil, "member", userB, userB, "", nil)
 
 	// Still exactly one task (bounded concurrency, no unique-index collision).

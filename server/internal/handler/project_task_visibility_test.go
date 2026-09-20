@@ -76,21 +76,27 @@ func TestProjectlessVisibilityPredicatesIncludeAgentOwners(t *testing.T) {
 // 2026-09-05 coder(lq): A task creator remains the immutable task Owner even
 // when its project has no historical creator grant. Keep every SQL list path
 // aligned with CheckIssue's runtime creator fallback.
+// 2026-09-20 coder(lq): The creator fallback is no longer nested inside the
+// project-bound branch — it now applies to the whole predicate, so a creator
+// keeps access whether or not the task is bound to a project — and the
+// projectless half moved into the direct-access CTE under the direct_issue
+// alias. Assert that both halves survive and that the fallback still reaches the
+// SQL, rather than slicing the predicate on markers that no longer exist.
 func TestProjectBoundVisibilityPredicatesIncludeTaskCreatorFallback(t *testing.T) {
 	predicate := issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", false)
-	start := strings.Index(predicate, "i.project_id IS NOT NULL")
-	end := strings.Index(predicate, "i.project_id IS NULL")
-	if start < 0 || end <= start {
-		t.Fatalf("predicate is missing project-bound/projectless branches: %s", predicate)
+	if !strings.Contains(predicate, "i.project_id IS NOT NULL") {
+		t.Fatalf("predicate is missing the project-bound branch: %s", predicate)
 	}
-	projectBound := predicate[start:end]
+	if !strings.Contains(predicate, "direct_issue.project_id IS NULL") {
+		t.Fatalf("predicate is missing the projectless branch: %s", predicate)
+	}
 	for _, fragment := range []string{
 		"i.creator_type = 'member'",
 		"i.creator_type = 'agent'",
 		"a.owner_id = $2::uuid",
 	} {
-		if !strings.Contains(projectBound, fragment) {
-			t.Fatalf("project-bound predicate missing creator fallback %q: %s", fragment, projectBound)
+		if !strings.Contains(predicate, fragment) {
+			t.Fatalf("predicate missing creator fallback %q: %s", fragment, predicate)
 		}
 	}
 }

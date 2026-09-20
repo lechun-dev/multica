@@ -314,6 +314,10 @@ func runSearchForParity(t *testing.T, label, query string, args []any) []searchP
 			&sr.issue.Number,
 			&sr.issue.ProjectID,
 			&sr.issue.Revision,
+			// 2026-09-20 coder(lq): The hydrated search query gained i.archived_at
+			// and production's scan reads it; this shared test scanner kept 24
+			// destinations and every parity run died on the column-count mismatch.
+			&sr.issue.ArchivedAt,
 			&sr.matchSource,
 			&sr.matchedCommentContent,
 		); err != nil {
@@ -575,7 +579,7 @@ func buildLegacySearchQueryForParity(phrase string, terms []string, queryNum int
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position,
 		i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id,
-		i.revision,
+		i.revision, i.archived_at,
 		%s AS match_source,
 		%s AS matched_comment_content
 	FROM issue i

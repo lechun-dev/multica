@@ -63,6 +63,7 @@ type squadBriefingClaimFixture struct {
 	RuntimeID string
 	AgentID   string // squad leader, has the runtime and empty instructions
 	SquadID   string
+	SquadName string // the briefing's "Squad Instructions" heading quotes it
 	IssueID   string // assignee_type='agent' (NOT squad) — reproduces MUL-3724
 }
 
@@ -99,6 +100,7 @@ func newSquadBriefingClaimFixture(t *testing.T, ctx context.Context, name string
 		RuntimeID: runtimeID,
 		AgentID:   agentID,
 		SquadID:   squadID,
+		SquadName: name + " squad",
 		IssueID:   issueID,
 	}
 }

@@ -286,8 +286,12 @@ func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if !strings.Contains(compiled.where, "i.creator_type = 'member'") || !strings.Contains(compiled.where, "i.assignee_type = 'member'") {
 		t.Fatalf("projectless visibility must restrict creator and assignee identities: %q", compiled.where)
 	}
-	if !strings.Contains(compiled.where, "FROM projectauth_access_grants pag") ||
-		!strings.Contains(compiled.where, "pag.scope_kind = 'project'") {
+	// 2026-09-20 coder(lq): The canonical grant predicate reads
+	// projectauth_access_grants under the alias `g` and decides project view from
+	// the grant's permission, then from its role. The older `pag`/`scope_kind`
+	// markers describe a column that never existed on this table.
+	if !strings.Contains(compiled.where, "FROM projectauth_access_grants g") ||
+		!strings.Contains(compiled.where, "g.permission = 'project.view'") {
 		t.Fatalf("canonical project visibility grant predicate missing: %q", compiled.where)
 	}
 	if len(compiled.args) != 2 {
