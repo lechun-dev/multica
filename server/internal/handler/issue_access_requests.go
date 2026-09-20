@@ -386,9 +386,6 @@ func (h *Handler) reviewIssueAccessRequest(ctx context.Context, tx pgx.Tx, actor
 		item.Status = accessRequestExpired
 		return item, accessRequestStateConflict{status: accessRequestExpired}
 	}
-	if item.Status == desired {
-		return item, nil
-	}
 	if item.Status != accessRequestPending {
 		return item, accessRequestStateConflict{status: item.Status}
 	}
@@ -453,12 +450,7 @@ func (h *Handler) isEffectiveIssueOwner(ctx context.Context, resolver projectaut
 	if err != nil {
 		return false, err
 	}
-	for _, source := range explanation.Sources {
-		if source.Source == projectauth.AccessSourceWorkspaceOwner || (source.Role == projectauth.RoleKey(projectauth.TaskOwner) && source.Scope == projectauth.RoleScopeTask) || (source.Role == projectauth.RoleKey(projectauth.ProjectOwner) && source.Scope == projectauth.RoleScopeProject) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return explanation.Allowed, nil
 }
 
 func (h *Handler) effectiveIssueOwnerIDs(ctx context.Context, tx pgx.Tx, workspaceID, issueID string) ([]string, error) {
@@ -522,9 +514,7 @@ func (h *Handler) enqueueAccessRequestNotification(ctx context.Context, tx pgx.T
 	if inboxID == "" {
 		return nil
 	}
-	// DingTalk is an optional asynchronous channel. A savepoint isolates a
-	// missing identity/table or enqueue failure so the reliable inbox delivery
-	// and access-request transaction are never blocked.
+	// 2026-09-18 coder(lq): 隔离可选的钉钉投递，避免外部通知异常阻断权限申请事务。
 	if _, err := tx.Exec(ctx, `SAVEPOINT access_request_dingtalk`); err != nil {
 		return err
 	}

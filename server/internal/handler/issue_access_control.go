@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -50,6 +51,14 @@ type issueAccessControlPreview struct {
 }
 
 type issuePolicyVersionConflict struct{ current int64 }
+
+type issueAccessNotificationTarget struct {
+	UserID     string
+	Role       projectauth.RoleKey
+	SourceType projectauth.SubjectType
+	SourceID   string
+	SourceName string
+}
 
 func (e issuePolicyVersionConflict) Error() string { return "task access policy version conflict" }
 
@@ -294,8 +303,8 @@ func sortedUnique(values []string) []string {
 }
 
 func (h *Handler) applyIssueAccessControl(ctx context.Context, tx dbExecutor, actor projectauth.Subject, issueID, projectID string, request issueAccessControlRequest) (issueAccessControlResponse, bool, error) {
-	var lockedWorkspace, lockedProject string
-	if err := tx.QueryRow(ctx, `SELECT workspace_id::text, COALESCE(project_id::text, '') FROM issue WHERE id=$1 FOR UPDATE`, issueID).Scan(&lockedWorkspace, &lockedProject); err != nil {
+	var lockedWorkspace, lockedProject, issueTitle string
+	if err := tx.QueryRow(ctx, `SELECT workspace_id::text, COALESCE(project_id::text, ''), title FROM issue WHERE id=$1 FOR UPDATE`, issueID).Scan(&lockedWorkspace, &lockedProject, &issueTitle); err != nil {
 		return issueAccessControlResponse{}, false, projectauth.ErrNoProjectAccess
 	}
 	if lockedWorkspace != actor.WorkspaceID || lockedProject != projectID {
@@ -354,8 +363,183 @@ func (h *Handler) applyIssueAccessControl(ctx context.Context, tx dbExecutor, ac
 	if err := (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(ctx, projectauth.AuthorizationAuditEvent{WorkspaceID: actor.WorkspaceID, IssueID: issueID, ActorUserID: actor.UserID, Action: "task_access_control_updated", Details: map[string]any{"issue_id": issueID, "old_policy_version": current.PolicyVersion, "new_policy_version": nextVersion, "old_project_access_mode": current.ProjectAccessMode, "new_project_access_mode": request.ProjectAccessMode, "manual_grant_count": len(normalized)}}); err != nil {
 		return issueAccessControlResponse{}, false, wrapProjectPermissionRepositoryError(err)
 	}
+	if err := createIssueAccessGrantNotifications(ctx, tx, actor, issueID, issueTitle, current.Grants, normalized); err != nil {
+		return issueAccessControlResponse{}, false, err
+	}
 	proposed.PolicyVersion = nextVersion
 	return proposed, true, nil
+}
+
+// 2026-09-18 coder(lq): Expand group grants to recipients at save time so inbox messages describe the access each person actually received.
+func createIssueAccessGrantNotifications(ctx context.Context, tx dbExecutor, actor projectauth.Subject, issueID, issueTitle string, before, after []issueAccessControlGrant) error {
+	now := time.Now()
+	beforeTargets, err := expandIssueAccessNotificationTargets(ctx, tx, actor.WorkspaceID, before, now)
+	if err != nil {
+		return err
+	}
+	afterTargets, err := expandIssueAccessNotificationTargets(ctx, tx, actor.WorkspaceID, after, now)
+	if err != nil {
+		return err
+	}
+
+	actorName := actor.UserID
+	err = tx.QueryRow(ctx, `SELECT COALESCE(NULLIF(name,''), NULLIF(email,''), $2) FROM "user" WHERE id=$1`, actor.UserID, actor.UserID).Scan(&actorName)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+
+	recipientIDs := make([]string, 0, len(afterTargets))
+	for userID, target := range afterTargets {
+		if userID == actor.UserID {
+			continue
+		}
+		previous, existed := beforeTargets[userID]
+		if existed && previous.Role == target.Role {
+			continue
+		}
+		recipientIDs = append(recipientIDs, userID)
+	}
+	sort.Strings(recipientIDs)
+
+	for _, userID := range recipientIDs {
+		target := afterTargets[userID]
+		_, existed := beforeTargets[userID]
+		body := issueAccessNotificationBody(actorName, target, existed)
+		details, err := json.Marshal(map[string]any{
+			"event":            "task_access_granted",
+			"role":             target.Role,
+			"permission_label": issueAccessRoleLabel(target.Role),
+			"source_type":      target.SourceType,
+			"source_id":        target.SourceID,
+			"source_name":      target.SourceName,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO inbox_item (workspace_id,recipient_type,recipient_id,type,severity,issue_id,title,body,actor_type,actor_id,details) VALUES ($1,'member',$2,'task_access_granted','info',$3,$4,$5,'member',$6,$7::jsonb)`, actor.WorkspaceID, userID, issueID, issueTitle, body, actor.UserID, details); err != nil {
+			return wrapProjectPermissionRepositoryError(err)
+		}
+	}
+	return nil
+}
+
+func expandIssueAccessNotificationTargets(ctx context.Context, tx dbExecutor, workspaceID string, grants []issueAccessControlGrant, now time.Time) (map[string]issueAccessNotificationTarget, error) {
+	targets := map[string]issueAccessNotificationTarget{}
+	for _, grant := range grants {
+		if grant.ExpiresAt != nil && !grant.ExpiresAt.After(now) {
+			continue
+		}
+		target := issueAccessNotificationTarget{Role: grant.Role, SourceType: grant.SubjectType, SourceID: grant.SubjectID}
+		var rows pgx.Rows
+		var err error
+		switch grant.SubjectType {
+		case projectauth.SubjectUser:
+			mergeIssueAccessNotificationTarget(targets, grant.SubjectID, target)
+			continue
+		case projectauth.SubjectOrganization:
+			err = tx.QueryRow(ctx, `SELECT name FROM projectauth_organizations WHERE workspace_id=$1 AND id=$2::uuid AND status='active'`, workspaceID, grant.SubjectID).Scan(&target.SourceName)
+			if err != nil {
+				return nil, wrapProjectPermissionRepositoryError(err)
+			}
+			rows, err = tx.Query(ctx, `WITH RECURSIVE selected_orgs(id) AS (
+				SELECT id FROM projectauth_organizations WHERE workspace_id=$1 AND id=$2::uuid AND status='active'
+				UNION
+				SELECT child.id FROM projectauth_organizations child JOIN selected_orgs parent ON child.parent_id=parent.id
+				WHERE child.workspace_id=$1 AND child.status='active'
+			) SELECT DISTINCT om.user_id::text FROM selected_orgs org JOIN projectauth_organization_members om ON om.organization_id=org.id AND om.workspace_id=$1 JOIN member m ON m.workspace_id=om.workspace_id AND m.user_id=om.user_id`, workspaceID, grant.SubjectID)
+		case projectauth.SubjectEveryone:
+			rows, err = tx.Query(ctx, `SELECT user_id::text FROM member WHERE workspace_id=$1`, workspaceID)
+		default:
+			continue
+		}
+		if err != nil {
+			return nil, wrapProjectPermissionRepositoryError(err)
+		}
+		for rows.Next() {
+			var userID string
+			if err := rows.Scan(&userID); err != nil {
+				rows.Close()
+				return nil, wrapProjectPermissionRepositoryError(err)
+			}
+			mergeIssueAccessNotificationTarget(targets, userID, target)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, wrapProjectPermissionRepositoryError(err)
+		}
+		rows.Close()
+	}
+	return targets, nil
+}
+
+func mergeIssueAccessNotificationTarget(targets map[string]issueAccessNotificationTarget, userID string, candidate issueAccessNotificationTarget) {
+	current, exists := targets[userID]
+	if !exists || issueAccessRoleRank(candidate.Role) > issueAccessRoleRank(current.Role) ||
+		(issueAccessRoleRank(candidate.Role) == issueAccessRoleRank(current.Role) && issueAccessSourceRank(candidate.SourceType) > issueAccessSourceRank(current.SourceType)) {
+		targets[userID] = candidate
+	}
+}
+
+func issueAccessRoleRank(role projectauth.RoleKey) int {
+	switch role {
+	case projectauth.RoleKey(projectauth.TaskOwner), projectauth.RoleKey(projectauth.TaskManager):
+		return 3
+	case projectauth.RoleKey(projectauth.TaskMember):
+		return 2
+	case projectauth.RoleKey(projectauth.TaskViewer):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func issueAccessSourceRank(subjectType projectauth.SubjectType) int {
+	switch subjectType {
+	case projectauth.SubjectUser:
+		return 3
+	case projectauth.SubjectOrganization:
+		return 2
+	case projectauth.SubjectEveryone:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func issueAccessRoleLabel(role projectauth.RoleKey) string {
+	switch role {
+	case projectauth.RoleKey(projectauth.TaskOwner), projectauth.RoleKey(projectauth.TaskManager):
+		return "可管理"
+	case projectauth.RoleKey(projectauth.TaskMember):
+		return "可编辑"
+	default:
+		return "可查看"
+	}
+}
+
+func issueAccessNotificationBody(actorName string, target issueAccessNotificationTarget, adjusted bool) string {
+	verb := "授予你"
+	if adjusted {
+		verb = "将你的权限调整为"
+	}
+	label := issueAccessRoleLabel(target.Role)
+	switch target.SourceType {
+	case projectauth.SubjectOrganization:
+		if adjusted {
+			return fmt.Sprintf("%s通过部门「%s」%s「%s」", actorName, target.SourceName, verb, label)
+		}
+		return fmt.Sprintf("%s通过部门「%s」%s「%s」权限", actorName, target.SourceName, verb, label)
+	case projectauth.SubjectEveryone:
+		if adjusted {
+			return fmt.Sprintf("%s通过「全员」%s「%s」", actorName, verb, label)
+		}
+		return fmt.Sprintf("%s通过「全员」%s「%s」权限", actorName, verb, label)
+	default:
+		if adjusted {
+			return fmt.Sprintf("%s%s「%s」", actorName, verb, label)
+		}
+		return fmt.Sprintf("%s%s「%s」权限", actorName, verb, label)
+	}
 }
 
 func validateIssueAccessControlGrants(ctx context.Context, tx dbExecutor, workspaceID string, grants []issueAccessControlGrant) ([]issueAccessControlGrant, error) {
