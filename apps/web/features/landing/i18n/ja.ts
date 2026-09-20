@@ -270,6 +270,22 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.1",
+          date: "2026-09-20",
+          title: "タスク権限と承認の統一",
+          changes: [],
+          features: [
+            "タスクの権限は「管理可」の一点で判定され、付与・剥奪・承認の口径が揃います。編集可は管理可を意味しません。",
+            "権限申請はタスクの管理権限を持つ全員に届き、一度だけ処理されます。受信トレイの通知から直接開けます。",
+          ],
+          improvements: [
+            "ワークスペース所有者が全タスクへの自動アクセスを持つかどうかは、デプロイ設定 PROJECT_OWNER_BYPASS_ENABLED で制御します。",
+          ],
+          fixes: [
+            "スケジュール実行と Webhook の自動化が再び動作します。ワークスペース削除中にタスク更新が止まらなくなりました。",
+          ],
+        },
+        {
           version: "0.4.89",
           date: "2026-09-17",
           title: "タスク共有とテスト環境へのデプロイを改善",

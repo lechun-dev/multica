@@ -294,6 +294,22 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.1",
+        date: "2026-09-20",
+        title: "统一任务权限与审批",
+        changes: [],
+        features: [
+          "任务权限统一按「可管理」判定：授权、撤权、审批口径一致，可编辑不再等于可管理。",
+          "权限申请会送达该任务的每一位可管理者，只需处理一次，并可从收件箱通知直接打开。",
+        ],
+        improvements: [
+          "工作区所有者是否自动拥有全部任务权限，由部署开关 PROJECT_OWNER_BYPASS_ENABLED 控制。",
+        ],
+        fixes: [
+          "定时与 Webhook 自动化恢复运行；删除工作区期间的任务更新不再卡住。",
+        ],
+      },
+      {
         version: "0.4.89",
         date: "2026-09-17",
         title: "优化任务分享与测试环境部署",

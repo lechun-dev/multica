@@ -269,6 +269,22 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.1",
+          date: "2026-09-20",
+          title: "태스크 권한과 승인 통합",
+          changes: [],
+          features: [
+            "태스크 권한이 '관리 가능' 하나로 판정되어 부여, 회수, 승인의 기준이 일치합니다. 편집 가능은 관리 가능을 의미하지 않습니다.",
+            "권한 요청이 해당 태스크의 모든 관리자에게 전달되고 한 번만 처리되며, 받은편지함 알림에서 바로 열 수 있습니다.",
+          ],
+          improvements: [
+            "워크스페이스 소유자가 모든 태스크에 자동 접근하는지는 배포 스위치 PROJECT_OWNER_BYPASS_ENABLED로 제어합니다.",
+          ],
+          fixes: [
+            "예약 및 Webhook 자동화가 다시 동작합니다. 워크스페이스 삭제 중에도 태스크 업데이트가 멈추지 않습니다.",
+          ],
+        },
+        {
           version: "0.4.89",
           date: "2026-09-17",
           title: "태스크 공유 및 테스트 배포 개선",

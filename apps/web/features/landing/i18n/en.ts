@@ -294,6 +294,22 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.1",
+        date: "2026-09-20",
+        title: "Unified task permissions and approvals",
+        changes: [],
+        features: [
+          "Task access follows a single manage permission: granting, revoking and approving all agree, and edit never implies manage.",
+          "Access requests reach every manager of a task, are decided exactly once, and open straight from the inbox notification.",
+        ],
+        improvements: [
+          "The deployment switch PROJECT_OWNER_BYPASS_ENABLED controls whether a workspace owner keeps automatic access to every task.",
+        ],
+        fixes: [
+          "Scheduled and webhook automations run again, and task updates no longer stall while a workspace is being deleted.",
+        ],
+      },
+      {
         version: "0.4.89",
         date: "2026-09-17",
         title: "Simplify task sharing and test deployments",
