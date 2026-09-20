@@ -70,6 +70,8 @@
     "reaction_added": "リアクションあり",
     "quick_create_done": "エージェントで作成",
     "quick_create_failed": "エージェントでの作成に失敗",
+    "task_access_request": "タスク権限の申請",
+    "task_access_granted": "タスク権限が付与されました",
     "quick_create_unconfirmed": "エージェントでの作成結果は未確認"
   },
   "labels": {

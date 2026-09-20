@@ -115,6 +115,40 @@ describe("InboxDetailLabel quick-create outcomes", () => {
 });
 
 describe("InboxDetailLabel localized values", () => {
+  it("shows the task permission level and grant source from the notification", () => {
+    const body = "李群通过部门「研发部」授予你「可编辑」权限";
+    const { container } = render(
+      <InboxDetailLabel item={item({ type: "task_access_granted", body })} />,
+    );
+
+    expect(container.textContent).toBe(body);
+  });
+
+  it("uses a localized fallback for task access notifications without details", () => {
+    const { container } = render(
+      <InboxDetailLabel item={item({ type: "task_access_granted" })} />,
+    );
+
+    expect(container.textContent).toBe(en.types.task_access_granted);
+  });
+
+  it("shows the server-authored body of an access request notification", () => {
+    const body = "李四申请「可编辑」权限：需要跟进这个任务";
+    const { container } = render(
+      <InboxDetailLabel item={item({ type: "task_access_request", body })} />,
+    );
+
+    expect(container.textContent).toBe(body);
+  });
+
+  it("falls back to the access request type label when the notification has no body", () => {
+    const { container } = render(
+      <InboxDetailLabel item={item({ type: "task_access_request" })} />,
+    );
+
+    expect(container.textContent).toBe(en.types.task_access_request);
+  });
+
   it("uses the localized built-in status instead of the English catalog seed", () => {
     const { container } = render(
       <InboxDetailLabel

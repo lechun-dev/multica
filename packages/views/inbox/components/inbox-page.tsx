@@ -49,7 +49,13 @@ import {
   useInboxFilterStore,
 } from "@multica/core/inbox/filter-store";
 
-import { IssueDetail, issueHighlightMementoKey } from "../../issues/components";
+import {
+  IssueDetail,
+  IssueDetailSkeleton,
+  IssueNotFound,
+  RestrictedIssueAccessFallback,
+  issueHighlightMementoKey,
+} from "../../issues/components";
 import { useWorkspaceTaskVisibility } from "../../issues/surface/visibility-context";
 import { useViewStateWriter } from "../../platform";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
@@ -331,32 +337,34 @@ export function InboxPage() {
   // it stays selected: moving the selection elsewhere releases the guard, so
   // re-opening the row later marks it read again like any other open.
   const manualUnreadIdRef = useRef<string | null>(null);
+  const autoReadAttemptedIdRef = useRef<string | null>(null);
 
   // Auto-mark-read whenever a selected item is unread — covers both click-
   // to-select and URL-param-select (e.g. OS notification click on desktop).
-  // The mutation flips `read: true` optimistically, so this effect settles
-  // in one pass and can't loop. Kept in a `useEffect` rather than inlined
-  // in handleSelect so URL-driven selection triggers it too.
+  // 2026-09-18 coder(lq): A rejected mutation rolls its optimistic update
+  // back, so remember the attempt while this row stays selected. Passive
+  // read tracking must not repeatedly retry or surface permission toasts.
   const markReadMutate = markReadMutation.mutate;
   const selectedId = selected?.id;
   const selectedRead = selected?.read;
   useEffect(() => {
     if (!selectedId || selectedRead) return;
     if (manualUnreadIdRef.current === selectedId) return;
-    markReadMutate(selectedId, {
-      onError: (err) =>
-        toast.error(
-          err instanceof Error && err.message
-            ? err.message
-            : t(($) => $.errors.mark_read_failed),
-        ),
-    });
-  }, [selectedId, selectedRead, markReadMutate, t]);
+    if (autoReadAttemptedIdRef.current === selectedId) return;
+    autoReadAttemptedIdRef.current = selectedId;
+    markReadMutate(selectedId);
+  }, [selectedId, selectedRead, markReadMutate]);
 
   // Release the guard as soon as the selection moves off the parked row.
   useEffect(() => {
     if (manualUnreadIdRef.current && manualUnreadIdRef.current !== selectedId) {
       manualUnreadIdRef.current = null;
+    }
+    if (
+      autoReadAttemptedIdRef.current &&
+      autoReadAttemptedIdRef.current !== selectedId
+    ) {
+      autoReadAttemptedIdRef.current = null;
     }
   }, [selectedId]);
 
@@ -366,6 +374,10 @@ export function InboxPage() {
   // remount. Selection changes don't need it — they remount the detail (key
   // by issue) and a fresh mount with a cleared memento entry lands by itself.
   const [highlightRequestToken, setHighlightRequestToken] = useState(0);
+  // Same replay contract for the task-permissions dialog: an access-request
+  // notification opens that dialog on its own request, and re-clicking the row
+  // re-opens it without a remount.
+  const [accessRequestToken, setAccessRequestToken] = useState(0);
   const handleSelect = (item: InboxItem) => {
     const nextKey = item.issue_id ?? item.id;
     // Every click on a notification row is a fresh deep-link intent: clear
@@ -379,6 +391,12 @@ export function InboxPage() {
       if (nextKey === selectedKey) {
         setHighlightRequestToken((t) => t + 1);
       }
+    }
+    // 2026-09-20 coder(lq): 任务权限申请通知点开即落到「任务授权」弹窗的对应申请上；
+    // 同一行再次点击靠 token 重放，切换行时由 IssueDetail 按 issue 重挂载自然落位，
+    // 其他类型通知不 bump，避免下拉详情时误弹权限弹窗。
+    if (item.type === "task_access_request") {
+      setAccessRequestToken((token) => token + 1);
     }
     setSelectedKey(nextKey);
   };
@@ -684,6 +702,12 @@ export function InboxPage() {
     </div>
   ) : null;
 
+  // An access notification names the request it is about. Only that type arms
+  // the permissions dialog: every other notification opens the task alone.
+  const accessRequestId = detailItem?.type === "task_access_request"
+    ? detailItem.details?.access_request_id ?? undefined
+    : undefined;
+
   const detailContent = detailItem?.issue_id ? (
     // Key by issue_id (not inbox-item id): a new comment/reaction generates a
     // new inbox notification for the same issue, and the dedup helper picks the
@@ -710,6 +734,19 @@ export function InboxPage() {
         layoutId="multica_inbox_issue_detail_layout"
         highlightCommentId={detailItem.details?.comment_id ?? undefined}
         highlightRequestToken={highlightRequestToken}
+        accessRequestId={accessRequestId}
+        accessRequestToken={accessRequestToken}
+        // A denied reader lands here holding a task they may not view. Saying
+        // "task deleted" would be wrong, so resolve what the task reference
+        // actually is and offer the access request instead.
+        notFoundFallback={detailItem.type === "task_access_request" ? (
+          <RestrictedIssueAccessFallback
+            targetId={detailItem.issue_id}
+            leading={compactBackAction}
+            loading={<IssueDetailSkeleton leading={compactBackAction} />}
+            notFound={<IssueNotFound showBackLink={false} leading={compactBackAction} />}
+          />
+        ) : undefined}
         // The split layout already has a nav trigger in the list header.
         // Explicit false suppresses the detail header's fallback trigger.
         leadingAction={compactBackAction ?? false}

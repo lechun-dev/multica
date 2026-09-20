@@ -117,6 +117,11 @@ vi.mock("../../issues/components", () => ({
   },
   StatusIcon: () => null,
   issueHighlightMementoKey: (issueId: string) => `highlight:${issueId}`,
+  // The page threads these into IssueDetail but the stub above renders none of
+  // them; they exist so the module mock can satisfy the page's named imports.
+  IssueDetailSkeleton: () => null,
+  IssueNotFound: () => null,
+  RestrictedIssueAccessFallback: () => null,
 }));
 
 const replace = vi.fn();
@@ -450,6 +455,48 @@ describe("InboxPage", () => {
     expect(issueDetailProps.at(-1)?.highlightRequestToken).toBe(1);
   });
 
+  // 2026-09-20 coder(lq): 任务权限申请通知打开即落到对应申请，重复点击靠 token 重放。
+  it("arms the task access dialog when the opened notification is an access request", () => {
+    reset();
+    layout.width = DESKTOP;
+    listData.active = [
+      item({
+        id: "inbox-request",
+        issue_id: "issue-7",
+        type: "task_access_request",
+        details: { access_request_id: "req-1" },
+      }),
+    ];
+
+    render(<InboxPage />);
+    fireEvent.click(screen.getByTestId("row"));
+    expect(issueDetailProps.at(-1)?.accessRequestId).toBe("req-1");
+
+    // Re-clicking the same row replays the landing instead of remounting it.
+    const firstToken = issueDetailProps.at(-1)?.accessRequestToken as number;
+    fireEvent.click(screen.getByTestId("row"));
+    expect(issueDetailProps.at(-1)?.accessRequestToken).toBe(firstToken + 1);
+  });
+
+  it("leaves the task access dialog alone for notifications that are not requests", () => {
+    reset();
+    layout.width = DESKTOP;
+    listData.active = [
+      item({
+        id: "inbox-comment",
+        issue_id: "issue-8",
+        type: "new_comment",
+        details: { comment_id: "comment-1" },
+      }),
+    ];
+
+    render(<InboxPage />);
+    fireEvent.click(screen.getByTestId("row"));
+
+    expect(issueDetailProps.at(-1)?.accessRequestId).toBeUndefined();
+    expect(issueDetailProps.at(-1)?.accessRequestToken).toBe(0);
+  });
+
   it("keeps the archived view in the URL when selecting an item there", () => {
     // A bare `?issue=` write would silently drop the user back to the main
     // inbox on the next refresh — both pieces of state travel together.
@@ -567,7 +614,24 @@ describe("InboxPage", () => {
     render(<InboxPage />);
     fireEvent.click(screen.getByTestId("row"));
 
-    expect(markReadMutate).toHaveBeenCalledWith("inbox-a", expect.anything());
+    expect(markReadMutate).toHaveBeenCalledWith("inbox-a");
+  });
+
+  it("does not retry or toast when automatic read tracking is rejected", () => {
+    reset();
+    layout.width = DESKTOP;
+    listData.active = [
+      item({ id: "inbox-a", issue_id: "issue-a", read: false }),
+    ];
+
+    const { rerender } = render(<InboxPage />);
+    fireEvent.click(screen.getByTestId("row"));
+    expect(markReadMutate).toHaveBeenCalledTimes(1);
+
+    rerender(<InboxPage />);
+
+    expect(markReadMutate).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("keeps an explicitly unread row unread while it stays open", () => {
@@ -610,7 +674,7 @@ describe("InboxPage", () => {
     markReadMutate.mockClear();
     fireEvent.click(rowA!);
 
-    expect(markReadMutate).toHaveBeenCalledWith("inbox-a", expect.anything());
+    expect(markReadMutate).toHaveBeenCalledWith("inbox-a");
   });
 
   it("folds to a single column on a folded inner screen", () => {

@@ -70,6 +70,8 @@
     "reaction_added": "반응 추가됨",
     "quick_create_done": "에이전트로 생성됨",
     "quick_create_failed": "에이전트 생성 실패",
+    "task_access_request": "작업 권한 요청",
+    "task_access_granted": "작업 권한이 부여됨",
     "quick_create_unconfirmed": "에이전트 생성 결과 미확인"
   },
   "labels": {
