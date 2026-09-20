@@ -1,0 +1,35 @@
+-- 2026-09-20 coder(lq): Stop coupling every task status write to the workspace
+-- row's lock.
+--
+-- agent_daily_stats was created with a foreign key onto workspace(id), and
+-- trg_agent_daily_stats_for_queue maintains it AFTER INSERT OR UPDATE OF
+-- ... status ON agent_task_queue. A plain
+--   UPDATE agent_task_queue SET status = 'failed' WHERE id = $1
+-- therefore upserts a stats row, and that upsert takes FOR KEY SHARE on the
+-- referenced workspace row to satisfy the foreign key. Any transaction holding
+-- FOR UPDATE on that workspace row — which is exactly what workspace teardown
+-- does through LockWorkspaceForDelete for the whole sweep — blocks the status
+-- write until the teardown commits or its lock_timeout fires (SQLSTATE 55P03).
+--
+-- That contradicts the fence's own design: migration 284 introduced
+-- lock_task_owner_rows as a WRITE-side predicate that an ownership write calls in
+-- its own WHERE clause, and it deliberately leaves the status-only hot path
+-- alone. The coupling came from this foreign key, not from the fence.
+--
+-- Dropping the constraint is also the direction the database rules require: no
+-- new foreign keys or cascading actions, with relationships and dependent cleanup
+-- in the application layer. Cleanup stays complete without it — workspace
+-- teardown deletes the workspace's agents (DeleteWorkspaceIssueRoots /
+-- the agent sweep in workspace_delete.sql), and agent_daily_stats.agent_id keeps
+-- its own ON DELETE CASCADE, so the stats rows still go with their agent. The
+-- table is classified workspaceDelete in workspaceDeletionManifest.
+--
+-- The agent_id foreign key is deliberately left in place: it does not touch the
+-- workspace fence, and removing it would mean reimplementing agent-deletion
+-- cleanup for no behavioral gain.
+--
+-- Recovery: nothing depends on the constraint for correctness. Re-adding it would
+-- reintroduce the status-write stall above, so prefer an application-layer check
+-- if integrity ever needs to be enforced here.
+ALTER TABLE agent_daily_stats
+    DROP CONSTRAINT IF EXISTS agent_daily_stats_workspace_id_fkey;
