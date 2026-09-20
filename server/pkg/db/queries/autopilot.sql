@@ -206,16 +206,22 @@ SELECT * FROM autopilot_trigger
 WHERE id = $1;
 
 -- name: CreateAutopilotTrigger :one
+-- 2026-09-20 coder(lq): Stamp the immutable creator too. Migration 490 added
+-- created_by_* as the AUTHORIZATION principal every schedule/webhook firing acts
+-- as (MUL-6951) and documented it as "written once at creation", but this INSERT
+-- never wrote it, so every trigger created since carried a NULL principal and
+-- its runs had to fail closed (MUL-4302).
 INSERT INTO autopilot_trigger (
     autopilot_id, kind, enabled, cron_expression, timezone,
     next_run_at, webhook_token, label, provider, event_filters,
-    published_by_type, published_by_id
+    published_by_type, published_by_id, created_by_type, created_by_id
 ) VALUES (
     $1, $2, $3, sqlc.narg('cron_expression'), sqlc.narg('timezone'),
     sqlc.narg('next_run_at'), sqlc.narg('webhook_token'), sqlc.narg('label'),
     COALESCE(sqlc.narg('provider')::text, 'generic'),
     sqlc.narg('event_filters'),
-    sqlc.narg('published_by_type'), sqlc.narg('published_by_id')
+    sqlc.narg('published_by_type'), sqlc.narg('published_by_id'),
+    sqlc.narg('created_by_type'), sqlc.narg('created_by_id')
 ) RETURNING *;
 
 -- name: SetAutopilotTriggerPublisher :exec

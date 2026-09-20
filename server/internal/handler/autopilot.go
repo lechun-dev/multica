@@ -659,9 +659,20 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 	// detail, mutation, runs, deliveries, triggers, and collaborator routes.
 	// Return 404 for both absent and hidden rows so guessed UUIDs cannot reveal
 	// whether another member's Autopilot exists.
+	//
+	// 2026-09-20 coder(lq): A mediated request may see the row when EITHER the
+	// authenticated member or the human it acts for may see it. Judging only the
+	// raw caller 404'd the very member who ordered an autopilot as soon as their
+	// agent ran under a different runtime owner, while judging only the acting
+	// human would 404 a member whose own read is legitimate. What such a request
+	// may DO stays narrower: can_write and webhook-token exposure follow the
+	// acting human alone (MUL-7108).
 	if !h.memberCanViewAutopilot(r.Context(), autopilot, member) {
-		writeError(w, http.StatusNotFound, "autopilot not found")
-		return db.Autopilot{}, false
+		acting, resolved := h.autopilotActingMemberIdentity(r, workspaceID)
+		if !resolved || !h.memberCanViewAutopilot(r.Context(), autopilot, acting) {
+			writeError(w, http.StatusNotFound, "autopilot not found")
+			return db.Autopilot{}, false
+		}
 	}
 	// 2026-08-27 coder(lq): Keep every authenticated Autopilot read and write
 	// path behind project View when the automation is bound to a project. This
@@ -899,6 +910,31 @@ func (h *Handler) requireAutopilotAccessManagement(w http.ResponseWriter, r *htt
 	}
 	if !autopilotWriteByOwnership(ap, member) {
 		writeErrorCode(w, http.StatusForbidden, autopilotAccessRefusal.forbiddenCode, autopilotAccessRefusal.forbiddenMsg)
+		return db.Member{}, false
+	}
+	return member, true
+}
+
+// autopilotActingMemberIdentity resolves the human an agent-originated Autopilot
+// request acts for: the top-of-chain human of the calling task, never the
+// runtime owner bound to its token (MUL-7108). It reports false when the request
+// is not agent-originated or carries no resolvable human, letting callers fall
+// back to the authenticated member. It writes no response.
+func (h *Handler) autopilotActingMemberIdentity(r *http.Request, workspaceID string) (db.Member, bool) {
+	userID, ok := requireUserIDValue(r)
+	if !ok {
+		return db.Member{}, false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if actorType != "agent" {
+		return db.Member{}, false
+	}
+	originator := h.invokeOriginatorFromRequest(r, actorType, actorID)
+	if originator == "" {
+		return db.Member{}, false
+	}
+	member, err := h.getWorkspaceMember(r.Context(), originator, workspaceID)
+	if err != nil {
 		return db.Member{}, false
 	}
 	return member, true
@@ -1768,6 +1804,12 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		// (source=trigger_owner, MUL-4302).
 		PublishedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
 		PublishedByID:   publisherID,
+		// 2026-09-20 coder(lq): Also seed the IMMUTABLE creator, which is the
+		// principal every future firing authorizes as (MUL-6951). Migration 490
+		// documented it as written-once-at-creation but this INSERT never wrote it,
+		// leaving new triggers with a NULL principal so their runs failed closed.
+		CreatedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
+		CreatedByID:   publisherID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create trigger")
@@ -1834,6 +1876,10 @@ func (h *Handler) createWebhookTriggerWithMintedToken(
 			// later substantive edit (source=trigger_owner, MUL-4302).
 			PublishedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
 			PublishedByID:   publisherID,
+			// The immutable authorization principal for every future firing
+			// (MUL-6951); see the schedule path for why it must be stamped here.
+			CreatedByType: pgtype.Text{String: "member", Valid: publisherID.Valid},
+			CreatedByID:   publisherID,
 		})
 		if err != nil {
 			tx.Rollback(ctx)
