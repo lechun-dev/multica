@@ -4477,6 +4477,44 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 	if err != nil {
 		return nil, nil, fmt.Errorf("list issue attachment URLs: %w", err)
 	}
+	// 2026-09-20 coder(lq): Deleting a task also gives up its source-context
+	// ownership. The context row and its snapshot clones go away in this same
+	// transaction, and every clone leaves a durable deletion intent so the object
+	// sweeper reclaims the stored object the rows no longer reference. The two
+	// deletion queries existed for this but had no caller, so deleting a target
+	// task silently stranded its context, its clones and their objects.
+	if context, contextErr := qtx.DeleteIssueSourceContextByIssue(ctx, db.DeleteIssueSourceContextByIssueParams{
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+	}); contextErr == nil {
+		clones, cloneErr := qtx.DeleteAttachmentsBySourceContext(ctx, db.DeleteAttachmentsBySourceContextParams{
+			WorkspaceID:     issue.WorkspaceID,
+			SourceContextID: context.ID,
+		})
+		if cloneErr != nil {
+			return nil, nil, fmt.Errorf("delete source context clones: %w", cloneErr)
+		}
+		for _, clone := range clones {
+			// The intent names the object the way the object store does; a store
+			// that cannot derive a key keeps the recorded URL so the sweep still
+			// has something to act on.
+			storageKey := clone.Url
+			if h.Storage != nil {
+				storageKey = h.Storage.KeyFromURL(clone.Url)
+			}
+			if _, intentErr := qtx.RecordSourceContextDeletionObjectIntent(ctx, db.RecordSourceContextDeletionObjectIntentParams{
+				StorageKey:      storageKey,
+				WorkspaceID:     issue.WorkspaceID,
+				SourceContextID: context.ID,
+				AttachmentID:    clone.ID,
+				ObjectUrl:       clone.Url,
+			}); intentErr != nil {
+				return nil, nil, fmt.Errorf("record source context deletion intent: %w", intentErr)
+			}
+		}
+	} else if !errors.Is(contextErr, pgx.ErrNoRows) {
+		return nil, nil, fmt.Errorf("delete issue source context: %w", contextErr)
+	}
 	if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
