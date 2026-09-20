@@ -258,6 +258,8 @@ func TestIssueTableProjectScopeAssigneeTypes(t *testing.T) {
 // 2026-08-27 coder(lq): Keep the table compiler covered by the project
 // permission boundary; rows, groups, and facets all reuse this predicate,
 // including the restricted visibility branch for projectless issues.
+// 2026-09-20 coder(lq): The boundary is now a statement-local materialized set,
+// so the assertions moved from the page predicate to the CTE definitions.
 func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -280,15 +282,28 @@ func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if !ok {
 		t.Fatalf("compile failed: %d %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(compiled.where, "i.project_id IS NOT NULL") || !strings.Contains(compiled.where, "i.project_id IS NULL") {
-		t.Fatalf("project visibility must cover project-bound and projectless issues: %q", compiled.where)
+	if !strings.Contains(compiled.where, "i.id IN (SELECT id FROM issue_auth_visible)") {
+		t.Fatalf("table reads must semi-join the materialized visibility set: %q", compiled.where)
 	}
-	if !strings.Contains(compiled.where, "i.creator_type = 'member'") || !strings.Contains(compiled.where, "i.assignee_type = 'member'") {
-		t.Fatalf("projectless visibility must restrict creator and assignee identities: %q", compiled.where)
+	if !strings.Contains(compiled.where, "i.project_id IS NULL") {
+		t.Fatalf("explicit include_no_project filter must stay in the page predicate: %q", compiled.where)
 	}
-	if !strings.Contains(compiled.where, "FROM projectauth_access_grants pag") ||
-		!strings.Contains(compiled.where, "pag.scope_kind = 'project'") {
-		t.Fatalf("canonical project visibility grant predicate missing: %q", compiled.where)
+	for _, fragment := range []string{
+		"issue_auth_projects AS MATERIALIZED",
+		"issue_auth_visible AS MATERIALIZED",
+		"visible_issue.project_id IS NOT NULL",
+		"visible_issue.project_id IS NULL",
+		"visible_issue.creator_type = 'member'",
+		"visible_issue.assignee_type = 'member'",
+		"FROM projectauth_access_grants g",
+		"FROM projectauth_issue_access_grants g",
+	} {
+		if !strings.Contains(compiled.visibilityCTEs, fragment) {
+			t.Fatalf("visibility CTE must keep %q: %q", fragment, compiled.visibilityCTEs)
+		}
+	}
+	if !strings.HasPrefix(compiled.visibilityWithClause(), "WITH issue_auth_organizations") {
+		t.Fatalf("facet/count prefix must open the visibility set: %q", compiled.visibilityWithClause())
 	}
 	if len(compiled.args) != 2 {
 		t.Fatalf("project visibility must bind the authenticated user, args=%#v", compiled.args)

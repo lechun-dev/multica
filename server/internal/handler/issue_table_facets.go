@@ -133,7 +133,7 @@ func (h *Handler) issueTableBaseFacetQuery(
 		groupingSets = append(groupingSets, "()")
 	}
 
-	query := fmt.Sprintf(`SELECT CASE %s ELSE '__total__' END,
+	query := base.visibilityWithClause() + fmt.Sprintf(`SELECT CASE %s ELSE '__total__' END,
        CASE %s ELSE '' END,
        COUNT(*)::bigint
 FROM issue i
@@ -270,6 +270,9 @@ GROUP BY a.id`, compiled.where)
 		writeError(w, http.StatusBadRequest, "invalid facets.kind")
 		return response, false
 	}
+	// 2026-09-20 coder(lq): Every facet statement filters on the shared visibility
+	// predicate, so each one needs the same statement-local materialized set.
+	query = compiled.visibilityWithClause() + query
 
 	rows, err := h.DB.Query(r.Context(), query, compiled.args...)
 	if err != nil {
@@ -415,7 +418,8 @@ func (h *Handler) ListIssueTableFacets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if includeTotal && !totalResolved {
-		if err := h.DB.QueryRow(r.Context(), fmt.Sprintf("SELECT COUNT(*)::bigint FROM issue i WHERE %s", base.where), base.args...).Scan(&total); err != nil {
+		totalQuery := base.visibilityWithClause() + fmt.Sprintf("SELECT COUNT(*)::bigint FROM issue i WHERE %s", base.where)
+		if err := h.DB.QueryRow(r.Context(), totalQuery, base.args...).Scan(&total); err != nil {
 			slog.Warn("ListIssueTableFacets total failed", append(logger.RequestAttrs(r), "error", err)...)
 			writeIssueTableQueryFailure(w, r, "failed to count table facets")
 			return

@@ -202,6 +202,29 @@ type issueTableSQL struct {
 	args        []any
 	fingerprint string
 	workspaceID pgtype.UUID
+	// 2026-09-20 coder(lq): The project visibility set is materialized once per
+	// statement instead of being re-evaluated for every candidate issue row.
+	// Statements that consume `where` must carry these CTE definitions too,
+	// which is why they travel with the compiled query.
+	visibilityCTEs string
+}
+
+// visibilityWithClause renders the definitions as a complete WITH prefix for
+// statements that have no CTE list of their own (facets, bare counts).
+func (q issueTableSQL) visibilityWithClause() string {
+	if q.visibilityCTEs == "" {
+		return ""
+	}
+	return "WITH " + q.visibilityCTEs + "\n"
+}
+
+// visibilityCTEFragment renders the same definitions for statements that already
+// open a WITH list; the caller appends its own CTEs after this fragment.
+func (q issueTableSQL) visibilityCTEFragment() string {
+	if q.visibilityCTEs == "" {
+		return ""
+	}
+	return q.visibilityCTEs + ", "
 }
 
 type issueTableCursor struct {
@@ -460,6 +483,7 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 
 	where := []string{"i.workspace_id = $1"}
 	args := []any{workspaceUUID}
+	visibilityCTEs := ""
 	archiveState, ok := parseIssueArchiveState(w, spec.Filters.ArchiveState)
 	if !ok {
 		return issueTableSQL{}, false
@@ -473,6 +497,11 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	// facets, so apply the project boundary here once instead of relying on
 	// each surface to remember it. Projectless issues use the same creator,
 	// assignee, and workspace-owner visibility rule as the issue endpoints.
+	// 2026-09-20 coder(lq): Bind the visible issue set as a statement-local
+	// materialized CTE instead of inlining the ACL predicate into WHERE. The
+	// inline form re-ran the whole grant/organization/member check once per
+	// candidate issue row, which is what saturated production. Same predicates,
+	// evaluated once, then a semi-join against `issue_auth_visible`.
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		userID, ok := requireUserID(w, r)
 		if !ok {
@@ -484,7 +513,8 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 			return issueTableSQL{}, false
 		}
 		includeWorkspaceOwned := spec.Filters.IncludeWorkspaceOwned == nil || *spec.Filters.IncludeWorkspaceOwned
-		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userUUID), includeWorkspaceOwned))
+		visibilityCTEs = issueVisibilityCTEDefs("$1", addArg(userUUID), includeWorkspaceOwned)
+		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
 	}
 
 	// Any non-empty status KEY, not just the 7 built-ins. A status filter names
@@ -724,9 +754,10 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	}
 
 	return issueTableSQL{
-		where:       strings.Join(where, " AND "),
-		args:        args,
-		fingerprint: fingerprint,
-		workspaceID: workspaceUUID,
+		where:          strings.Join(where, " AND "),
+		args:           args,
+		fingerprint:    fingerprint,
+		workspaceID:    workspaceUUID,
+		visibilityCTEs: visibilityCTEs,
 	}, true
 }

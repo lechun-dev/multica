@@ -10,10 +10,14 @@ type issueVisibilitySQL struct {
 	projectsMaterialized bool
 }
 
-func issueVisibilityCTEs(workspaceRef, userRef string, includeWorkspaceOwned bool) string {
+// 2026-09-20 coder(lq): The table reads (rows/groups/facets) already open their
+// own WITH list, so they need the definitions without a second WITH keyword.
+// Keep this as the single source of the visibility set and let issueVisibilityCTEs
+// wrap it for the callers that own the whole statement.
+func issueVisibilityCTEDefs(workspaceRef, userRef string, includeWorkspaceOwned bool) string {
 	principals := issueVisibilitySQL{materialized: true}
 	issues := issueVisibilitySQL{materialized: true, projectsMaterialized: true}
-	return fmt.Sprintf(`WITH issue_auth_organizations(organization_id) AS MATERIALIZED (
+	return fmt.Sprintf(`issue_auth_organizations(organization_id) AS MATERIALIZED (
 		%s
 	), issue_auth_projects AS MATERIALIZED (
 		SELECT visible_project.id FROM project visible_project
@@ -25,6 +29,10 @@ func issueVisibilityCTEs(workspaceRef, userRef string, includeWorkspaceOwned boo
 	`, userOrganizationIDsSQL(workspaceRef, userRef), workspaceRef,
 		principals.projectAccess("visible_project.id", workspaceRef, userRef), workspaceRef,
 		issues.predicate("visible_issue", workspaceRef, userRef, includeWorkspaceOwned))
+}
+
+func issueVisibilityCTEs(workspaceRef, userRef string, includeWorkspaceOwned bool) string {
+	return "WITH " + issueVisibilityCTEDefs(workspaceRef, userRef, includeWorkspaceOwned)
 }
 
 // 2026-09-14 coder(lq): Match issue_effective_status exactly: canonical keys
