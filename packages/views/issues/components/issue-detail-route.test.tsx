@@ -27,15 +27,6 @@ vi.mock("../surface/visibility-context", () => ({
   useWorkspaceTaskVisibility: () => ({ includeWorkspaceOwned: true, ready: true }),
 }));
 
-vi.mock("./restricted-issue-access", () => ({
-  RestrictedIssueAccess: ({ identifier }: { identifier: string }) => (
-    <div>
-      <p>没有访问权限：{identifier}</p>
-      <button type="button">申请权限</button>
-    </div>
-  ),
-}));
-
 vi.mock("@multica/core/paths", async () => {
   const actual = await vi.importActual<typeof import("@multica/core/paths")>(
     "@multica/core/paths",
@@ -232,8 +223,11 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("没有访问权限：LC-797")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "申请权限" })).toBeInTheDocument();
+    // The real restricted page renders: the denial names the task and offers a
+    // request form, instead of pretending the task is gone.
+    expect(await screen.findByText("LC-797")).toBeInTheDocument();
+    expect(screen.getByText("You don't have access")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Request access" })).toBeInTheDocument();
     expect(screen.queryByText("Task deleted")).not.toBeInTheDocument();
     qc.clear();
   });

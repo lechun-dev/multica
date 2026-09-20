@@ -3,7 +3,7 @@
 /* eslint-disable i18next/no-literal-string -- Task permissions use canonical policy codes in API payloads and previews. */
 /* eslint-disable no-restricted-syntax -- This isolated administration surface ships its fallback copy with the feature. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, ShieldCheck, UserMinus, Users } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
@@ -16,12 +16,30 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@multica/ui/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
+import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 import { ProjectMemberMultiSelect } from "../../projects/components/project-member-multi-select";
 import { ProjectPermissionOrganizationTreeSelect } from "../../projects/components/project-permission-organization-tree-select";
 
-type IssueAccessGrantsDialogProps = { issueId: string; projectId?: string | null; defaultOpen?: boolean };
+type IssueAccessGrantsDialogProps = {
+  issueId: string;
+  projectId?: string | null;
+  defaultOpen?: boolean;
+  /**
+   * Access request the host wants this dialog to land on. Set when a task
+   * access notification is opened from the inbox: the request is centred in
+   * the pending list and can no longer be approved/rejected once it left the
+   * pending state.
+   */
+  focusRequestId?: string | null;
+  /**
+   * Bumped by the host to replay the landing when the same notification is
+   * clicked again. A fresh mount replays it by itself; this token is for the
+   * click that swaps the focused request without remounting the dialog.
+   */
+  focusRequestToken?: number;
+};
 
 function sameTaskGrant(left: IssueAccessControlGrant, right: IssueAccessControlGrant) {
   return left.subject_type === right.subject_type && left.subject_id === right.subject_id && left.role === right.role;
@@ -36,7 +54,7 @@ function mergeTaskGrants(current: IssueAccessControlGrant[], additions: IssueAcc
 }
 
 /** Task ACL editor plus a read-only resolver explanation for the current user. */
-export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = false }: IssueAccessGrantsDialogProps) {
+export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = false, focusRequestId = null, focusRequestToken }: IssueAccessGrantsDialogProps) {
   const { t } = useT("projects");
   const workspaceId = useWorkspaceId();
   const queryClient = useQueryClient();
@@ -52,6 +70,13 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
   const [saving, setSaving] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [grantsOpen, setGrantsOpen] = useState(false);
+  const [focusedRequestId, setFocusedRequestId] = useState<string | null>(null);
+  const [focusRingNonce, setFocusRingNonce] = useState(0);
+  const focusRowRef = useRef<HTMLDivElement | null>(null);
+  // Tracks the last landing we already honoured. A plain token ref would skip
+  // the very first render when the host passes no token, so the key carries
+  // both the request id and the token.
+  const lastFocusKeyRef = useRef<string | undefined>(undefined);
 
   const controlQuery = useQuery({ queryKey: ["issue-access-control", workspaceId, issueId], queryFn: () => api.getIssueAccessControl(issueId), enabled: open, retry: false });
   const effectiveQuery = useQuery({ queryKey: ["issue-effective-access", workspaceId, issueId], queryFn: () => api.getIssueEffectiveAccess(issueId), enabled: open, retry: false });
@@ -70,6 +95,32 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     if (!open || typeof window === "undefined") return;
     setShareUrl(window.location.href);
   }, [open]);
+
+  // 2026-09-20 coder(lq): 从收件箱点击“任务权限申请”通知时，直接打开本弹窗并定位到该申请，
+  // 不再要求审批人自己在一长串申请里找。首次挂载与 token 变化各触发一次。
+  useEffect(() => {
+    if (!focusRequestId) return;
+    const focusKey = `${focusRequestId}:${focusRequestToken ?? "initial"}`;
+    if (lastFocusKeyRef.current === focusKey) return;
+    lastFocusKeyRef.current = focusKey;
+    setOpen(true);
+    setFocusRingNonce((current) => current + 1);
+  }, [focusRequestId, focusRequestToken]);
+
+  // Centre the focused row once the request list has it, and ring it briefly
+  // so the reader sees which request the notification pointed at. The ring is
+  // transient on purpose: it marks the landing, it is not a second state.
+  useEffect(() => {
+    if (!open || !focusRequestId) {
+      setFocusedRequestId(null);
+      return;
+    }
+    if (!requestsQuery.data?.items.some((item) => item.id === focusRequestId)) return;
+    setFocusedRequestId(focusRequestId);
+    focusRowRef.current?.scrollIntoView?.({ block: "center" });
+    const timer = setTimeout(() => setFocusedRequestId(null), 2400);
+    return () => clearTimeout(timer);
+  }, [open, focusRequestId, focusRingNonce, requestsQuery.data]);
 
   const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
   const organizations = useMemo(() => directoryQuery.data?.organizations ?? [], [directoryQuery.data?.organizations]);
@@ -96,6 +147,16 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
       case "member": return t(($) => $.permissions.task_access_level_editor);
       case "manager": return t(($) => $.permissions.task_access_level_manager);
       default: return fallback || roleKey;
+    }
+  };
+  const requestStatusLabel = (status: string) => {
+    switch (status) {
+      case "pending": return t(($) => $.permissions.task_request_status_pending);
+      case "approved": return t(($) => $.permissions.task_request_status_approved);
+      case "rejected": return t(($) => $.permissions.task_request_status_rejected);
+      case "cancelled": return t(($) => $.permissions.task_request_status_cancelled);
+      case "expired": return t(($) => $.permissions.task_request_status_expired);
+      default: return status;
     }
   };
   const accessSummary = [
@@ -126,6 +187,16 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
       ? memberByUser.get(grant.subject_id || "")?.name || memberByUser.get(grant.subject_id || "")?.email || grant.subject_id || "—"
       : organizationById.get(grant.subject_id || "")?.name || grant.subject_id || "—";
   const resetPicker = () => { setSelectedUserIds(new Set()); setSelectedOrganizationIds(new Set()); setSelectedEveryone(false); setExpiresAt(""); };
+
+  // 2026-09-20 coder(lq): 定位场景下，已处理的申请也要跟着通知一起出现在列表里，
+  // 否则审批人点开通知只能看到空白或别人的申请，无法确认这条通知的结果。
+  const pendingRequests = (requestsQuery.data?.items ?? []).filter((item) => item.status === "pending");
+  const focusedRequest = focusRequestId
+    ? requestsQuery.data?.items.find((item) => item.id === focusRequestId)
+    : undefined;
+  const visibleRequests = focusedRequest && focusedRequest.status !== "pending"
+    ? [...pendingRequests, focusedRequest]
+    : pendingRequests;
 
   const copyShareLink = async () => {
     if (!shareUrl) return;
@@ -186,7 +257,23 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
   };
 
   return <>
-    <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={() => setOpen(true)} aria-label={t(($) => $.permissions.task_permissions_title)}><ShieldCheck /></Button>} /><TooltipContent side="top">{t(($) => $.permissions.task_permissions_title)}</TooltipContent></Tooltip>
+    <Tooltip>
+      <TooltipTrigger
+        render={(
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 px-2 text-caption"
+            onClick={() => setOpen(true)}
+            aria-label={t(($) => $.permissions.task_permissions_action)}
+          >
+            <ShieldCheck className="size-3.5" />
+            <span>{t(($) => $.permissions.task_permissions_action)}</span>
+          </Button>
+        )}
+      />
+      <TooltipContent side="top">{t(($) => $.permissions.task_permissions_action)}</TooltipContent>
+    </Tooltip>
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) { setDirty(false); setGrantsOpen(false); } }}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
       <DialogHeader><DialogTitle>{t(($) => $.permissions.task_permissions_title)}</DialogTitle><DialogDescription>{t(($) => $.permissions.task_permissions_description)}</DialogDescription></DialogHeader>
       <section className="space-y-2">
@@ -245,7 +332,52 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
             <Select modal={false} items={[{ value: "inherit", label: t(($) => $.permissions.task_policy_inherit) }, { value: "restricted", label: t(($) => $.permissions.task_policy_restricted) }]} value={mode} onValueChange={(value) => { setMode(value as TaskAccessMode); setDirty(true); }}><SelectTrigger className="w-48" aria-label={t(($) => $.permissions.task_project_access_mode)}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">{t(($) => $.permissions.task_policy_inherit)}</SelectItem><SelectItem value="restricted">{t(($) => $.permissions.task_policy_restricted)}</SelectItem></SelectContent></Select>
           </div>
         </section>
-        {requestsQuery.data?.items.some((item) => item.status === "pending") ? <section className="space-y-2 border-t pt-4"><h3 className="font-medium">{t(($) => $.permissions.task_pending_requests)}</h3>{requestsQuery.data.items.filter((item) => item.status === "pending").map((request) => <div key={request.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2"><code>{request.requester_user_id}</code><span>{t(($) => $.permissions.task_request_role, { role: taskRoleLabel(request.requested_role) })}</span><span className="flex-1 text-muted-foreground">{request.reason}</span><Button size="sm" variant="brandSubtle" onClick={() => void review(request.id, "approve")}>{t(($) => $.permissions.task_request_approve)}</Button><Button size="sm" variant="outline" onClick={() => void review(request.id, "reject")}>{t(($) => $.permissions.task_request_reject)}</Button></div>)}</section> : null}
+        {visibleRequests.length ? (
+          <section className="space-y-2 border-t pt-4">
+            <h3 className="font-medium">
+              {pendingRequests.length
+                ? t(($) => $.permissions.task_pending_requests)
+                : t(($) => $.permissions.task_request_section_title)}
+            </h3>
+            {visibleRequests.map((request) => {
+              const isPending = request.status === "pending";
+              const isFocused = request.id === focusRequestId;
+              return (
+                <div
+                  key={request.id}
+                  ref={isFocused ? focusRowRef : undefined}
+                  data-request-id={request.id}
+                  className={cn(
+                    "flex flex-wrap items-center gap-2 rounded-md border p-2",
+                    focusedRequestId === request.id && "border-primary ring-1 ring-primary",
+                  )}
+                >
+                  <code>{request.requester_user_id}</code>
+                  <span>{t(($) => $.permissions.task_request_role, { role: taskRoleLabel(request.requested_role) })}</span>
+                  <span className="flex-1 text-muted-foreground">{request.reason}</span>
+                  {isFocused && isPending ? (
+                    <span className="text-caption text-muted-foreground">
+                      {t(($) => $.permissions.task_request_focus_hint)}
+                    </span>
+                  ) : null}
+                  {isPending ? (
+                    <>
+                      <Button size="sm" variant="brandSubtle" onClick={() => void review(request.id, "approve")}>{t(($) => $.permissions.task_request_approve)}</Button>
+                      <Button size="sm" variant="outline" onClick={() => void review(request.id, "reject")}>{t(($) => $.permissions.task_request_reject)}</Button>
+                    </>
+                  ) : (
+                    // A notification outlives the decision it announces: show what
+                    // was decided instead of an empty list, and never re-offer an
+                    // approve/reject pair for a request that already left pending.
+                    <span className="text-caption font-medium">
+                      {t(($) => $.permissions.task_request_already_handled, { status: requestStatusLabel(request.status) })}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        ) : null}
       </> : <p className="rounded-md border p-3 text-caption text-muted-foreground">{readonlyReason}</p>}
       <section className="border-t pt-3">
         <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">

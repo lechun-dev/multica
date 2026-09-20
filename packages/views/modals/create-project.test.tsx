@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../test/i18n";
+import enProjects from "../locales/en/projects.json";
+
+// 2026-09-20 coder(lq): The sharing step renamed this action from "Add
+// members" to "Grant access"; read the label from the bundle so the next copy
+// change cannot silently stale these clicks again.
+const GRANT_ACCESS_LABEL = enProjects.permissions.add_members;
 
 const longRepoUrl =
   "https://github.com/multica-ai/a-very-long-repository-name-that-needs-a-tooltip";
@@ -274,7 +280,7 @@ describe("CreateProjectModal", () => {
     expect(screen.getByRole("checkbox", { name: /Alice Owner/ })).toBeChecked();
 
     await user.click(screen.getByRole("button", { name: "Manager" }));
-    await user.click(screen.getByRole("button", { name: "Add members" }));
+    await user.click(screen.getByRole("button", { name: GRANT_ACCESS_LABEL }));
     expect(screen.getAllByText("Alice Owner").length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: "Create Project" }));
@@ -304,7 +310,7 @@ describe("CreateProjectModal", () => {
     await user.click(screen.getByRole("button", { name: "Access" }));
     await user.click(screen.getByRole("button", { name: "Search by name or email" }));
     await user.click(screen.getByRole("checkbox", { name: /Alice Owner/ }));
-    await user.click(screen.getByRole("button", { name: "Add members" }));
+    await user.click(screen.getByRole("button", { name: GRANT_ACCESS_LABEL }));
     await user.click(screen.getByRole("button", { name: "Create Project" }));
 
     await waitFor(() => {

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useQuery } from "@tanstack/react-query";
 import { renderWithI18n } from "../../test/i18n";
+import enIssues from "../../locales/en/issues.json";
 import { IssueHoverCard } from "./issue-hover-card";
 
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
@@ -110,7 +111,9 @@ const BASE_ISSUE: Issue = {
   priority: "none",
 };
 
-const NOT_FOUND_TEXT = "This issue does not exist or has been deleted in this workspace.";
+// 2026-09-20 coder(lq): Track the bundle value instead of a hard-coded copy of
+// the "task deleted" message, which was shortened in the LC-797 release.
+const NOT_FOUND_TEXT = enIssues.detail.not_found;
 
 /** The three query states the card body branches on, as react-query reports them. */
 type DetailState =

@@ -13,7 +13,6 @@ import { Badge } from "@multica/ui/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@multica/ui/components/ui/select";
 import { toast } from "sonner";
 import { SettingsCard, SettingsSection, SettingsTab } from "./settings-layout";
-import { EffectiveAccessDashboard } from "./effective-access-dashboard";
 import { useT } from "../../i18n";
 
 const NO_ACCESS = "__no_project_access__";
@@ -301,16 +300,6 @@ export function ProjectPermissionsTab() {
             <span>{t(($) => $.permission_report.people_projects)}</span>
             <span>·</span>
             <span>{t(($) => $.permission_report.read_only_hint)}</span>
-          </div>
-        </SettingsCard>
-      </SettingsSection>
-      <SettingsSection>
-        <SettingsCard>
-          <div className="p-4">
-            <EffectiveAccessDashboard
-              projectId={projectFilter === ALL_FILTER ? undefined : projectFilter}
-              userId={personFilter === ALL_FILTER ? undefined : personFilter}
-            />
           </div>
         </SettingsCard>
       </SettingsSection>

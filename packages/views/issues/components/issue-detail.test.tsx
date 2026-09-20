@@ -1299,7 +1299,9 @@ describe("IssueDetail (shared)", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("This issue does not exist or has been deleted in this workspace."),
+        // 2026-09-20 coder(lq): Read the copy from the bundle so a renamed
+        // not-found message cannot leave this assertion stale again.
+        screen.getByText(enIssues.detail.not_found),
       ).toBeInTheDocument();
     });
   });

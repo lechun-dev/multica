@@ -45,16 +45,36 @@ const control = {
   grants: [],
 };
 
-function renderDialog(projectId: string | null = "project-1") {
+function renderDialog(
+  projectId: string | null = "project-1",
+  focus: { focusRequestId?: string | null; focusRequestToken?: number } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return renderWithI18n(
     <QueryClientProvider client={client}>
-      <IssueAccessGrantsDialog issueId="issue-1" projectId={projectId} />
+      <IssueAccessGrantsDialog
+        issueId="issue-1"
+        projectId={projectId}
+        focusRequestId={focus.focusRequestId ?? null}
+        focusRequestToken={focus.focusRequestToken}
+      />
     </QueryClientProvider>,
   );
 }
+
+const pendingRequest = {
+  id: "request-9",
+  workspace_id: "workspace-1",
+  issue_id: "issue-1",
+  requester_user_id: "li-4",
+  requested_role: "viewer",
+  reason: "Need task context",
+  status: "pending" as const,
+  created_at: "2026-09-16T00:00:00Z",
+  updated_at: "2026-09-16T00:00:00Z",
+};
 
 describe("IssueAccessGrantsDialog", () => {
   beforeEach(() => {
@@ -143,7 +163,9 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Share task" }));
+    const trigger = screen.getByRole("button", { name: "Task access" });
+    expect(trigger).toHaveTextContent("Task access");
+    await user.click(trigger);
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     expect(within(dialog).getByText("Task link")).toBeInTheDocument();
@@ -168,7 +190,7 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog(null);
 
-    await user.click(screen.getByRole("button", { name: "Share task" }));
+    await user.click(screen.getByRole("button", { name: "Task access" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     expect(within(dialog).getByText(/Projectless tasks use direct grants only/)).toBeInTheDocument();
@@ -199,7 +221,7 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Share task" }));
+    await user.click(screen.getByRole("button", { name: "Task access" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     await user.click(within(dialog).getByRole("button", { name: "Select people" }));
@@ -247,7 +269,7 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Share task" }));
+    await user.click(screen.getByRole("button", { name: "Task access" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     await user.click(await within(dialog).findByRole("button", { name: "Approve" }));
@@ -272,7 +294,7 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Share task" }));
+    await user.click(screen.getByRole("button", { name: "Task access" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     expect(
@@ -290,11 +312,46 @@ describe("IssueAccessGrantsDialog", () => {
     const user = userEvent.setup();
     renderDialog();
 
-    await user.click(screen.getByRole("button", { name: "Share task" }));
+    await user.click(screen.getByRole("button", { name: "Task access" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
     expect(within(dialog).getByText("My access")).toBeInTheDocument();
     expect(within(dialog).getByText("Grant access")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
+  // 2026-09-20 coder(lq): 收件箱点开“任务权限申请”通知后，弹窗必须自己打开并落在该申请上。
+  it("opens on its own and lands on the request the notification pointed at", async () => {
+    mocks.listIssueAccessRequests.mockResolvedValue({ items: [pendingRequest] });
+
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+
+    // No trigger click: the focus request alone has to open the dialog.
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    const row = await within(dialog).findByText(pendingRequest.reason);
+    expect(row.closest("[data-request-id]")).toHaveAttribute(
+      "data-request-id",
+      pendingRequest.id,
+    );
+    expect(within(dialog).getByText(/Opened from the inbox/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Reject" })).toBeInTheDocument();
+  });
+
+  it("shows a decided request as handled instead of re-offering the decision", async () => {
+    // A notification outlives the decision it announces. Landing on it must
+    // answer "what happened?" — and never put Approve/Reject back on screen.
+    mocks.listIssueAccessRequests.mockResolvedValue({
+      items: [{ ...pendingRequest, status: "approved" as const }],
+    });
+
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(
+      await within(dialog).findByText("This request was already handled: Approved."),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
   });
 });

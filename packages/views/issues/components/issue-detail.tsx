@@ -1001,6 +1001,24 @@ interface IssueDetailProps {
    */
   highlightRequestToken?: number;
   /**
+   * Access request the task-permissions dialog should land on. Set when the
+   * host opened an access-request notification: the dialog centres that
+   * request and stops offering approve/reject once it left pending.
+   */
+  accessRequestId?: string;
+  /**
+   * Bump to replay the `accessRequestId` landing on an already-mounted detail
+   * without a remount — the same contract as `highlightRequestToken`, for the
+   * same reason (see `InboxPage.handleSelect`).
+   */
+  accessRequestToken?: number;
+  /**
+   * Replaces `IssueNotFound` when the issue cannot be loaded. A host that knows
+   * WHY it might be missing — the inbox holds access-request notifications, and
+   * a denied reader is not a deleted task — passes the surface that fits.
+   */
+  notFoundFallback?: ReactNode;
+  /**
    * Far-left header slot, replacing the mobile sidebar trigger. A host that
    * embeds this detail one level deep (the inbox, on a phone) passes its own
    * "back" control here instead of stacking a second 48px bar above us — the
@@ -1129,7 +1147,7 @@ export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
 // IssueDetail
 // ---------------------------------------------------------------------------
 
-export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, leadingAction }: IssueDetailProps) {
+export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, accessRequestId, accessRequestToken, notFoundFallback, leadingAction }: IssueDetailProps) {
   const { t } = useT("issues");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
@@ -2243,7 +2261,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }
 
   if (!issue) {
-    return <IssueNotFound showBackLink={!onDelete} leading={leadingAction} />;
+    return notFoundFallback ?? <IssueNotFound showBackLink={!onDelete} leading={leadingAction} />;
   }
 
   const isArchived = Boolean(issue.archived_at);
@@ -2904,7 +2922,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               />
               <TooltipContent side="bottom">{actions.isPinned ? t(($) => $.detail.unpin_tooltip) : t(($) => $.detail.pin_tooltip)}</TooltipContent>
             </Tooltip>
-            <IssueAccessGrantsDialog issueId={issue.id} projectId={issue.project_id} />
+            <IssueAccessGrantsDialog
+              issueId={issue.id}
+              projectId={issue.project_id}
+              focusRequestId={accessRequestId ?? null}
+              focusRequestToken={accessRequestToken}
+            />
             <IssueActionsDropdown
               issue={issue}
               align="end"
