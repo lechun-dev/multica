@@ -4803,7 +4803,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxRetryingOnContention(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -6586,6 +6586,53 @@ func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) e
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// isRetryableTxContention reports the SQLSTATEs PostgreSQL raises when it aborts
+// a transaction because of a concurrency conflict rather than because the
+// statement was wrong: 40P01 deadlock_detected and 40001 serialization_failure.
+// Both abort the WHOLE transaction, so the only recovery is to run it again.
+func isRetryableTxContention(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "40P01" || pgErr.Code == "40001"
+}
+
+// runInTxRetryingOnContention runs fn in a transaction like runInTx, retrying the
+// whole transaction when PostgreSQL aborts it for a concurrency conflict.
+//
+// 2026-09-20 coder(lq): Failing a task and rerunning its issue are two deliberate
+// actions on the same single pending slot. A concurrent FailTask and RerunIssue
+// both insert into that slot and both lock the same owner and task rows, so the
+// pair can deadlock; PostgreSQL then rolls the loser back completely.
+// RerunIssue already reclaims and retries under this race, but FailTask used to
+// surface the deadlock, which stranded the parent in 'running' — the state the
+// concurrency contracts exist to prevent. Retrying is safe here: nothing but
+// logging happens inside fn, and the pre-computed retry inputs are resolved
+// before the transaction, so a replay re-derives the same row.
+func (s *TaskService) runInTxRetryingOnContention(ctx context.Context, fn func(*db.Queries) error) error {
+	const maxAttempts = 4
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err = s.runInTx(ctx, fn)
+		if err == nil || !isRetryableTxContention(err) {
+			return err
+		}
+		slog.Warn("task transaction lost a concurrency race, retrying",
+			"attempt", attempt+1,
+			"error", err,
+		)
+		// Bounded backoff so the two racers stop colliding immediately; the
+		// winner's COMMIT is what releases the slot.
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 // ReportProgress broadcasts a progress update via the event bus.
