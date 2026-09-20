@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -103,7 +102,7 @@ func (r *projectAuthRepository) ActiveOrganizationInWorkspace(ctx context.Contex
 func (r *projectAuthRepository) WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID string) (bool, error) {
 	_ = ctx
 	_ = workspaceID
-	return os.Getenv("PROJECT_OWNER_BYPASS_ENABLED") != "false", nil
+	return projectauth.WorkspaceOwnerBypassEnabledFromEnvironment(), nil
 }
 
 // IssueAccessResource loads every resource binding needed by the effective

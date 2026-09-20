@@ -33,6 +33,14 @@ func (s *Service) RolloutPhase() RolloutPhase {
 func (s *Service) Enabled() bool       { return s != nil && s.rollout.ReaderEnabled() }
 func (s *Service) ShadowEnabled() bool { return s != nil && s.rollout.ShadowEnabled() }
 
+// WorkspaceOwnerBypassEnabledFromEnvironment is the single parser for the
+// deployment-level owner override. 2026-09-18 coder(lq): Accept surrounding
+// whitespace and case differences so an operationally valid false value
+// cannot silently fall back to the permissive default.
+func WorkspaceOwnerBypassEnabledFromEnvironment() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("PROJECT_OWNER_BYPASS_ENABLED")), "false")
+}
+
 // WorkspaceOwnerBypassEnabled resolves the workspace-level owner override.
 // The switch is deployment-scoped and now comes from the process environment
 // rather than workspace.settings, so operators can flip it without touching
@@ -40,7 +48,7 @@ func (s *Service) ShadowEnabled() bool { return s != nil && s.rollout.ShadowEnab
 func (s *Service) WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID string) (bool, error) {
 	_ = ctx
 	_ = workspaceID
-	return os.Getenv("PROJECT_OWNER_BYPASS_ENABLED") != "false", nil
+	return WorkspaceOwnerBypassEnabledFromEnvironment(), nil
 }
 
 // CurrentProjectRoles returns the caller's effective role for visible projects

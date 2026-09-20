@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -705,7 +704,7 @@ func (scope issueVisibilitySQL) projectAccess(projectExpr, workspaceRef, userRef
 // from accidentally retaining unconditional workspace-owner visibility.
 func workspaceOwnerBypassPredicate(workspaceRef string) string {
 	_ = workspaceRef
-	if os.Getenv("PROJECT_OWNER_BYPASS_ENABLED") == "false" {
+	if !projectauth.WorkspaceOwnerBypassEnabledFromEnvironment() {
 		return "FALSE"
 	}
 	return "TRUE"
