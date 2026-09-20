@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.89",
+        date: "2026-09-20",
+        title: "优化任务表格的权限过滤性能",
+        changes: [],
+        features: [],
+        improvements: [
+          "任务表格的分面统计、总数统计和取数改为复用一次性算出的可见任务集合，减少数据库重复权限校验。",
+        ],
+        fixes: [
+          "修复任务表格权限过滤逐行重复校验造成的数据库高负载与接口超时。",
+        ],
+      },
+      {
         version: "0.4.88",
         date: "2026-09-17",
         title: "按空间配置 Codex 运行时模型",

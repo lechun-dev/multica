@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.89",
+          date: "2026-09-20",
+          title: "태스크 테이블 권한 필터 성능 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "태스크 테이블의 패싯 집계, 건수 집계, 데이터 조회가 한 번 계산한 가시 태스크 집합을 재사용합니다.",
+          ],
+          fixes: [
+            "행마다 권한을 다시 계산해 발생하던 데이터베이스 부하와 API 타임아웃을 수정했습니다.",
+          ],
+        },
+        {
           version: "0.4.88",
           date: "2026-09-17",
           title: "워크스페이스별 Codex 런타임 모델 설정",

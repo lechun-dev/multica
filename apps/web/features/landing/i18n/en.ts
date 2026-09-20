@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.4.89",
+        date: "2026-09-20",
+        title: "Speed up issue table permission filtering",
+        changes: [],
+        features: [],
+        improvements: [
+          "Issue table facets, totals, and row queries now reuse one materialized set of visible issues instead of re-checking permissions for every row.",
+        ],
+        fixes: [
+          "Fix the database overload and request timeouts caused by per-row permission checks on the issue table.",
+        ],
+      },
+      {
         version: "0.4.88",
         date: "2026-09-17",
         title: "Configure Codex runtime models per workspace",

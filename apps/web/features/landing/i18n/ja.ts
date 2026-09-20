@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.4.89",
+          date: "2026-09-20",
+          title: "タスクテーブルの権限フィルタ性能を改善",
+          changes: [],
+          features: [],
+          improvements: [
+            "タスクテーブルのファセット集計・件数集計・データ取得が、一度だけ算出した可視タスク集合を再利用するようになりました。",
+          ],
+          fixes: [
+            "行ごとの権限再計算によるデータベース高負荷と API タイムアウトを修正しました。",
+          ],
+        },
+        {
           version: "0.4.88",
           date: "2026-09-17",
           title: "ワークスペースごとに Codex ランタイムモデルを設定",
