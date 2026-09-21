@@ -110,7 +110,6 @@ import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
 import { ProjectPermissionsDialog } from "./project-permissions-dialog";
-import { ProjectPermissionsTab } from "../../settings/components/project-permissions-tab";
 import { PAGE_GUTTER, PAGE_TOOLBAR } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -936,8 +935,6 @@ function ProjectBatchToolbar({
 
 export function ProjectsPage() {
   const { t } = useT("projects");
-  const { t: tSettings } = useT("settings");
-  const [projectPermissionsOpen, setProjectPermissionsOpen] = useState(false);
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
@@ -1140,11 +1137,11 @@ export function ProjectsPage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              <CollectionPageHeaderAction
-                icon={ShieldCheck}
-                label={tSettings(($) => $.page.tabs.project_permissions)}
-                onClick={() => setProjectPermissionsOpen(true)}
-              />
+              {/* 2026-09-21 coder(lq): Hidden from this toolbar at the product's
+                  request. The permissions surface itself is untouched and still
+                  reachable from Settings, so this removes an entry point, not the
+                  feature: restore this entry and the dialog it opened to bring it
+                  back to the projects list. */}
 
               {/* Filter */}
               <DropdownMenu>
@@ -1257,15 +1254,6 @@ export function ProjectsPage() {
                   </DropdownMenuSub>
                 </DropdownMenuContent>
               </DropdownMenu>
-
-              <Dialog open={projectPermissionsOpen} onOpenChange={setProjectPermissionsOpen}>
-                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
-                  <DialogTitle className="sr-only">
-                    {tSettings(($) => $.page.tabs.project_permissions)}
-                  </DialogTitle>
-                  {projectPermissionsOpen ? <ProjectPermissionsTab /> : null}
-                </DialogContent>
-              </Dialog>
 
               {/* Display (sort + columns). Always present — view mode is a
                   pure presentation choice and must not reshape the toolbar.
