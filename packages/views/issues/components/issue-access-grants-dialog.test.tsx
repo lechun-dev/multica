@@ -8,6 +8,7 @@ import { renderWithI18n } from "../../test/i18n";
 
 const mocks = vi.hoisted(() => ({
   getIssueAccessControl: vi.fn(),
+  revokeIssueMentionAccess: vi.fn(),
   getIssueEffectiveAccess: vi.fn(),
   listTaskPermissionRoles: vi.fn(),
   listProjectAuthorizationOrganizations: vi.fn(),
@@ -301,8 +302,39 @@ describe("IssueAccessGrantsDialog", () => {
       ...control,
       derived_grants: [
         { subject_type: "user" as const, subject_id: "user-9", role: "member", source: "system", reason: "mention" },
+        { subject_type: "user" as const, subject_id: "user-1", role: "owner", source: "system", reason: "creator" },
       ],
     } as never);
+    mocks.revokeIssueMentionAccess.mockResolvedValue({ ...control, derived_grants: [] });
+
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Task access" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    await user.click(await within(dialog).findByRole("button", { name: "Already granted 2" }));
+
+    const grantsDialog = await screen.findByRole("dialog", { name: "Direct task access" });
+    const rows = within(grantsDialog).getAllByTestId("derived-access-row");
+    const mentionRow = rows.find((item) => item.textContent?.includes("@mention"));
+    const creatorRow = rows.find((item) => item.textContent?.includes("Task creator"));
+    if (!mentionRow || !creatorRow) {
+      throw new Error("expected both the mention and the creator row");
+    }
+    // A mistaken mention has to be withdrawable, and the server remembers the
+    // decision so the next reconciliation cannot hand the access back.
+    await user.click(within(mentionRow).getByRole("button"));
+    await waitFor(() => expect(mocks.revokeIssueMentionAccess).toHaveBeenCalledWith("issue-1", "user-9"));
+    // The creator owns the task by definition; only a mention can be withdrawn.
+    expect(within(creatorRow).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("removes a manual grant immediately, without the other dialog's save", async () => {
+    // The list says it manages manual access, so the removal has to happen here:
+    // it used to only mark the dialog dirty, and closing the list discarded it.
+    const existingGrant = { subject_type: "user" as const, subject_id: "user-9", role: "manager", scope: "task" as const };
+    mocks.getIssueAccessControl.mockResolvedValue({ ...control, grants: [existingGrant] } as never);
+    mocks.updateIssueAccessControl.mockResolvedValue({ ...control, grants: [] } as never);
 
     const user = userEvent.setup();
     renderDialog();
@@ -312,12 +344,12 @@ describe("IssueAccessGrantsDialog", () => {
     await user.click(await within(dialog).findByRole("button", { name: "Already granted 1" }));
 
     const grantsDialog = await screen.findByRole("dialog", { name: "Direct task access" });
-    const row = within(grantsDialog).getByTestId("derived-access-row");
-    // The source label comes from the shared task_source_* vocabulary the
-    // effective-access surfaces use, not a dialog-local one.
-    expect(within(row).getByText("@mention")).toBeInTheDocument();
-    // Only the source that granted it can take it away, so the row is read-only.
-    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    await user.click(within(within(grantsDialog).getByTestId("manual-access-row")).getByRole("button"));
+
+    await waitFor(() => expect(mocks.updateIssueAccessControl).toHaveBeenCalledWith(
+      "issue-1",
+      expect.objectContaining({ grants: [] }),
+    ));
   });
 
   it("keeps explanation read-only when the caller has no Manage permission", async () => {

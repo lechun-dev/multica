@@ -3990,6 +3990,25 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Withdraws the access a mention granted and remembers the decision: the
+   * mention that was revoked stays revoked, and mentioning the person again
+   * grants again. Returns the task's access control so the caller can render the
+   * result without a second round trip.
+   */
+  async revokeIssueMentionAccess(issueId: string, subjectId: string): Promise<IssueAccessControl> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/access-control/revoke-mention`,
+      {
+        method: "POST",
+        body: JSON.stringify({ subject_id: subjectId }),
+      },
+    );
+    return parseWithFallback(raw, IssueAccessControlSchema, emptyIssueAccessControl(issueId), {
+      endpoint: "POST /api/issues/:id/access-control/revoke-mention",
+    });
+  }
+
   async getIssueEffectiveAccess(issueId: string): Promise<EffectiveIssueAccess> {
     const raw = await this.fetch<unknown>(
       `/api/issues/${encodeURIComponent(issueId)}/effective-access`,

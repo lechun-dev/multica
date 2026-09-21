@@ -269,21 +269,52 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     }
   };
 
-  const save = async () => {
+  // 2026-09-21 coder(lq): Every change to the manual ACL now persists where it is
+  // made. Removing a row used to only mark the dialog dirty, so deleting it in the
+  // list and closing left the grant untouched: the list says it manages manual
+  // access, while the write lived in the other window.
+  const persistGrants = async (nextGrants: IssueAccessControlGrant[], successMessage: string) => {
     if (!controlQuery.data) return;
     setSaving(true);
     try {
-      const nextGrants = grantsForSave;
       const update = { expected_version: controlQuery.data.policy_version, project_access_mode: mode, grants: nextGrants };
       await api.updateIssueAccessControl(issueId, update);
       setGrants(nextGrants);
       resetPicker();
       setDirty(false);
       await Promise.all([queryClient.invalidateQueries({ queryKey: ["issue-access-control", workspaceId, issueId] }), queryClient.invalidateQueries({ queryKey: ["issue-effective-access", workspaceId, issueId] })]);
-      toast.success(t(($) => $.permissions.task_update_success));
+      toast.success(successMessage);
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) { setDirty(false); await controlQuery.refetch(); toast.error(t(($) => $.permissions.task_changed_reload)); }
       else toast.error(t(($) => $.permissions.task_save_failed));
+    } finally { setSaving(false); }
+  };
+
+  const save = async () => {
+    if (!controlQuery.data) return;
+    await persistGrants(grantsForSave, t(($) => $.permissions.task_update_success));
+  };
+
+  const removeManualGrant = async (grant: IssueAccessControlGrant) => {
+    await persistGrants(
+      grantsForSave.filter((item) => !sameTaskGrant(item, grant)),
+      t(($) => $.permissions.task_update_success),
+    );
+  };
+
+  // A mention is not a manual grant, so withdrawing it is its own call: the server
+  // records the decision, which is what keeps the next reconciliation from handing
+  // the access straight back.
+  const revokeMentionGrant = async (grant: IssueAccessControlDerivedGrant) => {
+    if (!grant.subject_id) return;
+    setSaving(true);
+    try {
+      const state = await api.revokeIssueMentionAccess(issueId, grant.subject_id);
+      queryClient.setQueryData(["issue-access-control", workspaceId, issueId], state);
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["issue-access-control", workspaceId, issueId] }), queryClient.invalidateQueries({ queryKey: ["issue-effective-access", workspaceId, issueId] })]);
+      toast.success(t(($) => $.permissions.task_mention_revoked));
+    } catch {
+      toast.error(t(($) => $.permissions.task_mention_revoke_failed));
     } finally { setSaving(false); }
   };
 
@@ -459,11 +490,11 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
       <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[680px] table-fixed text-body"><thead className="bg-muted/40 text-left text-caption text-muted-foreground"><tr><th className="w-[24%] px-3 py-2">{t(($) => $.permissions.authorization_subject)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_role)}</th><th className="w-[28%] px-3 py-2">{t(($) => $.permissions.task_exact_permissions)}</th><th className="px-3 py-2">{t(($) => $.permissions.access_source_column)}</th><th className="w-[16%] px-3 py-2">{t(($) => $.permissions.task_expires)}</th><th className="w-12" /></tr></thead><tbody>
         {grants.map((grant, index) => {
           const definition = availableRoles.find((item) => item.key === grant.role);
-          return <tr key={`${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t"><td className="px-3 py-2 align-top break-words">{subjectName(grant)}</td><td className="px-3 py-2 align-top">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{t(($) => $.permissions.access_source_manual)}</td><td className="px-3 py-2 align-top whitespace-nowrap">{grant.expires_at ? new Date(grant.expires_at).toLocaleString() : t(($) => $.permissions.task_diagnostic_never)}</td><td className="align-top"><Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_task_access_aria)} ${subjectName(grant)}`} onClick={() => { setGrants((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }}><UserMinus className="size-3.5" /></Button></td></tr>;
+          return <tr key={`${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t" data-testid="manual-access-row"><td className="px-3 py-2 align-top break-words">{subjectName(grant)}</td><td className="px-3 py-2 align-top">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{t(($) => $.permissions.access_source_manual)}</td><td className="px-3 py-2 align-top whitespace-nowrap">{grant.expires_at ? new Date(grant.expires_at).toLocaleString() : t(($) => $.permissions.task_diagnostic_never)}</td><td className="align-top"><Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_task_access_aria)} ${subjectName(grant)}`} onClick={() => void removeManualGrant(grant)} disabled={saving}><UserMinus className="size-3.5" /></Button></td></tr>;
         })}
         {derivedGrants.map((grant, index) => {
           const definition = availableRoles.find((item) => item.key === grant.role);
-          return <tr key={`derived-${grant.source}-${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t bg-muted/20" data-testid="derived-access-row"><td className="px-3 py-2 align-top break-words">{derivedSubjectName(grant)}</td><td className="px-3 py-2 align-top">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{derivedSourceLabel(grant)}</td><td className="px-3 py-2 align-top text-muted-foreground">—</td><td /></tr>;
+          return <tr key={`derived-${grant.source}-${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t bg-muted/20" data-testid="derived-access-row"><td className="px-3 py-2 align-top break-words">{derivedSubjectName(grant)}</td><td className="px-3 py-2 align-top">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2 align-top text-caption text-muted-foreground break-words">{derivedSourceLabel(grant)}</td><td className="px-3 py-2 align-top text-muted-foreground">—</td><td className="align-top">{grant.reason === "mention" && grant.subject_id ? <Button variant="ghost" size="icon-sm" disabled={saving} aria-label={`${t(($) => $.permissions.remove_task_access_aria)} ${derivedSubjectName(grant)}`} onClick={() => void revokeMentionGrant(grant)}><UserMinus className="size-3.5" /></Button> : null}</td></tr>;
         })}
         {!grants.length && !derivedGrants.length ? <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">{t(($) => $.permissions.no_direct_access)}</td></tr> : null}
       </tbody></table></div>
