@@ -337,7 +337,7 @@ func (h *Handler) ListIssueTableRows(w http.ResponseWriter, r *http.Request) {
 	// which made a 51-row page spill the entire workspace membership to disk.
 	// NOT MATERIALIZED lets PostgreSQL push parent_id/id predicates into issue and
 	// use the parent indexes for child branches and per-page child counts.
-	ctePrefix := "WITH "
+	ctePrefix := "WITH " + compiled.visibilityCTEFragment()
 	pageSource := "issue"
 	pagePredicate := fmt.Sprintf("(%s) AND (%s)", compiled.where, groupPredicate)
 	if request.Hierarchy.Enabled {
@@ -451,7 +451,8 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 	// must not pay for a full-membership COUNT.
 	var total int64
 	if cursor == nil && request.Group.Kind == "none" && request.ParentID == nil {
-		if err := h.DB.QueryRow(r.Context(), fmt.Sprintf("SELECT COUNT(*)::bigint FROM issue i WHERE %s", compiled.where), compiled.args...).Scan(&total); err != nil {
+		countQuery := compiled.visibilityWithClause() + fmt.Sprintf("SELECT COUNT(*)::bigint FROM issue i WHERE %s", compiled.where)
+		if err := h.DB.QueryRow(r.Context(), countQuery, compiled.args...).Scan(&total); err != nil {
 			slog.Warn("ListIssueTableRows total count failed", append(logger.RequestAttrs(r), "error", err)...)
 			writeIssueTableQueryFailure(w, r, "failed to count table rows")
 			return

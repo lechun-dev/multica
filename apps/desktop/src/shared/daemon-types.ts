@@ -47,6 +47,13 @@ export interface DaemonPrefs {
   autoStop: boolean;
 }
 
+export interface DaemonActionResult {
+  success: boolean;
+  error?: string;
+  repaired?: boolean;
+  reason?: "agent_cli_not_found" | "selection_cancelled";
+}
+
 export type LocalRuntimeProbe =
   | {
       probeResult: "success";

@@ -4509,8 +4509,12 @@ func TestEnsureCodexGatewayModelsInjectsGrokEntries(t *testing.T) {
 	if err := os.WriteFile(cachePath, original, 0o644); err != nil {
 		t.Fatalf("write cache: %v", err)
 	}
+	supplementalModels := []CodexSupplementalModel{
+		{ID: "grok-4.6", DisplayName: "Grok 4.6", Description: "Workspace model"},
+		{ID: "grok-4.5", DisplayName: "Grok 4.5", Description: "Workspace model"},
+	}
 
-	if err := ensureCodexGatewayModels(cachePath); err != nil {
+	if err := ensureCodexGatewayModels(cachePath, supplementalModels); err != nil {
 		t.Fatalf("ensure Codex gateway models: %v", err)
 	}
 
@@ -4532,7 +4536,7 @@ func TestEnsureCodexGatewayModelsInjectsGrokEntries(t *testing.T) {
 		slug, _ := model["slug"].(string)
 		seen[slug] = model
 	}
-	for _, slug := range []string{codexGatewayModelGrok46, codexGatewayModelGrok45} {
+	for _, slug := range []string{"grok-4.6", "grok-4.5"} {
 		model, ok := seen[slug]
 		if !ok {
 			t.Fatalf("missing injected model %q", slug)
@@ -4545,7 +4549,7 @@ func TestEnsureCodexGatewayModelsInjectsGrokEntries(t *testing.T) {
 		}
 	}
 
-	if err := ensureCodexGatewayModels(cachePath); err != nil {
+	if err := ensureCodexGatewayModels(cachePath, supplementalModels); err != nil {
 		t.Fatalf("ensure existing models: %v", err)
 	}
 	dataAgain, err := os.ReadFile(cachePath)
@@ -4570,7 +4574,7 @@ func TestEnsureCodexGatewayModelsPreservesLegacyStringEntries(t *testing.T) {
 		t.Fatalf("write cache: %v", err)
 	}
 
-	if err := ensureCodexGatewayModels(cachePath); err != nil {
+	if err := ensureCodexGatewayModels(cachePath, []CodexSupplementalModel{{ID: "grok-4.6", DisplayName: "Grok 4.6"}}); err != nil {
 		t.Fatalf("ensure Codex gateway models: %v", err)
 	}
 	data, err := os.ReadFile(cachePath)
@@ -4579,6 +4583,25 @@ func TestEnsureCodexGatewayModelsPreservesLegacyStringEntries(t *testing.T) {
 	}
 	if string(data) != string(original) {
 		t.Fatalf("legacy cache changed: got %q, want %q", data, original)
+	}
+}
+
+func TestEnsureCodexGatewayModelsWithoutWorkspaceModelsLeavesCacheUntouched(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "models_cache.json")
+	original := []byte(`{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]}`)
+	if err := os.WriteFile(cachePath, original, 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	if err := ensureCodexGatewayModels(cachePath, nil); err != nil {
+		t.Fatalf("ensure Codex gateway models: %v", err)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("unconfigured cache changed: got %q, want %q", data, original)
 	}
 }
 

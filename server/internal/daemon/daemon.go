@@ -7313,6 +7313,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentName:                        agentName,
 		AgentInstructions:                instructions,
 		AgentSkills:                      convertSkillsForEnv(skills),
+		CodexSupplementalModels:          codexSupplementalModelsForEnv(task.Agent),
 		DisabledRuntimeSkills:            convertDisabledRuntimeSkillsForEnv(task.Agent, task.RuntimeID, provider),
 		Repos:                            convertReposForEnv(task.Repos),
 		ProjectID:                        task.ProjectID,
@@ -9643,6 +9644,18 @@ func convertSkillsForEnv(skills []SkillData) []execenv.SkillContextForEnv {
 		}
 	}
 	return result
+}
+
+func codexSupplementalModelsForEnv(agentData *AgentData) []execenv.CodexSupplementalModel {
+	if agentData == nil || agentData.RuntimeModel == nil {
+		return nil
+	}
+	model := agentData.RuntimeModel
+	return []execenv.CodexSupplementalModel{{
+		ID:          model.ID,
+		DisplayName: model.DisplayName,
+		Description: model.Description,
+	}}
 }
 
 func convertDisabledRuntimeSkillsForEnv(agentData *AgentData, runtimeID, provider string) []execenv.RuntimeSkillRefForEnv {

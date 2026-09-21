@@ -13,6 +13,7 @@ import type {
   UpdaterPreferences,
 } from "../shared/updater-types";
 import type {
+  DaemonActionResult,
   DaemonStatus,
   DaemonPrefs,
   LocalRuntimeProbe,
@@ -136,9 +137,10 @@ type DaemonReauthResult =
   | { ok: false; reason: "transient"; message: string };
 
 interface DaemonAPI {
-  start: () => Promise<{ success: boolean; error?: string }>;
-  stop: () => Promise<{ success: boolean; error?: string }>;
-  restart: () => Promise<{ success: boolean; error?: string }>;
+  start: () => Promise<DaemonActionResult>;
+  selectCodex: () => Promise<DaemonActionResult>;
+  stop: () => Promise<DaemonActionResult>;
+  restart: () => Promise<DaemonActionResult>;
   getStatus: () => Promise<DaemonStatus>;
   probeRuntimes: () => Promise<LocalRuntimeProbe>;
   getHostName: () => Promise<string>;

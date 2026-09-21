@@ -78,60 +78,15 @@ func TestListModelsCopilotFallsBackToStatic(t *testing.T) {
 	}
 }
 
-func TestListModelsCodexAlwaysInjectsGrokModels(t *testing.T) {
-	// Codex model visibility is an application contract, so it remains stable
-	// when the daemon host has no Codex binary available for discovery.
+func TestListModelsCodexDoesNotHardcodeWorkspaceModels(t *testing.T) {
 	got, err := ListModels(context.Background(), "codex", Command{Path: missingAgentExecutable(t, "codex")})
 	if err != nil {
 		t.Fatalf("ListModels(codex) error: %v", err)
 	}
-	byID := map[string]Model{}
 	for _, model := range got.Models {
-		byID[model.ID] = model
-	}
-	for _, tc := range []struct {
-		id     string
-		levels []string
-	}{
-		{id: "grok-4.6", levels: []string{"low", "medium", "high", "xhigh"}},
-		{id: "grok-4.5", levels: []string{"low", "medium", "high"}},
-	} {
-		model, ok := byID[tc.id]
-		if !ok {
-			t.Errorf("ListModels(codex) missing %s: %+v", tc.id, got.Models)
-			continue
+		if model.ID == "grok-4.6" || model.ID == "grok-4.5" {
+			t.Fatalf("Codex catalog still contains hardcoded workspace model %q: %+v", model.ID, got.Models)
 		}
-		if model.Provider != "openai" {
-			t.Errorf("ListModels(codex) model %s provider = %q, want openai", tc.id, model.Provider)
-		}
-		if gotLevels := thinkingValues(model.Thinking); !reflect.DeepEqual(gotLevels, tc.levels) {
-			t.Errorf("ListModels(codex) model %s thinking = %v, want %v", tc.id, gotLevels, tc.levels)
-		}
-		if model.Thinking != nil && model.Thinking.DefaultLevel != "" {
-			t.Errorf("ListModels(codex) model %s default thinking = %q, want blank to follow CLI config", tc.id, model.Thinking.DefaultLevel)
-		}
-	}
-}
-
-func TestEnsureCodexModelsKeepsGatewayModelsInCodexCatalog(t *testing.T) {
-	models := ensureCodexModels([]Model{
-		{ID: "grok-4.6", Label: "Runtime Grok 4.6", Provider: "xai"},
-	})
-
-	if len(models) != 2 {
-		t.Fatalf("model count = %d, want 2: %+v", len(models), models)
-	}
-	if models[0].ID != "grok-4.6" || models[0].Provider != "openai" {
-		t.Fatalf("gateway model = %+v, want Codex catalog provider openai", models[0])
-	}
-	if got := thinkingValues(models[0].Thinking); !reflect.DeepEqual(got, []string{"low", "medium", "high", "xhigh"}) {
-		t.Errorf("gateway Grok 4.6 thinking = %v, want low/medium/high/xhigh", got)
-	}
-	if models[1].ID != "grok-4.5" || models[1].Provider != "openai" {
-		t.Fatalf("injected model = %+v, want Codex catalog provider openai", models[1])
-	}
-	if got := thinkingValues(models[1].Thinking); !reflect.DeepEqual(got, []string{"low", "medium", "high"}) {
-		t.Errorf("injected Grok 4.5 thinking = %v, want low/medium/high", got)
 	}
 }
 
@@ -751,10 +706,10 @@ func TestModelKnownIncompatibleWithProvider(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "grok model is compatible with codex",
+			name:     "unconfigured grok model is rejected by static codex catalog",
 			provider: "codex",
 			model:    "grok-4.6",
-			want:     false,
+			want:     true,
 		},
 		{
 			name:     "grok model is incompatible with claude",

@@ -311,27 +311,27 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       },
       {
         version: "0.4.89",
-        date: "2026-09-17",
-        title: "优化任务分享与测试环境部署",
+        date: "2026-09-20",
+        title: "优化任务表格的权限过滤性能",
         changes: [],
         features: [],
         improvements: [
-          "简化任务分享、直接授权和权限申请处理流程。",
+          "任务表格的分面统计、总数统计和取数改为复用一次性算出的可见任务集合，减少数据库重复权限校验。",
         ],
         fixes: [
-          "测试环境拉取镜像较慢时允许部署继续执行，避免过早超时。",
+          "修复任务表格权限过滤逐行重复校验造成的数据库高负载与接口超时。",
         ],
       },
       {
         version: "0.4.88",
-        date: "2026-09-16",
-        title: "分阶段上线 MissionOS 任务权限",
+        date: "2026-09-17",
+        title: "按空间配置 Codex 运行时模型",
         changes: [],
         features: [
-          "新增任务权限分阶段上线控制，支持 reader、writer 和 restricted 阶段。",
+          "空间 Owner 现在可以在设置中管理智能体可使用的 Codex 模型。",
         ],
         improvements: [
-          "权限看板、权限申请、共享界面和智能体任务领取统一复用同一套有效权限判断。",
+          "空间配置的模型会从智能体选择一致传递到 daemon 任务执行。",
         ],
         fixes: [],
       },

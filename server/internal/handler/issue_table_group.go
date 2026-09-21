@@ -930,6 +930,9 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 )`, compiled.where, promotedParentsCTE, groupExpr, secondaryExpr, headerPredicate, visibleRef, visibleRef)
 		}
 	}
+	// 2026-09-20 coder(lq): Merge the visibility set into the single WITH list;
+	// grouped/cells/membership all read `compiled.where`, so they must see the
+	// same materialized `issue_auth_visible`.
 	query := fmt.Sprintf(`WITH %s, sorted AS (
 	  SELECT group_value, issue_count, visible_count, secondary_counts, (%s)::text AS group_sort,
 	         (%s)::jsonb AS group_context
@@ -943,7 +946,7 @@ func (h *Handler) ListIssueTableGroups(w http.ResponseWriter, r *http.Request) {
 	FROM ranked
 	WHERE %s
 	ORDER BY group_order ASC, group_sort ASC, group_value ASC
-	LIMIT %s`, groupedCTE, groupSortExpr, contextExpr, orderExpr, cursorPredicate, limitRef)
+	LIMIT %s`, compiled.visibilityCTEFragment()+groupedCTE, groupSortExpr, contextExpr, orderExpr, cursorPredicate, limitRef)
 
 	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {

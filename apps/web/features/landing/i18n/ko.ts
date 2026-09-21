@@ -286,27 +286,27 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         },
         {
           version: "0.4.89",
-          date: "2026-09-17",
-          title: "태스크 공유 및 테스트 배포 개선",
+          date: "2026-09-20",
+          title: "태스크 테이블 권한 필터 성능 개선",
           changes: [],
           features: [],
           improvements: [
-            "태스크 공유, 직접 권한 부여, 접근 요청 처리 흐름을 간소화했습니다.",
+            "태스크 테이블의 패싯 집계, 건수 집계, 데이터 조회가 한 번 계산한 가시 태스크 집합을 재사용합니다.",
           ],
           fixes: [
-            "레지스트리 속도가 느린 경우에도 테스트 배포에서 이미지 가져오기를 계속할 수 있도록 했습니다.",
+            "행마다 권한을 다시 계산해 발생하던 데이터베이스 부하와 API 타임아웃을 수정했습니다.",
           ],
         },
         {
           version: "0.4.88",
-          date: "2026-09-16",
-          title: "MissionOS 태스크 권한 단계적 롤아웃",
+          date: "2026-09-17",
+          title: "워크스페이스별 Codex 런타임 모델 설정",
           changes: [],
           features: [
-            "reader, writer, restricted 단계에 맞춘 태스크 권한 롤아웃 제어를 추가했습니다.",
+            "워크스페이스 Owner가 설정에서 Agent가 사용할 수 있는 Codex 모델을 관리할 수 있습니다.",
           ],
           improvements: [
-            "권한 대시보드, 접근 요청, 공유 UI, Agent 태스크 클레임을 동일한 유효 권한 판단 흐름에 맞췄습니다.",
+            "설정한 모델이 Agent 선택부터 daemon 태스크 실행까지 일관되게 반영됩니다.",
           ],
           fixes: [],
         },

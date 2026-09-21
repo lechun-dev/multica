@@ -311,27 +311,27 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       },
       {
         version: "0.4.89",
-        date: "2026-09-17",
-        title: "Simplify task sharing and test deployments",
+        date: "2026-09-20",
+        title: "Speed up issue table permission filtering",
         changes: [],
         features: [],
         improvements: [
-          "Streamlined task sharing, direct grants, and access-request handling.",
+          "Issue table facets, totals, and row queries now reuse one materialized set of visible issues instead of re-checking permissions for every row.",
         ],
         fixes: [
-          "Allow test deployments more time to pull images when registry throughput is low.",
+          "Fix the database overload and request timeouts caused by per-row permission checks on the issue table.",
         ],
       },
       {
         version: "0.4.88",
-        date: "2026-09-16",
-        title: "Stage MissionOS task permissions rollout",
+        date: "2026-09-17",
+        title: "Configure Codex runtime models per workspace",
         changes: [],
         features: [
-          "Added staged task permission rollout controls for reader, writer, and restricted access phases.",
+          "Workspace owners can manage the Codex models available to their Agents from Settings.",
         ],
         improvements: [
-          "Kept permission dashboards, access requests, sharing UI, and Agent task claims aligned with the same effective-access decision path.",
+          "Configured models now flow consistently from Agent selection through daemon task execution.",
         ],
         fixes: [],
       },

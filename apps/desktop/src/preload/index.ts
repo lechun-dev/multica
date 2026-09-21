@@ -22,6 +22,7 @@ import {
 } from "../shared/issue-window";
 import { AUTH_SESSION_STATE_CHANNEL } from "../shared/auth-session";
 import type {
+  DaemonActionResult,
   DaemonStatus,
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
@@ -262,11 +263,11 @@ type DaemonReauthResult =
   | { ok: false; reason: "transient"; message: string };
 
 const daemonAPI = {
-  start: (): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke("daemon:start"),
-  stop: (): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke("daemon:stop"),
-  restart: (): Promise<{ success: boolean; error?: string }> =>
+  start: (): Promise<DaemonActionResult> => ipcRenderer.invoke("daemon:start"),
+  selectCodex: (): Promise<DaemonActionResult> =>
+    ipcRenderer.invoke("daemon:select-codex"),
+  stop: (): Promise<DaemonActionResult> => ipcRenderer.invoke("daemon:stop"),
+  restart: (): Promise<DaemonActionResult> =>
     ipcRenderer.invoke("daemon:restart"),
   getStatus: (): Promise<DaemonStatus> =>
     ipcRenderer.invoke("daemon:get-status"),
