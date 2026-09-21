@@ -1,13 +1,12 @@
 name: Desktop release
 
+# 2026-09-21 coder(lq): Publish desktop installers only after an explicit
+# manual selection of an existing release tag.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build and publish (for example v0.4.35)
+        description: Existing version tag to build and publish (for example v0.4.90)
         required: true
         type: string
 
@@ -19,11 +18,11 @@ permissions:
   packages: write
 
 concurrency:
-  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: desktop-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.tag }}
   STAGING_API_URL: ${{ vars.STAGING_API_URL }}
   STAGING_WS_URL: ${{ vars.STAGING_WS_URL }}
   STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
