@@ -348,11 +348,11 @@ describe("IssueAccessGrantsDialog", () => {
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
 
     const view = await within(dialog).findByText("View task");
-    expect(view.closest("li")).toHaveTextContent("Task creator");
+    expect(view.nextElementSibling).toHaveTextContent("Task creator");
     const manage = within(dialog).getByText("Manage task");
-    expect(manage.closest("li")).toHaveTextContent("Project direct grant");
-    // Each line carries only its own source.
-    expect(manage.closest("li")).not.toHaveTextContent("Task creator");
+    expect(manage.nextElementSibling).toHaveTextContent("Project direct grant");
+    // Each row carries only its own source.
+    expect(manage.nextElementSibling).not.toHaveTextContent("Task creator");
   });
 
   it("removes a manual grant immediately, without the other dialog's save", async () => {

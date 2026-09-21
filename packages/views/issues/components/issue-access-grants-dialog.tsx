@@ -3,7 +3,7 @@
 /* eslint-disable i18next/no-literal-string -- Task permissions use canonical policy codes in API payloads and previews. */
 /* eslint-disable no-restricted-syntax -- This isolated administration surface ships its fallback copy with the feature. */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, ShieldCheck, UserMinus, Users } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
@@ -477,14 +477,19 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
         <div className="flex flex-wrap items-start gap-x-3 gap-y-1 text-caption text-muted-foreground">
           <span className="font-medium text-foreground">{t(($) => $.permissions.task_access_summary_title)}</span>
           {myAccess.length ? (
-            <ul className="space-y-1">
+            /* Aligned columns: a run of "permission 来源: …" sentences reads as one
+               paragraph once the sources are long, and the reader is comparing
+               rows, not reading prose. */
+            <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1">
               {myAccess.map((item) => (
-                <li key={item.permission} className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-body text-foreground">{item.label}</span>
-                  {item.sources.length ? <span>{t(($) => $.permissions.task_access_summary_source, { sources: item.sources.join("、") })}</span> : null}
-                </li>
+                <Fragment key={item.permission}>
+                  <dt className="whitespace-nowrap text-body text-foreground">{item.label}</dt>
+                  <dd className="text-caption text-muted-foreground">
+                    {item.sources.length ? t(($) => $.permissions.task_access_summary_source, { sources: item.sources.join("、") }) : "—"}
+                  </dd>
+                </Fragment>
               ))}
-            </ul>
+            </dl>
           ) : (
             <span>{t(($) => $.permissions.task_access_summary_none)}</span>
           )}
