@@ -313,7 +313,9 @@ describe("IssueAccessGrantsDialog", () => {
 
     const grantsDialog = await screen.findByRole("dialog", { name: "Direct task access" });
     const row = within(grantsDialog).getByTestId("derived-access-row");
-    expect(within(row).getByText("Mentioned")).toBeInTheDocument();
+    // The source label comes from the shared task_source_* vocabulary the
+    // effective-access surfaces use, not a dialog-local one.
+    expect(within(row).getByText("@mention")).toBeInTheDocument();
     // Only the source that granted it can take it away, so the row is read-only.
     expect(within(row).queryByRole("button")).not.toBeInTheDocument();
   });
@@ -333,6 +335,9 @@ describe("IssueAccessGrantsDialog", () => {
     ).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    // The reader sees where their own permissions come from, not just which ones
+    // they hold — the mocked explanation grants view through a project grant.
+    expect(within(dialog).getByText(/via Project direct grant/)).toBeInTheDocument();
   });
 
   it("reports a failed request as a failure, not as a missing permission", async () => {

@@ -201,17 +201,47 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
   // These are shown read-only: the source that granted them is the only thing that
   // can take them away.
   const derivedGrants = controlQuery.data?.derived_grants ?? [];
-  const derivedSourceLabel = (grant: IssueAccessControlDerivedGrant) => {
-    switch (grant.reason) {
-      case "creator": return t(($) => $.permissions.access_source_creator);
-      case "assignee": return t(($) => $.permissions.access_source_assignee);
-      case "mention": return t(($) => $.permissions.access_source_mention);
-      case "organization": return t(($) => $.permissions.access_source_organization);
-      case "everyone": return t(($) => $.permissions.access_source_everyone);
-      case "migration": return t(($) => $.permissions.access_source_migration);
-      default: return grant.reason || grant.source || "—";
+  // 2026-09-20 coder(lq): One vocabulary for "why does this person have access",
+  // shared by the table's source column and the reader's own permission line. The
+  // resolver names its sources (creator, mention, project_direct, …) and a stored
+  // grant carries the narrower storage token (organization, everyone, migration),
+  // so both spellings land on the same label. These are the keys the
+  // effective-access dashboard used before it was removed.
+  const taskSourceLabel = (source: string) => {
+    switch (source) {
+      case "creator": return t(($) => $.permissions.task_source_creator);
+      case "assignee": return t(($) => $.permissions.task_source_assignee);
+      case "mention": return t(($) => $.permissions.task_source_mention);
+      case "delegated_originator": return t(($) => $.permissions.task_source_delegated_originator);
+      case "workspace_owner_bypass": return t(($) => $.permissions.task_source_workspace_owner_bypass);
+      case "issue_direct": return t(($) => $.permissions.task_source_issue_direct);
+      case "organization":
+      case "issue_organization": return t(($) => $.permissions.task_source_issue_organization);
+      case "everyone":
+      case "issue_everyone": return t(($) => $.permissions.task_source_issue_everyone);
+      case "project_direct": return t(($) => $.permissions.task_source_project_direct);
+      case "project_organization": return t(($) => $.permissions.task_source_project_organization);
+      case "project_everyone": return t(($) => $.permissions.task_source_project_everyone);
+      case "parent_issue": return t(($) => $.permissions.task_source_parent_issue);
+      case "access_request": return t(($) => $.permissions.task_source_access_request);
+      case "migration": return t(($) => $.permissions.task_source_migration);
+      default: return source;
     }
   };
+  const derivedSourceLabel = (grant: IssueAccessControlDerivedGrant) => taskSourceLabel(grant.reason || grant.source);
+  // The reader could see WHAT they may do but not WHY, while the table below names
+  // every other person's source. Only the sources behind the permissions this line
+  // lists, so an unrelated source cannot confuse the summary.
+  const myAccessSources: string[] = [];
+  {
+    const summaryPermissions = new Set(accessSummary.map((item) => item.permission));
+    const seen = new Set<string>();
+    for (const source of effectiveQuery.data?.sources ?? []) {
+      if (!summaryPermissions.has(source.permission) || seen.has(source.source)) continue;
+      seen.add(source.source);
+      myAccessSources.push(taskSourceLabel(source.source));
+    }
+  }
   const derivedSubjectName = (grant: IssueAccessControlDerivedGrant) => grant.subject_type === "everyone"
     ? t(($) => $.permissions.current_workspace_everyone)
     : grant.subject_type === "user"
@@ -414,6 +444,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
         <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
           <span className="font-medium text-foreground">{t(($) => $.permissions.task_access_summary_title)}</span>
           <span>{allowedAccessLabels.length ? allowedAccessLabels.join("、") : t(($) => $.permissions.task_access_summary_none)}</span>
+          {myAccessSources.length ? <span>{t(($) => $.permissions.task_access_summary_source, { sources: myAccessSources.join("、") })}</span> : null}
         </div>
       </section>
       <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{t(($) => $.permissions.close)}</Button>{canManage ? <Button variant="brand" onClick={() => void save()} disabled={(!dirty && selectedCount === 0) || saving}>{saving ? t(($) => $.permissions.task_saving) : t(($) => $.permissions.task_save)}</Button> : null}</DialogFooter>
