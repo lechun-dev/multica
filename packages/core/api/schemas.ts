@@ -3498,6 +3498,15 @@ export const IssueAccessControlGrantSchema = z.object({
   expires_at: z.string().optional(),
 }).loose();
 
+const IssueAccessControlDerivedGrantSchema = z.object({
+  subject_type: z.enum(["user", "organization", "everyone"]),
+  subject_id: z.string().optional(),
+  role: z.string(),
+  source: z.string(),
+  // Defaulted for the same reason as the array itself.
+  reason: z.string().default(""),
+}).loose();
+
 export const IssueAccessControlSchema = z.object({
   workspace_id: z.string(),
   issue_id: z.string(),
@@ -3506,6 +3515,8 @@ export const IssueAccessControlSchema = z.object({
   project_access_mode: z.enum(["inherit", "restricted"]),
   policy_version: z.number(),
   grants: z.array(IssueAccessControlGrantSchema).default([]),
+  // Defaulted so a backend that predates this field still parses.
+  derived_grants: z.array(IssueAccessControlDerivedGrantSchema).default([]),
 }).loose();
 
 const EffectiveAccessResourceRefSchema = z.object({

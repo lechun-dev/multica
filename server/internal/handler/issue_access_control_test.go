@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -269,5 +270,47 @@ func TestIssueAccessControlEndpointsRequireManage(t *testing.T) {
 	mine := callIssueAccessEndpoint(testHandler.ListIssueAccessRequests, issueAccessHTTPRequest(viewer, ws, http.MethodGet, issue, "mine=true", nil))
 	if mine.Code != http.StatusOK {
 		t.Fatalf("own requests as viewer: status=%d body=%s, want 200", mine.Code, mine.Body.String())
+	}
+}
+
+// A mention stores a real task grant outside the manual ACL. The access read must
+// report it, because counting only manual rows told a manager "0 granted" while
+// the mentioned teammate could plainly open the task.
+func TestIssueAccessControlReportsDerivedGrantsReadOnly(t *testing.T) {
+	enableProjectAuthorizationForTest(t)
+	ws := dbfx.Workspace(t, "Derived task access", "derived-task-access")
+	fx := testutil.New(testPool, ws, testUserID)
+	reader := dbfx.User(t, "Derived reader", "derived-reader@example.test")
+	mentioned := dbfx.User(t, "Derived mentioned", "derived-mentioned@example.test")
+	creator := dbfx.User(t, "Derived creator", "derived-creator@example.test")
+	for _, user := range []string{reader, mentioned, creator} {
+		fx.Member(t, ws, user, "member")
+	}
+	project := fx.Project(t, "Derived project")
+	// A neutral creator, so a creator source cannot stand in for what is asserted.
+	issue := fx.Issue(t, "Derived grant task", testutil.Cols{"project_id": project, "creator_id": creator})
+	fx.InsertNoID(t, "projectauth_issue_policies", testutil.Cols{"workspace_id": ws, "issue_id": issue, "project_access_mode": "restricted", "policy_version": 1}, "workspace_id=$1 AND issue_id=$2", ws, issue)
+	// The caller manages through a manual grant; the mention is what must show up
+	// as a derived, read-only row.
+	fx.Insert(t, "projectauth_access_grants", testutil.Cols{"workspace_id": ws, "project_id": project, "issue_id": issue, "subject_type": "user", "subject_id": reader, "role_key": "manager", "source": "manual"})
+	fx.Insert(t, "projectauth_access_grants", testutil.Cols{"workspace_id": ws, "project_id": project, "issue_id": issue, "subject_type": "user", "subject_id": mentioned, "role_key": "member", "source": "system"})
+
+	w := callIssueAccessEndpoint(testHandler.GetIssueAccessControl, issueAccessHTTPRequest(reader, ws, http.MethodGet, issue, "", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("read task access control: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var state issueAccessControlResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+		t.Fatalf("decode task access control: %v", err)
+	}
+	if len(state.Grants) != 1 || state.Grants[0].SubjectID != reader {
+		t.Fatalf("manual grants = %#v, want only the reader's manual row", state.Grants)
+	}
+	if len(state.DerivedGrants) != 1 {
+		t.Fatalf("derived grants = %#v, want exactly the mention", state.DerivedGrants)
+	}
+	derived := state.DerivedGrants[0]
+	if derived.SubjectID != mentioned || derived.Source != "system" || derived.Reason != "mention" {
+		t.Fatalf("derived grant = %#v, want the mentioned member with reason mention", derived)
 	}
 }

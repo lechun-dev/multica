@@ -25,6 +25,22 @@ export interface IssueAccessControlGrant {
   expires_at?: string;
 }
 
+/**
+ * Access the task carries from a source this API does not own — a mention, an
+ * access request, a migration, an organization or Everyone. Read-only here: the
+ * dialog may show it so a manager can see who really has access, but only the
+ * owning source can change it.
+ */
+export interface IssueAccessControlDerivedGrant {
+  subject_type: TaskAccessSubjectType;
+  subject_id?: string;
+  role: string;
+  /** Stored grant source: system | organization | everyone | migration. */
+  source: string;
+  /** Why the row exists: creator | assignee | mention, else the stored source. */
+  reason: string;
+}
+
 export interface IssueAccessControl {
   workspace_id: string;
   issue_id: string;
@@ -33,6 +49,7 @@ export interface IssueAccessControl {
   project_access_mode: TaskAccessMode;
   policy_version: number;
   grants: IssueAccessControlGrant[];
+  derived_grants: IssueAccessControlDerivedGrant[];
 }
 
 export interface IssueAccessControlUpdate {

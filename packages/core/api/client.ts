@@ -712,6 +712,7 @@ function emptyIssueAccessControl(issueId: string): IssueAccessControl {
     project_access_mode: "restricted",
     policy_version: 0,
     grants: [],
+    derived_grants: [],
   };
 }
 

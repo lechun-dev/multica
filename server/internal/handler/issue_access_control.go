@@ -40,6 +40,42 @@ type issueAccessControlResponse struct {
 	ProjectAccessMode projectauth.ProjectAccessMode `json:"project_access_mode"`
 	PolicyVersion     int64                         `json:"policy_version"`
 	Grants            []issueAccessControlGrant     `json:"grants"`
+	// 2026-09-20 coder(lq): Access this task also carries from sources this API
+	// does not own — a mention, an access request, a migration, an organization
+	// or Everyone. They stay read-only here (mutating them is not this dialog's
+	// contract), but a manager who opens the dialog must be able to see that they
+	// exist: reporting "0 granted" while a mentioned teammate can plainly open the
+	// task reads as "nobody has access".
+	DerivedGrants []issueAccessControlDerivedGrant `json:"derived_grants"`
+}
+
+// issueAccessControlDerivedGrant is one read-only access source outside the
+// manual ACL. Source is the stored grant source. Reason names why the row exists
+// in the terms a manager thinks in — the stored token "system" says nothing about
+// whether somebody was mentioned, assigned, or created the task.
+type issueAccessControlDerivedGrant struct {
+	SubjectType projectauth.SubjectType `json:"subject_type"`
+	SubjectID   string                  `json:"subject_id,omitempty"`
+	Role        projectauth.RoleKey     `json:"role"`
+	Source      string                  `json:"source"`
+	Reason      string                  `json:"reason"`
+}
+
+// derivedGrantReason classifies one non-manual grant. Automatic task grants are
+// all stored with source="system", so the subject is compared against the task's
+// own creator and assignee to tell those apart from a mention.
+func derivedGrantReason(grant issueAccessControlDerivedGrant, creatorUserID, assigneeUserID string) string {
+	if grant.Source != "system" || grant.SubjectType != projectauth.SubjectUser {
+		return grant.Source
+	}
+	switch {
+	case creatorUserID != "" && grant.SubjectID == creatorUserID:
+		return "creator"
+	case assigneeUserID != "" && grant.SubjectID == assigneeUserID:
+		return "assignee"
+	default:
+		return "mention"
+	}
 }
 
 type issueAccessControlPreview struct {
@@ -598,7 +634,7 @@ func validateIssueAccessControlGrants(ctx context.Context, tx dbExecutor, worksp
 }
 
 func readIssueAccessControl(ctx context.Context, executor dbExecutor, workspaceID, issueID, projectID string, lock bool) (issueAccessControlResponse, error) {
-	state := issueAccessControlResponse{WorkspaceID: workspaceID, IssueID: issueID, ProjectID: projectID, Scope: projectauth.RoleScopeTask, ProjectAccessMode: projectauth.ProjectAccessInherit, PolicyVersion: 1, Grants: []issueAccessControlGrant{}}
+	state := issueAccessControlResponse{WorkspaceID: workspaceID, IssueID: issueID, ProjectID: projectID, Scope: projectauth.RoleScopeTask, ProjectAccessMode: projectauth.ProjectAccessInherit, PolicyVersion: 1, Grants: []issueAccessControlGrant{}, DerivedGrants: []issueAccessControlDerivedGrant{}}
 	query := `SELECT project_access_mode, policy_version FROM projectauth_issue_policies WHERE workspace_id=$1 AND issue_id=$2`
 	if lock {
 		query += ` FOR UPDATE`
@@ -624,7 +660,45 @@ func readIssueAccessControl(ctx context.Context, executor dbExecutor, workspaceI
 		}
 		state.Grants = append(state.Grants, grant)
 	}
-	return state, wrapProjectPermissionRepositoryError(rows.Err())
+	if err := rows.Err(); err != nil {
+		return state, wrapProjectPermissionRepositoryError(err)
+	}
+	// Materialize before querying again: pgx answers "conn busy" when a second
+	// query is issued while this result set is still open.
+	rows.Close()
+	// Everything the task grants from a source this API does not own. Same table
+	// choice as the manual list, because a mention on a project task is stored in
+	// the project grant table with its issue_id set.
+	derivedRows, err := executor.Query(ctx, `SELECT g.subject_type, g.subject_id, g.role_key, g.source FROM `+table+` g WHERE g.workspace_id=$1 AND g.issue_id=$2 AND g.source<>'manual' ORDER BY g.source,g.subject_type,g.subject_id,g.role_key`, workspaceID, issueID)
+	if err != nil {
+		return state, wrapProjectPermissionRepositoryError(err)
+	}
+	defer derivedRows.Close()
+	for derivedRows.Next() {
+		var grant issueAccessControlDerivedGrant
+		if err := derivedRows.Scan(&grant.SubjectType, &grant.SubjectID, &grant.Role, &grant.Source); err != nil {
+			return state, wrapProjectPermissionRepositoryError(err)
+		}
+		state.DerivedGrants = append(state.DerivedGrants, grant)
+	}
+	if err := derivedRows.Err(); err != nil {
+		return state, wrapProjectPermissionRepositoryError(err)
+	}
+	derivedRows.Close()
+	if len(state.DerivedGrants) > 0 {
+		var creatorUserID, assigneeUserID string
+		if err := executor.QueryRow(ctx, `
+			SELECT CASE WHEN i.creator_type = 'member' THEN i.creator_id::text ELSE '' END,
+			       CASE WHEN i.assignee_type = 'member' THEN i.assignee_id::text ELSE '' END
+			FROM issue i WHERE i.id=$1 AND i.workspace_id=$2`, issueID, workspaceID).
+			Scan(&creatorUserID, &assigneeUserID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return state, wrapProjectPermissionRepositoryError(err)
+		}
+		for i := range state.DerivedGrants {
+			state.DerivedGrants[i].Reason = derivedGrantReason(state.DerivedGrants[i], creatorUserID, assigneeUserID)
+		}
+	}
+	return state, nil
 }
 
 func sameIssueAccessControl(a, b issueAccessControlResponse) bool {
