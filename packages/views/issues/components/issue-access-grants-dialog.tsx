@@ -164,7 +164,6 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     { permission: "project.edit", label: t(($) => $.permissions.edit_task) },
     { permission: "project.issue.manage", label: t(($) => $.permissions.manage_task) },
   ];
-  const allowedAccessLabels = accessSummary.filter((item) => effectivePermissions.has(item.permission)).map((item) => item.label);
   // 2026-09-20 coder(lq): Only a 403 means "you may not manage this task". Any
   // other failure — a 5xx, a timeout, an offline client — used to render the very
   // same "only a manager can change sharing" panel, so a broken request was
@@ -229,19 +228,22 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     }
   };
   const derivedSourceLabel = (grant: IssueAccessControlDerivedGrant) => taskSourceLabel(grant.reason || grant.source);
-  // The reader could see WHAT they may do but not WHY, while the table below names
-  // every other person's source. Only the sources behind the permissions this line
-  // lists, so an unrelated source cannot confuse the summary.
-  const myAccessSources: string[] = [];
-  {
-    const summaryPermissions = new Set(accessSummary.map((item) => item.permission));
-    const seen = new Set<string>();
-    for (const source of effectiveQuery.data?.sources ?? []) {
-      if (!summaryPermissions.has(source.permission) || seen.has(source.source)) continue;
-      seen.add(source.source);
-      myAccessSources.push(taskSourceLabel(source.source));
-    }
-  }
+  // 2026-09-21 coder(lq): Name the source of EACH permission. One merged line
+  // answered "why do I have access", but not "why do I have THIS permission",
+  // which is the question that matters once two of them arrive from different
+  // places — the task's creator, a mention, a project grant.
+  const myAccess = accessSummary
+    .filter((item) => effectivePermissions.has(item.permission))
+    .map((item) => {
+      const sources: string[] = [];
+      const seen = new Set<string>();
+      for (const source of effectiveQuery.data?.sources ?? []) {
+        if (source.permission !== item.permission || seen.has(source.source)) continue;
+        seen.add(source.source);
+        sources.push(taskSourceLabel(source.source));
+      }
+      return { permission: item.permission, label: item.label, sources };
+    });
   const derivedSubjectName = (grant: IssueAccessControlDerivedGrant) => grant.subject_type === "everyone"
     ? t(($) => $.permissions.current_workspace_everyone)
     : grant.subject_type === "user"
@@ -472,10 +474,20 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
         ) : null}
       </> : <div className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-caption text-muted-foreground"><span>{readonlyReason}</span>{controlFailedToLoad ? <Button variant="outline" size="sm" onClick={() => void controlQuery.refetch()}>{t(($) => $.permissions.retry)}</Button> : null}</div>}
       <section className="border-t pt-3">
-        <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-1 text-caption text-muted-foreground">
           <span className="font-medium text-foreground">{t(($) => $.permissions.task_access_summary_title)}</span>
-          <span>{allowedAccessLabels.length ? allowedAccessLabels.join("、") : t(($) => $.permissions.task_access_summary_none)}</span>
-          {myAccessSources.length ? <span>{t(($) => $.permissions.task_access_summary_source, { sources: myAccessSources.join("、") })}</span> : null}
+          {myAccess.length ? (
+            <ul className="space-y-1">
+              {myAccess.map((item) => (
+                <li key={item.permission} className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-body text-foreground">{item.label}</span>
+                  {item.sources.length ? <span>{t(($) => $.permissions.task_access_summary_source, { sources: item.sources.join("、") })}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span>{t(($) => $.permissions.task_access_summary_none)}</span>
+          )}
         </div>
       </section>
       <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{t(($) => $.permissions.close)}</Button>{canManage ? <Button variant="brand" onClick={() => void save()} disabled={(!dirty && selectedCount === 0) || saving}>{saving ? t(($) => $.permissions.task_saving) : t(($) => $.permissions.task_save)}</Button> : null}</DialogFooter>

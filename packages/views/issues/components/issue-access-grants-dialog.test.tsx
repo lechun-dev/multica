@@ -329,6 +329,32 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(creatorRow).queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("names the source of each permission separately", async () => {
+    // One merged source line cannot answer "why do I have this permission" once
+    // two of them arrive from different places.
+    mocks.getIssueEffectiveAccess.mockResolvedValue({
+      ...control,
+      permissions: ["project.view", "project.issue.manage"],
+      sources: [
+        { permission: "project.view", source: "creator", role: "owner", scope: "task", source_resource: { scope: "task", id: "issue-1" }, target_resource: { scope: "task", id: "issue-1" }, policy_version: 4 },
+        { permission: "project.issue.manage", source: "project_direct", role: "manager", scope: "project", source_resource: { scope: "project", id: "project-1" }, target_resource: { scope: "task", id: "issue-1" }, policy_version: 4 },
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Task access" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+
+    const view = await within(dialog).findByText("View task");
+    expect(view.closest("li")).toHaveTextContent("Task creator");
+    const manage = within(dialog).getByText("Manage task");
+    expect(manage.closest("li")).toHaveTextContent("Project direct grant");
+    // Each line carries only its own source.
+    expect(manage.closest("li")).not.toHaveTextContent("Task creator");
+  });
+
   it("removes a manual grant immediately, without the other dialog's save", async () => {
     // The list says it manages manual access, so the removal has to happen here:
     // it used to only mark the dialog dirty, and closing the list discarded it.
