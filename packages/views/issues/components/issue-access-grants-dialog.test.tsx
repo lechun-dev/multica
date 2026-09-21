@@ -289,6 +289,31 @@ describe("IssueAccessGrantsDialog", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Access request approved");
   });
 
+  it("counts and lists access that a mention granted, without offering to remove it", async () => {
+    // A mention stores a real grant outside the manual ACL. Counting only the
+    // manual rows reported "Already granted 0" while the mentioned teammate could
+    // plainly open the task, which reads as "nobody has access".
+    mocks.getIssueAccessControl.mockResolvedValue({
+      ...control,
+      derived_grants: [
+        { subject_type: "user" as const, subject_id: "user-9", role: "member", source: "system", reason: "mention" },
+      ],
+    } as never);
+
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Task access" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    await user.click(await within(dialog).findByRole("button", { name: "Already granted 1" }));
+
+    const grantsDialog = await screen.findByRole("dialog", { name: "Direct task access" });
+    const row = within(grantsDialog).getByTestId("derived-access-row");
+    expect(within(row).getByText("Mentioned")).toBeInTheDocument();
+    // Only the source that granted it can take it away, so the row is read-only.
+    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("keeps explanation read-only when the caller has no Manage permission", async () => {
     mocks.getIssueAccessControl.mockRejectedValue(new Error("forbidden"));
     const user = userEvent.setup();

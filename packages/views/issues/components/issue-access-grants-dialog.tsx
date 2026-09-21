@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
-import type { IssueAccessControlGrant, IssueAccessRequest, TaskAccessMode } from "@multica/core/types";
+import type { IssueAccessControlDerivedGrant, IssueAccessControlGrant, IssueAccessRequest, TaskAccessMode } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -186,6 +186,28 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     : grant.subject_type === "user"
       ? memberByUser.get(grant.subject_id || "")?.name || memberByUser.get(grant.subject_id || "")?.email || grant.subject_id || "—"
       : organizationById.get(grant.subject_id || "")?.name || grant.subject_id || "—";
+  // 2026-09-20 coder(lq): Mentions, assignment and creation grant real task access
+  // without ever appearing in the manual ACL, so a dialog that only counted manual
+  // rows told a manager "0 granted" while a mentioned teammate could open the task.
+  // These are shown read-only: the source that granted them is the only thing that
+  // can take them away.
+  const derivedGrants = controlQuery.data?.derived_grants ?? [];
+  const derivedSourceLabel = (grant: IssueAccessControlDerivedGrant) => {
+    switch (grant.reason) {
+      case "creator": return t(($) => $.permissions.access_source_creator);
+      case "assignee": return t(($) => $.permissions.access_source_assignee);
+      case "mention": return t(($) => $.permissions.access_source_mention);
+      case "organization": return t(($) => $.permissions.access_source_organization);
+      case "everyone": return t(($) => $.permissions.access_source_everyone);
+      case "migration": return t(($) => $.permissions.access_source_migration);
+      default: return grant.reason || grant.source || "—";
+    }
+  };
+  const derivedSubjectName = (grant: IssueAccessControlDerivedGrant) => grant.subject_type === "everyone"
+    ? t(($) => $.permissions.current_workspace_everyone)
+    : grant.subject_type === "user"
+      ? memberByUser.get(grant.subject_id || "")?.name || memberByUser.get(grant.subject_id || "")?.email || grant.subject_id || "—"
+      : organizationById.get(grant.subject_id || "")?.name || grant.subject_id || "—";
   const resetPicker = () => { setSelectedUserIds(new Set()); setSelectedOrganizationIds(new Set()); setSelectedEveryone(false); setExpiresAt(""); };
 
   // 2026-09-20 coder(lq): 定位场景下，已处理的申请也要跟着通知一起出现在列表里，
@@ -290,7 +312,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
               <h3 className="font-medium">{t(($) => $.permissions.add_task_access)}</h3>
               <p className="text-caption text-muted-foreground">{t(($) => $.permissions.add_task_access_description)}</p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => setGrantsOpen(true)}><Users className="size-4" />{t(($) => $.permissions.direct_access_count, { count: grants.length })}</Button>
+            <Button variant="outline" size="sm" onClick={() => setGrantsOpen(true)}><Users className="size-4" />{t(($) => $.permissions.direct_access_count, { count: grants.length + derivedGrants.length })}</Button>
           </div>
           <div className="rounded-lg border bg-muted/10 p-3">
             <div className="space-y-3">
@@ -389,7 +411,18 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     </DialogContent></Dialog>
     <Dialog open={grantsOpen} onOpenChange={setGrantsOpen}><DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
       <DialogHeader><DialogTitle>{t(($) => $.permissions.direct_access)}</DialogTitle><DialogDescription>{t(($) => $.permissions.existing_task_access_description)}</DialogDescription></DialogHeader>
-      <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[620px] text-body"><thead className="bg-muted/40 text-left text-caption text-muted-foreground"><tr><th className="px-3 py-2">{t(($) => $.permissions.authorization_subject)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_role)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_exact_permissions)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_expires)}</th><th className="w-12" /></tr></thead><tbody>{grants.length ? grants.map((grant, index) => { const definition = availableRoles.find((item) => item.key === grant.role); return <tr key={`${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t"><td className="px-3 py-2">{subjectName(grant)}</td><td className="px-3 py-2">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 text-caption text-muted-foreground">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2">{grant.expires_at ? new Date(grant.expires_at).toLocaleString() : t(($) => $.permissions.task_diagnostic_never)}</td><td><Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_task_access_aria)} ${subjectName(grant)}`} onClick={() => { setGrants((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }}><UserMinus className="size-3.5" /></Button></td></tr>; }) : <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">{t(($) => $.permissions.no_direct_access)}</td></tr>}</tbody></table></div>
+      <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[720px] text-body"><thead className="bg-muted/40 text-left text-caption text-muted-foreground"><tr><th className="px-3 py-2">{t(($) => $.permissions.authorization_subject)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_role)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_exact_permissions)}</th><th className="px-3 py-2">{t(($) => $.permissions.access_source_column)}</th><th className="px-3 py-2">{t(($) => $.permissions.task_expires)}</th><th className="w-12" /></tr></thead><tbody>
+        {grants.map((grant, index) => {
+          const definition = availableRoles.find((item) => item.key === grant.role);
+          return <tr key={`${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t"><td className="px-3 py-2">{subjectName(grant)}</td><td className="px-3 py-2">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 text-caption text-muted-foreground">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2 text-caption text-muted-foreground">{t(($) => $.permissions.access_source_manual)}</td><td className="px-3 py-2">{grant.expires_at ? new Date(grant.expires_at).toLocaleString() : t(($) => $.permissions.task_diagnostic_never)}</td><td><Button variant="ghost" size="icon-sm" aria-label={`${t(($) => $.permissions.remove_task_access_aria)} ${subjectName(grant)}`} onClick={() => { setGrants((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }}><UserMinus className="size-3.5" /></Button></td></tr>;
+        })}
+        {derivedGrants.map((grant, index) => {
+          const definition = availableRoles.find((item) => item.key === grant.role);
+          return <tr key={`derived-${grant.source}-${grant.subject_type}-${grant.subject_id}-${grant.role}-${index}`} className="border-t bg-muted/20" data-testid="derived-access-row"><td className="px-3 py-2">{derivedSubjectName(grant)}</td><td className="px-3 py-2">{taskRoleLabel(grant.role, definition?.name)}</td><td className="px-3 py-2 text-caption text-muted-foreground">{definition?.permissions.map(permissionLabel).join(", ") || "—"}</td><td className="px-3 py-2 text-caption text-muted-foreground">{derivedSourceLabel(grant)}</td><td className="px-3 py-2 text-muted-foreground">—</td><td /></tr>;
+        })}
+        {!grants.length && !derivedGrants.length ? <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">{t(($) => $.permissions.no_direct_access)}</td></tr> : null}
+      </tbody></table></div>
+      {derivedGrants.length ? <p className="text-caption text-muted-foreground">{t(($) => $.permissions.derived_access_note)}</p> : null}
       <DialogFooter><Button variant="outline" onClick={() => setGrantsOpen(false)}>{t(($) => $.permissions.close)}</Button></DialogFooter>
     </DialogContent></Dialog>
   </>;
