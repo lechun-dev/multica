@@ -35,9 +35,12 @@ func DefaultPolicy() Policy {
 			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
 			IssueArchive: true, AgentUse: true, MemberManage: true, SettingsManage: true,
 		},
+		// 2026-09-21 coder(lq): A manager may manage the project's access, so
+		// task-level and project-level authorization agree: whoever may manage the
+		// work may manage who reaches it.
 		ProjectManager: {
 			View: true, Edit: true, IssueCreate: true, IssueComment: true, IssueManage: true,
-			IssueArchive: true, AgentUse: true,
+			IssueArchive: true, AgentUse: true, MemberManage: true,
 		},
 		// 2026-09-03 coder(lq): Project members may archive tasks, while the
 		// separate issue-management permission remains reserved for managers.

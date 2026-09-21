@@ -123,7 +123,9 @@ func TestPolicyInheritanceAndRoles(t *testing.T) {
 		{"workspace admin without project grant cannot manage settings", WorkspaceAdmin, "", SettingsManage, false},
 		{"workspace admin with project member grant can view", WorkspaceAdmin, ProjectViewer, View, true},
 		{"project owner manages project members", WorkspaceMember, ProjectOwner, MemberManage, true},
-		{"project manager cannot manage project members", WorkspaceMember, ProjectManager, MemberManage, false},
+		// 2026-09-21 coder(lq): A manager manages the project's access too, so the
+		// project access dialog they are offered is one they can actually use.
+		{"project manager manages project members", WorkspaceMember, ProjectManager, MemberManage, true},
 		{"viewer read", WorkspaceMember, ProjectViewer, View, true},
 		{"viewer cannot edit", WorkspaceMember, ProjectViewer, Edit, false},
 		{"member creates issue", WorkspaceMember, ProjectMember, IssueCreate, true},

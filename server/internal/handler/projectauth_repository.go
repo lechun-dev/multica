@@ -1298,7 +1298,7 @@ func (r *projectAuthRepository) ensureSystemRoleDefinitions(ctx context.Context,
 			('owner','project.view'), ('owner','project.edit'), ('owner','project.issue.create'),
 			('owner','project.issue.comment'), ('owner','project.issue.manage'), ('owner','project.issue.archive'), ('owner','project.agent.use'), ('owner','project.member.manage'),
 			('owner','project.settings.manage'), ('manager','project.view'), ('manager','project.edit'),
-			('manager','project.issue.create'), ('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'), ('manager','project.agent.use'),
+			('manager','project.issue.create'), ('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'), ('manager','project.agent.use'), ('manager','project.member.manage'),
 			('member','project.view'), ('member','project.issue.create'), ('member','project.issue.comment'), ('member','project.issue.archive'), ('member','project.agent.use'),
 			('viewer','project.view')
 		) AS defaults(role_key, permission) ON defaults.role_key = inserted.role_key

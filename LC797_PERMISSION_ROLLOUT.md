@@ -289,6 +289,15 @@ fail the endpoint, and only a 403 takes the permission branch in the dialog.
 When touching this table, remember that `role_key` and `permission` are mutually
 exclusive and that the backfilled rows are permission-shaped.
 
+A project manager can manage the project's access. The role matrix lives in three
+places and all three carry the same rule: `DefaultPolicy` in `pkg/projectauth`,
+the lazy seeding in `projectAuthRepository.ensureSystemRoleDefinitions` that new
+workspaces use, and the migrations (439 seeded the original list without
+`project.member.manage` for manager, 530 patches workspaces whose roles already
+exist). Changing a permission means changing all three, or new and existing
+workspaces disagree — which is how a manager ended up being offered a dialog
+that refused them.
+
 Withdrawing mention access now has a supported path, and it is worth knowing how
 it works before debugging one. A mention is stored as a grant, and every comment
 or description change reconciles that storage against the text; deleting the
