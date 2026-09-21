@@ -3614,6 +3614,23 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.deleteS3Objects(r.Context(), attachmentURLs)
+	// 2026-09-21 coder(lq): A deleted comment takes its mentions with it, so the
+	// access those mentions granted has to go too. Creating and editing a comment
+	// reconcile mentions; deleting one did not, so the stored source='system' grant
+	// outlived the text that justified it — the person kept access to a task that
+	// no longer mentioned them, and only an unrelated comment edit would ever
+	// withdraw it.
+	//
+	// The delete keeps owning its own statement (the batch-repair tests inject
+	// failures there), so the reconciliation follows it instead of sharing a
+	// transaction. It is idempotent, and the next comment or description change
+	// runs it again, so a failure here is loud rather than permanent.
+	if hasIssue {
+		if syncErr := syncPrivateCommentMentionAccess(r.Context(), h.DB, issue); syncErr != nil {
+			slog.Error("withdraw the deleted comment's mention access failed",
+				append(logger.RequestAttrs(r), "error", syncErr, "comment_id", commentId, "issue_id", uuidToString(comment.IssueID))...)
+		}
+	}
 	slog.Info("comment deleted", append(logger.RequestAttrs(r), "comment_id", commentId, "issue_id", uuidToString(comment.IssueID))...)
 	eventPayload := map[string]any{
 		"comment_id": uuidToString(comment.ID),
