@@ -263,6 +263,18 @@ this pass changed:
   the squad-briefing heading, the comment-fold fixture's thread, and one test
   that replaced its own route context before reading a URL param.
 
+One display gap surfaced in the test environment and is fixed. The share dialog
+manages the task's *manual* ACL, and the read endpoint deliberately returned only
+`source='manual'` rows. Mentioning somebody stores a real grant with
+`source='system'`, so a task whose only other reader arrived through a mention
+reported "already granted 0" — true of the manual ACL, but it reads as "nobody
+has access". The read now also returns those grants as `derived_grants`, each
+labelled with why it exists (`creator`, `assignee`, `mention`, or the stored
+source), and the dialog lists them read-only beside the manual rows, counted
+together with them. They are deliberately not editable there: the source that
+granted them is the only thing that can withdraw them, so the manual-ACL API
+stays the single write path.
+
 Two things to keep in mind when re-running this suite. Run it against one
 database at a time, and prefer a freshly created database: a reused one
 accumulates rows from earlier failed runs, fixed member emails then collide, and
