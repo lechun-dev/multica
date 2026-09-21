@@ -289,6 +289,8 @@
     "task_saving": "保存中…",
     "task_save": "保存",
     "task_permissions_readonly_manage": "你可以查看自己的权限来源，但只有拥有“管理任务”权限的人才能修改共享。",
+    "task_permissions_load_failed": "权限信息加载失败，无法确认你是否有管理权限。",
+    "task_permissions_retry": "重试",
     "task_update_success": "任务权限已更新",
     "task_save_failed": "任务权限保存失败，当前编辑仍可重试。",
     "task_changed_reload": "权限已被其他人修改，已重新加载最新策略，请确认后重试。",

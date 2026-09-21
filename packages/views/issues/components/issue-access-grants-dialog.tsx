@@ -165,7 +165,16 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     { permission: "project.issue.manage", label: t(($) => $.permissions.manage_task) },
   ];
   const allowedAccessLabels = accessSummary.filter((item) => effectivePermissions.has(item.permission)).map((item) => item.label);
-  const readonlyReason = t(($) => $.permissions.task_permissions_readonly_manage);
+  // 2026-09-20 coder(lq): Only a 403 means "you may not manage this task". Any
+  // other failure — a 5xx, a timeout, an offline client — used to render the very
+  // same "only a manager can change sharing" panel, so a broken request was
+  // indistinguishable from a permission decision and pointed the reader at the
+  // wrong problem.
+  const controlFailedToLoad = controlQuery.isError
+    && !(controlQuery.error instanceof ApiError && controlQuery.error.status === 403);
+  const readonlyReason = controlFailedToLoad
+    ? t(($) => $.permissions.task_permissions_load_failed)
+    : t(($) => $.permissions.task_permissions_readonly_manage);
   const taskPolicyDescription = projectId
     ? t(($) => $.permissions.task_policy_project_task, { version: controlQuery.data?.policy_version ?? "—" })
     : t(($) => $.permissions.task_policy_projectless_task, { version: controlQuery.data?.policy_version ?? "—" });
@@ -400,7 +409,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
             })}
           </section>
         ) : null}
-      </> : <p className="rounded-md border p-3 text-caption text-muted-foreground">{readonlyReason}</p>}
+      </> : <div className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-caption text-muted-foreground"><span>{readonlyReason}</span>{controlFailedToLoad ? <Button variant="outline" size="sm" onClick={() => void controlQuery.refetch()}>{t(($) => $.permissions.task_permissions_retry)}</Button> : null}</div>}
       <section className="border-t pt-3">
         <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
           <span className="font-medium text-foreground">{t(($) => $.permissions.task_access_summary_title)}</span>

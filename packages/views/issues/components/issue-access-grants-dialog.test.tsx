@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@multica/core/api";
 import { configStore } from "@multica/core/config";
 import { renderWithI18n } from "../../test/i18n";
 
@@ -20,11 +21,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@multica/core/api", () => ({
   api: mocks,
+  // Same shape as the real ApiError: the dialog branches on `status`, so a mock
+  // that put the message there would quietly take the wrong branch.
   ApiError: class ApiError extends Error {
     status: number;
-    constructor(status: number) {
-      super();
+    constructor(message: string, status: number, statusText?: string) {
+      super(message);
       this.status = status;
+      this.name = statusText || "ApiError";
     }
   },
 }));
@@ -315,7 +319,9 @@ describe("IssueAccessGrantsDialog", () => {
   });
 
   it("keeps explanation read-only when the caller has no Manage permission", async () => {
-    mocks.getIssueAccessControl.mockRejectedValue(new Error("forbidden"));
+    // The server refuses with 403. A generic failure must NOT read as a permission
+    // decision — that case is covered separately below.
+    mocks.getIssueAccessControl.mockRejectedValue(new ApiError("forbidden", 403, "Forbidden"));
     const user = userEvent.setup();
     renderDialog();
 
@@ -326,6 +332,22 @@ describe("IssueAccessGrantsDialog", () => {
       within(dialog).getByText(/only someone with Manage task permission/),
     ).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("reports a failed request as a failure, not as a missing permission", async () => {
+    // A 5xx or a network error used to render the same "only a manager can change
+    // sharing" panel, so a broken request pointed the reader at the wrong cause.
+    mocks.getIssueAccessControl.mockRejectedValue(new ApiError("unavailable", 503, "Service Unavailable"));
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByRole("button", { name: "Task access" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(within(dialog).getByText(/Could not load this task's access settings/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/only someone with Manage task permission/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("allows a task manager to change access in any active rollout phase", async () => {
