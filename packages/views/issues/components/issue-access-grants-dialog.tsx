@@ -51,6 +51,7 @@ type AccessLayer = "task" | "project" | "parent" | "workspace";
 /** One rendered row of "My access": a permission, where it comes from, and what granted it there. */
 type AccessSummaryRow = { key: string; permission: string; layer: AccessLayer | null; sources: string[] };
 
+
 const ACCESS_SOURCE_LAYER: Record<string, AccessLayer> = {
   creator: "task",
   assignee: "task",
@@ -266,10 +267,14 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
       default: return t(($) => $.permissions.access_layer_task);
     }
   };
-  const myAccess = accessSummary
-    .filter((item) => effectivePermissions.has(item.permission))
-    .flatMap((item): AccessSummaryRow[] => {
-      const layers = new Map<AccessLayer, string[]>();
+  // Grouped by layer, because "why do I have access" is answered one layer at a
+  // time: this task makes you its creator, the project grants you the rest. Within
+  // a layer the permission leads and what granted it follows.
+  const myAccess = (() => {
+    const order: AccessLayer[] = ["task", "project", "parent", "workspace"];
+    const byLayer = new Map<AccessLayer, Map<string, AccessSummaryRow>>();
+    for (const item of accessSummary) {
+      if (!effectivePermissions.has(item.permission)) continue;
       const seen = new Set<string>();
       for (const source of effectiveQuery.data?.sources ?? []) {
         if (source.permission !== item.permission || seen.has(source.source)) continue;
@@ -280,11 +285,17 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
           ? `${taskSourceLabel(source.source)}（${taskSourceLabel(source.underlying_source)}）`
           : taskSourceLabel(source.source);
         const layer = ACCESS_SOURCE_LAYER[source.source] ?? "task";
-        layers.set(layer, [...(layers.get(layer) ?? []), label]);
+        const rows = byLayer.get(layer) ?? new Map<string, AccessSummaryRow>();
+        const row = rows.get(item.permission) ?? { key: item.permission, permission: item.label, layer, sources: [] };
+        row.sources.push(label);
+        rows.set(item.permission, row);
+        byLayer.set(layer, rows);
       }
-      if (!layers.size) return [{ key: item.permission, permission: item.label, layer: null, sources: ["—"] }];
-      return [...layers].map(([layer, sources]) => ({ key: `${item.permission}-${layer}`, permission: item.label, layer, sources }));
-    });
+    }
+    return order
+      .filter((layer) => byLayer.has(layer))
+      .map((layer) => ({ layer, rows: [...byLayer.get(layer)!] }));
+  })();
   const derivedSubjectName = (grant: IssueAccessControlDerivedGrant) => grant.subject_type === "everyone"
     ? t(($) => $.permissions.current_workspace_everyone)
     : grant.subject_type === "user"
@@ -521,16 +532,21 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
             /* Aligned columns: a run of "permission 来源: …" sentences reads as one
                paragraph once the sources are long, and the reader is comparing
                rows, not reading prose. */
-            <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1">
-              {myAccess.map((item) => (
-                <Fragment key={item.key}>
-                  <dt className="whitespace-nowrap text-body text-foreground">{item.permission}</dt>
-                  <dd className="text-caption text-muted-foreground">
-                    {item.layer ? `${accessLayerLabel(item.layer)} · ${item.sources.join("、")}` : item.sources.join("、")}
-                  </dd>
-                </Fragment>
+            <div className="space-y-2">
+              {myAccess.map((group) => (
+                <div key={group.layer}>
+                  <div className="text-caption font-medium text-muted-foreground">{accessLayerLabel(group.layer)}</div>
+                  <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1">
+                    {group.rows.map(([permission, row]) => (
+                      <Fragment key={permission}>
+                        <dt className="whitespace-nowrap text-body text-foreground">{row.permission}</dt>
+                        <dd className="text-caption text-muted-foreground">{row.sources.join("、")}</dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                </div>
               ))}
-            </dl>
+            </div>
           ) : (
             <span>{t(($) => $.permissions.task_access_summary_none)}</span>
           )}
