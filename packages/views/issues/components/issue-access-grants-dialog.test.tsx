@@ -164,7 +164,7 @@ describe("IssueAccessGrantsDialog", () => {
     mocks.updateIssueAccessControl.mockResolvedValue(control);
   });
 
-  it("shows a share-first access dialog without source diagnostics", async () => {
+  it("leads with sharing and keeps other people's access behind the list", async () => {
     const user = userEvent.setup();
     renderDialog();
 
@@ -188,7 +188,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).getAllByText("View task").length).toBeGreaterThan(0);
     expect(within(dialog).queryByText("Allowed")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("Permission source details")).not.toBeInTheDocument();
-    expect(within(dialog).queryByText("Project direct grant")).not.toBeInTheDocument();
+    expect(within(dialog).queryByTestId("derived-access-row")).not.toBeInTheDocument();
   });
 
   it("saves a projectless task grant directly", async () => {
@@ -348,10 +348,10 @@ describe("IssueAccessGrantsDialog", () => {
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
 
     const view = await within(dialog).findByText("View task");
-    expect(view.nextElementSibling).toHaveTextContent("Task creator");
+    expect(view.nextElementSibling).toHaveTextContent("This task · Task creator");
     const manage = within(dialog).getByText("Manage task");
-    expect(manage.nextElementSibling).toHaveTextContent("Project direct grant");
-    // Each row carries only its own source.
+    // The layer is named, and each row carries only its own source.
+    expect(manage.nextElementSibling).toHaveTextContent("From project · Project direct grant");
     expect(manage.nextElementSibling).not.toHaveTextContent("Task creator");
   });
 
@@ -395,7 +395,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
     // The reader sees where their own permissions come from, not just which ones
     // they hold — the mocked explanation grants view through a project grant.
-    expect(within(dialog).getByText(/via Project direct grant/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Project direct grant/)).toBeInTheDocument();
   });
 
   it("reports a failed request as a failure, not as a missing permission", async () => {

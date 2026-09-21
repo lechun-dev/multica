@@ -41,6 +41,32 @@ type IssueAccessGrantsDialogProps = {
   focusRequestToken?: number;
 };
 
+// Where a permission comes from is a layer before it is a source: this task's own
+// facts (creator, assignee, a mention), an inherited project grant, an inherited
+// parent-task grant, or the workspace-owner bypass. The source names say which,
+// but a reader comparing rows should not have to know that "项目部门授权" is a
+// project grant while "任务部门授权" is not.
+type AccessLayer = "task" | "project" | "parent" | "workspace";
+
+/** One rendered row of "My access": a permission, where it comes from, and what granted it there. */
+type AccessSummaryRow = { key: string; permission: string; layer: AccessLayer | null; sources: string[] };
+
+const ACCESS_SOURCE_LAYER: Record<string, AccessLayer> = {
+  creator: "task",
+  assignee: "task",
+  delegated_originator: "task",
+  mention: "task",
+  issue_direct: "task",
+  issue_organization: "task",
+  issue_everyone: "task",
+  access_request: "task",
+  project_direct: "project",
+  project_organization: "project",
+  project_everyone: "project",
+  parent_issue: "parent",
+  workspace_owner_bypass: "workspace",
+};
+
 function sameTaskGrant(left: IssueAccessControlGrant, right: IssueAccessControlGrant) {
   return left.subject_type === right.subject_type && left.subject_id === right.subject_id && left.role === right.role;
 }
@@ -232,17 +258,32 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
   // answered "why do I have access", but not "why do I have THIS permission",
   // which is the question that matters once two of them arrive from different
   // places — the task's creator, a mention, a project grant.
+  const accessLayerLabel = (layer: AccessLayer) => {
+    switch (layer) {
+      case "project": return t(($) => $.permissions.access_layer_project);
+      case "parent": return t(($) => $.permissions.access_layer_parent);
+      case "workspace": return t(($) => $.permissions.access_layer_workspace);
+      default: return t(($) => $.permissions.access_layer_task);
+    }
+  };
   const myAccess = accessSummary
     .filter((item) => effectivePermissions.has(item.permission))
-    .map((item) => {
-      const sources: string[] = [];
+    .flatMap((item): AccessSummaryRow[] => {
+      const layers = new Map<AccessLayer, string[]>();
       const seen = new Set<string>();
       for (const source of effectiveQuery.data?.sources ?? []) {
         if (source.permission !== item.permission || seen.has(source.source)) continue;
         seen.add(source.source);
-        sources.push(taskSourceLabel(source.source));
+        // Inheriting from a parent task is that task's own access, relabelled, so
+        // the kind of access it handed down is only visible underneath.
+        const label = source.source === "parent_issue" && source.underlying_source
+          ? `${taskSourceLabel(source.source)}（${taskSourceLabel(source.underlying_source)}）`
+          : taskSourceLabel(source.source);
+        const layer = ACCESS_SOURCE_LAYER[source.source] ?? "task";
+        layers.set(layer, [...(layers.get(layer) ?? []), label]);
       }
-      return { permission: item.permission, label: item.label, sources };
+      if (!layers.size) return [{ key: item.permission, permission: item.label, layer: null, sources: ["—"] }];
+      return [...layers].map(([layer, sources]) => ({ key: `${item.permission}-${layer}`, permission: item.label, layer, sources }));
     });
   const derivedSubjectName = (grant: IssueAccessControlDerivedGrant) => grant.subject_type === "everyone"
     ? t(($) => $.permissions.current_workspace_everyone)
@@ -482,10 +523,10 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
                rows, not reading prose. */
             <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1">
               {myAccess.map((item) => (
-                <Fragment key={item.permission}>
-                  <dt className="whitespace-nowrap text-body text-foreground">{item.label}</dt>
+                <Fragment key={item.key}>
+                  <dt className="whitespace-nowrap text-body text-foreground">{item.permission}</dt>
                   <dd className="text-caption text-muted-foreground">
-                    {item.sources.length ? t(($) => $.permissions.task_access_summary_source, { sources: item.sources.join("、") }) : "—"}
+                    {item.layer ? `${accessLayerLabel(item.layer)} · ${item.sources.join("、")}` : item.sources.join("、")}
                   </dd>
                 </Fragment>
               ))}
