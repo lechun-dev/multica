@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, UserMinus, Users } from "lucide-react";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useProjectPermissionsEnabled } from "@multica/core/config";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -335,7 +335,16 @@ export function ProjectPermissionsDialog({
     }
   };
 
-  if (!canManage && !accessGrantsQuery.data) return null;
+  // 2026-09-21 coder(lq): Every section of this dialog is manage-only, so a reader
+  // without project-manage rights got a dialog with a title, a description and a
+  // close button — an empty surface that reads as a broken screen rather than as a
+  // permission boundary. Say which one it is, and keep a failed load distinct from
+  // a refusal, the way the task dialog does.
+  const accessLoadFailed = accessGrantsQuery.isError
+    && !(accessGrantsQuery.error instanceof ApiError && accessGrantsQuery.error.status === 403);
+  const notManageableNotice = accessLoadFailed
+    ? t(($) => $.permissions.project_access_load_failed)
+    : t(($) => $.permissions.project_access_readonly);
 
   const roleItems = roles.map((item) => ({
     value: item.key,
@@ -447,7 +456,10 @@ export function ProjectPermissionsDialog({
   );
   return (
     <>
-      {!hideTrigger && (
+      {/* The trigger stays hidden from somebody who can neither manage the project
+          nor read its grants, which is what the old early return did before the
+          dialog body learned to explain itself. */}
+      {!hideTrigger && (canManage || !!accessGrantsQuery.data) && (
         <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => setOpen(true)}>
           <ShieldCheck className="size-3.5" />
           {t(($) => $.permissions.authorize)}
@@ -459,6 +471,13 @@ export function ProjectPermissionsDialog({
             <DialogTitle>{t(($) => $.permissions.dialog_title)}</DialogTitle>
             <DialogDescription>{t(($) => $.permissions.dialog_description)}</DialogDescription>
           </DialogHeader>
+
+          {!canManage ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-caption text-muted-foreground">
+              <span>{notManageableNotice}</span>
+              {accessLoadFailed ? <Button variant="outline" size="sm" onClick={() => void accessGrantsQuery.refetch()}>{t(($) => $.permissions.retry)}</Button> : null}
+            </div>
+          ) : null}
 
           {canManage && <section role="region" aria-label={t(($) => $.permissions.add_members)} className="space-y-3 border-t pt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">

@@ -470,7 +470,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
             })}
           </section>
         ) : null}
-      </> : <div className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-caption text-muted-foreground"><span>{readonlyReason}</span>{controlFailedToLoad ? <Button variant="outline" size="sm" onClick={() => void controlQuery.refetch()}>{t(($) => $.permissions.task_permissions_retry)}</Button> : null}</div>}
+      </> : <div className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-caption text-muted-foreground"><span>{readonlyReason}</span>{controlFailedToLoad ? <Button variant="outline" size="sm" onClick={() => void controlQuery.refetch()}>{t(($) => $.permissions.retry)}</Button> : null}</div>}
       <section className="border-t pt-3">
         <div className="flex flex-wrap items-center gap-2 text-caption text-muted-foreground">
           <span className="font-medium text-foreground">{t(($) => $.permissions.task_access_summary_title)}</span>

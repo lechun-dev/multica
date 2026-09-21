@@ -105,6 +105,19 @@ const workspaceMembers = [
   },
 ];
 
+// The projects list mounts this dialog open with its own trigger button, which is
+// how a reader without manage rights reaches it.
+function renderOpenDialog() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return renderWithI18n(
+    <QueryClientProvider client={queryClient}>
+      <ProjectPermissionsDialog projectId="project-1" open hideTrigger />
+    </QueryClientProvider>,
+  );
+}
+
 function renderDialog() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -156,6 +169,19 @@ describe("ProjectPermissionsDialog", () => {
 
     await waitFor(() => expect(listProjectMembers).toHaveBeenCalledWith("project-1"));
     expect(screen.queryByRole("button", { name: "Access" })).not.toBeInTheDocument();
+  });
+
+  it("explains the permission boundary instead of rendering an empty dialog", async () => {
+    // Every section is manage-only, so this reader used to get a dialog with a
+    // title, a description and a close button, which reads as a broken screen.
+    listProjectMembers.mockResolvedValue({ members: [], total: 0, can_manage: false });
+
+    renderOpenDialog();
+
+    expect(await screen.findByRole("dialog", { name: "Project access" })).toBeInTheDocument();
+    expect(
+      await screen.findByText(/do not have permission to manage this project/),
+    ).toBeInTheDocument();
   });
 
   it("shows all current grants separately from ungranted workspace members", async () => {
