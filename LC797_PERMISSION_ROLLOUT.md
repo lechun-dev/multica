@@ -289,6 +289,19 @@ fail the endpoint, and only a 403 takes the permission branch in the dialog.
 When touching this table, remember that `role_key` and `permission` are mutually
 exclusive and that the backfilled rows are permission-shaped.
 
+Withdrawing mention access now has a supported path, and it is worth knowing how
+it works before debugging one. A mention is stored as a grant, and every comment
+or description change reconciles that storage against the text; deleting the
+comment used to be the only way to withdraw it, and deleting one never
+reconciled at all (fixed here). The access list can now withdraw it directly:
+the grant is deleted and a watermark is recorded per task and person
+(`projectauth_issue_mention_revocations`), which reconciliation compares a
+mention against. A mention older than the watermark stays withdrawn; mentioning
+the person again outranks it and grants again; a mention in the description has
+no timestamp of its own, so the digest of that text at withdrawal time decides.
+The list also writes immediately now — removing a row persists on the spot
+instead of waiting for a save in the other dialog.
+
 Two things to keep in mind when re-running this suite. Run it against one
 database at a time, and prefer a freshly created database: a reused one
 accumulates rows from earlier failed runs, fixed member emails then collide, and
