@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
@@ -669,16 +670,32 @@ func readIssueAccessControl(ctx context.Context, executor dbExecutor, workspaceI
 	// Everything the task grants from a source this API does not own. Same table
 	// choice as the manual list, because a mention on a project task is stored in
 	// the project grant table with its issue_id set.
-	derivedRows, err := executor.Query(ctx, `SELECT g.subject_type, g.subject_id, g.role_key, g.source FROM `+table+` g WHERE g.workspace_id=$1 AND g.issue_id=$2 AND g.source<>'manual' ORDER BY g.source,g.subject_type,g.subject_id,g.role_key`, workspaceID, issueID)
+	//
+	// 2026-09-20 coder(lq): A grant names EITHER a role OR a bare permission, and
+	// the table's CHECK enforces exactly one. Migration 469 backfilled the legacy
+	// `issue_permissions` rows as the permission-shaped kind with role_key NULL,
+	// so selecting role_key without the manual filter met NULLs and failed the
+	// whole read with a 500 — the share dialog then degraded to its read-only
+	// panel and the task looked ungrantable. The derived list only carries task
+	// roles; a permission-shaped row has no task role to show, and project-level
+	// inheritance is already reported on its own row.
+	derivedRows, err := executor.Query(ctx, `SELECT g.subject_type, g.subject_id, g.role_key, g.source FROM `+table+` g WHERE g.workspace_id=$1 AND g.issue_id=$2 AND g.source<>'manual' AND g.role_key IS NOT NULL ORDER BY g.source,g.subject_type,g.subject_id,g.role_key`, workspaceID, issueID)
 	if err != nil {
 		return state, wrapProjectPermissionRepositoryError(err)
 	}
 	defer derivedRows.Close()
 	for derivedRows.Next() {
 		var grant issueAccessControlDerivedGrant
-		if err := derivedRows.Scan(&grant.SubjectType, &grant.SubjectID, &grant.Role, &grant.Source); err != nil {
+		// Role is read as nullable even though the query filters NULLs out: this
+		// read must never fail the whole endpoint over one odd grant row.
+		var role pgtype.Text
+		if err := derivedRows.Scan(&grant.SubjectType, &grant.SubjectID, &role, &grant.Source); err != nil {
 			return state, wrapProjectPermissionRepositoryError(err)
 		}
+		if !role.Valid {
+			continue
+		}
+		grant.Role = projectauth.RoleKey(role.String)
 		state.DerivedGrants = append(state.DerivedGrants, grant)
 	}
 	if err := derivedRows.Err(); err != nil {

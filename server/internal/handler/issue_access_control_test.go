@@ -294,6 +294,11 @@ func TestIssueAccessControlReportsDerivedGrantsReadOnly(t *testing.T) {
 	// as a derived, read-only row.
 	fx.Insert(t, "projectauth_access_grants", testutil.Cols{"workspace_id": ws, "project_id": project, "issue_id": issue, "subject_type": "user", "subject_id": reader, "role_key": "manager", "source": "manual"})
 	fx.Insert(t, "projectauth_access_grants", testutil.Cols{"workspace_id": ws, "project_id": project, "issue_id": issue, "subject_type": "user", "subject_id": mentioned, "role_key": "member", "source": "system"})
+	// Migration 469 backfills legacy `issue_permissions` rows as grants that name a
+	// PERMISSION and leave role_key NULL — the table's CHECK allows exactly one of
+	// the two. They carry this issue_id and a non-manual source, so the derived
+	// query meets them; reading role_key there must not fail the whole read.
+	fx.Insert(t, "projectauth_access_grants", testutil.Cols{"workspace_id": ws, "project_id": project, "issue_id": issue, "subject_type": "user", "subject_id": creator, "permission": "project.view", "source": "migration"})
 
 	w := callIssueAccessEndpoint(testHandler.GetIssueAccessControl, issueAccessHTTPRequest(reader, ws, http.MethodGet, issue, "", nil))
 	if w.Code != http.StatusOK {
