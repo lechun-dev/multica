@@ -275,6 +275,20 @@ together with them. They are deliberately not editable there: the source that
 granted them is the only thing that can withdraw them, so the manual-ACL API
 stays the single write path.
 
+That first cut of the derived list then broke the share dialog in the test
+environment, and the shape of that failure is worth remembering. Migration `469`
+backfills the legacy `issue_permissions` rows as grants that name a permission
+and leave `role_key` NULL — the grants table's CHECK allows exactly one of the
+two. The derived query was the first read of that table *without* the
+`source='manual'` filter, so it met those NULLs and failed the scan, turning the
+whole read into `500 project_permission_failed`. A clean test database never has
+such rows, so the suite stayed green while a workspace with real history could not
+open the dialog at all. Both halves are fixed: the derived query keeps only
+role-bearing rows and the role is read as nullable, so one odd grant can never
+fail the endpoint, and only a 403 takes the permission branch in the dialog.
+When touching this table, remember that `role_key` and `permission` are mutually
+exclusive and that the backfilled rows are permission-shaped.
+
 Two things to keep in mind when re-running this suite. Run it against one
 database at a time, and prefer a freshly created database: a reused one
 accumulates rows from earlier failed runs, fixed member emails then collide, and
