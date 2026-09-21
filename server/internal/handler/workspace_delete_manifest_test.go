@@ -119,6 +119,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"projectauth_access_request_notifications": workspaceDelete,
 	"projectauth_access_requests":              workspaceDelete,
 	"projectauth_grant_constraints":            workspaceDelete,
+	"projectauth_issue_mention_revocations":    workspaceDelete,
 	"projectauth_issue_access_grants":          workspaceDelete,
 	"projectauth_issue_policies":               workspaceDelete,
 	"projectauth_organizations":                workspaceDelete,

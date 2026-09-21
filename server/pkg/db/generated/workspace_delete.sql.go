@@ -249,6 +249,11 @@ deleted_task_roles AS (
 ),
 deleted_organization_members AS (
     DELETE FROM projectauth_organization_members WHERE workspace_id = $1
+),
+-- 2026-09-21 coder(lq): Withdrawal watermarks for mention access. No foreign key
+-- reaches workspace, so the teardown has to sweep them explicitly.
+deleted_mention_revocations AS (
+    DELETE FROM projectauth_issue_mention_revocations WHERE workspace_id = $1
 )
 DELETE FROM projectauth_organizations WHERE workspace_id = $1
 `

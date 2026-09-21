@@ -231,6 +231,93 @@ func (h *Handler) PreviewIssueAccessControl(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, preview)
 }
 
+// RevokeIssueMentionAccess withdraws the access a mention granted and remembers
+// the decision, so reconciliation does not hand it straight back.
+//
+// 2026-09-21 coder(lq): A manager could only revoke a mention by editing the text
+// that carried it — delete the comment and the grant goes with it — which is no
+// help while the mention has to stay. The revocation is a watermark: the mention
+// that was withdrawn stays withdrawn, and mentioning the person again (a new
+// comment, or an edit to one) outranks it and grants again.
+func (h *Handler) RevokeIssueMentionAccess(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		SubjectID string `json:"subject_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	subjectUUID, parseErr := util.ParseUUID(request.SubjectID)
+	if parseErr != nil {
+		writeError(w, http.StatusBadRequest, "subject_id must be a user id")
+		return
+	}
+	if !h.requireProjectAuthorizationEnabled(w) {
+		return
+	}
+	actor, issueID, projectID, ok := h.issueAccessControlActor(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	if h.TxStarter == nil {
+		writeProjectAccessGrantError(w, projectauth.ErrStorageUnavailable)
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var description string
+	if err := tx.QueryRow(r.Context(), `SELECT COALESCE(description, '') FROM issue WHERE id=$1 AND workspace_id=$2`, issueID, actor.WorkspaceID).Scan(&description); err != nil {
+		h.writeIssueAccessControlError(w, err)
+		return
+	}
+	table := "projectauth_access_grants"
+	if projectID == "" {
+		table = "projectauth_issue_access_grants"
+	}
+	if _, err := tx.Exec(r.Context(), `DELETE FROM `+table+`
+		WHERE workspace_id=$1 AND issue_id=$2 AND subject_type='user' AND subject_id=$3
+		  AND role_key=$4 AND source='system'`,
+		actor.WorkspaceID, issueID, request.SubjectID, string(projectauth.TaskMember)); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `
+		INSERT INTO projectauth_issue_mention_revocations
+			(workspace_id, issue_id, subject_id, revoked_at, revoked_by, description_digest)
+		VALUES ($1, $2, $3, now(), $4, $5)
+		ON CONFLICT (workspace_id, issue_id, subject_id) DO UPDATE
+		SET revoked_at = now(), revoked_by = EXCLUDED.revoked_by,
+		    description_digest = EXCLUDED.description_digest`,
+		actor.WorkspaceID, issueID, request.SubjectID, actor.UserID, mentionTextDigest(description)); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	if err := (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(r.Context(), projectauth.AuthorizationAuditEvent{
+		WorkspaceID: actor.WorkspaceID, IssueID: issueID, ActorUserID: actor.UserID,
+		Action:  "task_access_mention_revoked",
+		Details: map[string]any{"subject_id": request.SubjectID, "subject_uuid": util.UUIDToString(subjectUUID)},
+	}); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+
+	state, err := readIssueAccessControl(r.Context(), tx, actor.WorkspaceID, issueID, projectID, false)
+	if err != nil {
+		h.writeIssueAccessControlError(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
 func (h *Handler) PatchIssueAccessControl(w http.ResponseWriter, r *http.Request) {
 	request, err := decodeIssueAccessControlRequest(r)
 	if err != nil {

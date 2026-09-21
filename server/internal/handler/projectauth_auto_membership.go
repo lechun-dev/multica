@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -232,7 +235,16 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		return err
 	}
 	workspaceID := uuidToString(workspaceUUID)
-	addMentions := func(content string) error {
+	// Mentions a manager explicitly withdrew stay withdrawn until the mention is
+	// newer than the withdrawal (migration 528). Without this the reconciliation
+	// would restore the revoked grant on the very next comment, because the text
+	// still names the person.
+	revokedAt, revokedDescriptionDigest, err := loadIssueMentionRevocations(ctx, executor, workspaceID, issueID)
+	if err != nil {
+		return err
+	}
+	descriptionDigest := mentionTextDigest(description)
+	addMentions := func(content string, changedAt time.Time, isDescription bool) error {
 		for _, mention := range util.ParseMentions(content) {
 			if mention.Type != "member" && mention.Type != "agent" {
 				continue
@@ -249,16 +261,32 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 					return err
 				}
 			}
-			if userID != "" {
-				desired[userID] = struct{}{}
+			if userID == "" {
+				continue
 			}
+			if _, already := desired[userID]; already {
+				continue
+			}
+			if at, revoked := revokedAt[userID]; revoked {
+				// A comment's own timestamps say whether it was written or edited
+				// after the withdrawal. The description carries no timestamp of its
+				// own, so it counts again only once that text actually changed.
+				fresh := changedAt.After(at)
+				if isDescription {
+					fresh = descriptionDigest != revokedDescriptionDigest[userID]
+				}
+				if !fresh {
+					continue
+				}
+			}
+			desired[userID] = struct{}{}
 		}
 		return nil
 	}
-	if err := addMentions(description); err != nil {
+	if err := addMentions(description, time.Time{}, true); err != nil {
 		return err
 	}
-	rows, err := executor.Query(ctx, `SELECT content FROM comment WHERE issue_id=$1`, issueID)
+	rows, err := executor.Query(ctx, `SELECT content, GREATEST(created_at, updated_at) FROM comment WHERE issue_id=$1`, issueID)
 	if err != nil {
 		return err
 	}
@@ -266,22 +294,26 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 	// mentions. resolveAgentOwnerWithExecutor issues a QueryRow on the same
 	// transaction connection; doing that while this result set is open makes
 	// pgx return "conn busy".
-	commentContents := make([]string, 0)
+	type commentMentionSource struct {
+		content   string
+		changedAt time.Time
+	}
+	commentContents := make([]commentMentionSource, 0)
 	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
+		var source commentMentionSource
+		if err := rows.Scan(&source.content, &source.changedAt); err != nil {
 			rows.Close()
 			return err
 		}
-		commentContents = append(commentContents, content)
+		commentContents = append(commentContents, source)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	for _, content := range commentContents {
-		if err := addMentions(content); err != nil {
+	for _, source := range commentContents {
+		if err := addMentions(source.content, source.changedAt, false); err != nil {
 			return err
 		}
 	}
@@ -731,4 +763,37 @@ func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.I
 		return db.CreateCommentRow{}, fmt.Errorf("commit project access comment create: %w", err)
 	}
 	return created, nil
+}
+
+// loadIssueMentionRevocations reads the withdrawal watermark every mention on
+// this task is judged against, plus the description digest captured when it was
+// withdrawn.
+func loadIssueMentionRevocations(ctx context.Context, executor dbExecutor, workspaceID, issueID string) (map[string]time.Time, map[string]string, error) {
+	revokedAt := make(map[string]time.Time)
+	descriptionDigest := make(map[string]string)
+	rows, err := executor.Query(ctx, `
+		SELECT subject_id, revoked_at, description_digest
+		FROM projectauth_issue_mention_revocations
+		WHERE workspace_id=$1 AND issue_id=$2`, workspaceID, issueID)
+	if err != nil {
+		return revokedAt, descriptionDigest, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var subjectID, digest string
+		var at time.Time
+		if err := rows.Scan(&subjectID, &at, &digest); err != nil {
+			return revokedAt, descriptionDigest, err
+		}
+		revokedAt[subjectID] = at
+		descriptionDigest[subjectID] = digest
+	}
+	return revokedAt, descriptionDigest, rows.Err()
+}
+
+// mentionTextDigest fingerprints the description so a withdrawal can tell "this
+// text still names them" from "this text changed since I withdrew it".
+func mentionTextDigest(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }

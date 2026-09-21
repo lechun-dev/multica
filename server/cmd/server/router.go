@@ -1944,6 +1944,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/access-control", h.GetIssueAccessControl)
 					r.Post("/access-control/preview", h.PreviewIssueAccessControl)
 					r.Patch("/access-control", h.PatchIssueAccessControl)
+					r.Post("/access-control/revoke-mention", h.RevokeIssueMentionAccess)
 					r.Get("/access-grants", h.ListIssueAccessGrants)
 					r.Post("/access-grants", h.CreateIssueAccessGrant)
 					r.Delete("/access-grants", h.RevokeIssueAccessGrant)
