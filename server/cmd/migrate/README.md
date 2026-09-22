@@ -1,6 +1,6 @@
 # Migration runner operations
 
-## Prebuild the cancelled-chat session guard index
+## Prebuild the chat-session delete lookup index
 
 Migration 506 builds `idx_agent_task_queue_chat_with_session_created_at`, which
 keeps `AdvanceCancelledChatSessionPointer` from scanning the global task queue
@@ -11,8 +11,7 @@ predicate. Measure the eligible population before scheduling the build:
 ```sql
 SELECT count(*) AS indexed_rows
 FROM agent_task_queue
-WHERE chat_session_id IS NOT NULL
-  AND session_id IS NOT NULL;
+WHERE chat_session_id IS NOT NULL;
 ```
 
 Migrations run during backend startup, whose Helm startup probe allows ten
@@ -21,10 +20,9 @@ prebuild the index in a low-traffic window. Run the statement by itself and
 outside a transaction:
 
 ```sql
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_task_queue_chat_with_session_created_at
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_task_queue_chat_session
 ON agent_task_queue (chat_session_id, created_at DESC)
-WHERE chat_session_id IS NOT NULL
-  AND session_id IS NOT NULL;
+WHERE chat_session_id IS NOT NULL;
 ```
 
 Confirm the build is usable before deploying:
@@ -36,13 +34,16 @@ SELECT indexrelid::regclass AS index_name,
        indisready,
        indislive
 FROM pg_index
-WHERE indexrelid = to_regclass('idx_agent_task_queue_chat_with_session_created_at');
+WHERE indexrelid = to_regclass('idx_agent_task_queue_chat_session');
 ```
 
-The migration then becomes a fast no-op. If an interrupted manual build leaves
-the index invalid, drop that invalid index concurrently and retry the standalone
-build before deploying. The migration runner also registers invalid-index
-cleanup so an interrupted startup build can recover on its next attempt.
+Migration 472 then becomes a fast no-op. Migration 473 only drops the narrower
+index concurrently and does not scan `agent_task_queue`; migration 474 builds a
+single-column index on `dingtalk_bot_identity`, not the global task table. If an
+interrupted manual build leaves the replacement index invalid, drop that invalid
+index concurrently and retry the standalone build before deploying. The
+migration runner also registers invalid-index cleanup so an interrupted startup
+build can recover on its next attempt.
 
 Application rollback is compatible with the extra index, so leave it in place.
 Rolling back migration 506 drops the index and is functionally safe, but restores

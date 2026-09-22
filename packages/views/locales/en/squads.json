@@ -2,7 +2,7 @@
   "page": {
     "title": "Squads",
     "new_button": "New Squad",
-    "empty_no_squads": "No squads yet. Create one to get started.",
+    "empty_no_squads": "No squads yet.",
     "empty_no_match": "No squads match your filters.",
     "table": {
       "name": "Squad",
@@ -42,7 +42,7 @@
   },
   "add_member_dialog": {
     "title": "Add Member",
-    "description": "Add a workspace member or agent to this squad.",
+    "description": "Choose workspace members or agents.",
     "label_member": "Member",
     "label_role": "Role",
     "label_optional": "(optional)",

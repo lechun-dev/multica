@@ -25,6 +25,15 @@ WHERE id = $1;
 SELECT * FROM agent_runtime
 WHERE id = ANY(@ids::uuid[]);
 
+-- name: GetAgentRuntimeHeartbeatLeases :many
+-- Narrow connection-time and heartbeat-reconciliation projection. The daemon
+-- WebSocket authenticates its whole runtime set in one round trip and then
+-- keeps these immutable ownership fields plus liveness state in its connection
+-- lease, avoiding a GetAgentRuntime call on every heartbeat.
+SELECT id, workspace_id, daemon_id, status, last_seen_at
+FROM agent_runtime
+WHERE id = ANY(@ids::uuid[]);
+
 -- name: LockAgentRuntime :one
 -- Acquires a row-level exclusive lock on the runtime row. Used at the
 -- top of the cascade-delete transaction so that:
@@ -83,9 +92,9 @@ RETURNING *, (xmax = 0) AS inserted;
 -- command_name on PATH and is registering an instance of it. The arbiter is the
 -- partial unique index from migration 120 (WHERE profile_id IS NOT NULL), so a
 -- single daemon can host the built-in provider AND any number of custom
--- profiles of the same protocol family. provider stays the protocol family so
--- task routing (agent.New(provider)) is unchanged; profile_id is the stable
--- identity. (xmax = 0) AS inserted mirrors UpsertAgentRuntime.
+-- profiles of the same protocol family. provider carries the base runtime
+-- identity so ResolveBackend applies its descriptor; profile_id preserves
+-- custom-profile provenance. (xmax = 0) AS inserted mirrors UpsertAgentRuntime.
 INSERT INTO agent_runtime (
     workspace_id,
     daemon_id,

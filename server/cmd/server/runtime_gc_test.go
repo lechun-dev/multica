@@ -530,6 +530,7 @@ type runtimeGCPublishCall struct {
 	action                string
 	publishRuntimeRefresh bool
 	cancelledTasks        int
+	runtimeID             string
 }
 
 type recordingRuntimeGCPublisher struct {
@@ -555,6 +556,13 @@ func (p *recordingRuntimeGCPublisher) PublishRuntimeRefresh(workspaceID, actorTy
 		actorType:   actorType,
 		actorID:     actorID,
 		action:      action,
+	})
+}
+
+func (p *recordingRuntimeGCPublisher) NotifyRuntimeGone(runtimeID string) {
+	p.calls = append(p.calls, runtimeGCPublishCall{
+		kind:      "runtime_gone",
+		runtimeID: runtimeID,
 	})
 }
 

@@ -570,7 +570,7 @@ type RegisterDingTalkBYORequest struct {
 // BYO path this needs only the at-rest key configured (DingTalkInstall != nil).
 func (h *Handler) RegisterDingTalkBYO(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not enabled")
+		writeFeatureDisabled(w, "dingtalk_not_configured", "dingtalk integration not enabled")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -665,7 +665,7 @@ func (h *Handler) publishDingTalkInstallationCreated(row db.ChannelInstallation,
 // workspace owner/admin-only cleanup because there is no agent owner to resolve.
 func (h *Handler) RevokeDingTalkInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkInstall == nil {
-		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not configured")
+		writeFeatureDisabled(w, "dingtalk_not_configured", "dingtalk integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -830,7 +830,7 @@ func (h *Handler) GetDingTalkProfile(w http.ResponseWriter, r *http.Request) {
 //   - 403 Forbidden: redeemer is not a workspace member
 func (h *Handler) RedeemDingTalkBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.DingTalkBindingTokens == nil {
-		writeError(w, http.StatusServiceUnavailable, "dingtalk integration not configured")
+		writeFeatureDisabled(w, "dingtalk_not_configured", "dingtalk integration not configured")
 		return
 	}
 	userID, ok := requireUserID(w, r)

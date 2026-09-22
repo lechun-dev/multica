@@ -25,7 +25,7 @@ WHERE a.workspace_id = $1
 type CountAgentsUsingWorkspaceRuntimeModelParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	Provider    string      `json:"provider"`
-	Model       string      `json:"model"`
+	Model       pgtype.Text `json:"model"`
 }
 
 func (q *Queries) CountAgentsUsingWorkspaceRuntimeModel(ctx context.Context, arg CountAgentsUsingWorkspaceRuntimeModelParams) (int64, error) {
@@ -153,7 +153,23 @@ type GetEnabledWorkspaceRuntimeModelByKeyParams struct {
 func (q *Queries) GetEnabledWorkspaceRuntimeModelByKey(ctx context.Context, arg GetEnabledWorkspaceRuntimeModelByKeyParams) (WorkspaceRuntimeModel, error) {
 	row := q.db.QueryRow(ctx, getEnabledWorkspaceRuntimeModelByKey, arg.WorkspaceID, arg.RuntimeProvider, arg.ModelID)
 	var i WorkspaceRuntimeModel
-	err := row.Scan(&i.ID, &i.WorkspaceID, &i.RuntimeProvider, &i.ModelID, &i.DisplayName, &i.ModelProvider, &i.Description, &i.ThinkingLevels, &i.DefaultThinkingLevel, &i.ServiceTiers, &i.SupportsExplicitStandardServiceTier, &i.Enabled, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RuntimeProvider,
+		&i.ModelID,
+		&i.DisplayName,
+		&i.ModelProvider,
+		&i.Description,
+		&i.ThinkingLevels,
+		&i.DefaultThinkingLevel,
+		&i.ServiceTiers,
+		&i.SupportsExplicitStandardServiceTier,
+		&i.Enabled,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -172,7 +188,23 @@ type GetWorkspaceRuntimeModelParams struct {
 func (q *Queries) GetWorkspaceRuntimeModel(ctx context.Context, arg GetWorkspaceRuntimeModelParams) (WorkspaceRuntimeModel, error) {
 	row := q.db.QueryRow(ctx, getWorkspaceRuntimeModel, arg.ID, arg.WorkspaceID)
 	var i WorkspaceRuntimeModel
-	err := row.Scan(&i.ID, &i.WorkspaceID, &i.RuntimeProvider, &i.ModelID, &i.DisplayName, &i.ModelProvider, &i.Description, &i.ThinkingLevels, &i.DefaultThinkingLevel, &i.ServiceTiers, &i.SupportsExplicitStandardServiceTier, &i.Enabled, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RuntimeProvider,
+		&i.ModelID,
+		&i.DisplayName,
+		&i.ModelProvider,
+		&i.Description,
+		&i.ThinkingLevels,
+		&i.DefaultThinkingLevel,
+		&i.ServiceTiers,
+		&i.SupportsExplicitStandardServiceTier,
+		&i.Enabled,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -196,10 +228,26 @@ func (q *Queries) ListEnabledWorkspaceRuntimeModelsByProvider(ctx context.Contex
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkspaceRuntimeModel
+	items := []WorkspaceRuntimeModel{}
 	for rows.Next() {
 		var i WorkspaceRuntimeModel
-		if err := rows.Scan(&i.ID, &i.WorkspaceID, &i.RuntimeProvider, &i.ModelID, &i.DisplayName, &i.ModelProvider, &i.Description, &i.ThinkingLevels, &i.DefaultThinkingLevel, &i.ServiceTiers, &i.SupportsExplicitStandardServiceTier, &i.Enabled, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RuntimeProvider,
+			&i.ModelID,
+			&i.DisplayName,
+			&i.ModelProvider,
+			&i.Description,
+			&i.ThinkingLevels,
+			&i.DefaultThinkingLevel,
+			&i.ServiceTiers,
+			&i.SupportsExplicitStandardServiceTier,
+			&i.Enabled,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -223,10 +271,26 @@ func (q *Queries) ListWorkspaceRuntimeModels(ctx context.Context, workspaceID pg
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkspaceRuntimeModel
+	items := []WorkspaceRuntimeModel{}
 	for rows.Next() {
 		var i WorkspaceRuntimeModel
-		if err := rows.Scan(&i.ID, &i.WorkspaceID, &i.RuntimeProvider, &i.ModelID, &i.DisplayName, &i.ModelProvider, &i.Description, &i.ThinkingLevels, &i.DefaultThinkingLevel, &i.ServiceTiers, &i.SupportsExplicitStandardServiceTier, &i.Enabled, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RuntimeProvider,
+			&i.ModelID,
+			&i.DisplayName,
+			&i.ModelProvider,
+			&i.Description,
+			&i.ThinkingLevels,
+			&i.DefaultThinkingLevel,
+			&i.ServiceTiers,
+			&i.SupportsExplicitStandardServiceTier,
+			&i.Enabled,
+			&i.SortOrder,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -269,8 +333,36 @@ type UpdateWorkspaceRuntimeModelParams struct {
 }
 
 func (q *Queries) UpdateWorkspaceRuntimeModel(ctx context.Context, arg UpdateWorkspaceRuntimeModelParams) (WorkspaceRuntimeModel, error) {
-	row := q.db.QueryRow(ctx, updateWorkspaceRuntimeModel, arg.ID, arg.WorkspaceID, arg.DisplayName, arg.ModelProvider, arg.Description, arg.ThinkingLevels, arg.DefaultThinkingLevel, arg.ServiceTiers, arg.SupportsExplicitStandardServiceTier, arg.Enabled, arg.SortOrder)
+	row := q.db.QueryRow(ctx, updateWorkspaceRuntimeModel,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.DisplayName,
+		arg.ModelProvider,
+		arg.Description,
+		arg.ThinkingLevels,
+		arg.DefaultThinkingLevel,
+		arg.ServiceTiers,
+		arg.SupportsExplicitStandardServiceTier,
+		arg.Enabled,
+		arg.SortOrder,
+	)
 	var i WorkspaceRuntimeModel
-	err := row.Scan(&i.ID, &i.WorkspaceID, &i.RuntimeProvider, &i.ModelID, &i.DisplayName, &i.ModelProvider, &i.Description, &i.ThinkingLevels, &i.DefaultThinkingLevel, &i.ServiceTiers, &i.SupportsExplicitStandardServiceTier, &i.Enabled, &i.SortOrder, &i.CreatedAt, &i.UpdatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RuntimeProvider,
+		&i.ModelID,
+		&i.DisplayName,
+		&i.ModelProvider,
+		&i.Description,
+		&i.ThinkingLevels,
+		&i.DefaultThinkingLevel,
+		&i.ServiceTiers,
+		&i.SupportsExplicitStandardServiceTier,
+		&i.Enabled,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }

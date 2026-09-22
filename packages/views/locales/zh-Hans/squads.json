@@ -2,7 +2,7 @@
   "page": {
     "title": "小队",
     "new_button": "新建小队",
-    "empty_no_squads": "还没有小队，创建一个开始吧。",
+    "empty_no_squads": "暂无小队。",
     "empty_no_match": "没有匹配筛选条件的小队。",
     "table": {
       "name": "小队",
@@ -42,7 +42,7 @@
   },
   "add_member_dialog": {
     "title": "添加成员",
-    "description": "添加工作区成员或智能体到这个小队。",
+    "description": "可选择工作区成员或智能体。",
     "label_member": "成员",
     "label_role": "角色",
     "label_optional": "（可选）",

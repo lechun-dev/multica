@@ -3,6 +3,7 @@ import { createRef, type ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { issueKeys, PAGINATED_CATEGORIES } from "@multica/core/issues/queries";
+import { statusCategoryOfKey } from "@multica/core/issues";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { IssueStatusCategory, ListIssuesCache } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
@@ -145,7 +146,9 @@ function fakeQc(data: {
   map.set(JSON.stringify(workspaceKeys.squads("ws-1")), data.squads ?? []);
   const byStatus: ListIssuesCache["byStatus"] = {};
   for (const status of PAGINATED_CATEGORIES) {
-    const bucket = (data.issues ?? []).filter((i) => i.status === status);
+    const bucket = (data.issues ?? []).filter(
+      (i) => statusCategoryOfKey(i.status) === status,
+    );
     byStatus[status as IssueStatusCategory] = { issues: bucket as never, total: bucket.length };
   }
   map.set(
@@ -174,6 +177,28 @@ function itemArgs(query: string) {
     editor: {} as never,
     signal: new AbortController().signal,
   };
+}
+
+const PICKER_INTERACTION_KEYS: KeyboardEventInit[] = [
+  { key: "Enter" },
+  { key: "Enter", shiftKey: true },
+  { key: "Enter", metaKey: true },
+  { key: "Enter", ctrlKey: true },
+  { key: "Enter", altKey: true },
+  { key: "Tab" },
+  { key: "ArrowUp" },
+  { key: "ArrowDown" },
+  { key: "n", ctrlKey: true },
+  { key: "j", ctrlKey: true },
+  { key: "p", ctrlKey: true },
+  { key: "k", ctrlKey: true },
+];
+
+function pressPickerInteractionKeys(ref: MentionListRef | null): boolean[] {
+  if (!ref) return [];
+  return PICKER_INTERACTION_KEYS.map((init) =>
+    ref.onKeyDown({ event: new KeyboardEvent("keydown", init) }),
+  );
 }
 
 describe("createMentionSuggestion", () => {
@@ -271,7 +296,7 @@ describe("createMentionSuggestion", () => {
     );
   });
 
-  it("does not select a runtime-required mention row by click or keyboard", () => {
+  it("keeps picker keys inert when every mention row is disabled", () => {
     const command = vi.fn<(item: MentionItem) => void>();
     const ref = createRef<MentionListRef>();
     render(
@@ -297,11 +322,10 @@ describe("createMentionSuggestion", () => {
     });
     expect(row).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(row);
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "Enter" }),
-      }),
-    ).toBe(true);
+
+    expect(pressPickerInteractionKeys(ref.current)).toEqual(
+      PICKER_INTERACTION_KEYS.map(() => true),
+    );
     expect(command).not.toHaveBeenCalled();
   });
 
@@ -407,14 +431,23 @@ describe("createMentionSuggestion", () => {
     expect(searchProjectsMock).not.toHaveBeenCalled();
   });
 
-  it("captures Enter while the popup has no selectable items", () => {
+  it("lets picker keys reach the editor while search has no result rows", async () => {
+    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
     const ref = createRef<MentionListRef>();
 
     render(<I18nWrapper><MentionList ref={ref} items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
 
-    expect(
-      ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "Enter" }) }),
-    ).toBe(true);
+    expect(screen.getByText("Searching...")).toBeInTheDocument();
+    expect(pressPickerInteractionKeys(ref.current)).toEqual(
+      PICKER_INTERACTION_KEYS.map(() => false),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No results")).toBeInTheDocument();
+    });
+    expect(pressPickerInteractionKeys(ref.current)).toEqual(
+      PICKER_INTERACTION_KEYS.map(() => false),
+    );
   });
 
   // MUL-3685: plain Tab accepts the highlighted row exactly like Enter.
@@ -462,16 +495,6 @@ describe("createMentionSuggestion", () => {
     expect(press({ key: "Tab", ctrlKey: true })).toBe(false);
     expect(press({ key: "Tab", altKey: true })).toBe(false);
     expect(command).not.toHaveBeenCalled();
-  });
-
-  it("captures Tab while the popup has no selectable items, like Enter", () => {
-    const ref = createRef<MentionListRef>();
-
-    render(<I18nWrapper><MentionList ref={ref} items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
-
-    expect(
-      ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "Tab" }) }),
-    ).toBe(true);
   });
 
   // MUL-3607: groupItems() re-buckets the list (current → recent → search →
@@ -1007,9 +1030,9 @@ describe("MentionList cancelled demotion", () => {
 
   it("sorts cancelled issues below live ones regardless of input order", () => {
     const items: MentionItem[] = [
-      { id: "i-1", label: "MUL-1", type: "issue", status: "cancelled", statusCategory: "cancelled" },
+      { id: "i-1", label: "MUL-1", type: "issue", status: "cancelled", statusCategory: "closed" },
       { id: "i-2", label: "MUL-2", type: "issue", status: "in_progress" },
-      { id: "i-3", label: "MUL-3", type: "issue", status: "cancelled", statusCategory: "cancelled" },
+      { id: "i-3", label: "MUL-3", type: "issue", status: "cancelled", statusCategory: "closed" },
       { id: "i-4", label: "MUL-4", type: "issue", status: "backlog" },
     ];
 
@@ -1028,7 +1051,7 @@ describe("MentionList cancelled demotion", () => {
         label: `MUL-${100 + n}`,
         type: "issue" as const,
         status: "cancelled" as const,
-        statusCategory: "cancelled" as const,
+        statusCategory: "closed" as const,
       })),
       { id: "i-live", label: "MUL-9", type: "issue", status: "todo" },
     ];
@@ -1046,7 +1069,7 @@ describe("MentionList cancelled demotion", () => {
     // "Current" is explicit context, not a relevance hit — demoting it past the
     // truncation would make the issue on screen vanish from its own picker.
     const items: MentionItem[] = [
-      { id: "i-cur", label: "MUL-7", type: "issue", status: "cancelled", statusCategory: "cancelled", group: "current" },
+      { id: "i-cur", label: "MUL-7", type: "issue", status: "cancelled", statusCategory: "closed", group: "current" },
       { id: "i-live", label: "MUL-8", type: "issue", status: "in_progress" },
     ];
 
@@ -1086,7 +1109,7 @@ describe("MentionList cancelled demotion", () => {
     // The cached row is merged first; without the demotion it would render on
     // top of the server's higher-ranked live match.
     const items: MentionItem[] = [
-      { id: "i-cached", label: "MUL-20", type: "issue", status: "cancelled", statusCategory: "cancelled", description: "Cancelled match" },
+      { id: "i-cached", label: "MUL-20", type: "issue", status: "cancelled", statusCategory: "closed", description: "Cancelled match" },
     ];
 
     render(<I18nWrapper><MentionList items={items} query="match" command={vi.fn()} /></I18nWrapper>);

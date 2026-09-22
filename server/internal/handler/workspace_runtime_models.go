@@ -438,6 +438,6 @@ func (h *Handler) workspaceRuntimeModelUsageCount(r *http.Request, model db.Work
 	return h.Queries.CountAgentsUsingWorkspaceRuntimeModel(r.Context(), db.CountAgentsUsingWorkspaceRuntimeModelParams{
 		WorkspaceID: model.WorkspaceID,
 		Provider:    model.RuntimeProvider,
-		Model:       model.ModelID,
+		Model:       pgtype.Text{String: model.ModelID, Valid: true},
 	})
 }

@@ -265,6 +265,9 @@ func timelineActor(actorType, actorID string, actors actorDisplayLookup, fullID 
 // rather than being dropped.
 func timelineDetail(entry map[string]any, actors actorDisplayLookup, fullID bool) string {
 	if strVal(entry, "type") == "comment" {
+		if strVal(entry, "deleted_at") != "" {
+			return "(deleted)"
+		}
 		return clipTimelineText(singleLineText(strVal(entry, "content")), 60)
 	}
 

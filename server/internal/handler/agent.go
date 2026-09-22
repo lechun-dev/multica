@@ -348,7 +348,8 @@ const taskIssueStatusCap = 30
 // TaskIssueStatusData is one active CUSTOM workspace status on the claim wire
 // (MUL-6460). Only the fields an agent needs to choose and write the status
 // travel: key is the CLI argument, name is what users call it in instructions,
-// category anchors the inherited platform behavior, and description is the
+// category uses the legacy wire enum for installed daemons (presentation only,
+// not inherited platform behavior), and description is the
 // admin's "when to use me" guidance — the disambiguator when a category holds
 // more than one status. Color/position/id stay off the wire: they carry no
 // behavioral meaning for an agent, and the server already emits entries in
@@ -481,6 +482,11 @@ type AgentTaskResponse struct {
 	// NewCommentsDeltaKnown distinguishes a verified zero from an unavailable
 	// comment-delta lookup for newer daemons.
 	NewCommentsDeltaKnown    bool                 `json:"new_comments_delta_known,omitempty"`
+	IssueStateDeltaKnown     bool                 `json:"issue_state_delta_known,omitempty"`
+	IssueChangedFields       []string             `json:"issue_changed_fields,omitempty"`
+	IssueStatus              string               `json:"issue_status,omitempty"`
+	IssueAssigneeType        string               `json:"issue_assignee_type,omitempty"`
+	IssueAssigneeID          string               `json:"issue_assignee_id,omitempty"`
 	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
 	ChatChannelType          string               `json:"chat_channel_type,omitempty"`           // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Makes the agent channel-aware (read history from the channel, not Multica)
 	ChatChannelDeliversFiles bool                 `json:"chat_channel_delivers_files,omitempty"` // server capability: THIS deployment can put a file the agent produced into THIS conversation — the adapter goes back for the bound attachment AND object storage exists to go back to. Absent/false on a server predating it, which is the safe reading: the agent is told to describe its file in words. Never inferred daemon-side from chat_channel_type; see handler.Handler.channelDeliversFiles
@@ -501,10 +507,11 @@ type AgentTaskResponse struct {
 	QuickCreateAttachmentIDs []string             `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
 	QuickCreateSourceContext json.RawMessage      `json:"quick_create_source_context,omitempty"` // immutable historical context for source-context quick-create
 	HandoffNote              string               `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
-	SquadID                  string               `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string               `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string               `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	WakeupID                 string               `json:"wakeup_id,omitempty"`
+	SquadID                  string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string               `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID            string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -807,6 +814,10 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		TaskID string `json:"comment_change_cancelled_task_id"`
 	}
 	_ = json.Unmarshal(t.Context, &cancellation)
+	var wakeupContext struct {
+		ID string `json:"wakeup_id"`
+	}
+	_ = json.Unmarshal(t.Context, &wakeupContext)
 	var result any
 	if t.Result != nil {
 		json.Unmarshal(t.Result, &result)
@@ -860,6 +871,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:    uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:         textToPtr(t.TriggerSummary),
 		HandoffNote:            handoffNote,
+		WakeupID:               wakeupContext.ID,
 		WorkDir:                workDir,
 		RelativeWorkDir:        relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		DurableWorkDir:         durableWorkDir,
@@ -1478,6 +1490,15 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, thinkingCapabilityUnknownRejection(runtime.Provider))
 			return
 		}
+	}
+	// An effort with no pinned model is not storable for runtimes that resolve
+	// their own default model out of sight — it would save cleanly, show as set,
+	// and then run at a different level. Reject it here instead of letting the
+	// daemon drop it silently at launch (MUL-7412).
+	if agent.ThinkingLevelRejectedWithoutModel(runtime.Provider) &&
+		req.ThinkingLevel != "" && strings.TrimSpace(req.Model) == "" {
+		writeError(w, http.StatusBadRequest, thinkingNeedsExplicitModelRejection(runtime.Provider))
+		return
 	}
 	if !agent.IsKnownServiceTier(runtime.Provider, req.ServiceTier) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("service_tier %q is not a recognised value for runtime %q", req.ServiceTier, runtime.Provider))
@@ -2136,6 +2157,28 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Same combination check as CreateAgent, but against the state the request
+	// actually lands on: a cleared model with a carried-over effort, or a new
+	// effort on an agent that never had a model, are both the invalid pair. The
+	// caller can always recover by pinning a model or clearing the level, so
+	// this cannot lock an agent out of editing (MUL-7412).
+	if effectiveThinking := effectiveThinkingLevel(params, existing, shouldClearThinkingLevel); effectiveThinking != "" &&
+		strings.TrimSpace(effectiveModelValue(params, existing)) == "" {
+		provider := targetProvider
+		if provider == "" {
+			var ok bool
+			provider, ok = h.resolveAgentProvider(r, existing.WorkspaceID, targetRuntimeID)
+			if !ok {
+				writeError(w, http.StatusInternalServerError, "failed to resolve runtime for thinking_level validation")
+				return
+			}
+		}
+		if agent.ThinkingLevelRejectedWithoutModel(provider) {
+			writeError(w, http.StatusBadRequest, thinkingNeedsExplicitModelRejection(provider))
+			return
+		}
+	}
+
 	shouldClearServiceTier := false
 	if req.ServiceTier != nil {
 		value := *req.ServiceTier
@@ -2379,6 +2422,42 @@ func (h *Handler) resolveAgentProvider(r *http.Request, workspaceID pgtype.UUID,
 		return "", false
 	}
 	return rt.Provider, true
+}
+
+// thinkingNeedsExplicitModelRejection is the copy for a level that is valid for
+// the runtime but cannot be stored without a model. It names both ways out so
+// the caller does not have to guess that clearing is allowed.
+func thinkingNeedsExplicitModelRejection(provider string) string {
+	return fmt.Sprintf(
+		"runtime %q resolves its own default model, so a reasoning effort needs an explicit model; set model or pass thinking_level=\"\" to clear",
+		provider,
+	)
+}
+
+// effectiveModelValue is the model the update lands on: the requested value
+// when this request sets one (including an explicit clear), otherwise what the
+// agent already holds.
+func effectiveModelValue(params db.UpdateAgentParams, existing db.Agent) string {
+	if params.Model.Valid {
+		return params.Model.String
+	}
+	return existing.Model.String
+}
+
+// effectiveThinkingLevel is the effort the update lands on. An explicit clear
+// wins over everything; otherwise a value set by this request wins over the
+// stored one, which is carried when the field was omitted.
+func effectiveThinkingLevel(params db.UpdateAgentParams, existing db.Agent, cleared bool) string {
+	if cleared {
+		return ""
+	}
+	if params.ThinkingLevel.Valid {
+		return params.ThinkingLevel.String
+	}
+	if existing.ThinkingLevel.Valid {
+		return existing.ThinkingLevel.String
+	}
+	return ""
 }
 
 // thinkingLevelRejection explains why the target runtime will not take this
@@ -2758,10 +2837,12 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 // AgentActivityBucket is one day-bucketed throughput sample for the
 // Agents-list ACTIVITY sparkline. bucket_at is midnight UTC of the day.
 type AgentActivityBucket struct {
-	AgentID     string `json:"agent_id"`
-	BucketAt    string `json:"bucket_at"`
-	TaskCount   int32  `json:"task_count"`
-	FailedCount int32  `json:"failed_count"`
+	AgentID        string `json:"agent_id"`
+	BucketAt       string `json:"bucket_at"`
+	TaskCount      int32  `json:"task_count"`
+	FailedCount    int32  `json:"failed_count"`
+	CompletedCount int32  `json:"completed_count"`
+	CancelledCount int32  `json:"cancelled_count"`
 }
 
 // AgentRunCount is the trailing-30-day total task run count per agent,
@@ -3032,10 +3113,12 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 			continue
 		}
 		resp = append(resp, AgentActivityBucket{
-			AgentID:     agentID,
-			BucketAt:    timestampToString(row.Bucket),
-			TaskCount:   row.TaskCount,
-			FailedCount: row.FailedCount,
+			AgentID:        agentID,
+			BucketAt:       timestampToString(row.Bucket),
+			TaskCount:      row.TaskCount,
+			FailedCount:    row.FailedCount,
+			CompletedCount: row.CompletedCount,
+			CancelledCount: row.CancelledCount,
 		})
 	}
 

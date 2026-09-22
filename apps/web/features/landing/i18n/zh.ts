@@ -264,8 +264,8 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     title: "\u5173\u4e8e Multica",
     nameLine: {
       prefix: "Multica\u2014\u2014",
-      mul: "Mul",
-      tiplexed: "tiplexed ",
+      mult: "Mult",
+      iplexed: "iplexed ",
       i: "I",
       nformationAnd: "nformation and ",
       c: "C",
@@ -3424,24 +3424,17 @@ export function createZhDict(allowSignup: boolean): LandingDict {
       "了解如何在你的团队中落地 Multica 的人类 + 智能体协作工作流。",
     eyebrow: "联系商务",
     title: "先了解你的需求",
-    subtitle: "在正式沟通之前，让我们为你定制最合适的方案。",
-    notice: {
-      badge: "系统仅识别企业邮箱域名。",
-      body: "来自个人邮箱（例如 @gmail.com、@outlook.com）的请求不会被处理。",
-    },
     fields: {
       firstName: "名",
       lastName: "姓",
       businessEmail: "企业邮箱",
       businessEmailHint:
-        "请使用真实的企业邮箱域名，方便我们后续与你联系。",
+        "请使用公司邮箱，不接受 Gmail、Outlook 等个人邮箱。",
       companyName: "公司名称",
       companySize: "公司规模",
       countryRegion: "国家 / 地区",
       useCase: "你打算如何使用 Multica 或与我们合作？",
       goals: "你的目标或挑战",
-      goalsHint:
-        "告诉我们你希望借助 Multica 达成什么目标，或正在面临的挑战。信息越详细，我们越能给到合适的支持。",
       selectPlaceholder: "请选择",
       submit: "提交",
       submitting: "正在提交…",

@@ -55,7 +55,7 @@ export function InboxListItem({
   const timeAgo = useTimeAgo();
   // Inbox is a cross-workspace surface, so the catalog is read against the
   // item's OWN workspace rather than the route's. (MUL-6243)
-  const { categoryOf: statusCategoryOf, colorOf: statusColorOf } =
+  const { categoryOf: statusCategoryOf, colorOf: statusColorOf, iconOf: statusIconOf } =
     useIssueStatuses(item.workspace_id);
   const statusLabelOf = useStatusLabel(item.workspace_id);
   const openContextMenu = useInboxContextMenu();
@@ -174,6 +174,7 @@ export function InboxListItem({
                   status={item.issue_status}
                   category={statusCategoryOf(item.issue_status)}
                   color={statusColor}
+                  icon={item.issue_status ? statusIconOf(item.issue_status) : null}
                   className="h-3.5 w-3.5 shrink-0"
                 />
               </span>

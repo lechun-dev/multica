@@ -264,8 +264,8 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     title: "About Multica",
     nameLine: {
       prefix: "Multica \u2014 ",
-      mul: "Mul",
-      tiplexed: "tiplexed ",
+      mult: "Mult",
+      iplexed: "iplexed ",
       i: "I",
       nformationAnd: "nformation and ",
       c: "C",
@@ -3429,25 +3429,17 @@ export function createEnDict(allowSignup: boolean): LandingDict {
       "Talk to the Multica team about rolling out human + agent workflows at your company.",
     eyebrow: "Contact Sales",
     title: "Let’s understand your needs",
-    subtitle:
-      "Help us tailor the best solution for you before we connect.",
-    notice: {
-      badge: "Our system only recognizes business email domains.",
-      body: "Requests from personal emails (e.g., @gmail.com, @outlook.com) will not be detected or processed.",
-    },
     fields: {
       firstName: "First name",
       lastName: "Last name",
       businessEmail: "Business email",
       businessEmailHint:
-        "Company email required. Please use a valid company domain so we can follow up with you.",
+        "Use a company email. Gmail, Outlook, and other personal email providers aren't accepted.",
       companyName: "Company name",
       companySize: "Company size",
       countryRegion: "Country / Region",
       useCase: "How do you plan to use or collaborate with Multica?",
       goals: "Your goals or challenges",
-      goalsHint:
-        "Tell us what you’d like to achieve with Multica or the challenges you’re facing. The more details you provide, the better we can support you.",
       selectPlaceholder: "Please select",
       submit: "Submit",
       submitting: "Submitting…",

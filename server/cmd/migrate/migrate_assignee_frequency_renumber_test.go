@@ -18,6 +18,7 @@ func TestAssigneeFrequencyRenumberPreservesExistingIndex(t *testing.T) {
 
 	for _, previouslyApplied := range []bool{false, true} {
 		t.Run(fmt.Sprintf("previously_applied_%t", previouslyApplied), func(t *testing.T) {
+			t.Parallel()
 			admin := openTestPool(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

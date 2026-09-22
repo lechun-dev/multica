@@ -31,7 +31,15 @@ function seedTabs(count: number, activeIndex = 1): void {
   const tabs = Array.from({ length: count }, (_, index) => makeTab(index + 1));
   useTabStore.setState({
     activeWorkspaceSlug: "acme",
-    byWorkspace: { acme: { tabs, activeTabId: `t${activeIndex}`, recentTabIds: [] } },
+    byWorkspace: {
+      acme: {
+        tabs,
+        activeTabId: `t${activeIndex}`,
+        browsingHistory: [],
+        browsingHistoryTitles: {},
+        recentTabIds: [],
+      },
+    },
   });
 }
 

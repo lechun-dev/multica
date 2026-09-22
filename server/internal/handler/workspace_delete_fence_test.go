@@ -166,6 +166,8 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 		t.Fatalf("lock workspace row: %v", err)
 	}
 
+	// Each expected-blocked writer waits out its whole lock_timeout, which only
+	// runs while the writer is actually blocked, so it is kept small.
 	blockedEnqueue := func(name, agentID, runtimeID, issueID string) {
 		t.Helper()
 		writer, err := testPool.Begin(ctx)
@@ -200,7 +202,7 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 		t.Fatalf("begin reassign: %v", err)
 	}
 	defer reassign.Rollback(ctx)
-	if _, err := reassign.Exec(ctx, "SET LOCAL lock_timeout = 750"); err != nil {
+	if _, err := reassign.Exec(ctx, "SET LOCAL lock_timeout = 50"); err != nil {
 		t.Fatalf("reassign: set lock_timeout: %v", err)
 	}
 	_, err = testHandler.Queries.WithTx(reassign).ReassignTasksToRuntime(ctx, db.ReassignTasksToRuntimeParams{
@@ -221,7 +223,7 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 		t.Fatalf("begin unrelated: %v", err)
 	}
 	defer unrelated.Rollback(ctx)
-	if _, err := unrelated.Exec(ctx, "SET LOCAL lock_timeout = 750"); err != nil {
+	if _, err := unrelated.Exec(ctx, "SET LOCAL lock_timeout = 200"); err != nil {
 		t.Fatalf("unrelated: set lock_timeout: %v", err)
 	}
 	if err := enqueueViaRealQuery(ctx, testHandler.Queries.WithTx(unrelated),
@@ -238,7 +240,7 @@ func TestTaskWriteFence_BlocksOnWorkspaceLockAlone(t *testing.T) {
 		t.Fatalf("begin status update: %v", err)
 	}
 	defer statusUpdate.Rollback(ctx)
-	if _, err := statusUpdate.Exec(ctx, "SET LOCAL lock_timeout = 750"); err != nil {
+	if _, err := statusUpdate.Exec(ctx, "SET LOCAL lock_timeout = 200"); err != nil {
 		t.Fatalf("status update: set lock_timeout: %v", err)
 	}
 	if _, err := statusUpdate.Exec(ctx,

@@ -589,6 +589,7 @@ export function SaveViewDialog({
         creatorFilters: state.creatorFilters,
         projectFilters: state.projectFilters,
         includeNoProject: state.includeNoProject,
+        projectStatusFilters: state.projectStatusFilters,
         labelFilters: state.labelFilters,
         propertyFilters: state.propertyFilters,
       },

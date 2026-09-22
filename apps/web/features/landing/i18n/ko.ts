@@ -2854,8 +2854,8 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       title: "Multica 소개",
       nameLine: {
         prefix: "Multica — ",
-        mul: "Mul",
-        tiplexed: "tiplexed ",
+        mult: "Mult",
+        iplexed: "iplexed ",
         i: "I",
         nformationAnd: "nformation and ",
         c: "C",
@@ -2951,24 +2951,17 @@ export function createKoDict(allowSignup: boolean): LandingDict {
         "회사에 사람과 에이전트가 함께 일하는 워크플로를 도입하는 방법을 Multica 팀과 함께 이야기해 보세요.",
       eyebrow: "영업팀 문의",
       title: "어떤 도움이 필요하신지 알려 주세요",
-      subtitle: "가장 알맞은 방안을 미리 준비해 드릴 수 있도록, 몇 가지만 적어 주세요.",
-      notice: {
-        badge: "시스템은 비즈니스 이메일 도메인만 인식합니다.",
-        body: "개인 이메일 주소(예: @gmail.com, @outlook.com)로 보내신 요청은 시스템에서 인식되지 않아 처리되지 않습니다.",
-      },
       fields: {
         firstName: "이름",
         lastName: "성",
         businessEmail: "비즈니스 이메일",
         businessEmailHint:
-          "회사 이메일이 필요합니다. 답신을 드릴 수 있도록 유효한 회사 도메인을 사용해 주세요.",
+          "회사 이메일을 사용하세요. Gmail, Outlook 등 개인 이메일은 사용할 수 없습니다.",
         companyName: "회사명",
         companySize: "회사 규모",
         countryRegion: "국가 / 지역",
         useCase: "Multica를 어떻게 사용하거나 어디에 활용하실 계획인가요?",
         goals: "목표 또는 현재 겪고 있는 과제",
-        goalsHint:
-          "Multica로 이루고 싶은 일이나 지금 겪고 있는 문제를 알려 주세요. 자세히 적어 주실수록 더 알맞게 도와드릴 수 있습니다.",
         selectPlaceholder: "선택하세요",
         submit: "제출",
         submitting: "제출 중...",

@@ -1,3 +1,5 @@
+import { RUNTIME_ACCESS_DENIED_RECOVERY_COPY } from "./runtime-access-copy";
+
 /**
  * Mirror of `packages/views/agents/components/tabs/task-failure.ts:REASON_LABEL`.
  *

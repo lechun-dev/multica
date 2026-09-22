@@ -2833,8 +2833,8 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       title: "Multica について",
       nameLine: {
         prefix: "Multica — ",
-        mul: "Mul",
-        tiplexed: "tiplexed ",
+        mult: "Mult",
+        iplexed: "iplexed ",
         i: "I",
         nformationAnd: "nformation and ",
         c: "C",
@@ -2930,24 +2930,17 @@ export function createJaDict(allowSignup: boolean): LandingDict {
         "人間と AI エージェントが協働するワークフローを社内に導入する方法について、Multica チームにご相談ください。",
       eyebrow: "営業に相談",
       title: "まずは、ご要望をお聞かせください",
-      subtitle: "最適なご提案を準備できるよう、いくつかお教えください。",
-      notice: {
-        badge: "システムはビジネスメールのドメインのみを認識します。",
-        body: "個人用メールアドレス(例: @gmail.com、@outlook.com)からのご依頼は、システムで検出されず、処理されません。",
-      },
       fields: {
         firstName: "名",
         lastName: "姓",
         businessEmail: "ビジネスメール",
         businessEmailHint:
-          "会社のメールアドレスが必要です。ご返信できるよう、有効な会社ドメインをご利用ください。",
+          "会社のメールアドレスを使用してください。Gmail、Outlook などの個人用メールは受け付けていません。",
         companyName: "会社名",
         companySize: "会社規模",
         countryRegion: "国 / 地域",
         useCase: "Multica をどのように利用、または活用するご予定ですか?",
         goals: "目標または現在抱えている課題",
-        goalsHint:
-          "Multica で実現したいことや、いま直面している課題をお聞かせください。詳しくご記入いただくほど、より的確にお手伝いできます。",
         selectPlaceholder: "選択してください",
         submit: "送信",
         submitting: "送信中...",

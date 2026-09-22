@@ -2,7 +2,7 @@ import { app } from "electron";
 import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { createReadStream, createWriteStream, existsSync } from "fs";
-import { chmod, mkdir, rename, rm } from "fs/promises";
+import { chmod, copyFile, mkdir, rename, rm } from "fs/promises";
 import { join, dirname } from "path";
 import { pipeline } from "stream/promises";
 import { tmpdir } from "os";

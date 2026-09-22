@@ -2,7 +2,7 @@
   "page": {
     "title": "スクワッド",
     "new_button": "新規スクワッド",
-    "empty_no_squads": "スクワッドはまだありません。作成して始めましょう。",
+    "empty_no_squads": "スクワッドはありません。",
     "empty_no_match": "フィルターに一致するスクワッドはありません。",
     "table": {
       "name": "スカッド",
@@ -42,7 +42,7 @@
   },
   "add_member_dialog": {
     "title": "メンバーを追加",
-    "description": "ワークスペースのメンバーまたはエージェントをこのスクワッドに追加します。",
+    "description": "ワークスペースのメンバーまたはエージェントを選択できます。",
     "label_member": "メンバー",
     "label_role": "役割",
     "label_optional": "（任意）",
