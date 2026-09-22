@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   CHANGELOG_LOCALE_FILES,
   changelogVersionForTag,
+  releaseRequiresChangelog,
   validateReleaseTagSequence,
   validateReleaseChangelog,
 } from "./check-release-changelog.mjs";
@@ -37,14 +38,11 @@ test("accepts a stable release when every locale has the version", (t) => {
   });
 });
 
-test("maps a prerelease tag to its base changelog version", (t) => {
-  const repoRoot = createFixture();
-  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
-
+test("requires product changelogs only for stable releases", () => {
   assert.equal(changelogVersionForTag("v0.4.82-beta.2"), "0.4.82");
-  assert.doesNotThrow(() =>
-    validateReleaseChangelog({ tag: "v0.4.82-beta.2", repoRoot }),
-  );
+  assert.equal(releaseRequiresChangelog("v0.4.82"), true);
+  assert.equal(releaseRequiresChangelog("v0.4.82-beta.2"), false);
+  assert.equal(releaseRequiresChangelog("v0.4.82-test.1"), false);
 });
 
 test("reports every locale missing the release version", (t) => {

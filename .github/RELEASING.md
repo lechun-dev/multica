@@ -8,18 +8,19 @@ trigger: a tag push is the only event that can publish binaries, Homebrew
 formulae, and container images.
 
 Before creating the tag, add the same base version to the changelog in all four
-locale files under `apps/web/features/landing/i18n/`. For example, both
-`v0.4.82` and `v0.4.82-beta.1` require a `0.4.82` entry in `en.ts`, `ja.ts`,
-`ko.ts`, and `zh.ts`. Run
+locale files under `apps/web/features/landing/i18n/`. For example, the stable
+tag `v0.4.82` requires a `0.4.82` entry in `en.ts`, `ja.ts`, `ko.ts`, and
+`zh.ts`. Prerelease tags do not require these product notes because the final
+summary is prepared for the stable release. Run
 `node scripts/check-release-changelog.mjs v0.4.82` locally to verify it.
 
 A test or beta release does not have to originate from `main`; only a stable
 release does. Each named deployment workflow uses the selected tag as its image
 version, so release preparation does not maintain a second version list.
 
-The verification job requires those changelog entries, then runs the Go tests
-and `govulncheck` before any publishing job starts. The changelog and
-vulnerability checks are fail-closed by default.
+The verification job requires those changelog entries for stable releases,
+then runs the Go tests and `govulncheck` before any publishing job starts. The
+stable changelog check and vulnerability checks are fail-closed by default.
 
 For a stable tag, GitHub Release notes are generated automatically from every
 non-merge commit between the previous stable tag and the new stable tag. Beta

@@ -35,6 +35,10 @@ export function changelogVersionForTag(tag) {
   return parseReleaseTag(tag).version;
 }
 
+export function releaseRequiresChangelog(tag) {
+  return parseReleaseTag(tag).prerelease === null;
+}
+
 function compareVersionParts(left, right) {
   for (let index = 0; index < 3; index += 1) {
     if (left[index] !== right[index]) {
@@ -116,8 +120,6 @@ if (isCli) {
       );
     }
 
-    // 2026-09-11 coder(lq): Prereleases share the base version's product
-    // notes, so v0.4.82-beta.1 intentionally validates the 0.4.82 entry.
     const existingTags = execFileSync("git", ["tag", "--list"], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -125,10 +127,16 @@ if (isCli) {
       .split("\n")
       .filter(Boolean);
     validateReleaseTagSequence({ tag, existingTags });
-    const result = validateReleaseChangelog({ tag, repoRoot });
-    console.log(
-      `Release changelog is ready: ${result.tag} -> ${result.version} (${CHANGELOG_LOCALE_FILES.length} locales).`,
-    );
+    if (releaseRequiresChangelog(tag)) {
+      const result = validateReleaseChangelog({ tag, repoRoot });
+      console.log(
+        `Release changelog is ready: ${result.tag} -> ${result.version} (${CHANGELOG_LOCALE_FILES.length} locales).`,
+      );
+    } else {
+      // 2026-09-22 coder(lq): Product notes are finalized for the stable tag;
+      // prereleases still enforce tag ordering without requiring draft notes.
+      console.log(`Prerelease tag is ready: ${tag}; changelog check skipped.`);
+    }
   } catch (error) {
     console.error(`::error::${error.message}`);
     process.exitCode = 1;
