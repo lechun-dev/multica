@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to build and publish (for example v0.4.90)
+        description: Keep "Use workflow from" on main, then enter the existing tag to rebuild (for example v0.5.2-beta.7)
         required: true
         type: string
 
@@ -35,14 +35,24 @@ jobs:
     name: Verify release metadata
     runs-on: ubuntu-latest
     steps:
-      - name: Check out release tag
+      # 2026-09-23 coder(lq): Use the latest policy from the default branch so
+      # historical tags can be rebuilt without carrying stale validation code.
+      - name: Check out release policy
         uses: actions/checkout@v5
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
 
+      - name: Require existing release tag
+        shell: bash
+        run: |
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "::error::Desktop releases must use an existing tag; got '$RELEASE_TAG'."
+            exit 1
+          fi
+
       - name: Require matching changelog entry
-        run: node scripts/check-release-changelog.mjs "$RELEASE_TAG"
+        run: node scripts/check-release-changelog.mjs "$RELEASE_TAG" --allow-existing-prerelease
 
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}

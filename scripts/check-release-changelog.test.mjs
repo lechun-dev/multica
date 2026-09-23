@@ -96,6 +96,29 @@ test("rejects a prerelease on an already stable version", () => {
   );
 });
 
+test("allows rebuilding an existing prerelease on a stable version", () => {
+  assert.deepEqual(
+    validateReleaseTagSequence({
+      tag: "v0.4.85-beta.5",
+      existingTags: ["v0.4.84", "v0.4.85-beta.5", "v0.4.85"],
+      allowExistingPrerelease: true,
+    }),
+    { tag: "v0.4.85-beta.5", latestStableTag: "v0.4.85" },
+  );
+});
+
+test("does not allow a new prerelease on a stable version during rebuild", () => {
+  assert.throws(
+    () =>
+      validateReleaseTagSequence({
+        tag: "v0.4.85-beta.6",
+        existingTags: ["v0.4.84", "v0.4.85-beta.5", "v0.4.85"],
+        allowExistingPrerelease: true,
+      }),
+    /must use a version newer than latest stable v0\.4\.85/,
+  );
+});
+
 test("ignores prereleases when finding the latest stable version", () => {
   assert.deepEqual(
     validateReleaseTagSequence({

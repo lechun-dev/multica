@@ -48,7 +48,11 @@ function compareVersionParts(left, right) {
   return 0;
 }
 
-export function validateReleaseTagSequence({ tag, existingTags }) {
+export function validateReleaseTagSequence({
+  tag,
+  existingTags,
+  allowExistingPrerelease = false,
+}) {
   const candidate = parseReleaseTag(tag);
   if (!candidate.prerelease) {
     return { tag, latestStableTag: null };
@@ -66,11 +70,15 @@ export function validateReleaseTagSequence({ tag, existingTags }) {
     .sort((left, right) => compareVersionParts(right.parts, left.parts));
   const latestStable = stableTags[0];
 
-  // 2026-09-15 coder(lq): Once a base version is stable, all later preview
-  // builds must move to a newer base so updater ordering remains monotonic.
+  const isExistingTag = existingTags.includes(tag);
+
+  // 2026-09-23 coder(lq): Desktop releases may rebuild an existing preview
+  // to recover missing assets. Newly created previews must still move to a
+  // newer base after a stable release so updater ordering remains monotonic.
   if (
     latestStable &&
-    compareVersionParts(candidate.parts, latestStable.parts) <= 0
+    compareVersionParts(candidate.parts, latestStable.parts) <= 0 &&
+    !(allowExistingPrerelease && isExistingTag)
   ) {
     throw new Error(
       `Prerelease ${tag} must use a version newer than latest stable ${latestStable.tag}. Start the next preview line instead.`,
@@ -110,7 +118,13 @@ const isCli =
   fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isCli) {
-  const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME;
+  const args = process.argv.slice(2);
+  const allowExistingPrerelease = args.includes(
+    "--allow-existing-prerelease",
+  );
+  const tag =
+    args.find((argument) => !argument.startsWith("--")) ??
+    process.env.GITHUB_REF_NAME;
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
   try {
@@ -126,7 +140,11 @@ if (isCli) {
     })
       .split("\n")
       .filter(Boolean);
-    validateReleaseTagSequence({ tag, existingTags });
+    validateReleaseTagSequence({
+      tag,
+      existingTags,
+      allowExistingPrerelease,
+    });
     if (releaseRequiresChangelog(tag)) {
       const result = validateReleaseChangelog({ tag, repoRoot });
       console.log(
