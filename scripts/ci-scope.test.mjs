@@ -80,6 +80,12 @@ const headings = [...jobSource.matchAll(/^  ([\w-]+):$/gm)];
 const jobs = Object.fromEntries(headings.map((match, index) => [
   match[1], jobSource.slice(match.index, headings[index + 1]?.index),
 ]));
+
+test("the changes job uses the shared path-filter source of truth", () => {
+  assert.match(jobs.changes, /^          filters: \.github\/ci-paths\.json$/m);
+  assert.doesNotMatch(jobs.changes, /^          filters: \|$/m);
+});
+
 function field(source, pattern) {
   const match = source.match(pattern);
   assert.ok(match, `Missing production field: ${pattern}`);
