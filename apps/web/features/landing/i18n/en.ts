@@ -294,6 +294,22 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.2",
+        date: "2026-09-23",
+        title: "More reliable deployments and Agent collaboration",
+        changes: [],
+        features: [],
+        improvements: [
+          "Deployments now run database migrations before service rollout and stop when a migration fails.",
+          "Workspace runtime models are merged and deduplicated with daemon discovery results so configured models remain available.",
+          "Improve Agent execution summaries, task activity, and notification wakeups.",
+        ],
+        fixes: [
+          "Fix issue status list failures caused by schema drift in status icon columns.",
+          "Fix release build dependencies and the timing of stable changelog validation.",
+        ],
+      },
+      {
         version: "0.4.89",
         date: "2026-09-20",
         title: "Speed up issue table permission filtering",

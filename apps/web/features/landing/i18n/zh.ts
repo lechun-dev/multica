@@ -294,6 +294,22 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.2",
+        date: "2026-09-23",
+        title: "提升部署可靠性与智能体协作体验",
+        changes: [],
+        features: [],
+        improvements: [
+          "部署流程会在服务发布前自动执行数据库迁移，并在迁移失败时停止发布。",
+          "运行时模型配置与 daemon 模型发现结果会合并去重，确保空间配置的模型始终可选。",
+          "优化智能体执行摘要、任务动态和通知唤醒体验。",
+        ],
+        fixes: [
+          "修复任务状态图标数据库结构不一致导致的状态列表加载失败。",
+          "修复发布构建依赖和稳定版更新日志校验时机问题。",
+        ],
+      },
+      {
         version: "0.4.89",
         date: "2026-09-20",
         title: "优化任务表格的权限过滤性能",
