@@ -129,4 +129,37 @@ func TestIssueStatusLifecycleMigrationPreservesIdentity(t *testing.T) {
 	if icon != "slash" {
 		t.Fatalf("migration replay erased saved icon: %q", icon)
 	}
+
+	// 2026-09-23 coder(lq): Reproduce a drifted database whose migration ledger
+	// contains 537 even though the column is missing, then verify the repair.
+	if _, err := tx.Exec(ctx, "ALTER TABLE issue_status DROP COLUMN icon"); err != nil {
+		t.Fatal(err)
+	}
+	repairMigration, err := os.ReadFile("../../migrations/600_issue_status_icon_schema_repair.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := tx.Exec(ctx, string(repairMigration)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.QueryRow(ctx, "SELECT icon FROM issue_status WHERE key = 'custom_blocked'").Scan(&icon); err != nil {
+		t.Fatal(err)
+	}
+	if icon != "" {
+		t.Fatalf("repair did not restore the default icon: %q", icon)
+	}
+	if _, err := tx.Exec(ctx, "UPDATE issue_status SET icon = 'slash' WHERE key = 'custom_blocked'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(repairMigration)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, "SELECT icon FROM issue_status WHERE key = 'custom_blocked'").Scan(&icon); err != nil {
+		t.Fatal(err)
+	}
+	if icon != "slash" {
+		t.Fatalf("repair replay erased saved icon: %q", icon)
+	}
 }
