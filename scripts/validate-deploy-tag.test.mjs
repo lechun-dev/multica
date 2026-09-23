@@ -93,3 +93,14 @@ test("routes every named deployment through the shared policy guard", () => {
 test("does not deploy mutable latest images to test automatically", () => {
   assert.doesNotMatch(readWorkflow("deploy-test.yml"), /workflow_run:/);
 });
+
+test("runs database migrations and waits for backend readiness", () => {
+  const sharedWorkflow = readWorkflow("deploy.yml");
+
+  assert.match(
+    sharedWorkflow,
+    /compose run --rm --no-deps --entrypoint \.\/migrate backend up/,
+  );
+  assert.match(sharedWorkflow, /http:\/\/127\.0\.0\.1:8080\/readyz/);
+  assert.match(sharedWorkflow, /Backend did not become ready within 180 seconds/);
+});

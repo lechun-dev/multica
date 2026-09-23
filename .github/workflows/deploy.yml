@@ -59,15 +59,59 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 15m
           script: |
-            set -e
+            set -eu
             cd "${{ inputs.deploy_path || '/deploy/multica' }}"
             image_tag="${{ inputs.image_tag }}"
             export MULTICA_IMAGE_TAG="$image_tag"
+            compose() {
+              docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml "$@"
+            }
             # 2026-09-02 coder(lq): Keep the compose sequence identical between
             # staging and production. Only the target directory and compose
             # project name vary, so both environments reuse the same image pull
             # and recreate flow.
-            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml pull backend frontend
-            docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml up -d --no-build backend frontend
+            compose pull backend frontend
+
+            # 2026-09-23 coder(lq): Run migrations explicitly before replacing
+            # the application. Remote overrides may replace the image entrypoint,
+            # so relying on backend startup can leave the database schema stale.
+            compose run --rm --no-deps --entrypoint ./migrate backend up
+            compose up -d --no-build backend frontend
+
+            # 2026-09-23 coder(lq): A detached compose start only confirms that
+            # containers were created. Require the backend readiness endpoint so
+            # missing migrations and crash loops fail the deployment visibly.
+            backend_container="$(compose ps -q backend)"
+            if [ -z "$backend_container" ]; then
+              echo "Backend container was not created."
+              compose logs --no-color --tail=200 backend
+              exit 1
+            fi
+
+            ready=false
+            attempt=1
+            while [ "$attempt" -le 36 ]; do
+              running="$(docker inspect -f '{{.State.Running}}' "$backend_container" 2>/dev/null || true)"
+              if [ "$running" != "true" ]; then
+                echo "Backend container stopped before becoming ready."
+                compose logs --no-color --tail=200 backend
+                exit 1
+              fi
+              if compose exec -T backend wget -qO- http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+
+            if [ "$ready" != "true" ]; then
+              echo "Backend did not become ready within 180 seconds."
+              compose exec -T backend wget -O- http://127.0.0.1:8080/readyz || true
+              compose logs --no-color --tail=200 backend
+              exit 1
+            fi
+
             docker image prune -f
