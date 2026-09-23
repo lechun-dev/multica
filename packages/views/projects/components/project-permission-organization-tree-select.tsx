@@ -124,7 +124,7 @@ export function ProjectPermissionOrganizationTreeSelect({
           aria-selected={selected}
           onSelect={() => onToggle(node.id)}
         >
-          {node.children.length > 0 ? <button type="button" className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-muted" aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`} onPointerDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); toggleExpanded(node.id); }}>{expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}</button> : <span className="size-5 shrink-0" />}
+          {node.children.length > 0 ? <button type="button" className="flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-muted" aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`} onPointerDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); toggleExpanded(node.id); }}>{expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}</button> : <span className="size-5 shrink-0" />}
           <Checkbox
             checked={selected}
             aria-label={node.name || node.external_id}
