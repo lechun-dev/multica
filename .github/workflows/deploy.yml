@@ -59,14 +59,35 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          command_timeout: 15m
+          # 2026-09-17 coder(lq): Image pulls on the test host can exceed the
+          # action's 10-minute default when registry throughput is low.
+          command_timeout: 30m
           script: |
             set -eu
             cd "${{ inputs.deploy_path || '/deploy/multica' }}"
             image_tag="${{ inputs.image_tag }}"
             export MULTICA_IMAGE_TAG="$image_tag"
+            # 2026-09-17 coder(lq): Test acceptance needs task ACL writes
+            # enabled; production can still set or roll back this phase from
+            # its own .env without changing the deployment workflow.
+            if [ "${{ inputs.environment_name || 'production' }}" = "test" ] && [ -z "${PROJECT_PERMISSION_ROLLOUT_PHASE:-}" ]; then
+              export PROJECT_PERMISSION_ROLLOUT_PHASE=writer
+            fi
+            cat > /tmp/multica-project-permission-rollout.yml <<'YAML'
+            services:
+              backend:
+                environment:
+                  PROJECT_PERMISSION_ROLLOUT_PHASE: ${PROJECT_PERMISSION_ROLLOUT_PHASE:-}
+                  # 2026-09-18 coder(lq): The deployment host keeps its own
+                  # compose files, so forward this policy in the generated
+                  # override to ensure the host .env value reaches the backend.
+                  PROJECT_OWNER_BYPASS_ENABLED: ${PROJECT_OWNER_BYPASS_ENABLED:-true}
+            YAML
+            # 2026-09-23 coder(lq): Every compose call carries the generated
+            # override, so image pull, migration and startup all agree on the
+            # permission policy.
             compose() {
-              docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml "$@"
+              docker compose -p "${{ inputs.compose_project || 'multica' }}" -f docker-compose.selfhost.yml -f docker-compose.selfhost.override.yml -f /tmp/multica-project-permission-rollout.yml "$@"
             }
             # 2026-09-02 coder(lq): Keep the compose sequence identical between
             # staging and production. Only the target directory and compose
@@ -114,4 +135,18 @@ jobs:
               exit 1
             fi
 
+
+            # 2026-09-18 coder(lq): Verify the policy inside the recreated
+            # backend container; checking only the host .env misses compose
+            # forwarding mistakes and stale containers.
+            expected_owner_bypass="${PROJECT_OWNER_BYPASS_ENABLED:-}"
+            if [ -z "$expected_owner_bypass" ] && [ -f .env ]; then
+              expected_owner_bypass="$(sed -n 's/^[[:space:]]*PROJECT_OWNER_BYPASS_ENABLED[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | tr -d '\r' | xargs)"
+            fi
+            expected_owner_bypass="${expected_owner_bypass:-true}"
+            actual_owner_bypass="$(compose exec -T backend sh -c 'printf %s "$PROJECT_OWNER_BYPASS_ENABLED"')"
+            if [ "$actual_owner_bypass" != "$expected_owner_bypass" ]; then
+              echo "PROJECT_OWNER_BYPASS_ENABLED mismatch: expected '$expected_owner_bypass', backend received '$actual_owner_bypass'" >&2
+              exit 1
+            fi
             docker image prune -f

@@ -272,28 +272,14 @@ func (h *Handler) requirePluginIssueProjectPermission(w http.ResponseWriter, r *
 		publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
 		return false
 	}
-	if !issue.ProjectID.Valid {
-		// 2026-09-05 coder(lq): Plugins must honor the same task-owner rule
-		// as the ordinary issue API. A projectless task has no grant row, so
-		// its creator/assignee is resolved as the effective Owner at runtime.
-		allowed, reason := h.projectlessIssueAllowedWithWorkspaceScope(r.Context(), issue, uuidToString(caller.UserID), member, permission, true)
-		if allowed {
-			return true
-		}
-		if reason == "internal" {
-			publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to check project permissions")
-		} else {
-			publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")
-		}
-		return false
-	}
 	subject := projectauth.Subject{
 		UserID:        uuidToString(caller.UserID),
 		WorkspaceID:   workspaceID,
 		WorkspaceRole: projectauth.WorkspaceRole(member.Role),
 	}
-	if err := h.ProjectAuth.CheckIssue(r.Context(), subject, uuidToString(issue.ID), uuidToString(issue.ProjectID), permission); err != nil {
-		if errors.Is(err, projectauth.ErrDisabled) {
+	allowed, reason := h.effectiveIssueAccessAllowed(r.Context(), subject, uuidToString(issue.ID), permission, true)
+	if !allowed {
+		if reason == "internal" || reason == "unavailable" || reason == "migration" {
 			publicapiv1.WriteProblem(w, r, http.StatusInternalServerError, "internal_error", "failed to check project permissions")
 		} else {
 			publicapiv1.WriteProblem(w, r, http.StatusNotFound, "not_found", "issue not found")

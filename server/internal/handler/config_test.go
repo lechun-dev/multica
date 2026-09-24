@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
 func TestGetConfigReportsCdnSignedMode(t *testing.T) {
@@ -111,17 +112,25 @@ func TestGetConfigReportsProjectPermissionSwitch(t *testing.T) {
 	t.Cleanup(func() { testHandler.cfg = origCfg })
 
 	testHandler.cfg.ProjectPermissionEnabled = false
+	testHandler.cfg.ProjectPermissionRolloutPhase = projectauth.RolloutShadow
 	var disabled map[string]json.RawMessage
 	testutil.Call(t, testHandler.GetConfig, httptest.NewRequest(http.MethodGet, "/api/config", nil)).Want(http.StatusOK).JSON(&disabled)
 	if _, ok := disabled["project_permissions_enabled"]; ok {
 		t.Fatal("project_permissions_enabled must be omitted when disabled")
 	}
+	if got := string(disabled["project_permission_rollout_phase"]); got != `"shadow"` {
+		t.Fatalf("project_permission_rollout_phase: want shadow, got %s", got)
+	}
 
 	testHandler.cfg.ProjectPermissionEnabled = true
+	testHandler.cfg.ProjectPermissionRolloutPhase = projectauth.RolloutRestricted
 	var enabled map[string]json.RawMessage
 	testutil.Call(t, testHandler.GetConfig, httptest.NewRequest(http.MethodGet, "/api/config", nil)).Want(http.StatusOK).JSON(&enabled)
 	if got := string(enabled["project_permissions_enabled"]); got != "true" {
 		t.Fatalf("project_permissions_enabled: want true, got %s", got)
+	}
+	if got := string(enabled["project_permission_rollout_phase"]); got != `"restricted"` {
+		t.Fatalf("project_permission_rollout_phase: want restricted, got %s", got)
 	}
 }
 

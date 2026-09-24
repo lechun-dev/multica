@@ -225,8 +225,10 @@ func TestAutopilotVisibility_DeleteRoutesCannotBypassBoundary(t *testing.T) {
 	t.Run("delete trigger", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := newRequestAs(adminID, http.MethodDelete, "/api/autopilots/"+autopilotID+"/triggers/"+triggerID+"?workspace_id="+testWorkspaceID, nil)
-		r = withURLParam(r, "id", autopilotID)
-		r = withURLParam(r, "triggerId", triggerID)
+		// 2026-09-20 coder(lq): withURLParam replaces the whole route context, so
+		// two calls in a row dropped the parent id and the handler refused with
+		// 400 "invalid autopilot id" instead of reaching the visibility guard.
+		r = withURLParams(r, "id", autopilotID, "triggerId", triggerID)
 		testHandler.DeleteAutopilotTrigger(w, r)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404: %s", w.Code, w.Body.String())

@@ -25,6 +25,12 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `UPDATE member SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, adminID); err != nil {
 		t.Fatalf("promote project list admin: %v", err)
 	}
+	// 2026-09-20 coder(lq): The project fixtures below must have a creator that
+	// is neither the owner, the granted member, nor the admin. Creating them as
+	// the workspace owner gave the owner task-creator access, which is a
+	// separate, legitimate path from the workspace-owner scope this test is
+	// trying to measure — the assertion then failed for the wrong reason.
+	creatorID := createPlainMember(t, "project-list-neutral-creator")
 	projectIDs := make([]string, 2)
 	issueIDs := make([]string, 2)
 	projectlessIssueIDs := make([]string, 2)
@@ -47,7 +53,7 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 				100
 			)
 			RETURNING id
-		`, testWorkspaceID, projectIDs[i], fmt.Sprintf("Permission list issue %d", i), testUserID).Scan(&issueIDs[i]); err != nil {
+		`, testWorkspaceID, projectIDs[i], fmt.Sprintf("Permission list issue %d", i), creatorID).Scan(&issueIDs[i]); err != nil {
 			t.Fatalf("create issue %d: %v", i, err)
 		}
 	}
@@ -204,10 +210,17 @@ func TestProjectAndIssueListsRespectCurrentUserPermissions(t *testing.T) {
 			t.Fatalf("workspace owner can see ungranted project issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
 		}
 	}
-	for _, issueID := range projectlessIssueIDs {
-		if ownerIssuesWithoutWorkspaceScope[issueID] {
-			t.Fatalf("workspace owner can see projectless issue %s with workspace scope hidden: %v", issueID, ownerIssuesWithoutWorkspaceScope)
-		}
+	// A task's creator keeps access whichever workspace-owner scope is
+	// requested: creator access is task-scoped and is asserted separately with
+	// the owner switch disabled below. So only the projectless issue created by
+	// another member must disappear here.
+	if ownerIssuesWithoutWorkspaceScope[projectlessIssueIDs[0]] {
+		t.Fatalf("workspace owner can see a projectless issue created by another member %s with workspace scope hidden: %v",
+			projectlessIssueIDs[0], ownerIssuesWithoutWorkspaceScope)
+	}
+	if !ownerIssuesWithoutWorkspaceScope[projectlessIssueIDs[1]] {
+		t.Fatalf("workspace owner lost the projectless issue they created %s with workspace scope hidden: %v",
+			projectlessIssueIDs[1], ownerIssuesWithoutWorkspaceScope)
 	}
 	if err := repository.AddProjectMember(ctx, projectIDs[0], testUserID, projectauth.ProjectViewer); err != nil {
 		t.Fatalf("grant owner explicit visible project: %v", err)

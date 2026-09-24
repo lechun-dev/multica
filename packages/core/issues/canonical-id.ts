@@ -99,7 +99,7 @@ export function useCanonicalIssue(
   // data": a failed resolution must present as terminally not-found, never as
   // still-resolving, or the caller flips back to a loading frame and the
   // remount loop described on `notFound` starts.
-  const failed = resolveEnabled && resolve.isError;
+  const failed = (resolveEnabled && resolve.isError) || (isUuid && detail.isError);
 
   return {
     canonicalId,

@@ -1,6 +1,8 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
 
+export type ProjectPermissionRolloutPhase = "off" | "shadow" | "reader" | "writer" | "restricted";
+
 interface ConfigState {
   cdnDomain: string;
   // True when cdnDomain serves private content via time-bounded signed URLs
@@ -18,6 +20,10 @@ interface ConfigState {
   // Whether the server exposes the additive project-permission overlay.
   // Unknown/older servers default to false so its settings screens stay hidden.
   projectPermissionsEnabled: boolean;
+  // Explicit rollout state keeps reader enforcement and mutation availability
+  // separate. Older servers only expose the boolean and retain their previous
+  // fully-enabled behavior through the fallback in setAuthConfig.
+  projectPermissionRolloutPhase: ProjectPermissionRolloutPhase;
   // Self-host-only gate for the Git provider integration (Forgejo / Gitea /
   // GitLab). When false the whole Settings → Integrations "Git providers"
   // section is hidden. Defaults to false so unknown / older servers and the
@@ -51,6 +57,7 @@ interface ConfigState {
     googleClientId?: string;
     workspaceCreationDisabled?: boolean;
     projectPermissionsEnabled?: boolean;
+    projectPermissionRolloutPhase?: ProjectPermissionRolloutPhase;
     vcsIntegrationAvailable?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -74,6 +81,7 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   projectPermissionsEnabled: false,
+  projectPermissionRolloutPhase: "off",
   vcsIntegrationAvailable: false,
   featureFlags: {},
   serverVersion: "",
@@ -88,7 +96,15 @@ export const configStore = createStore<ConfigState>((set) => ({
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
     projectPermissionsEnabled = false,
-  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable, projectPermissionsEnabled }),
+    projectPermissionRolloutPhase,
+  }) => set({
+    allowSignup,
+    googleClientId,
+    workspaceCreationDisabled,
+    vcsIntegrationAvailable,
+    projectPermissionsEnabled,
+    projectPermissionRolloutPhase: projectPermissionRolloutPhase ?? (projectPermissionsEnabled ? "restricted" : "off"),
+  }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
@@ -120,4 +136,9 @@ export function useFeatureEnabled(key: string, defaultValue = false): boolean {
   return useConfigStore((state) =>
     featureFlagEnabled(state.featureFlags, key, defaultValue),
   );
+}
+
+/** Read-only rollout adapters keep view packages independent of config-store internals. */
+export function useProjectPermissionsEnabled(): boolean {
+  return useConfigStore((state) => state.projectPermissionsEnabled);
 }

@@ -77,6 +77,7 @@ export function AuthInitializer({
           // The permission routes are disabled by default; keep their settings
           // screens hidden until the backend explicitly advertises the switch.
           projectPermissionsEnabled: cfg.project_permissions_enabled === true,
+          projectPermissionRolloutPhase: cfg.project_permission_rollout_phase,
         });
         configStore.getState().setDaemonConfig({
           daemonServerUrl: cfg.daemon_server_url,

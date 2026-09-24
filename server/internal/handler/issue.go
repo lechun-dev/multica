@@ -1840,7 +1840,14 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			countQuery := visibilityCTEs + fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
 			countArgs := args[:len(args)-2]
 			if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-				total = int64(len(issues))
+				// 2026-09-20 coder(lq): Surface the failure instead of degrading to
+				// len(issues). A swallowed count error answered HTTP 200 with a total
+				// that described the page rather than the result set, so pagination
+				// silently lied and callers could not tell a broken count from a
+				// genuinely short page.
+				slog.Warn("ListIssues count failed", "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to count issues")
+				return
 			}
 		}
 	}
@@ -3170,11 +3177,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		if !h.requireParentIssueProjectPermission(w, r, parent, projectUUID) {
 			return
 		}
-		// 2026-09-06 coder(lq): Resolve the inherited project before enforcing
-		// the new-task project binding invariant.
-		if !projectUUID.Valid && parent.ProjectID.Valid {
-			projectUUID = parent.ProjectID
-		}
 		parentIssueUUID = pid
 	}
 	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectUUID, projectauth.IssueCreate) {
@@ -3347,6 +3349,15 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var relationshipSubject projectauth.Subject
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		member, err := h.getWorkspaceMember(r.Context(), creatorID, workspaceID)
+		if err != nil {
+			writeError(w, http.StatusForbidden, "workspace membership is required")
+			return
+		}
+		relationshipSubject = projectauth.Subject{UserID: creatorID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
+	}
 
 	status := req.Status
 	if status == "" {
@@ -3410,13 +3421,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 			return
-		}
-		// 2026-09-06 coder(lq): A child without an explicit project inherits
-		// its parent's project before the create authorization check. This keeps
-		// project-bound sub-issue creation subject to project permissions while
-		// still allowing a genuinely projectless task.
-		if !projectID.Valid && parentIssue.ProjectID.Valid {
-			projectID = parentIssue.ProjectID
 		}
 	}
 	if !h.requireNewIssueProjectPermission(w, r, workspaceID, projectID, projectauth.IssueCreate) {
@@ -3550,6 +3554,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return out
 	}
 
+	beforeCommit := h.issueAccessBeforeCommit()
+	if relationshipSubject.UserID != "" {
+		beforeCommit = h.issueAccessBeforeCommitForSubject(relationshipSubject)
+	}
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 		WorkspaceID:    wsUUID,
 		Title:          req.Title,
@@ -3574,7 +3582,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
-		BeforeCommit:     h.issueAccessBeforeCommit(),
+		BeforeCommit:     beforeCommit,
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment, labels []db.IssueLabel) map[string]any {
 			payload := issueToResponse(issue, prefix)
 			// The event other tabs receive must carry the category too — filling
@@ -3613,8 +3621,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "cannot create a child issue under an archived parent; restore the parent first")
 		return
 	}
-	if errors.Is(err, service.ErrParentProjectMismatch) {
-		writeError(w, http.StatusBadRequest, "parent issue belongs to a different project")
+	if errors.Is(err, errIssueRelationshipForbidden) {
+		writeErrorCode(w, http.StatusForbidden, "issue_relationship_forbidden", "insufficient permission on parent task or target project")
 		return
 	}
 	if errors.Is(err, service.ErrProjectNotFound) {
@@ -3776,7 +3784,7 @@ func refreshUntouchedNullableIssueParams(params *db.UpdateIssueParams, current d
 
 var errIssueFieldConflict = errors.New("issue text field conflict")
 
-func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string) (db.Issue, db.Issue, bool, error) {
+func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.UUID, params db.UpdateIssueParams, rawFields map[string]json.RawMessage, titleBase, descriptionBase *string, attachmentIDs []pgtype.UUID, statusKey string, subjects ...projectauth.Subject) (db.Issue, db.Issue, bool, error) {
 	if h.TxStarter == nil {
 		return db.Issue{}, db.Issue{}, false, errors.New("atomic issue update requires transaction starter")
 	}
@@ -3843,6 +3851,11 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 	if err != nil {
 		return db.Issue{}, current, false, fmt.Errorf("update locked issue: %w", err)
 	}
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && len(subjects) > 0 {
+		if err := validateIssueRelationshipWithExecutor(ctx, tx, subjects[0], issue); err != nil {
+			return db.Issue{}, current, false, err
+		}
+	}
 
 	attachmentsChanged := false
 	if len(attachmentIDs) > 0 {
@@ -3893,6 +3906,15 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(prevIssue.WorkspaceID)
+	var relationshipSubjects []projectauth.Subject
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		member, memberErr := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+		if memberErr != nil {
+			writeError(w, http.StatusForbidden, "workspace membership is required")
+			return
+		}
+		relationshipSubjects = append(relationshipSubjects, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)})
+	}
 
 	// Read body as raw bytes so we can detect which fields were explicitly sent.
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -4127,13 +4149,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if req.Description != nil || req.TitleBase != nil || req.DescriptionBase != nil || len(attachmentIDs) > 0 {
 		var lockedPrev db.Issue
 		issue, lockedPrev, attachmentsChanged, err = h.updateIssueAtomically(
-			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard,
+			r.Context(), prevIssue.WorkspaceID, params, rawFields, req.TitleBase, req.DescriptionBase, attachmentIDs, statusKeyForGuard, relationshipSubjects...,
 		)
 		if lockedPrev.ID.Valid {
 			prevIssue = lockedPrev
 		}
 	} else {
-		issue, err = h.updateIssueWithProjectAccess(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params)
+		issue, err = h.updateIssueWithProjectAccess(r.Context(), prevIssue.WorkspaceID, statusKeyForGuard, params, relationshipSubjects...)
 	}
 	if err != nil {
 		if writeIssueStatusRaceError(w, err) {
@@ -4141,6 +4163,14 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, errIssueFieldConflict) {
 			writeEditConflict(w, "issue", prevIssue.ID)
+			return
+		}
+		if errors.Is(err, errIssueRelationshipForbidden) {
+			writeErrorCode(w, http.StatusForbidden, "issue_relationship_forbidden", "insufficient permission on parent task or target project")
+			return
+		}
+		if errors.Is(err, service.ErrParentIssueNotFound) || errors.Is(err, service.ErrArchivedParentIssue) || strings.Contains(err.Error(), "circular parent relationship") {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) && req.ExpectedRevision != nil {
@@ -4529,6 +4559,44 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 	if err != nil {
 		return nil, nil, fmt.Errorf("list issue attachment URLs: %w", err)
 	}
+	// 2026-09-20 coder(lq): Deleting a task also gives up its source-context
+	// ownership. The context row and its snapshot clones go away in this same
+	// transaction, and every clone leaves a durable deletion intent so the object
+	// sweeper reclaims the stored object the rows no longer reference. The two
+	// deletion queries existed for this but had no caller, so deleting a target
+	// task silently stranded its context, its clones and their objects.
+	if context, contextErr := qtx.DeleteIssueSourceContextByIssue(ctx, db.DeleteIssueSourceContextByIssueParams{
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+	}); contextErr == nil {
+		clones, cloneErr := qtx.DeleteAttachmentsBySourceContext(ctx, db.DeleteAttachmentsBySourceContextParams{
+			WorkspaceID:     issue.WorkspaceID,
+			SourceContextID: context.ID,
+		})
+		if cloneErr != nil {
+			return nil, nil, fmt.Errorf("delete source context clones: %w", cloneErr)
+		}
+		for _, clone := range clones {
+			// The intent names the object the way the object store does; a store
+			// that cannot derive a key keeps the recorded URL so the sweep still
+			// has something to act on.
+			storageKey := clone.Url
+			if h.Storage != nil {
+				storageKey = h.Storage.KeyFromURL(clone.Url)
+			}
+			if _, intentErr := qtx.RecordSourceContextDeletionObjectIntent(ctx, db.RecordSourceContextDeletionObjectIntentParams{
+				StorageKey:      storageKey,
+				WorkspaceID:     issue.WorkspaceID,
+				SourceContextID: context.ID,
+				AttachmentID:    clone.ID,
+				ObjectUrl:       clone.Url,
+			}); intentErr != nil {
+				return nil, nil, fmt.Errorf("record source context deletion intent: %w", intentErr)
+			}
+		}
+	} else if !errors.Is(contextErr, pgx.ErrNoRows) {
+		return nil, nil, fmt.Errorf("delete issue source context: %w", contextErr)
+	}
 	if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -4617,6 +4685,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
 		return
+	}
+	var relationshipSubjects []projectauth.Subject
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		member, memberErr := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+		if memberErr != nil {
+			writeError(w, http.StatusForbidden, "workspace membership is required")
+			return
+		}
+		relationshipSubjects = append(relationshipSubjects, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)})
 	}
 	// Status is validated against this workspace's catalog, so it has to wait
 	// for wsUUID above. One check for the whole batch — every issue in it
@@ -4806,10 +4883,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				ID:          params.ParentIssueID,
 				WorkspaceID: prevIssue.WorkspaceID,
 			})
-			if err != nil || !parent.ProjectID.Valid || !params.ProjectID.Valid || parent.ProjectID != params.ProjectID {
+			if err != nil {
 				continue
 			}
-			allowed, _ := h.issueProjectAllowed(r, parent, projectauth.View)
+			allowed, _ := h.issueProjectAllowed(r, parent, projectauth.IssueChildCreate)
 			if !allowed {
 				continue
 			}
@@ -4842,13 +4919,13 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			// legacy single-update clients that omit description_base.
 			var lockedPrev db.Issue
 			issue, lockedPrev, _, err = h.updateIssueAtomically(
-				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey,
+				r.Context(), prevIssue.WorkspaceID, params, rawUpdates, nil, nil, nil, batchStatusKey, relationshipSubjects...,
 			)
 			if err == nil {
 				prevIssue = lockedPrev
 			}
 		} else {
-			issue, err = h.updateIssueWithProjectAccess(r.Context(), wsUUID, batchStatusKey, params)
+			issue, err = h.updateIssueWithProjectAccess(r.Context(), wsUUID, batchStatusKey, params, relationshipSubjects...)
 		}
 		if err != nil {
 			// The archive race is a property of the batch's shared target

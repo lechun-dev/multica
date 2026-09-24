@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useCurrentMember } from "@multica/core/permissions";
-import { useConfigStore, useFeatureEnabled } from "@multica/core/config";
+import { useFeatureEnabled, useProjectPermissionsEnabled } from "@multica/core/config";
 import {
   BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
   PLUGINS_V1_FLAG,
@@ -86,9 +86,7 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
   const isWorkspaceOwner = role === "owner";
   const navigation = useNavigation();
   const pluginsEnabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
-  const projectPermissionsEnabled = useConfigStore(
-    (state) => state.projectPermissionsEnabled,
-  );
+  const projectPermissionsEnabled = useProjectPermissionsEnabled();
   const billingEnabled = useFeatureEnabled(
     BILLING_WORKSPACE_SUBSCRIPTIONS_FLAG,
     false,

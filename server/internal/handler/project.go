@@ -473,7 +473,7 @@ func (h *Handler) initializeProjectAccessInTx(ctx context.Context, tx pgx.Tx, wo
 			ProjectID:   projectID,
 			SubjectType: request.SubjectType,
 			SubjectID:   strings.TrimSpace(request.SubjectID),
-			Role:        request.Role,
+			Role:        projectauth.RoleKey(request.Role),
 			Permission:  request.Permission,
 		}
 		if err := service.GrantAccess(ctx, actor, grant); err != nil {
@@ -491,6 +491,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	if len(req.AccessGrants) > 0 && !h.requireProjectAuthorizationEnabled(w) {
 		return
 	}
 	workspaceID := h.resolveWorkspaceID(r)
@@ -648,12 +651,14 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeProjectAccessGrantError(w, err)
 			return
 		}
-		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
-			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-			writeProjectAccessGrantError(w, err)
-			return
+		if h.ProjectAuth.Enabled() {
+			if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+				slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+				writeProjectAccessGrantError(w, err)
+				return
+			}
 		}
-		if project.Description.Valid {
+		if h.ProjectAuth.Enabled() && project.Description.Valid {
 			if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
 				slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 				writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")
@@ -725,12 +730,14 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeProjectAccessGrantError(w, err)
 		return
 	}
-	if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
-		slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
-		writeProjectAccessGrantError(w, err)
-		return
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if err := promoteMemberLeadWithExecutor(r.Context(), tx, uuidToString(project.ID), project.LeadType, project.LeadID); err != nil {
+			slog.Error("grant project lead owner failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
+			writeProjectAccessGrantError(w, err)
+			return
+		}
 	}
-	if project.Description.Valid {
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && project.Description.Valid {
 		if err := promoteMentionedMembersWithExecutor(r.Context(), tx, uuidToString(project.ID), project.Description.String); err != nil {
 			slog.Error("grant mentioned project viewers failed", append(logger.RequestAttrs(r), "project_id", uuidToString(project.ID), "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to initialize mentioned member permissions")

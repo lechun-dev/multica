@@ -25,6 +25,7 @@ type OrganizationTreeSelectProps = {
   removeLabel: string;
   isLoading?: boolean;
   hasError?: boolean;
+  disabled?: boolean;
   ariaLabel?: string;
 };
 
@@ -72,6 +73,7 @@ export function ProjectPermissionOrganizationTreeSelect({
   removeLabel,
   isLoading = false,
   hasError = false,
+  disabled = false,
   ariaLabel,
 }: OrganizationTreeSelectProps) {
   const [open, setOpen] = useState(false);
@@ -147,8 +149,8 @@ export function ProjectPermissionOrganizationTreeSelect({
   };
 
   return (
-    <Popover modal={false} open={open} onOpenChange={setOpen}>
-      <PopoverTrigger nativeButton={false} render={<div role="button" tabIndex={0} className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-body outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" aria-label={ariaLabel || triggerLabel} aria-haspopup="tree" aria-expanded={open}><span className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap">{selectedOrganizations.length === 0 ? <span className="text-muted-foreground">{placeholder}</span> : selectedOrganizations.map((organization) => <span key={organization.id} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-caption"><span className="max-w-40 truncate">{organization.label}</span><button type="button" className="rounded-full text-muted-foreground hover:text-foreground" aria-label={`${removeLabel} ${organization.label}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onToggle(organization.id); }}>×</button></span>)}<span className="sr-only">{triggerLabel}</span></span><ChevronDown className="size-4 shrink-0 text-muted-foreground" /></div>} />
+    <Popover modal={false} open={disabled ? false : open} onOpenChange={(next) => { if (!disabled) setOpen(next); }}>
+      <PopoverTrigger nativeButton={false} render={<div role="button" tabIndex={disabled ? -1 : 0} className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-body outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:bg-muted/40 data-[disabled=true]:text-muted-foreground data-[disabled=true]:hover:bg-muted/40" aria-label={ariaLabel || triggerLabel} aria-haspopup="tree" aria-expanded={disabled ? false : open} aria-disabled={disabled} data-disabled={disabled ? "true" : undefined}><span className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap">{selectedOrganizations.length === 0 ? <span className="text-muted-foreground">{placeholder}</span> : selectedOrganizations.map((organization) => <span key={organization.id} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-caption"><span className="max-w-40 truncate">{organization.label}</span>{disabled ? null : <button type="button" className="rounded-full text-muted-foreground hover:text-foreground" aria-label={`${removeLabel} ${organization.label}`} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onToggle(organization.id); }}>×</button>}</span>)}<span className="sr-only">{triggerLabel}</span></span><ChevronDown className="size-4 shrink-0 text-muted-foreground" /></div>} />
       <PopoverContent align="start" className="w-[var(--anchor-width)] min-w-72 p-1">
         <Command shouldFilter={false}>
           <CommandInput value={search} onValueChange={setSearch} placeholder={placeholder} aria-label={placeholder} />

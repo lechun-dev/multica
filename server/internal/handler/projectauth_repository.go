@@ -6,12 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
@@ -20,7 +21,9 @@ import (
 // generated code and upstream handler structure.
 type projectAuthRepository struct{ db dbExecutor }
 
-var projectPermissionValues = []string{"project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.issue.archive", "project.agent.use", "project.member.manage", "project.settings.manage"}
+var _ projectauth.EffectiveAccessRepository = (*projectAuthRepository)(nil)
+
+var projectPermissionValues = []string{"project.view", "project.edit", "project.issue.create", "project.issue.comment", "project.issue.manage", "project.issue.archive", "project.agent.use", "project.issue.child.create", "project.member.manage", "project.settings.manage"}
 
 func (r *projectAuthRepository) RecordAuthorizationAudit(ctx context.Context, event projectauth.AuthorizationAuditEvent) error {
 	details, err := json.Marshal(event.Details)
@@ -99,7 +102,151 @@ func (r *projectAuthRepository) ActiveOrganizationInWorkspace(ctx context.Contex
 func (r *projectAuthRepository) WorkspaceOwnerBypassEnabled(ctx context.Context, workspaceID string) (bool, error) {
 	_ = ctx
 	_ = workspaceID
-	return os.Getenv("PROJECT_OWNER_BYPASS_ENABLED") != "false", nil
+	return projectauth.WorkspaceOwnerBypassEnabledFromEnvironment(), nil
+}
+
+// IssueAccessResource loads every resource binding needed by the effective
+// access algorithm in one snapshot. Related workspace IDs are returned to the
+// domain layer so inconsistent cross-workspace rows fail closed there.
+func (r *projectAuthRepository) IssueAccessResource(ctx context.Context, workspaceID, issueID string) (projectauth.IssueAccessResource, error) {
+	if r == nil || r.db == nil {
+		return projectauth.IssueAccessResource{}, projectauth.ErrStorageUnavailable
+	}
+	var resource projectauth.IssueAccessResource
+	var creatorType string
+	var originType pgtype.Text
+	var originID pgtype.UUID
+	err := r.db.QueryRow(ctx, `
+		SELECT i.workspace_id::text, i.id::text,
+		       COALESCE(i.project_id::text, ''), COALESCE(p.workspace_id::text, ''),
+		       COALESCE(i.parent_issue_id::text, ''), COALESCE(parent.workspace_id::text, ''),
+		       CASE
+		         WHEN i.creator_type='member' THEN COALESCE(i.creator_id::text, '')
+		         WHEN i.creator_type='agent' AND creator_agent.kind='user' THEN COALESCE(creator_agent.owner_id::text, '')
+		         ELSE ''
+		       END,
+		       CASE
+		         WHEN i.assignee_type='member' THEN COALESCE(i.assignee_id::text, '')
+		         WHEN i.assignee_type='agent' AND assignee_agent.kind='user' THEN COALESCE(assignee_agent.owner_id::text, '')
+		         ELSE ''
+		       END,
+		       i.creator_type, i.origin_type, i.origin_id,
+		       COALESCE(policy.project_access_mode, 'inherit'), COALESCE(policy.policy_version, 1)
+		FROM issue i
+		LEFT JOIN project p ON p.id=i.project_id
+		LEFT JOIN issue parent ON parent.id=i.parent_issue_id
+		LEFT JOIN agent creator_agent
+		  ON creator_agent.id=i.creator_id AND creator_agent.workspace_id=i.workspace_id AND creator_agent.kind='user'
+		LEFT JOIN agent assignee_agent
+		  ON assignee_agent.id=i.assignee_id AND assignee_agent.workspace_id=i.workspace_id AND assignee_agent.kind='user'
+		LEFT JOIN projectauth_issue_policies policy
+		  ON policy.workspace_id=i.workspace_id AND policy.issue_id=i.id
+		WHERE i.workspace_id=$1::uuid AND i.id=$2::uuid`, workspaceID, issueID).
+		Scan(&resource.WorkspaceID, &resource.IssueID, &resource.ProjectID, &resource.ProjectWorkspaceID,
+			&resource.ParentIssueID, &resource.ParentWorkspaceID, &resource.CreatorUserID, &resource.AssigneeUserID,
+			&creatorType, &originType, &originID, &resource.ProjectAccessMode, &resource.PolicyVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return projectauth.IssueAccessResource{}, projectauth.ErrNoProjectAccess
+	}
+	if err != nil {
+		return projectauth.IssueAccessResource{}, wrapProjectPermissionRepositoryError(err)
+	}
+	workspaceUUID, err := util.ParseUUID(resource.WorkspaceID)
+	if err != nil {
+		return projectauth.IssueAccessResource{}, projectauth.ErrCrossWorkspace
+	}
+	resource.OriginatorUserID, err = resolveDelegatedIssueMemberWithExecutor(ctx, r.db, workspaceUUID, creatorType, originType, originID)
+	if err != nil {
+		return projectauth.IssueAccessResource{}, wrapProjectPermissionRepositoryError(err)
+	}
+	return resource, nil
+}
+
+// ListIssueAccessGrants returns only task-scoped rows for one task. Project
+// rows are loaded independently and projected by the domain resolver.
+func (r *projectAuthRepository) ListIssueAccessGrants(ctx context.Context, workspaceID, issueID string) ([]projectauth.AccessGrant, error) {
+	var projectID string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(project_id::text, '') FROM issue
+		WHERE workspace_id=$1::uuid AND id=$2::uuid`, workspaceID, issueID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projectauth.ErrNoProjectAccess
+	}
+	if err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+
+	table := "projectauth_access_grants"
+	projectColumn := "g.project_id::text"
+	permissionColumn := "COALESCE(g.permission, '')"
+	projectPredicate := "AND g.project_id=$3::uuid"
+	args := []any{workspaceID, issueID, projectID}
+	if projectID == "" {
+		table = "projectauth_issue_access_grants"
+		projectColumn = "''"
+		permissionColumn = "''"
+		projectPredicate = ""
+		args = args[:2]
+	}
+	query := fmt.Sprintf(`
+		SELECT g.id::text, g.workspace_id::text, %s, g.issue_id::text,
+		       g.subject_type, COALESCE(g.subject_id, ''), COALESCE(g.role_key, ''),
+		       %s, g.source, COALESCE(g.granted_by::text, ''), g.created_at::text,
+		       c.expires_at,
+		       COALESCE(c.origin_kind, CASE WHEN g.source='system' THEN 'system' ELSE 'manual' END),
+		       COALESCE(c.origin_id::text, '')
+		FROM %s g
+		LEFT JOIN projectauth_grant_constraints c
+		  ON c.workspace_id=g.workspace_id AND c.grant_id=g.id
+		WHERE g.workspace_id=$1::uuid AND g.issue_id=$2::uuid %s
+		ORDER BY g.created_at, g.id`, projectColumn, permissionColumn, table, projectPredicate)
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	defer rows.Close()
+	return scanScopedAccessGrants(rows, projectauth.RoleScopeTask)
+}
+
+func (r *projectAuthRepository) ListProjectAccessGrants(ctx context.Context, workspaceID, projectID string) ([]projectauth.AccessGrant, error) {
+	grants, err := r.ListAccessGrants(ctx, workspaceID, projectID, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, grant := range grants {
+		if grant.Scope != projectauth.RoleScopeProject || grant.IssueID != "" {
+			return nil, projectauth.ErrInvalidRoleScope
+		}
+	}
+	return grants, nil
+}
+
+func scanScopedAccessGrants(rows pgx.Rows, scope projectauth.RoleScope) ([]projectauth.AccessGrant, error) {
+	grants := make([]projectauth.AccessGrant, 0)
+	for rows.Next() {
+		var grant projectauth.AccessGrant
+		var roleKey, permission, grantedBy, originKind, originID string
+		var expiresAt pgtype.Timestamptz
+		if err := rows.Scan(&grant.ID, &grant.WorkspaceID, &grant.ProjectID, &grant.IssueID,
+			&grant.SubjectType, &grant.SubjectID, &roleKey, &permission, &grant.Source, &grantedBy, &grant.CreatedAt,
+			&expiresAt, &originKind, &originID); err != nil {
+			return nil, wrapProjectPermissionRepositoryError(err)
+		}
+		grant.Role, grant.Scope, grant.Permission, grant.GrantedBy = projectauth.RoleKey(roleKey), scope, projectauth.Permission(permission), grantedBy
+		grant.OriginKind, grant.OriginID = originKind, originID
+		if expiresAt.Valid {
+			expires := expiresAt.Time
+			grant.ExpiresAt = &expires
+		}
+		if err := grant.ValidateRoleScope(); err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	return grants, nil
 }
 
 func (r *projectAuthRepository) ProjectRole(ctx context.Context, projectID, userID string) (projectauth.ProjectRole, error) {
@@ -302,8 +449,8 @@ func (r *projectAuthRepository) projectlessIssuePermission(ctx context.Context, 
 			  AND (
 				EXISTS (
 					SELECT 1
-					FROM project_permission_roles rr
-					JOIN project_permission_role_permissions rp ON rp.role_id = rr.id
+					FROM projectauth_task_roles rr
+					JOIN projectauth_task_role_permissions rp ON rp.role_id = rr.id
 					WHERE rr.workspace_id = g.workspace_id
 					  AND rr.role_key = g.role_key
 					  AND rp.permission = $4
@@ -311,12 +458,13 @@ func (r *projectAuthRepository) projectlessIssuePermission(ctx context.Context, 
 				OR (
 					g.role_key IN ('owner', 'manager', 'member', 'viewer')
 					AND NOT EXISTS (
-						SELECT 1 FROM project_permission_roles rr
+						SELECT 1 FROM projectauth_task_roles rr
 						WHERE rr.workspace_id = g.workspace_id AND rr.role_key = g.role_key
 					)
 					AND (
 						$4 = 'project.view'
-						OR ($4 IN ('project.edit', 'project.issue.comment', 'project.issue.archive', 'project.agent.use') AND g.role_key IN ('owner', 'manager', 'member'))
+						OR ($4 IN ('project.edit', 'project.issue.comment', 'project.issue.child.create') AND g.role_key IN ('owner', 'manager', 'member'))
+						OR ($4 IN ('project.issue.archive', 'project.agent.use') AND g.role_key IN ('owner', 'manager'))
 						OR ($4 = 'project.issue.manage' AND g.role_key IN ('owner', 'manager'))
 					)
 				)
@@ -330,7 +478,7 @@ func (r *projectAuthRepository) projectlessIssuePermission(ctx context.Context, 
 
 func taskPermissionAllowedForCompatibility(permission projectauth.Permission) bool {
 	switch permission {
-	case projectauth.View, projectauth.Edit, projectauth.IssueComment, projectauth.IssueManage, projectauth.IssueArchive, projectauth.AgentUse:
+	case projectauth.View, projectauth.Edit, projectauth.IssueComment, projectauth.IssueManage, projectauth.IssueArchive, projectauth.AgentUse, projectauth.IssueChildCreate:
 		return true
 	default:
 		return false
@@ -341,12 +489,15 @@ func taskPermissionAllowedForCompatibility(permission projectauth.Permission) bo
 // projectauth package remains independent of PostgreSQL and generated models.
 func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceID, projectID, issueID string) ([]projectauth.AccessGrant, error) {
 	query := `
-		SELECT id::text, workspace_id::text, project_id::text, COALESCE(issue_id::text, ''),
+		SELECT g.id::text, g.workspace_id::text, g.project_id::text, COALESCE(g.issue_id::text, ''),
 		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
-		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text
-		FROM projectauth_access_grants
-		WHERE workspace_id = $1 AND project_id = $2 AND (($3 = '' AND issue_id IS NULL) OR ($3 <> '' AND (issue_id IS NULL OR issue_id = $3::uuid)))
-		ORDER BY created_at, id`
+		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), g.created_at::text,
+		       c.expires_at, COALESCE(c.origin_kind, ''), COALESCE(c.origin_id::text, '')
+		FROM projectauth_access_grants g
+		LEFT JOIN projectauth_grant_constraints c
+		  ON c.workspace_id = g.workspace_id AND c.grant_id = g.id
+		WHERE g.workspace_id = $1 AND g.project_id = $2 AND (($3 = '' AND g.issue_id IS NULL) OR ($3 <> '' AND (g.issue_id IS NULL OR g.issue_id = $3::uuid)))
+		ORDER BY g.created_at, g.id`
 	rows, err := r.db.Query(ctx, query, workspaceID, projectID, issueID)
 	if err != nil {
 		return nil, wrapProjectPermissionRepositoryError(err)
@@ -354,12 +505,22 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 	grants := make([]projectauth.AccessGrant, 0)
 	for rows.Next() {
 		var grant projectauth.AccessGrant
-		var issueID, roleKey, permission, grantedBy string
+		var issueID, roleKey, permission, grantedBy, originKind, originID string
+		var expiresAt pgtype.Timestamptz
 		if err := rows.Scan(&grant.ID, &grant.WorkspaceID, &grant.ProjectID, &issueID,
-			&grant.SubjectType, &grant.SubjectID, &roleKey, &permission, &grant.Source, &grantedBy, &grant.CreatedAt); err != nil {
+			&grant.SubjectType, &grant.SubjectID, &roleKey, &permission, &grant.Source, &grantedBy, &grant.CreatedAt,
+			&expiresAt, &originKind, &originID); err != nil {
 			return nil, wrapProjectPermissionRepositoryError(err)
 		}
-		grant.IssueID, grant.Role, grant.Permission, grant.GrantedBy = issueID, projectauth.ProjectRole(roleKey), projectauth.Permission(permission), grantedBy
+		grant.IssueID, grant.Role, grant.Permission, grant.GrantedBy = issueID, projectauth.RoleKey(roleKey), projectauth.Permission(permission), grantedBy
+		if expiresAt.Valid {
+			expires := expiresAt.Time
+			grant.ExpiresAt = &expires
+		}
+		grant.OriginKind, grant.OriginID = originKind, originID
+		if err := grant.NormalizeRoleScope(); err != nil {
+			return nil, err
+		}
 		grants = append(grants, grant)
 	}
 	if err := rows.Err(); err != nil {
@@ -388,7 +549,7 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 	if projectCreatorID != "" {
 		projectCreatorOwnerExists := false
 		for _, grant := range grants {
-			if grant.IssueID == "" && grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == projectCreatorID && grant.Role == projectauth.ProjectOwner {
+			if grant.Scope == projectauth.RoleScopeProject && grant.IssueID == "" && grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == projectCreatorID && projectauth.ProjectRole(grant.Role) == projectauth.ProjectOwner {
 				projectCreatorOwnerExists = true
 				break
 			}
@@ -400,7 +561,8 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 				ProjectID:   projectID,
 				SubjectType: projectauth.SubjectUser,
 				SubjectID:   projectCreatorID,
-				Role:        projectauth.ProjectOwner,
+				Role:        projectauth.RoleKey(projectauth.ProjectOwner),
+				Scope:       projectauth.RoleScopeProject,
 				Source:      projectauth.GrantSourceSystem,
 				CreatedAt:   projectCreatedAt,
 			})
@@ -437,13 +599,12 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, wrapProjectPermissionRepositoryError(err)
 		}
-		// A task creator who is also the project creator already has the
-		// project-scope hard Owner row above; do not duplicate it in the task
-		// dialog. Other task creators receive a task-only virtual Owner row.
-		if issueCreatorID != "" && issueCreatorID != projectCreatorID {
+		// Project ownership and task creator ownership are separate sources even
+		// when the same user holds both same-named roles.
+		if issueCreatorID != "" {
 			issueCreatorOwnerExists := false
 			for _, grant := range grants {
-				if grant.IssueID == issueID && grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == issueCreatorID && grant.Role == projectauth.ProjectOwner {
+				if grant.Scope == projectauth.RoleScopeTask && grant.IssueID == issueID && grant.SubjectType == projectauth.SubjectUser && grant.SubjectID == issueCreatorID && projectauth.TaskRole(grant.Role) == projectauth.TaskOwner {
 					issueCreatorOwnerExists = true
 					break
 				}
@@ -456,7 +617,8 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 					IssueID:     issueID,
 					SubjectType: projectauth.SubjectUser,
 					SubjectID:   issueCreatorID,
-					Role:        projectauth.ProjectOwner,
+					Role:        projectauth.RoleKey(projectauth.TaskOwner),
+					Scope:       projectauth.RoleScopeTask,
 					Source:      projectauth.GrantSourceSystem,
 					CreatedAt:   issueCreatedAt,
 				})
@@ -471,30 +633,37 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 // 2026-08-31 coder(lq): Keep read-after-write in the PostgreSQL adapter; the
 // projectauth package remains storage-neutral.
 func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID, projectID, issueID string,
-	subjectType projectauth.SubjectType, subjectID string, role projectauth.ProjectRole, permission projectauth.Permission) (projectauth.AccessGrant, error) {
+	subjectType projectauth.SubjectType, subjectID string, role projectauth.RoleKey, permission projectauth.Permission) (projectauth.AccessGrant, error) {
 	var grant projectauth.AccessGrant
 	var issue, roleKey, permissionKey, source, grantedBy string
 	err := r.db.QueryRow(ctx, `
-		SELECT id::text, workspace_id::text, project_id::text, COALESCE(issue_id::text, ''),
-		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
-		       COALESCE(permission, ''), source, COALESCE(granted_by::text, ''), created_at::text
+		SELECT g.id::text, g.workspace_id::text, g.project_id::text, COALESCE(g.issue_id::text, ''),
+		       g.subject_type, COALESCE(g.subject_id, ''), COALESCE(g.role_key, ''),
+		       COALESCE(g.permission, ''), g.source, COALESCE(g.granted_by::text, ''), g.created_at::text,
+		       constraint_row.expires_at, COALESCE(constraint_row.origin_kind, ''), COALESCE(constraint_row.origin_id::text, '')
 		FROM projectauth_access_grants g
-		WHERE workspace_id=$1 AND project_id=$2
-		  AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
+		LEFT JOIN projectauth_grant_constraints constraint_row
+		  ON constraint_row.workspace_id=g.workspace_id AND constraint_row.grant_id=g.id
+		WHERE g.workspace_id=$1 AND g.project_id=$2
+		  AND g.issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid
 		  AND g.subject_type=$4 AND COALESCE(g.subject_id, '') = COALESCE($5, '')
 		  AND g.role_key IS NOT DISTINCT FROM NULLIF($6,'')
 		  AND g.permission IS NOT DISTINCT FROM NULLIF($7,'')
 		LIMIT 1`, workspaceID, projectID, issueID, string(subjectType), subjectID, string(role), string(permission)).
 		Scan(&grant.ID, &grant.WorkspaceID, &grant.ProjectID, &issue, &grant.SubjectType, &grant.SubjectID,
-			&roleKey, &permissionKey, &source, &grantedBy, &grant.CreatedAt)
+			&roleKey, &permissionKey, &source, &grantedBy, &grant.CreatedAt,
+			&grant.ExpiresAt, &grant.OriginKind, &grant.OriginID)
 	if err != nil {
 		return projectauth.AccessGrant{}, wrapProjectPermissionRepositoryError(err)
 	}
 	grant.IssueID = issue
-	grant.Role = projectauth.ProjectRole(roleKey)
+	grant.Role = projectauth.RoleKey(roleKey)
 	grant.Permission = projectauth.Permission(permissionKey)
 	grant.Source = projectauth.GrantSource(source)
 	grant.GrantedBy = grantedBy
+	if err := grant.NormalizeRoleScope(); err != nil {
+		return projectauth.AccessGrant{}, err
+	}
 	return grant, nil
 }
 
@@ -613,6 +782,9 @@ func (r *projectAuthRepository) RecordUserLogin(ctx context.Context, userID stri
 }
 
 func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant projectauth.AccessGrant) error {
+	if err := grant.NormalizeRoleScope(); err != nil {
+		return err
+	}
 	if grant.WorkspaceID == "" && grant.ProjectID != "" {
 		workspaceID, err := r.ProjectWorkspace(ctx, grant.ProjectID)
 		if err != nil {
@@ -624,7 +796,9 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 	// persistence seam. Service methods and compatibility adapters already
 	// normalize this role, but direct repository callers must not be able to
 	// downgrade a project/task creator to Member or Viewer.
-	if grant.SubjectType == projectauth.SubjectUser && grant.Permission == "" && grant.Role != projectauth.ProjectOwner {
+	isOwnerRole := (grant.Scope == projectauth.RoleScopeProject && projectauth.ProjectRole(grant.Role) == projectauth.ProjectOwner) ||
+		(grant.Scope == projectauth.RoleScopeTask && projectauth.TaskRole(grant.Role) == projectauth.TaskOwner)
+	if grant.SubjectType == projectauth.SubjectUser && grant.Permission == "" && !isOwnerRole {
 		creatorID := ""
 		var err error
 		if grant.IssueID != "" {
@@ -636,7 +810,11 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 			return err
 		}
 		if creatorID != "" && creatorID == grant.SubjectID {
-			grant.Role = projectauth.ProjectOwner
+			if grant.Scope == projectauth.RoleScopeTask {
+				grant.Role = projectauth.RoleKey(projectauth.TaskOwner)
+			} else {
+				grant.Role = projectauth.RoleKey(projectauth.ProjectOwner)
+			}
 		}
 	}
 	// 2026-09-05 coder(lq): The project/task uniqueness indexes are partial
@@ -664,10 +842,35 @@ func (r *projectAuthRepository) UpsertAccessGrant(ctx context.Context, grant pro
 		  AND permission IS NOT DISTINCT FROM NULLIF($7,'')`,
 		grant.WorkspaceID, grant.ProjectID, grant.IssueID, string(grant.SubjectType), grant.SubjectID,
 		string(grant.Role), string(grant.Permission), string(grant.Source), grant.GrantedBy)
+	if err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	persisted, err := r.GetAccessGrant(ctx, grant.WorkspaceID, grant.ProjectID, grant.IssueID,
+		grant.SubjectType, grant.SubjectID, grant.Role, grant.Permission)
+	if err != nil {
+		return err
+	}
+	return persistGrantConstraint(ctx, r.db, grant.WorkspaceID, persisted.ID, grant.ExpiresAt, grant.OriginKind, grant.OriginID)
+}
+
+func persistGrantConstraint(ctx context.Context, executor dbExecutor, workspaceID, grantID string, expiresAt *time.Time, originKind, originID string) error {
+	if expiresAt == nil && originKind == "" && originID == "" {
+		_, err := executor.Exec(ctx, `DELETE FROM projectauth_grant_constraints WHERE workspace_id=$1 AND grant_id=$2`, workspaceID, grantID)
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	if originKind == "" {
+		originKind = "manual"
+	}
+	_, err := executor.Exec(ctx, `
+		INSERT INTO projectauth_grant_constraints (workspace_id, grant_id, expires_at, origin_kind, origin_id)
+		VALUES ($1,$2,$3,$4,NULLIF($5,'')::uuid)
+		ON CONFLICT (workspace_id, grant_id) DO UPDATE
+		SET expires_at=EXCLUDED.expires_at, origin_kind=EXCLUDED.origin_kind,
+		    origin_id=EXCLUDED.origin_id, updated_at=now()`, workspaceID, grantID, expiresAt, originKind, originID)
 	return wrapProjectPermissionRepositoryError(err)
 }
 
-func (r *projectAuthRepository) DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType projectauth.SubjectType, subjectID string, role projectauth.ProjectRole, permission projectauth.Permission) error {
+func (r *projectAuthRepository) DeleteAccessGrant(ctx context.Context, workspaceID, projectID, issueID string, subjectType projectauth.SubjectType, subjectID string, role projectauth.RoleKey, permission projectauth.Permission) error {
 	_, err := r.db.Exec(ctx, `
 		WITH project_lock AS (
 			SELECT pg_advisory_xact_lock(hashtextextended(($2::uuid)::text, 0))
@@ -863,6 +1066,78 @@ func (r *projectAuthRepository) RolePermissions(ctx context.Context, workspaceID
 	return permissions, found, wrapProjectPermissionRepositoryError(err)
 }
 
+// TaskRolePermissions resolves the task-specific role catalog. Keeping this
+// query separate from RolePermissions prevents a project role override from
+// silently changing task access for the same role key.
+// 2026-09-14 coder(lq): Wire the independent LC-797 task role persistence.
+func (r *projectAuthRepository) TaskRolePermissions(ctx context.Context, workspaceID string, role projectauth.TaskRole) ([]projectauth.Permission, bool, error) {
+	permissions, found, err := r.queryTaskRolePermissions(ctx, workspaceID, role)
+	if err != nil {
+		return nil, false, wrapProjectPermissionRepositoryError(err)
+	}
+	if found || !projectauth.IsSystemTaskRole(role) {
+		return permissions, found, nil
+	}
+	if err := r.ensureTaskSystemRoleDefinitions(ctx, workspaceID); err != nil {
+		return nil, false, wrapProjectPermissionRepositoryError(err)
+	}
+	permissions, found, err = r.queryTaskRolePermissions(ctx, workspaceID, role)
+	return permissions, found, wrapProjectPermissionRepositoryError(err)
+}
+
+func (r *projectAuthRepository) queryTaskRolePermissions(ctx context.Context, workspaceID string, role projectauth.TaskRole) ([]projectauth.Permission, bool, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT permission.permission
+		FROM projectauth_task_roles role
+		LEFT JOIN projectauth_task_role_permissions permission ON permission.role_id = role.id
+		WHERE role.workspace_id = $1 AND role.role_key = $2
+		ORDER BY permission.permission`, workspaceID, string(role))
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	permissions := make([]projectauth.Permission, 0)
+	found := false
+	for rows.Next() {
+		var permission *string
+		if err := rows.Scan(&permission); err != nil {
+			return nil, false, err
+		}
+		found = true
+		if permission != nil {
+			permissions = append(permissions, projectauth.Permission(*permission))
+		}
+	}
+	return permissions, found, wrapProjectPermissionRepositoryError(rows.Err())
+}
+
+func (r *projectAuthRepository) ensureTaskSystemRoleDefinitions(ctx context.Context, workspaceID string) error {
+	_, err := r.db.Exec(ctx, `
+		WITH system_roles(role_key, name) AS (
+			VALUES ('owner', 'Owner'), ('manager', 'Manager'), ('member', 'Member'), ('viewer', 'Viewer')
+		), upserted_roles AS (
+			INSERT INTO projectauth_task_roles (workspace_id, role_key, name, is_system)
+			SELECT $1, role_key, name, true FROM system_roles
+			ON CONFLICT (workspace_id, role_key) DO UPDATE
+			SET name = EXCLUDED.name, is_system = true, updated_at = now()
+			RETURNING id, role_key
+		)
+		INSERT INTO projectauth_task_role_permissions (role_id, permission)
+		SELECT role.id, defaults.permission
+		FROM upserted_roles role
+		JOIN (VALUES
+			('owner','project.view'), ('owner','project.edit'), ('owner','project.issue.comment'),
+			('owner','project.issue.manage'), ('owner','project.issue.archive'), ('owner','project.agent.use'),
+			('owner','project.issue.child.create'), ('manager','project.view'), ('manager','project.edit'),
+			('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'),
+			('manager','project.agent.use'), ('manager','project.issue.child.create'), ('member','project.view'),
+			('member','project.edit'), ('member','project.issue.comment'), ('member','project.issue.child.create'),
+			('viewer','project.view')
+		) AS defaults(role_key, permission) ON defaults.role_key = role.role_key
+		ON CONFLICT DO NOTHING`, workspaceID)
+	return wrapProjectPermissionRepositoryError(err)
+}
+
 func (r *projectAuthRepository) queryRolePermissions(ctx context.Context, workspaceID string, role projectauth.ProjectRole) ([]projectauth.Permission, bool, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT p.permission
@@ -949,6 +1224,7 @@ func (r *projectAuthRepository) ListRoleDefinitions(ctx context.Context, workspa
 		for _, permission := range permissions {
 			role.Permissions = append(role.Permissions, projectauth.Permission(permission))
 		}
+		role.Scope = projectauth.RoleScopeProject
 		result = append(result, role)
 	}
 	return result, wrapProjectPermissionRepositoryError(rows.Err())
@@ -1022,7 +1298,7 @@ func (r *projectAuthRepository) ensureSystemRoleDefinitions(ctx context.Context,
 			('owner','project.view'), ('owner','project.edit'), ('owner','project.issue.create'),
 			('owner','project.issue.comment'), ('owner','project.issue.manage'), ('owner','project.issue.archive'), ('owner','project.agent.use'), ('owner','project.member.manage'),
 			('owner','project.settings.manage'), ('manager','project.view'), ('manager','project.edit'),
-			('manager','project.issue.create'), ('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'), ('manager','project.agent.use'),
+			('manager','project.issue.create'), ('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'), ('manager','project.agent.use'), ('manager','project.member.manage'),
 			('member','project.view'), ('member','project.issue.create'), ('member','project.issue.comment'), ('member','project.issue.archive'), ('member','project.agent.use'),
 			('viewer','project.view')
 		) AS defaults(role_key, permission) ON defaults.role_key = inserted.role_key
@@ -1169,7 +1445,7 @@ func (r *projectAuthRepository) AddProjectMember(ctx context.Context, projectID,
 		// run the permission migrations instead of returning a generic 500.
 		return wrapProjectPermissionRepositoryError(err)
 	}
-	return r.UpsertAccessGrant(ctx, projectauth.AccessGrant{ProjectID: projectID, SubjectType: projectauth.SubjectUser, SubjectID: userID, Role: role, Source: projectauth.GrantSourceManual})
+	return r.UpsertAccessGrant(ctx, projectauth.AccessGrant{ProjectID: projectID, SubjectType: projectauth.SubjectUser, SubjectID: userID, Role: projectauth.RoleKey(role), Scope: projectauth.RoleScopeProject, Source: projectauth.GrantSourceManual})
 }
 
 // 2026-08-27 coder(lq): Keep automatic role upgrades atomic in PostgreSQL so
@@ -1209,7 +1485,7 @@ func (r *projectAuthRepository) PromoteProjectMember(ctx context.Context, projec
 		// the error to a client-visible migration response.
 		return wrapProjectPermissionRepositoryError(err)
 	}
-	return r.UpsertAccessGrant(ctx, projectauth.AccessGrant{ProjectID: projectID, SubjectType: projectauth.SubjectUser, SubjectID: userID, Role: minimumRole, Source: projectauth.GrantSourceSystem})
+	return r.UpsertAccessGrant(ctx, projectauth.AccessGrant{ProjectID: projectID, SubjectType: projectauth.SubjectUser, SubjectID: userID, Role: projectauth.RoleKey(minimumRole), Scope: projectauth.RoleScopeProject, Source: projectauth.GrantSourceSystem})
 }
 
 func (r *projectAuthRepository) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
@@ -1332,6 +1608,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 	if err := r.ensureSystemRoleDefinitions(ctx, filter.WorkspaceID); err != nil {
 		return projectauth.PermissionReportResult{}, wrapProjectPermissionRepositoryError(err)
 	}
+	if err := r.ensureTaskSystemRoleDefinitions(ctx, filter.WorkspaceID); err != nil {
+		return projectauth.PermissionReportResult{}, wrapProjectPermissionRepositoryError(err)
+	}
 	// 2026-09-04 coder(lq): Keep synthetic workspace-owner rows aligned with
 	// every other visibility query. When the deployment disables the owner
 	// bypass, the report must not claim access that list/detail endpoints deny.
@@ -1341,14 +1620,18 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			SELECT g.id::text AS grant_id, g.workspace_id::text AS workspace_id,
 				g.project_id::text AS project_id, COALESCE(g.issue_id::text, '') AS issue_id,
 				g.subject_type, COALESCE(g.subject_id, '') AS subject_id,
-				g.role_key, g.permission, g.source, COALESCE(g.granted_by::text, '') AS granted_by
+				g.role_key, g.permission, g.source, COALESCE(g.granted_by::text, '') AS granted_by,
+				g.created_at, constraint_row.expires_at
 			FROM projectauth_access_grants g
 			JOIN project p ON p.id = g.project_id AND p.workspace_id = g.workspace_id
+			LEFT JOIN projectauth_grant_constraints constraint_row
+			  ON constraint_row.workspace_id = g.workspace_id AND constraint_row.grant_id = g.id
 			WHERE g.workspace_id = $1
 			  AND ($2 = '' OR g.project_id::text = $2)
 			  -- Project grants remain in scope when the report is filtered to one
 			  -- issue because they materialize inherited permissions below.
 			  AND ($3 = '' OR g.issue_id IS NULL OR g.issue_id::text = $3)
+			  AND (constraint_row.expires_at IS NULL OR constraint_row.expires_at > now())
 
 			UNION ALL
 
@@ -1358,7 +1641,7 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			-- effective Owner role. A physical Owner grant wins this de-dup check.
 			SELECT 'creator-owner-project-' || p.id::text, p.workspace_id::text,
 				p.id::text, ''::text, 'user'::text, p.created_by::text,
-				'owner'::text, NULL::text, 'system'::text, ''::text
+				'owner'::text, NULL::text, 'system'::text, ''::text, p.created_at, NULL::timestamptz
 			FROM project p
 			JOIN member creator_member
 			  ON creator_member.workspace_id = p.workspace_id
@@ -1389,7 +1672,7 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 					WHEN i.creator_type = 'agent' AND a.kind = 'user' THEN a.owner_id::text
 					ELSE ''
 				END,
-				'owner'::text, NULL::text, 'system'::text, ''::text
+				'owner'::text, NULL::text, 'system'::text, ''::text, i.created_at, NULL::timestamptz
 			FROM issue i
 			JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
 			LEFT JOIN agent a
@@ -1430,7 +1713,14 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 			JOIN project_permission_roles rd
 			  ON rd.workspace_id = c.workspace_id::uuid AND rd.role_key = c.role_key
 			JOIN project_permission_role_permissions rp ON rp.role_id = rd.id
-			WHERE c.role_key IS NOT NULL
+			WHERE c.role_key IS NOT NULL AND c.issue_id = ''
+			UNION ALL
+			SELECT c.*, rp.permission AS permission_key
+			FROM canonical c
+			JOIN projectauth_task_roles rd
+			  ON rd.workspace_id = c.workspace_id::uuid AND rd.role_key = c.role_key
+			JOIN projectauth_task_role_permissions rp ON rp.role_id = rd.id
+			WHERE c.role_key IS NOT NULL AND c.issue_id <> ''
 		), effective_org_members(workspace_id, organization_id, parent_id, user_id) AS (
 			-- 2026-09-03 coder(lq): Materialize each user's active department and
 			-- all active ancestors so reports reflect inherited parent grants too.
@@ -1507,7 +1797,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 				''::text AS issue_id, ''::text AS issue_title, s.effective_user_id AS user_id,
 				COALESCE(u.name, '') AS user_name, COALESCE(u.email, '') AS user_email, COALESCE(m.role, '') AS workspace_role,
 				COALESCE(s.role_key, '') AS project_role, s.permission_key AS permission,
-				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE AS inherited_from_project
+				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE AS inherited_from_project,
+				s.grant_id, s.created_at, s.expires_at, 'project'::text AS source_resource_scope,
+				s.project_id AS source_resource_id, ''::text AS project_access_mode, 0::bigint AS policy_version
 			FROM subjects s
 			JOIN project p ON p.id::text = s.project_id AND p.workspace_id::text = s.workspace_id
 			LEFT JOIN "user" u ON u.id::text = NULLIF(s.effective_user_id, '')
@@ -1518,10 +1810,14 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 
 			SELECT 'issue', s.project_id, p.title, i.id::text, i.title, s.effective_user_id,
 				COALESCE(u.name, ''), COALESCE(u.email, ''), COALESCE(m.role, ''), COALESCE(s.role_key, ''), s.permission_key,
-				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE
+				s.source, s.granted_by, s.subject_type, s.subject_id, FALSE,
+				s.grant_id, s.created_at, s.expires_at, 'task'::text, i.id::text,
+				COALESCE(policy.project_access_mode, 'inherit'), COALESCE(policy.policy_version, 1)
 			FROM subjects s
 			JOIN project p ON p.id::text = s.project_id AND p.workspace_id::text = s.workspace_id
 			JOIN issue i ON i.id::text = s.issue_id AND i.project_id = p.id AND i.workspace_id = p.workspace_id
+			LEFT JOIN projectauth_issue_policies policy
+			  ON policy.workspace_id = i.workspace_id AND policy.issue_id = i.id
 			LEFT JOIN "user" u ON u.id::text = NULLIF(s.effective_user_id, '')
 			LEFT JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = NULLIF(s.effective_user_id, '')
 			WHERE s.issue_id <> ''
@@ -1530,13 +1826,21 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 
 			SELECT 'issue', s.project_id, p.title, i.id::text, i.title, s.effective_user_id,
 				COALESCE(u.name, ''), COALESCE(u.email, ''), COALESCE(m.role, ''), COALESCE(s.role_key, ''), s.permission_key,
-				s.source, s.granted_by, s.subject_type, s.subject_id, TRUE
+				s.source, s.granted_by, s.subject_type, s.subject_id, TRUE,
+				s.grant_id, s.created_at, s.expires_at, 'project'::text, s.project_id,
+				COALESCE(policy.project_access_mode, 'inherit'), COALESCE(policy.policy_version, 1)
 			FROM subjects s
 			JOIN project p ON p.id::text = s.project_id AND p.workspace_id::text = s.workspace_id
 			JOIN issue i ON i.project_id = p.id AND i.workspace_id = p.workspace_id
+			LEFT JOIN projectauth_issue_policies policy
+			  ON policy.workspace_id = i.workspace_id AND policy.issue_id = i.id
 			LEFT JOIN "user" u ON u.id::text = NULLIF(s.effective_user_id, '')
 			LEFT JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = NULLIF(s.effective_user_id, '')
 			WHERE s.issue_id = ''
+			  AND COALESCE(policy.project_access_mode, 'inherit') = 'inherit'
+			  AND s.permission_key IN ('project.view', 'project.edit', 'project.issue.comment',
+				'project.issue.manage', 'project.issue.archive', 'project.agent.use',
+				'project.issue.child.create')
 		), owner_users AS (
 			SELECT m.workspace_id::text AS workspace_id, m.user_id::text AS user_id
 			FROM member m
@@ -1547,14 +1851,17 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 				COALESCE(u.name, '') AS user_name, COALESCE(u.email, '') AS user_email, m.role AS workspace_role,
 				''::text AS project_role, pm.permission, 'workspace_role'::text AS source,
 				''::text AS granted_by, 'user'::text AS subject_type, m.user_id::text AS subject_id,
-				FALSE AS inherited_from_project
+				FALSE AS inherited_from_project, ''::text AS grant_id, p.created_at,
+				NULL::timestamptz AS expires_at, 'workspace'::text AS source_resource_scope,
+				p.workspace_id::text AS source_resource_id, ''::text AS project_access_mode,
+				0::bigint AS policy_version
 			FROM project p
 			JOIN owner_users ou ON ou.workspace_id = p.workspace_id::text
 			JOIN member m ON m.workspace_id = p.workspace_id AND m.user_id::text = ou.user_id
 			JOIN "user" u ON u.id::text = ou.user_id
 			CROSS JOIN (VALUES ('project.view'), ('project.edit'), ('project.issue.create'),
 				('project.issue.comment'), ('project.issue.manage'), ('project.issue.archive'),
-				('project.agent.use'), ('project.member.manage'),
+				('project.agent.use'), ('project.issue.child.create'), ('project.member.manage'),
 				('project.settings.manage')) AS pm(permission)
 			WHERE p.workspace_id = $1 AND (%s)
 
@@ -1565,25 +1872,35 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 				COALESCE(u.name, '') AS user_name, COALESCE(u.email, '') AS user_email, 'owner'::text AS workspace_role,
 				''::text AS project_role, pm.permission, 'workspace_role'::text AS source,
 				''::text AS granted_by, 'user'::text AS subject_type, ou.user_id AS subject_id,
-				TRUE AS inherited_from_project
+				TRUE AS inherited_from_project, ''::text AS grant_id, i.created_at,
+				NULL::timestamptz AS expires_at, 'workspace'::text AS source_resource_scope,
+				p.workspace_id::text AS source_resource_id,
+				COALESCE(policy.project_access_mode, 'inherit') AS project_access_mode,
+				COALESCE(policy.policy_version, 1) AS policy_version
 			FROM issue i
 			JOIN project p ON p.id = i.project_id AND p.workspace_id = i.workspace_id
 			JOIN owner_users ou ON ou.workspace_id = p.workspace_id::text
 			JOIN "user" u ON u.id::text = ou.user_id
-			CROSS JOIN (VALUES ('project.view'), ('project.edit'), ('project.issue.create'),
+			CROSS JOIN (VALUES ('project.view'), ('project.edit'),
 				('project.issue.comment'), ('project.issue.manage'), ('project.issue.archive'),
-				('project.agent.use'), ('project.member.manage'),
-				('project.settings.manage')) AS pm(permission)
+				('project.agent.use'), ('project.issue.child.create')) AS pm(permission)
+			LEFT JOIN projectauth_issue_policies policy
+			  ON policy.workspace_id = i.workspace_id AND policy.issue_id = i.id
 			WHERE p.workspace_id = $1 AND (%s)
+			  AND COALESCE(policy.project_access_mode, 'inherit') = 'inherit'
 		), all_rows AS (
 			SELECT scope, project_id, project_title, issue_id, issue_title, user_id,
 				user_name, user_email, workspace_role, project_role, permission, source,
-				granted_by, subject_type, subject_id, inherited_from_project
+				granted_by, subject_type, subject_id, inherited_from_project, grant_id,
+				created_at, expires_at, source_resource_scope, source_resource_id,
+				project_access_mode, policy_version
 			FROM report_rows
 			UNION ALL
 			SELECT scope, project_id, project_title, issue_id, issue_title, user_id,
 				user_name, user_email, workspace_role, project_role, permission, source,
-				granted_by, subject_type, subject_id, inherited_from_project
+				granted_by, subject_type, subject_id, inherited_from_project, grant_id,
+				created_at, expires_at, source_resource_scope, source_resource_id,
+				project_access_mode, policy_version
 			FROM owner_rows
 		), filtered_rows AS (
 			SELECT DISTINCT * FROM all_rows
@@ -1599,7 +1916,9 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 		SELECT scope, project_id, project_title, issue_id, issue_title,
 			user_id, user_name, user_email, workspace_role, project_role,
 			permission, source, granted_by, subject_type, subject_id,
-			inherited_from_project, COUNT(*) OVER() AS total_count
+			inherited_from_project, grant_id, created_at, expires_at,
+			source_resource_scope, source_resource_id, project_access_mode,
+			policy_version, COUNT(*) OVER() AS total_count
 		FROM filtered_rows
 		ORDER BY project_title, project_id, issue_title, issue_id, user_name, permission, source
 		LIMIT $10 OFFSET $11`, ownerBypass, ownerBypass)
@@ -1615,13 +1934,16 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 	result := projectauth.PermissionReportResult{Rows: make([]projectauth.PermissionReportRow, 0)}
 	for rows.Next() {
 		var row projectauth.PermissionReportRow
-		var issueID, issueTitle, projectRole, grantedBy, subjectID pgtype.Text
-		var workspaceRole, permission, source, subjectType pgtype.Text
+		var issueID, issueTitle, projectRole, grantedBy, subjectID, grantID pgtype.Text
+		var workspaceRole, permission, source, subjectType, sourceResourceScope, sourceResourceID, projectAccessMode pgtype.Text
+		var createdAt, expiresAt pgtype.Timestamptz
 		var inherited bool
-		var total int64
+		var policyVersion, total int64
 		if err := rows.Scan(&row.Scope, &row.ProjectID, &row.ProjectTitle, &issueID, &issueTitle,
 			&row.UserID, &row.UserName, &row.UserEmail, &workspaceRole, &projectRole,
-			&permission, &source, &grantedBy, &subjectType, &subjectID, &inherited, &total); err != nil {
+			&permission, &source, &grantedBy, &subjectType, &subjectID, &inherited,
+			&grantID, &createdAt, &expiresAt, &sourceResourceScope, &sourceResourceID,
+			&projectAccessMode, &policyVersion, &total); err != nil {
 			return projectauth.PermissionReportResult{}, wrapProjectPermissionRepositoryError(err)
 		}
 		if issueID.Valid {
@@ -1648,9 +1970,35 @@ func (r *projectAuthRepository) ListPermissionReport(ctx context.Context, filter
 		if projectRole.Valid {
 			row.ProjectRole = projectauth.ProjectRole(projectRole.String)
 		}
+		if row.ProjectRole != "" {
+			if inherited || row.Scope == "project" {
+				row.RoleScope = projectauth.RoleScopeProject
+			} else {
+				row.RoleScope = projectauth.RoleScopeTask
+			}
+		}
+		if grantID.Valid {
+			row.GrantID = grantID.String
+		}
 		if grantedBy.Valid {
 			row.GrantedBy = grantedBy.String
 		}
+		if createdAt.Valid {
+			row.CreatedAt = createdAt.Time.UTC().Format(time.RFC3339Nano)
+		}
+		if expiresAt.Valid {
+			row.ExpiresAt = expiresAt.Time.UTC().Format(time.RFC3339Nano)
+		}
+		if sourceResourceScope.Valid {
+			row.SourceResourceScope = projectauth.RoleScope(sourceResourceScope.String)
+		}
+		if sourceResourceID.Valid {
+			row.SourceResourceID = sourceResourceID.String
+		}
+		if projectAccessMode.Valid {
+			row.ProjectAccessMode = projectauth.ProjectAccessMode(projectAccessMode.String)
+		}
+		row.PolicyVersion = policyVersion
 		row.InheritedFromProject = inherited
 		result.Rows = append(result.Rows, row)
 		result.Total = total

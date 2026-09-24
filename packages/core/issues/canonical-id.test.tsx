@@ -157,6 +157,19 @@ describe("useCanonicalIssue", () => {
     expect(result.current.isResolving).toBe(false);
   });
 
+  it("reports a failed UUID detail read so the route can distinguish denied from deleted", async () => {
+    getIssue.mockRejectedValue(new Error("issue unavailable"));
+
+    const { result } = renderHook(() => useCanonicalIssue("ws-1", ISSUE_UUID), {
+      wrapper: createWrapper(qc),
+    });
+
+    await waitFor(() => expect(result.current.notFound).toBe(true), { timeout: 5000 });
+    expect(result.current.canonicalId).toBe(ISSUE_UUID);
+    expect(result.current.issue).toBeUndefined();
+    expect(result.current.isResolving).toBe(false);
+  });
+
   // Regression: a failed resolution used to present as "not resolving, no id",
   // so the route handed the raw identifier to IssueDetail, whose observer
   // refetched the failed query, flipped this hook back to resolving, unmounted

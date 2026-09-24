@@ -70,9 +70,13 @@ type Config struct {
 	// ProjectPermissionEnabled enables the additive projectauth overlay. Keep
 	// false during rollout so upstream-compatible workspace behavior is retained.
 	ProjectPermissionEnabled bool
-	AllowSignup              bool
-	AllowedEmails            []string
-	AllowedEmailDomains      []string
+	// ProjectPermissionRolloutPhase separates shadow comparison, reader
+	// enforcement, ordinary ACL writes, and restricted-mode writes. Empty keeps
+	// the legacy boolean behavior for callers that have not migrated yet.
+	ProjectPermissionRolloutPhase projectauth.RolloutPhase
+	AllowSignup                   bool
+	AllowedEmails                 []string
+	AllowedEmailDomains           []string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
@@ -190,6 +194,9 @@ type Handler struct {
 	DB           dbExecutor
 	TxStarter    txStarter
 	ProjectAuth  *projectauth.Service
+	// EffectiveIssueAccess is the single task-authorization decision engine.
+	// ProjectAuth remains the project-scoped administration service.
+	EffectiveIssueAccess projectauth.EffectiveAccessResolver
 	// issueTableWindowCache is initialized only on the request-local Handler
 	// copy used by a repeatable-read table request. It lets facets reuse one
 	// visible-id snapshot without adding mutable state to the shared Handler.
@@ -466,12 +473,18 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
 	// a disabled client, which turns the feature off rather than failing.
 	taskSvc.QuickActions = llmClient
+	projectAuthRepo := &projectAuthRepository{db: executor}
+	rolloutPhase := cfg.ProjectPermissionRolloutPhase
+	if rolloutPhase == "" {
+		rolloutPhase = projectauth.LegacyRolloutPhase(cfg.ProjectPermissionEnabled)
+	}
 	h := &Handler{
 		Queries:                      queries,
 		ReadSelector:                 dbreader.NewPrimaryOnly(queries),
 		DB:                           executor,
 		TxStarter:                    txStarter,
-		ProjectAuth:                  projectauth.New(newProjectAuthRepository(executor), cfg.ProjectPermissionEnabled),
+		ProjectAuth:                  projectauth.NewWithRollout(projectAuthRepo, rolloutPhase),
+		EffectiveIssueAccess:         projectauth.NewEffectiveAccessResolver(projectAuthRepo),
 		Hub:                          hub,
 		DaemonHub:                    daemonHub,
 		DaemonProfileRefresh:         daemonProfileRefresh,
@@ -505,6 +518,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	taskSvc.IssueAgentUseAuthorizer = h.authorizeIssueAgentUse
 	// 2026-09-05 coder(lq): Keep autopilot-created tasks on the same project
 	// authorization path as HTTP and channel-created tasks.
 	h.AutopilotService.BeforeIssueCommit = h.issueAccessBeforeCommit()

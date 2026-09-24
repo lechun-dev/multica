@@ -18,7 +18,7 @@ type issueCountFailureDB struct {
 }
 
 func (db *issueCountFailureDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if strings.HasPrefix(sql, "SELECT COUNT(*) FROM issue i WHERE ") {
+	if strings.Contains(sql, "SELECT COUNT(*) FROM issue i WHERE ") {
 		db.failures++
 		return issueCountFailureRow{}
 	}

@@ -290,11 +290,24 @@ func TestIssueTableQueryAddsProjectVisibilityWhenEnabled(t *testing.T) {
 	if !strings.Contains(compiled.where, "i.project_id IS NULL") {
 		t.Fatalf("explicit include_no_project filter must stay in the page predicate: %q", compiled.where)
 	}
+	// 2026-09-20 coder(lq): The canonical grant predicate reads
+	// projectauth_access_grants under the alias `g` and decides project view from
+	// the grant's permission, then from its role. The older `pag`/`scope_kind`
+	// markers describe a column that never existed on this table.
+	//
+	// main moved the visibility predicate out of the page WHERE clause into a
+	// materialized CTE, so it is asserted where it now lives rather than where it
+	// used to be inlined.
+	if !strings.Contains(compiled.visibilityCTEs, "g.permission = 'project.view'") {
+		t.Fatalf("canonical project visibility grant predicate missing: %q", compiled.visibilityCTEs)
+	}
 	for _, fragment := range []string{
 		"issue_auth_projects AS MATERIALIZED",
 		"issue_auth_visible AS MATERIALIZED",
 		"visible_issue.project_id IS NOT NULL",
-		"visible_issue.project_id IS NULL",
+		// The projectless arm is reached through the direct-grant subquery, which
+		// names its own alias; see the canonical predicate above.
+		"direct_issue.project_id IS NULL",
 		"visible_issue.creator_type = 'member'",
 		"visible_issue.assignee_type = 'member'",
 		"FROM projectauth_access_grants g",

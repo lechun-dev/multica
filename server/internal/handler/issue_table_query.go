@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -134,7 +135,7 @@ type issueTableFiltersRequest struct {
 	IncludeNoProject      bool                         `json:"include_no_project,omitempty"`
 	ProjectStatuses       []string                     `json:"project_statuses,omitempty"`
 	LabelIDs              []string                     `json:"label_ids,omitempty"`
-	Properties            map[string][]string          `json:"properties,omitempty"`
+	Properties            map[string][]json.RawMessage `json:"properties,omitempty"`
 	Date                  *issueTableDateFilterRequest `json:"date,omitempty"`
 	WorkingOnly           bool                         `json:"working_only,omitempty"`
 	WorkingIssueIDs       []string                     `json:"working_issue_ids,omitempty"`
@@ -331,7 +332,7 @@ func canonicalIssueTableFingerprint(workspaceID string, spec issueTableQuerySpec
 	normalized.Filters.WorkingIssueIDs = sortedUniqueStrings(normalized.Filters.WorkingIssueIDs)
 	normalized.Filters.Creators = sortedUniqueActors(normalized.Filters.Creators)
 	for key, values := range normalized.Filters.Properties {
-		normalized.Filters.Properties[key] = sortedUniqueStrings(values)
+		normalized.Filters.Properties[key] = sortedUniqueRawMessages(values)
 	}
 	encoded, err := json.Marshal(struct {
 		WorkspaceID                string              `json:"workspace_id"`
@@ -371,6 +372,38 @@ func sortedUniqueStrings(values []string) []string {
 	sort.Strings(result)
 	if len(result) == 0 {
 		return nil
+	}
+	return result
+}
+
+// sortedUniqueRawMessages canonicalizes a property filter's members the way
+// sortedUniqueStrings does for plain string filters. Members stay raw JSON
+// because one may be a bare value or an operator object, and the table query
+// fingerprint must stay byte-exact across equivalent requests.
+// 2026-09-20 coder(lq): These members were typed []string, so an operator member
+// could not be expressed at all and the request was rejected with 400.
+func sortedUniqueRawMessages(values []json.RawMessage) []json.RawMessage {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	canonical := make([]string, 0, len(values))
+	for _, value := range values {
+		text := string(value)
+		var compacted bytes.Buffer
+		if err := json.Compact(&compacted, value); err == nil {
+			text = compacted.String()
+		}
+		if _, exists := seen[text]; exists {
+			continue
+		}
+		seen[text] = struct{}{}
+		canonical = append(canonical, text)
+	}
+	sort.Strings(canonical)
+	result := make([]json.RawMessage, 0, len(canonical))
+	for _, text := range canonical {
+		result = append(result, json.RawMessage(text))
 	}
 	return result
 }

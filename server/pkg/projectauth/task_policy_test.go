@@ -34,7 +34,7 @@ func (r *legacyGrantAdapter) ListUserOrganizations(context.Context, string, stri
 	return nil, nil
 }
 func (r *legacyGrantAdapter) UpsertAccessGrant(context.Context, AccessGrant) error { return nil }
-func (r *legacyGrantAdapter) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, ProjectRole, Permission) error {
+func (r *legacyGrantAdapter) DeleteAccessGrant(context.Context, string, string, string, SubjectType, string, RoleKey, Permission) error {
 	return nil
 }
 
@@ -175,14 +175,14 @@ func TestCheckIssueAllowsDirectTaskMemberWithoutProjectMembership(t *testing.T) 
 			IssueID:     "issue-1",
 			SubjectType: SubjectUser,
 			SubjectID:   "u-1",
-			Role:        ProjectMember,
+			Role:        RoleKey(ProjectMember),
 			Source:      GrantSourceSystem,
 		}},
 	}
 	service := New(repo, true)
 	subject := Subject{UserID: "u-1", WorkspaceID: "ws-1"}
 
-	for _, permission := range []Permission{View, IssueComment} {
+	for _, permission := range []Permission{View, Edit, IssueComment, IssueChildCreate} {
 		if err := service.CheckIssue(context.Background(), subject, "issue-1", "project-1", permission); err != nil {
 			t.Fatalf("direct task Member should allow %s without project membership: %v", permission, err)
 		}

@@ -74,6 +74,12 @@ type TaskService struct {
 	// exactly as before. Wired in router.go after composiointeg.NewService
 	// succeeds; the concrete type is *composio.Service.
 	Composio ComposioOverlayBuilder
+	// IssueAgentUseAuthorizer is the task-permission seam used by every
+	// issue-bound enqueue path. It deliberately lives as a callback rather than
+	// importing projectauth here: the service remains usable by self-hosted
+	// deployments with the overlay disabled, while the HTTP composition root
+	// supplies the single EffectiveAccessResolver-backed implementation.
+	IssueAgentUseAuthorizer IssueAgentUseAuthorizer
 	// QuickActions generates chat follow-up suggestions through the
 	// server-internal LLM layer. Optional: nil (or a disabled client) turns the
 	// whole feature off — no pending marker, no pills — which is the expected
@@ -91,6 +97,38 @@ type TaskService struct {
 	analyticsContextMu    sync.Mutex
 	analyticsContextCache map[string]analytics.TaskContext
 	analyticsContextOrder []string
+}
+
+// AuthorizationSubject names the human an agent-use decision is judged by. The
+// originator authorizes the run whenever one exists. A scheduled or webhook
+// autopilot run deliberately carries none: originator_user_id stays NULL while
+// the run is accountable to the human responsible for the firing trigger
+// (MUL-4302). Judging that accountable human keeps the task ACL gate in force
+// instead of refusing an otherwise legitimate run, and the gate still fails
+// closed when neither human exists.
+// 2026-09-20 coder(lq): Requiring a valid originator refused every scheduled
+// autopilot, squad and mention enqueue, because those paths are documented to
+// carry no authorizing human.
+func AuthorizationSubject(originatorUserID, accountableUserID pgtype.UUID) pgtype.UUID {
+	if originatorUserID.Valid {
+		return originatorUserID
+	}
+	return accountableUserID
+}
+
+// IssueAgentUseAuthorizer verifies that the accountable human represented by
+// originatorUserID may run an agent against issue. phase is a stable audit
+// dimension (currently enqueue or claim), never user-controlled text.
+type IssueAgentUseAuthorizer func(ctx context.Context, issue db.Issue, originatorUserID pgtype.UUID, phase string) error
+
+func (s *TaskService) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, originatorUserID pgtype.UUID, phase string) error {
+	if s == nil || s.IssueAgentUseAuthorizer == nil {
+		return nil
+	}
+	if !originatorUserID.Valid {
+		return errors.New("issue task authorization requires an accountable human")
+	}
+	return s.IssueAgentUseAuthorizer(ctx, issue, originatorUserID, phase)
 }
 
 type SourceContextObjectStore interface {
@@ -406,6 +444,16 @@ func (s *TaskService) buildRuntimeMCPOverlay(ctx context.Context, originatorUser
 		data.ConnectedApps = raw
 	}
 	return data
+}
+
+// RefreshRuntimeMCPOverlayForClaim recomputes the user/agent connector
+// intersection immediately before dispatch. Enqueue-time data is only a
+// snapshot; rebuilding here removes connectors revoked while the task waited
+// in the queue. A failed or empty refresh returns no overlay (fail closed for
+// delegated connector access while preserving the agent's own MCP config).
+func (s *TaskService) RefreshRuntimeMCPOverlayForClaim(ctx context.Context, originatorUserID pgtype.UUID, agent db.Agent) (json.RawMessage, json.RawMessage) {
+	data := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
+	return data.Overlay, data.ConnectedApps
 }
 
 // resolveOriginatorFromTriggerComment returns the top-of-chain HUMAN user
@@ -1100,7 +1148,7 @@ func (s *TaskService) EnqueueDeferredChannelIssueTask(ctx context.Context, issue
 // claimed while deferred, so the optional external overlay is hydrated after
 // commit without holding database locks across a network call.
 func (s *TaskService) createDeferredChannelIssueTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue, fireAt time.Time) (db.AgentTaskQueue, error) {
-	txService := &TaskService{Queries: q}
+	txService := &TaskService{Queries: q, IssueAgentUseAuthorizer: s.IssueAgentUseAuthorizer}
 	return txService.enqueueIssueTask(ctx, issue, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{Time: fireAt, Valid: true}, OriginDerived)
 }
 
@@ -1235,6 +1283,9 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 		return db.AgentTaskQueue{}, err
 	}
 	originatorUserID := attr.UserID
+	if err := s.authorizeIssueAgentUse(ctx, issue, AuthorizationSubject(attr.UserID, attr.AccountableUserID), "enqueue"); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("authorize issue agent use: %w", err)
+	}
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	createParams := db.CreateAgentTaskParams{
@@ -1410,6 +1461,9 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 		return db.AgentTaskQueue{}, err
 	}
 	originatorUserID := attr.UserID
+	if err := s.authorizeIssueAgentUse(ctx, issue, AuthorizationSubject(attr.UserID, attr.AccountableUserID), "enqueue"); err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("authorize issue agent use: %w", err)
+	}
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
@@ -4849,7 +4903,7 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxRetryingOnContention(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -6573,6 +6627,9 @@ func (s *TaskService) dispatchDelegatedFailureRecovery(ctx context.Context, targ
 		}
 
 		originator, accountable := delegatedFailureRecoveryAttribution(target)
+		if err := s.authorizeIssueAgentUse(ctx, target.issue, AuthorizationSubject(originator, accountable), "enqueue"); err != nil {
+			return delegatedFailureRecoveryCovered, fmt.Errorf("authorize recovery issue agent use: %w", err)
+		}
 		source := attribution.SourceDelegation
 		if !originator.Valid && !accountable.Valid {
 			source = attribution.SourceUnattributed
@@ -6731,6 +6788,53 @@ func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) e
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// isRetryableTxContention reports the SQLSTATEs PostgreSQL raises when it aborts
+// a transaction because of a concurrency conflict rather than because the
+// statement was wrong: 40P01 deadlock_detected and 40001 serialization_failure.
+// Both abort the WHOLE transaction, so the only recovery is to run it again.
+func isRetryableTxContention(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "40P01" || pgErr.Code == "40001"
+}
+
+// runInTxRetryingOnContention runs fn in a transaction like runInTx, retrying the
+// whole transaction when PostgreSQL aborts it for a concurrency conflict.
+//
+// 2026-09-20 coder(lq): Failing a task and rerunning its issue are two deliberate
+// actions on the same single pending slot. A concurrent FailTask and RerunIssue
+// both insert into that slot and both lock the same owner and task rows, so the
+// pair can deadlock; PostgreSQL then rolls the loser back completely.
+// RerunIssue already reclaims and retries under this race, but FailTask used to
+// surface the deadlock, which stranded the parent in 'running' — the state the
+// concurrency contracts exist to prevent. Retrying is safe here: nothing but
+// logging happens inside fn, and the pre-computed retry inputs are resolved
+// before the transaction, so a replay re-derives the same row.
+func (s *TaskService) runInTxRetryingOnContention(ctx context.Context, fn func(*db.Queries) error) error {
+	const maxAttempts = 4
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err = s.runInTx(ctx, fn)
+		if err == nil || !isRetryableTxContention(err) {
+			return err
+		}
+		slog.Warn("task transaction lost a concurrency race, retrying",
+			"attempt", attempt+1,
+			"error", err,
+		)
+		// Bounded backoff so the two racers stop colliding immediately; the
+		// winner's COMMIT is what releases the slot.
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 // ReportProgress broadcasts a progress update via the event bus.

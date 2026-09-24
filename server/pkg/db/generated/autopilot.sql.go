@@ -421,13 +421,13 @@ const createAutopilotTrigger = `-- name: CreateAutopilotTrigger :one
 INSERT INTO autopilot_trigger (
     autopilot_id, kind, enabled, cron_expression, timezone,
     next_run_at, webhook_token, label, provider, event_filters,
-    published_by_type, published_by_id
+    published_by_type, published_by_id, created_by_type, created_by_id
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
     COALESCE($9::text, 'generic'),
     $10,
-    $11, $12
+    $11, $12, $13, $14
 ) RETURNING id, autopilot_id, kind, enabled, cron_expression, timezone, next_run_at, webhook_token, label, last_fired_at, created_at, updated_at, provider, signing_secret, event_filters, published_by_type, published_by_id, created_by_type, created_by_id
 `
 
@@ -444,6 +444,8 @@ type CreateAutopilotTriggerParams struct {
 	EventFilters    []byte             `json:"event_filters"`
 	PublishedByType pgtype.Text        `json:"published_by_type"`
 	PublishedByID   pgtype.UUID        `json:"published_by_id"`
+	CreatedByType   pgtype.Text        `json:"created_by_type"`
+	CreatedByID     pgtype.UUID        `json:"created_by_id"`
 }
 
 func (q *Queries) CreateAutopilotTrigger(ctx context.Context, arg CreateAutopilotTriggerParams) (AutopilotTrigger, error) {
@@ -460,6 +462,8 @@ func (q *Queries) CreateAutopilotTrigger(ctx context.Context, arg CreateAutopilo
 		arg.EventFilters,
 		arg.PublishedByType,
 		arg.PublishedByID,
+		arg.CreatedByType,
+		arg.CreatedByID,
 	)
 	var i AutopilotTrigger
 	err := row.Scan(

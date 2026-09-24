@@ -2,12 +2,16 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/attribution"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
@@ -231,7 +235,16 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		return err
 	}
 	workspaceID := uuidToString(workspaceUUID)
-	addMentions := func(content string) error {
+	// Mentions a manager explicitly withdrew stay withdrawn until the mention is
+	// newer than the withdrawal (migration 528). Without this the reconciliation
+	// would restore the revoked grant on the very next comment, because the text
+	// still names the person.
+	revokedAt, revokedDescriptionDigest, err := loadIssueMentionRevocations(ctx, executor, workspaceID, issueID)
+	if err != nil {
+		return err
+	}
+	descriptionDigest := mentionTextDigest(description)
+	addMentions := func(content string, changedAt time.Time, isDescription bool) error {
 		for _, mention := range util.ParseMentions(content) {
 			if mention.Type != "member" && mention.Type != "agent" {
 				continue
@@ -248,16 +261,32 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 					return err
 				}
 			}
-			if userID != "" {
-				desired[userID] = struct{}{}
+			if userID == "" {
+				continue
 			}
+			if _, already := desired[userID]; already {
+				continue
+			}
+			if at, revoked := revokedAt[userID]; revoked {
+				// A comment's own timestamps say whether it was written or edited
+				// after the withdrawal. The description carries no timestamp of its
+				// own, so it counts again only once that text actually changed.
+				fresh := changedAt.After(at)
+				if isDescription {
+					fresh = descriptionDigest != revokedDescriptionDigest[userID]
+				}
+				if !fresh {
+					continue
+				}
+			}
+			desired[userID] = struct{}{}
 		}
 		return nil
 	}
-	if err := addMentions(description); err != nil {
+	if err := addMentions(description, time.Time{}, true); err != nil {
 		return err
 	}
-	rows, err := executor.Query(ctx, `SELECT content FROM comment WHERE issue_id=$1`, issueID)
+	rows, err := executor.Query(ctx, `SELECT content, GREATEST(created_at, updated_at) FROM comment WHERE issue_id=$1`, issueID)
 	if err != nil {
 		return err
 	}
@@ -265,22 +294,26 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 	// mentions. resolveAgentOwnerWithExecutor issues a QueryRow on the same
 	// transaction connection; doing that while this result set is open makes
 	// pgx return "conn busy".
-	commentContents := make([]string, 0)
+	type commentMentionSource struct {
+		content   string
+		changedAt time.Time
+	}
+	commentContents := make([]commentMentionSource, 0)
 	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
+		var source commentMentionSource
+		if err := rows.Scan(&source.content, &source.changedAt); err != nil {
 			rows.Close()
 			return err
 		}
-		commentContents = append(commentContents, content)
+		commentContents = append(commentContents, source)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	for _, content := range commentContents {
-		if err := addMentions(content); err != nil {
+	for _, source := range commentContents {
+		if err := addMentions(source.content, source.changedAt, false); err != nil {
 			return err
 		}
 	}
@@ -340,11 +373,11 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		currentRows, err = executor.Query(ctx, `
 			SELECT subject_id FROM projectauth_access_grants
 			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user'
-			  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.ProjectMember))
+			  AND role_key=$3 AND permission IS NULL AND source='system'`, issueID, projectID, string(projectauth.TaskMember))
 	} else {
 		currentRows, err = executor.Query(ctx, `
 			SELECT subject_id FROM projectauth_issue_access_grants
-			WHERE issue_id=$1 AND subject_type='user' AND role_key=$2 AND source='system'`, issueID, string(projectauth.ProjectMember))
+			WHERE issue_id=$1 AND subject_type='user' AND role_key=$2 AND source='system'`, issueID, string(projectauth.TaskMember))
 	}
 	if err != nil {
 		return err
@@ -371,11 +404,11 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 		if projectID != "" {
 			_, deleteErr = executor.Exec(ctx, `DELETE FROM projectauth_access_grants
 				WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-				  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.ProjectMember))
+				  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, userID, string(projectauth.TaskMember))
 		} else {
 			_, deleteErr = executor.Exec(ctx, `DELETE FROM projectauth_issue_access_grants
 				WHERE issue_id=$1 AND subject_type='user' AND subject_id=$2
-				  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.ProjectMember))
+				  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.TaskMember))
 		}
 		if deleteErr != nil {
 			return deleteErr
@@ -384,9 +417,9 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 	for userID := range desired {
 		var upsertErr error
 		if projectID != "" {
-			upsertErr = upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.ProjectMember)
+			upsertErr = upsertIssueAccessGrant(ctx, executor, issueID, projectID, userID, projectauth.TaskMember)
 		} else {
-			upsertErr = upsertProjectlessIssueAccessGrant(ctx, executor, issueID, userID, projectauth.ProjectMember)
+			upsertErr = upsertProjectlessIssueAccessGrant(ctx, executor, issueID, userID, projectauth.TaskMember)
 		}
 		if upsertErr != nil {
 			return upsertErr
@@ -420,7 +453,7 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 			return err
 		}
 		if creatorUserID != "" {
-			if err := upsertProjectlessIssueAccessGrant(ctx, executor, issueID, creatorUserID, projectauth.ProjectOwner); err != nil {
+			if err := upsertProjectlessIssueAccessGrant(ctx, executor, issueID, creatorUserID, projectauth.TaskOwner); err != nil {
 				return err
 			}
 		}
@@ -432,7 +465,7 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 		return err
 	}
 	if creatorUserID != "" {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, creatorUserID, projectauth.ProjectOwner); err != nil {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, creatorUserID, projectauth.TaskOwner); err != nil {
 			return err
 		}
 	}
@@ -450,12 +483,12 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 	if previousAssignee != "" && previousAssignee != currentAssignee {
 		if _, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants
 			WHERE issue_id=$1 AND project_id=$2 AND subject_type='user' AND subject_id=$3
-			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.ProjectMember)); err != nil {
+			  AND role_key=$4 AND permission IS NULL AND source='system'`, issueID, projectID, previousAssignee, string(projectauth.TaskMember)); err != nil {
 			return err
 		}
 	}
 	if currentAssignee != "" {
-		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.ProjectMember); err != nil {
+		if err := upsertIssueAccessGrant(ctx, executor, issueID, projectID, currentAssignee, projectauth.TaskMember); err != nil {
 			return err
 		}
 	}
@@ -465,7 +498,7 @@ func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previ
 // 2026-09-05 coder(lq): Projectless issues need the same immutable creator,
 // assignee, and mention roles as project-bound issues, but cannot use the
 // project grant table because its project_id is intentionally NOT NULL.
-func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, userID string, role projectauth.ProjectRole) error {
+func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, userID string, role projectauth.TaskRole) error {
 	var workspaceID string
 	if err := executor.QueryRow(ctx, `SELECT workspace_id::text FROM issue WHERE id=$1`, issueID).Scan(&workspaceID); err != nil {
 		return err
@@ -486,12 +519,12 @@ func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor,
 		WHERE i.id=$1::uuid AND i.project_id IS NULL`, issueID).Scan(&creatorID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if creatorID != "" && creatorID == userID && role == projectauth.ProjectMember {
-		role = projectauth.ProjectOwner
+	if creatorID != "" && creatorID == userID && role == projectauth.TaskMember {
+		role = projectauth.TaskOwner
 		if _, err := executor.Exec(ctx, `
 			DELETE FROM projectauth_issue_access_grants
 			WHERE issue_id=$1::uuid AND subject_type='user' AND subject_id=$2
-			  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.ProjectMember)); err != nil {
+			  AND role_key=$3 AND source='system'`, issueID, userID, string(projectauth.TaskMember)); err != nil {
 			return err
 		}
 	}
@@ -508,7 +541,7 @@ func upsertProjectlessIssueAccessGrant(ctx context.Context, executor dbExecutor,
 // the unified source while legacy issue_permissions remains available for
 // rollback and older handlers. The canonical grant is always a task role;
 // the legacy project.view row is compatibility data only.
-func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, role projectauth.ProjectRole) error {
+func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, projectID, userID string, role projectauth.TaskRole) error {
 	// 2026-09-05 coder(lq): Normalize every automatic task grant against the
 	// task creator, not only the initial create path. A creator can also be the
 	// assignee or a mention target; those events must not leave a duplicate
@@ -530,12 +563,12 @@ func upsertIssueAccessGrant(ctx context.Context, executor dbExecutor, issueID, p
 		return err
 	}
 	if creatorID != "" && creatorID == userID {
-		role = projectauth.ProjectOwner
+		role = projectauth.TaskOwner
 		if _, err := executor.Exec(ctx, `
 			DELETE FROM projectauth_access_grants
 			WHERE issue_id=$1::uuid AND project_id=$2::uuid AND subject_type='user'
 			  AND subject_id=$3 AND role_key=$4 AND permission IS NULL AND source='system'`,
-			issueID, projectID, userID, string(projectauth.ProjectMember)); err != nil {
+			issueID, projectID, userID, string(projectauth.TaskMember)); err != nil {
 			return err
 		}
 	}
@@ -564,6 +597,81 @@ func (h *Handler) issueAccessBeforeCommit() func(context.Context, pgx.Tx, db.Iss
 	}
 }
 
+var errIssueRelationshipForbidden = errors.New("issue relationship permission denied")
+
+// validateIssueRelationshipWithExecutor re-checks the final relationship
+// while the write transaction is still open. The early HTTP checks provide a
+// useful response; this check closes project/parent/archive races and is the
+// authority used by create and update.
+func validateIssueRelationshipWithExecutor(ctx context.Context, executor dbExecutor, subject projectauth.Subject, issue db.Issue) error {
+	if issue.ParentIssueID.Valid {
+		var parentWorkspace pgtype.UUID
+		var archivedAt pgtype.Timestamptz
+		if err := executor.QueryRow(ctx, `
+			SELECT workspace_id, archived_at
+			FROM issue
+			WHERE id=$1::uuid AND workspace_id=$2::uuid`, issue.ParentIssueID, issue.WorkspaceID).Scan(&parentWorkspace, &archivedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return service.ErrParentIssueNotFound
+			}
+			return err
+		}
+		if archivedAt.Valid {
+			return service.ErrArchivedParentIssue
+		}
+
+		var cyclic bool
+		if err := executor.QueryRow(ctx, `
+			WITH RECURSIVE ancestors(id, parent_issue_id) AS (
+				SELECT id, parent_issue_id FROM issue WHERE id=$1::uuid AND workspace_id=$2::uuid
+				UNION
+				SELECT i.id, i.parent_issue_id
+				FROM issue i JOIN ancestors a ON i.id=a.parent_issue_id
+				WHERE i.workspace_id=$2::uuid
+			)
+			SELECT EXISTS (SELECT 1 FROM ancestors WHERE id=$3::uuid)`, issue.ParentIssueID, issue.WorkspaceID, issue.ID).Scan(&cyclic); err != nil {
+			return err
+		}
+		if cyclic {
+			return errors.New("circular parent relationship detected")
+		}
+
+		repo := &projectAuthRepository{db: executor}
+		access, err := projectauth.NewEffectiveAccessResolver(repo).ExplainIssue(ctx, subject, uuidToString(issue.ParentIssueID), projectauth.IssueChildCreate)
+		if err != nil {
+			return err
+		}
+		if !access.Allowed {
+			return errIssueRelationshipForbidden
+		}
+	}
+	if issue.ProjectID.Valid {
+		repo := &projectAuthRepository{db: executor}
+		if err := projectauth.New(repo, true).Check(ctx, subject, uuidToString(issue.ProjectID), projectauth.IssueCreate); err != nil {
+			if errors.Is(err, projectauth.ErrForbidden) || errors.Is(err, projectauth.ErrNoProjectAccess) || errors.Is(err, projectauth.ErrNotWorkspaceMember) {
+				return errIssueRelationshipForbidden
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) issueAccessBeforeCommitForSubject(subject projectauth.Subject) func(context.Context, pgx.Tx, db.Issue) error {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+		return nil
+	}
+	return func(ctx context.Context, tx pgx.Tx, issue db.Issue) error {
+		if err := validateIssueRelationshipWithExecutor(ctx, tx, subject, issue); err != nil {
+			return err
+		}
+		if !h.ProjectAuth.Enabled() {
+			return nil
+		}
+		return syncIssueAccessWithExecutor(ctx, tx, nil, issue)
+	}
+}
+
 // IssueAccessBeforeCommitForChannel exposes the narrow transaction hook needed
 // by the channel engine without coupling that integration package to Handler's
 // projectauth implementation.
@@ -576,7 +684,7 @@ func (h *Handler) IssueAccessBeforeCommitForChannel() func(context.Context, pgx.
 // 2026-08-27 coder(lq): Ordinary issue updates do not otherwise need a
 // transaction. Open one only while project authorization is enabled so the
 // issue assignment/mention and its inherited project role cannot diverge.
-func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams) (db.Issue, error) {
+func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, subjects ...projectauth.Subject) (db.Issue, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		var issue db.Issue
 		err := h.runWithIssueStatusGuard(ctx, workspaceID, statusKey, func(q *db.Queries) error {
@@ -607,8 +715,15 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	if err != nil {
 		return db.Issue{}, err
 	}
-	if err := syncIssueAccessWithExecutor(ctx, tx, &previous, issue); err != nil {
-		return db.Issue{}, fmt.Errorf("promote issue project access: %w", err)
+	if len(subjects) > 0 {
+		if err := validateIssueRelationshipWithExecutor(ctx, tx, subjects[0], issue); err != nil {
+			return db.Issue{}, err
+		}
+	}
+	if h.ProjectAuth.Enabled() {
+		if err := syncIssueAccessWithExecutor(ctx, tx, &previous, issue); err != nil {
+			return db.Issue{}, fmt.Errorf("promote issue project access: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.Issue{}, fmt.Errorf("commit project access issue update: %w", err)
@@ -648,4 +763,37 @@ func (h *Handler) createCommentWithProjectAccess(ctx context.Context, issue db.I
 		return db.CreateCommentRow{}, fmt.Errorf("commit project access comment create: %w", err)
 	}
 	return created, nil
+}
+
+// loadIssueMentionRevocations reads the withdrawal watermark every mention on
+// this task is judged against, plus the description digest captured when it was
+// withdrawn.
+func loadIssueMentionRevocations(ctx context.Context, executor dbExecutor, workspaceID, issueID string) (map[string]time.Time, map[string]string, error) {
+	revokedAt := make(map[string]time.Time)
+	descriptionDigest := make(map[string]string)
+	rows, err := executor.Query(ctx, `
+		SELECT subject_id, revoked_at, description_digest
+		FROM projectauth_issue_mention_revocations
+		WHERE workspace_id=$1 AND issue_id=$2`, workspaceID, issueID)
+	if err != nil {
+		return revokedAt, descriptionDigest, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var subjectID, digest string
+		var at time.Time
+		if err := rows.Scan(&subjectID, &at, &digest); err != nil {
+			return revokedAt, descriptionDigest, err
+		}
+		revokedAt[subjectID] = at
+		descriptionDigest[subjectID] = digest
+	}
+	return revokedAt, descriptionDigest, rows.Err()
+}
+
+// mentionTextDigest fingerprints the description so a withdrawal can tell "this
+// text still names them" from "this text changed since I withdrew it".
+func mentionTextDigest(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }

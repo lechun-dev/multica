@@ -294,6 +294,26 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.3",
+        date: "2026-09-21",
+        title: "Unified task permissions and approvals",
+        changes: [],
+        features: [
+          "Task access follows a single manage permission: granting, revoking and approving all agree, and edit never implies manage.",
+          "Access requests reach every manager of a task, are decided exactly once, and open straight from the inbox notification.",
+          "Access a mention granted can be withdrawn from the task access list; it returns only if the person is mentioned again.",
+        ],
+        improvements: [
+          "The deployment switch PROJECT_OWNER_BYPASS_ENABLED controls whether a workspace owner keeps automatic access to every task.",
+          "My access groups each permission by where it comes from: this task, the project, the parent task, or the workspace.",
+          "A project manager can manage the project's access.",
+        ],
+        fixes: [
+          "Scheduled and webhook automations run again, and task updates no longer stall while a workspace is being deleted.",
+          "Deleting a comment withdraws the access its mentions granted, removal in the access list applies immediately, and a missing permission is explained instead of rendering an empty dialog.",
+        ],
+      },
+      {
         version: "0.5.2",
         date: "2026-09-23",
         title: "More reliable deployments and Agent collaboration",

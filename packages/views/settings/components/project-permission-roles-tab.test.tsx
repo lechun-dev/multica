@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { configStore } from "@multica/core/config";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSettings from "../../locales/en/settings.json";
@@ -66,6 +67,11 @@ describe("ProjectPermissionRolesTab", () => {
   beforeEach(() => {
     access.role = "owner";
     vi.clearAllMocks();
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+      projectPermissionRolloutPhase: "restricted",
+    });
   });
 
   it("shows role management controls to the workspace owner", () => {
@@ -88,4 +94,18 @@ describe("ProjectPermissionRolesTab", () => {
       expect(screen.queryByRole("button", { name: "Delete role" })).not.toBeInTheDocument();
     },
   );
+
+  it("allows the workspace owner to manage roles in any active rollout phase", () => {
+    configStore.getState().setAuthConfig({
+      allowSignup: true,
+      projectPermissionsEnabled: true,
+      projectPermissionRolloutPhase: "reader",
+    });
+
+    render(<ProjectPermissionRolesTab />, { wrapper: Wrapper });
+
+    expect(screen.getByText("Owner")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add role" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(4);
+  });
 });

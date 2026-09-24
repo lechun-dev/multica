@@ -193,6 +193,40 @@ func (s *AutopilotService) AdmitAutopilotWebhookDelivery(
 		return nil, fmt.Errorf("admit webhook delivery: lookup existing run: %w", err)
 	}
 
+	// 2026-09-20 coder(lq): MUL-6951 makes the trigger's immutable creator the
+	// principal a schedule/webhook run fires as, and migration 490 states that a
+	// NULL created_by_id means no principal and "the dispatch fails closed". That
+	// resolution lived only in the column comment: nothing read it, so a legacy
+	// trigger with no recoverable principal was admitted and ran with nobody
+	// authorizing it. Resolve it here, before any other admission decision.
+	trigger, triggerErr := s.Queries.GetAutopilotTrigger(ctx, triggerID)
+	triggerHasPrincipal := triggerErr == nil &&
+		trigger.CreatedByType.String == "member" && trigger.CreatedByID.Valid
+	if triggerErr != nil && !errors.Is(triggerErr, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("admit webhook delivery: load trigger: %w", triggerErr)
+	}
+	if !triggerHasPrincipal {
+		run, err := s.recordSkippedRun(
+			ctx,
+			autopilot,
+			triggerID,
+			"webhook",
+			payload,
+			pgtype.Timestamptz{},
+			deliveryID,
+			"trigger has no authorization principal",
+			dispatch.ReasonAttributionBlocked,
+		)
+		if err != nil {
+			return s.recoverConcurrentWebhookAdmission(
+				ctx,
+				deliveryID,
+				fmt.Errorf("admit webhook delivery: create skipped run: %w", err),
+			)
+		}
+		return run, nil
+	}
+
 	// Webhook admission has no member actor → automation principal (rule_owner);
 	// the per-run reason code is not surfaced to a human here, so it is dropped.
 	if reason, _, skip := s.shouldSkipDispatch(ctx, autopilot, pgtype.UUID{}); skip {

@@ -46,6 +46,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	publicapiv1 "github.com/multica-ai/multica/server/pkg/publicapi/v1"
 )
 
@@ -417,27 +418,29 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 	origins := allowedOrigins()
 
+	projectPermissionRollout := projectPermissionRolloutFromEnv()
 	signupConfig := handler.Config{
-		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
-		ProjectPermissionEnabled: os.Getenv("PROJECT_PERMISSION_ENABLED") == "true",
-		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
-		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
-		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
-		VCSIntegrationEnabled:    os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
-		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
-		AppURL:                   appURLFromEnv(),
-		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
-		CloudURL:                 strings.TrimSpace(os.Getenv("MULTICA_CLOUD_URL")),
-		CloudTimeout:             35 * time.Second,
-		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
-		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
-		AttachmentFrameAncestors: origins,
-		PluginSurfaceOrigin:      strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PLUGIN_SURFACE_ORIGIN")), "/"),
-		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
-		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
-		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
-		LLMMaxRetries:            opts.LLMMaxRetries,
-		ServerVersion:            normalizeServerVersion(version),
+		AllowSignup:                   os.Getenv("ALLOW_SIGNUP") != "false",
+		ProjectPermissionEnabled:      projectPermissionRollout.ReaderEnabled(),
+		ProjectPermissionRolloutPhase: projectPermissionRollout,
+		AllowedEmails:                 splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
+		AllowedEmailDomains:           splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+		VCSIntegrationEnabled:         os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
+		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+		AppURL:                        appURLFromEnv(),
+		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
+		CloudURL:                      strings.TrimSpace(os.Getenv("MULTICA_CLOUD_URL")),
+		CloudTimeout:                  35 * time.Second,
+		AttachmentDownloadMode:        os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
+		AttachmentDownloadURLTTL:      envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
+		AttachmentFrameAncestors:      origins,
+		PluginSurfaceOrigin:           strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PLUGIN_SURFACE_ORIGIN")), "/"),
+		LLMAPIKey:                     strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
+		LLMBaseURL:                    strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
+		LLMDefaultModel:               strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
+		LLMMaxRetries:                 opts.LLMMaxRetries,
+		ServerVersion:                 normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	invitationRateLimits := handler.DefaultInvitationRateLimits()
@@ -2001,12 +2004,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteProjectPermissionRole)
 				})
 			})
+			r.Get("/api/task-permission-roles", h.ListTaskPermissionRoles)
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
+				r.Get("/access-request-target/{id}", h.GetIssueAccessRequestTarget)
 				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
 				r.Post("/table/rows", h.ListIssueTableRows)
@@ -2026,6 +2031,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
+					r.Get("/effective-access", h.GetIssueEffectiveAccess)
+					r.Post("/access-requests", h.CreateIssueAccessRequest)
+					r.Get("/access-requests", h.ListIssueAccessRequests)
+					r.Post("/access-requests/{requestID}/review", h.ReviewIssueAccessRequest)
+					r.Post("/access-requests/{requestID}/cancel", h.CancelIssueAccessRequest)
+					r.Get("/access-control", h.GetIssueAccessControl)
+					r.Post("/access-control/preview", h.PreviewIssueAccessControl)
+					r.Patch("/access-control", h.PatchIssueAccessControl)
+					r.Post("/access-control/revoke-mention", h.RevokeIssueMentionAccess)
 					r.Get("/access-grants", h.ListIssueAccessGrants)
 					r.Post("/access-grants", h.CreateIssueAccessGrant)
 					r.Delete("/access-grants", h.RevokeIssueAccessGrant)
@@ -2471,6 +2485,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 
 	return r, h
+}
+
+func projectPermissionRolloutFromEnv() projectauth.RolloutPhase {
+	raw := strings.TrimSpace(os.Getenv("PROJECT_PERMISSION_ROLLOUT_PHASE"))
+	if raw == "" {
+		return projectauth.LegacyRolloutPhase(os.Getenv("PROJECT_PERMISSION_ENABLED") == "true")
+	}
+	phase, err := projectauth.ParseRolloutPhase(raw)
+	if err != nil {
+		// Authorization rollout configuration is a security boundary. Refuse to
+		// start with a typo instead of silently opening or closing access.
+		panic(err)
+	}
+	return phase
 }
 
 // buildLarkConnector wires the real WS long-conn connector that talks
