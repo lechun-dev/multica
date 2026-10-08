@@ -511,7 +511,7 @@ var launchHeaders = map[string]string{
 	"hermes":      "hermes acp",
 	"kimi":        "kimi acp",
 	"reasonix":    "reasonix acp",
-	"dsh":         "dsh --profile multica (stdio)",
+	"dsh":         "dsh --profile acp",
 	"kiro":        "kiro-cli acp",
 	"openclaw":    "openclaw agent (json)",
 	"opencode":    "opencode run (json)",
