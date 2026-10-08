@@ -3,477 +3,354 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/url"
+	"os"
 	"os/exec"
-	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
-const (
-	dshProfile = "multica"
-	// DshProtocolVersion is the DSH stdio protocol this backend speaks. Exported
-	// because the daemon's profile probe accepts or rejects a runtime profile on
-	// this exact number, and a second copy of it there is a copy that can drift.
-	DshProtocolVersion = 1
-	dshCancelGrace     = 3 * time.Second
-	dshTerminateGrace  = 2 * time.Second
-)
+const DshProtocolVersion = 1
+const dshShutdownGrace = 2 * time.Second
 
-// dshBackend drives the Multica DSH bundle over its versioned JSONL
-// stdio protocol. The adapter is intentionally independent of ACP: DSH owns
-// the agent loop, session store, model catalog, tools, and MCP clients, while
-// this package only translates those events into Multica's Backend contract.
-type dshBackend struct {
-	cfg Config
-}
+type dshBackend struct{ cfg Config }
 
-type dshModelSelection struct {
-	Provider        string `json:"provider"`
-	ID              string `json:"id"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-}
+func dshLaunchArgs() []string { return []string{"--profile", "acp"} }
 
-type dshMCPServer struct {
-	Name              string            `json:"name"`
-	Transport         string            `json:"transport"`
-	Command           string            `json:"command,omitempty"`
-	Args              []string          `json:"args,omitempty"`
-	Env               map[string]string `json:"env,omitempty"`
-	Cwd               string            `json:"cwd,omitempty"`
-	URL               string            `json:"url,omitempty"`
-	Headers           map[string]string `json:"headers,omitempty"`
-	ToolCallTimeoutMS int               `json:"tool_call_timeout_ms,omitempty"`
-}
-
-type dshExecuteCommand struct {
-	Version         int                `json:"v"`
-	Type            string             `json:"type"`
-	RequestID       string             `json:"request_id"`
-	Cwd             string             `json:"cwd"`
-	Prompt          string             `json:"prompt"`
-	ResumeSessionID string             `json:"resume_session_id,omitempty"`
-	Model           *dshModelSelection `json:"model,omitempty"`
-	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
-	MCPServers      []dshMCPServer     `json:"mcp_servers"`
-}
-
-type dshCancelCommand struct {
-	Version   int    `json:"v"`
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-}
-
-type dshWireError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-type dshFrame struct {
-	Version          int             `json:"v"`
-	Type             string          `json:"type"`
-	Runtime          string          `json:"runtime,omitempty"`
-	ProtocolVersion  int             `json:"protocol_version,omitempty"`
-	RequestID        string          `json:"request_id,omitempty"`
-	SessionID        string          `json:"session_id,omitempty"`
-	Resumed          bool            `json:"resumed,omitempty"`
-	Content          string          `json:"content,omitempty"`
-	CallID           string          `json:"call_id,omitempty"`
-	Name             string          `json:"name,omitempty"`
-	Arguments        string          `json:"arguments,omitempty"`
-	Output           string          `json:"output,omitempty"`
-	IsError          bool            `json:"is_error,omitempty"`
-	Provider         string          `json:"provider,omitempty"`
-	Model            string          `json:"model,omitempty"`
-	InputTokens      int64           `json:"input_tokens,omitempty"`
-	OutputTokens     int64           `json:"output_tokens,omitempty"`
-	CacheReadTokens  int64           `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int64           `json:"cache_write_tokens,omitempty"`
-	Status           string          `json:"status,omitempty"`
-	StopReason       string          `json:"stop_reason,omitempty"`
-	ResumeRejected   bool            `json:"resume_rejected,omitempty"`
-	Error            *dshWireError   `json:"error,omitempty"`
-	Code             string          `json:"code,omitempty"`
-	Message          string          `json:"message,omitempty"`
-	Models           []dshModelFrame `json:"models,omitempty"`
-}
-
-type dshThinkingFrame struct {
-	SupportedLevels []ThinkingLevel `json:"supported_levels"`
-	DefaultLevel    string          `json:"default_level,omitempty"`
-}
-
-type dshModelFrame struct {
-	ID       string            `json:"id"`
-	Label    string            `json:"label"`
-	Provider string            `json:"provider,omitempty"`
-	Default  bool              `json:"default,omitempty"`
-	Thinking *dshThinkingFrame `json:"thinking,omitempty"`
-}
-
-func dshLaunchArgs() []string {
-	return []string{"--profile", dshProfile, "--stdio"}
-}
-
-func parseDshModelID(value string) (*dshModelSelection, error) {
-	value = strings.TrimSpace(value)
+// 2026-10-08 coder(lq): Official ACP option values are opaque; never decode or rebuild provider/model IDs.
+func applyDshConfig(ctx context.Context, request acpRequestFn, sessionID string, state json.RawMessage, category, value string) (json.RawMessage, error) {
 	if value == "" {
-		return nil, nil
+		return state, nil
 	}
-	providerPart, modelPart, ok := strings.Cut(value, "/")
-	if !ok || providerPart == "" || modelPart == "" {
-		return nil, fmt.Errorf("dsh model must use the provider/model ID advertised by DSH")
+	var response struct {
+		Options []struct {
+			ID       string           `json:"id"`
+			Category string           `json:"category"`
+			Options  []acpSelectEntry `json:"options"`
+		} `json:"configOptions"`
 	}
-	provider, err := url.PathUnescape(providerPart)
-	if err != nil {
-		return nil, fmt.Errorf("decode dsh model provider: %w", err)
-	}
-	if strings.TrimSpace(provider) == "" {
-		return nil, errors.New("dsh model provider is empty")
-	}
-	model, err := url.PathUnescape(modelPart)
-	if err != nil {
-		return nil, fmt.Errorf("decode dsh model ID: %w", err)
-	}
-	if strings.TrimSpace(model) == "" {
-		return nil, errors.New("dsh model ID is empty")
-	}
-	return &dshModelSelection{Provider: provider, ID: model}, nil
-}
-
-func buildDshMCPServers(raw json.RawMessage, logger interface {
-	Warn(string, ...any)
-}) ([]dshMCPServer, error) {
-	servers, err := buildACPMcpServers(raw, nil)
-	if err != nil {
+	if err := json.Unmarshal(state, &response); err != nil {
 		return nil, err
 	}
-	out := make([]dshMCPServer, 0, len(servers))
-	for _, rawServer := range servers {
-		server, ok := rawServer.(map[string]any)
-		if !ok {
+	for _, option := range response.Options {
+		if option.Category != category || option.ID == "" {
 			continue
 		}
-		name, _ := server["name"].(string)
-		if command, _ := server["command"].(string); command != "" {
-			entry := dshMCPServer{Name: name, Transport: "stdio", Command: command, Args: []string{}, Env: map[string]string{}}
-			if args, ok := server["args"].([]string); ok {
-				entry.Args = args
-			}
-			if pairs, ok := server["env"].([]map[string]any); ok {
-				for _, pair := range pairs {
-					key, _ := pair["name"].(string)
-					value, _ := pair["value"].(string)
-					if key != "" {
-						entry.Env[key] = value
-					}
-				}
-			}
-			out = append(out, entry)
-			continue
-		}
-
-		transport, _ := server["type"].(string)
-		if transport == "sse" {
-			return nil, fmt.Errorf("dsh MCP server %q uses SSE, but the DSH runtime supports stdio and streamable HTTP only", name)
-		}
-		remoteURL, _ := server["url"].(string)
-		if remoteURL == "" {
-			if logger != nil {
-				logger.Warn("skipping invalid DSH MCP server", "name", name)
-			}
-			continue
-		}
-		entry := dshMCPServer{Name: name, Transport: "streamable-http", URL: remoteURL, Headers: map[string]string{}}
-		if pairs, ok := server["headers"].([]map[string]any); ok {
-			for _, pair := range pairs {
-				key, _ := pair["name"].(string)
-				value, _ := pair["value"].(string)
-				if key != "" {
-					entry.Headers[key] = value
-				}
+		supported := false
+		for _, choice := range flattenACPSelectChoices(option.Options) {
+			if choice.Value == value {
+				supported = true
 			}
 		}
-		out = append(out, entry)
+		if !supported {
+			return nil, fmt.Errorf("dsh does not advertise requested %s %q", category, value)
+		}
+		result, err := request(ctx, "session/set_config_option", map[string]any{"sessionId": sessionID, "configId": option.ID, "value": value})
+		if err != nil {
+			return nil, err
+		}
+		current, ok := acpConfigOptionCurrentValue(result, option.ID)
+		if !ok || current != value {
+			return nil, fmt.Errorf("dsh did not confirm requested %s %q", category, value)
+		}
+		return result, nil
 	}
-	return out, nil
+	return nil, fmt.Errorf("dsh advertises no %s selector", category)
 }
 
 func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
-	execPath := b.cfg.ExecutablePath
-	if execPath == "" {
-		execPath = "dsh"
+	path := b.cfg.ExecutablePath
+	if path == "" {
+		path = "dsh"
 	}
-	if _, err := exec.LookPath(execPath); err != nil {
-		return nil, fmt.Errorf("dsh executable not found at %q: %w", execPath, err)
+	if _, err := exec.LookPath(path); err != nil {
+		return nil, fmt.Errorf("dsh executable not found: %w", err)
 	}
-	model, err := parseDshModelID(opts.Model)
+	// 2026-10-08 coder(lq): The ACP profile owns transport/bootstrap. Arbitrary profile flags could bypass the headless contract.
+	if len(opts.CustomArgs) != 0 {
+		return nil, fmt.Errorf("dsh ACP does not support custom arguments")
+	}
+	servers, err := buildACPMcpServers(opts.McpConfig, b.cfg.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("dsh invalid mcp_config: %w", err)
+	}
+	env := replaceEnvValue(buildEnv(b.cfg.Env), "DSH_TELEMETRY_DISABLED", "1")
+	args, cleanupConnection, err := prepareDshLaunch(env, opts.Cwd)
 	if err != nil {
 		return nil, err
 	}
-	mcpServers, err := buildDshMCPServers(opts.McpConfig, b.cfg.Logger)
-	if err != nil {
-		return nil, fmt.Errorf("dsh: invalid mcp_config: %w", err)
-	}
-
+	connectionStarted := false
+	defer func() {
+		if !connectionStarted {
+			cleanupConnection()
+		}
+	}()
 	runCtx, cancel := runContext(ctx, opts.Timeout)
-	args := dshLaunchArgs()
-	cmd := b.cfg.commandAt(execPath).exec(runCtx, args...)
+	cmd := b.cfg.commandAt(path).exec(runCtx, args...)
 	hideAgentWindow(cmd)
-	cmd.Cancel = func() error { return nil }
-	cmd.WaitDelay = 10 * time.Second
+	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))
+	cmd.Env = env
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
-
+	// 2026-10-08 coder(lq): Give official ACP cancel/close a bounded flush window before killing the owned process tree.
+	cmd.Cancel = func() error { return nil }
+	cmd.WaitDelay = dshShutdownGrace
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("dsh stdout pipe: %w", err)
+		return nil, err
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("dsh stdin pipe: %w", err)
+		return nil, err
 	}
-	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[dsh:stderr] "), agentStderrTailBytes)
-	cmd.Stderr = stderrBuf
+	providerErr := newACPProviderErrorSniffer("dsh")
+	cmd.Stderr = providerErr // 2026-10-08 coder(lq): Never copy credential-shaped provider diagnostics into the daemon log.
 	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start dsh: %w", err)
 	}
-
-	requestID := b.cfg.TaskID
-	if requestID == "" {
-		requestID = "multica-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	connectionStarted = true
+	stream := newACPMessageStream(256)
+	results := make(chan Result, 1)
+	var delivering atomic.Bool
+	var deliverable acpDeliverableTracker
+	promptDone := make(chan hermesPromptResult, 1)
+	client := &hermesClient{
+		cfg: b.cfg, stdin: stdin, pending: make(map[int]*pendingRPC), pendingTools: make(map[string]*pendingToolCall),
+		acceptNotification: func(string) bool { return delivering.Load() },
+		onMessage: func(msg Message) {
+			if delivering.Load() {
+				deliverable.observe(msg)
+				stream.send(msg)
+			}
+		},
+		onPromptDone: func(result hermesPromptResult) {
+			select {
+			case promptDone <- result:
+			default:
+			}
+		},
 	}
-	command := dshExecuteCommand{
-		Version: DshProtocolVersion, Type: "execute", RequestID: requestID,
-		Cwd: opts.Cwd, Prompt: prompt, ResumeSessionID: opts.ResumeSessionID,
-		Model: model, ReasoningEffort: opts.ThinkingLevel, MCPServers: mcpServers,
-	}
-	var writeMu sync.Mutex
-	encoder := json.NewEncoder(stdin)
-	writeFrame := func(value any) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		return encoder.Encode(value)
-	}
-	if err := writeFrame(command); err != nil {
-		signalProcessGroup(cmd, syscall.SIGKILL)
-		_ = cmd.Wait()
-		releaseProcessGroup(cmd)
-		cancel()
-		return nil, fmt.Errorf("send dsh execute command: %w", err)
-	}
-
-	b.cfg.Logger.Info("dsh started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-	procDone := make(chan struct{})
-
+	readerDone := make(chan struct{})
 	go func() {
-		select {
-		case <-procDone:
-			return
-		case <-runCtx.Done():
-		}
-		_ = writeFrame(dshCancelCommand{Version: DshProtocolVersion, Type: "cancel", RequestID: requestID})
-		timer := time.NewTimer(dshCancelGrace)
-		defer timer.Stop()
-		select {
-		case <-procDone:
-			return
-		case <-timer.C:
-		}
-		signalProcessGroup(cmd, syscall.SIGTERM)
-		if !waitProcessGroupGone(cmd, dshTerminateGrace) {
-			signalProcessGroup(cmd, syscall.SIGKILL)
-		}
-		_ = stdout.Close()
-	}()
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-		defer func() { _ = stdin.Close() }()
-		started := time.Now()
-		state := dshRunState{usage: make(map[string]TokenUsage)}
+		defer close(readerDone)
 		scanner := newAgentStreamScanner(stdout)
 		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			var frame dshFrame
-			if err := json.Unmarshal([]byte(line), &frame); err != nil {
-				state.invalidFrames++
-				continue
-			}
-			state.frameCount++
-			handleDshFrame(frame, requestID, msgCh, &state)
+			client.handleLine(strings.TrimSpace(scanner.Text()))
 		}
-		scanErr := scanner.Err()
-		if scanErr != nil {
-			_ = stdout.Close()
+		err := scanner.Err()
+		if err == nil {
+			err = io.EOF
 		}
-		exitErr := cmd.Wait()
-		close(procDone)
-		releaseProcessGroup(cmd)
-
-		result := state.result
-		if result == nil {
-			result = &Result{Status: "failed", SessionID: state.sessionID, Usage: state.usage}
-			switch {
-			case errors.Is(runCtx.Err(), context.DeadlineExceeded):
-				result.Status = "timeout"
-				result.Error = fmt.Sprintf("dsh timed out after %s", opts.Timeout)
-			case errors.Is(runCtx.Err(), context.Canceled):
-				result.Status = "cancelled"
-				result.Error = "dsh execution cancelled"
-			case scanErr != nil:
-				result.Error = fmt.Sprintf("read dsh event stream: %v", scanErr)
-			case state.protocolError != "":
-				result.Error = state.protocolError
-			case !state.ready:
-				result.Error = "dsh exited before the runtime protocol became ready"
-			case exitErr != nil:
-				result.Error = fmt.Sprintf("dsh exited with error: %v", exitErr)
-			default:
-				result.Error = "dsh exited without a terminal result"
-			}
-		}
-		if result.Error != "" {
-			result.Error = withAgentStderr(result.Error, "dsh", stderrBuf.Tail())
-		}
-		result.DurationMs = time.Since(started).Milliseconds()
-		b.cfg.Logger.Info("dsh finished", "pid", cmd.Process.Pid, "status", result.Status,
-			"duration", time.Since(started).Round(time.Millisecond).String(), "frames", state.frameCount,
-			"invalid_frames", state.invalidFrames)
-		resCh <- *result
+		client.closeAllPending(err)
 	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+	go func() {
+		started := time.Now()
+		result := Result{Status: "failed"}
+		var sessionID string
+		defer func() {
+			delivering.Store(false)
+			// 2026-10-08 coder(lq): Closing a session flushes persistence but does not delete it, so it can be resumed by another process.
+			if sessionID != "" {
+				closeCtx, closeCancel := context.WithTimeout(context.Background(), dshShutdownGrace)
+				if runCtx.Err() != nil {
+					data, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": sessionID}})
+					_ = client.writeLine(append(data, '\n'))
+				}
+				_, _ = client.request(closeCtx, "session/close", map[string]any{"sessionId": sessionID})
+				closeCancel()
+			}
+			_ = stdin.Close()
+			signalProcessGroup(cmd, syscall.SIGKILL)
+			_ = cmd.Wait()
+			releaseProcessGroup(cmd)
+			cancel()
+			_ = stdout.Close()
+			<-readerDone
+			cleanupConnection()
+			_, diagnostics := deliverable.result()
+			result.Status, result.Error = promoteACPResultOnProviderError(result.Status, result.Error, diagnostics, providerErr)
+			stream.close()
+			result.Error = sanitizeAgentDiagnostic(result.Error)
+			result.DurationMs = time.Since(started).Milliseconds()
+			results <- result
+			close(results)
+		}()
+		fail := func(stage string, err error) {
+			result.Error = fmt.Sprintf("dsh %s failed: %v", stage, err)
+			if runCtx.Err() == context.DeadlineExceeded {
+				result.Status = "timeout"
+			}
+			if runCtx.Err() == context.Canceled {
+				result.Status = "aborted"
+			}
+			if opts.ResumeSessionID != "" && isACPSessionNotFound(err) {
+				result.SessionID = ""
+				result.ResumeRejected = true
+			}
+		}
+		init, err := client.request(runCtx, "initialize", map[string]any{
+			"protocolVersion": DshProtocolVersion, "clientInfo": map[string]any{"name": "missionos", "version": "1"}, "clientCapabilities": map[string]any{},
+		})
+		if err != nil {
+			fail("initialize", err)
+			return
+		}
+		if validateDshACPInit(init) != nil {
+			fail("initialize", fmt.Errorf("unsupported ACP protocol"))
+			return
+		}
+		cwd := opts.Cwd
+		if cwd == "" {
+			cwd, err = os.Getwd()
+			if err != nil {
+				fail("cwd", err)
+				return
+			}
+		}
+		params := map[string]any{"cwd": cwd, "mcpServers": filterACPMcpServersByCapability(servers, extractACPMcpCapabilities(init), "dsh", b.cfg)}
+		method := "session/new"
+		if opts.ResumeSessionID != "" {
+			method = "session/resume"
+			params["sessionId"] = opts.ResumeSessionID
+		}
+		state, err := client.request(runCtx, method, params)
+		if err != nil {
+			if opts.ResumeSessionID != "" {
+				result.Status, result.Error, result.ResumeRejected = classifyACPResumeFailure(runCtx, "dsh", method, err, opts.Timeout, b.cfg.Logger)
+			} else {
+				fail(method, err)
+			}
+			return
+		}
+		sessionID = extractACPSessionID(state)
+		if opts.ResumeSessionID != "" {
+			sessionID, _ = resolveResumedSessionID(opts.ResumeSessionID, state)
+		}
+		if sessionID == "" {
+			fail(method, fmt.Errorf("no session ID returned"))
+			return
+		}
+		if opts.ResumeSessionID != "" && sessionID != opts.ResumeSessionID {
+			fail(method, fmt.Errorf("runtime returned a different session ID"))
+			result.ResumeRejected = true
+			return
+		}
+		client.sessionID = sessionID
+		// 2026-10-08 coder(lq): A resumed transcript remains valid if model/effort setup fails; only fresh, unprompted IDs are withheld.
+		if !setupFailureWithholdsSessionID(opts) {
+			result.SessionID = sessionID
+		}
+		state, err = applyDshConfig(runCtx, client.request, sessionID, state, "model", opts.Model)
+		if err != nil {
+			fail("model selection", err)
+			return
+		}
+		effectiveModel := opts.Model
+		if effectiveModel == "" {
+			for _, model := range parseACPConfigOptionModels(state) {
+				if model.Default {
+					effectiveModel = model.ID
+				}
+			}
+		}
+		_, err = applyDshConfig(runCtx, client.request, sessionID, state, "thought_level", opts.ThinkingLevel)
+		if err != nil {
+			fail("reasoning effort", err)
+			return
+		}
+		result.SessionID = sessionID
+		delivering.Store(true)
+		stream.send(Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
+		text := prompt
+		if opts.SystemPrompt != "" {
+			text = opts.SystemPrompt + "\n\n---\n\n" + text
+		}
+		_, err = client.request(runCtx, "session/prompt", map[string]any{"sessionId": sessionID, "prompt": []map[string]any{{"type": "text", "text": text}}})
+		if err != nil {
+			fail("session/prompt", err)
+			return
+		}
+		result.Status = "completed"
+		select {
+		case terminal := <-promptDone:
+			client.mergeUsage(terminal.usage)
+			switch terminal.stopReason {
+			case "cancelled":
+				result.Status = "aborted"
+				result.Error = "dsh cancelled the prompt"
+			case "end_turn", "max_tokens":
+			default:
+				result.Status = "failed"
+				result.Error = "dsh returned an unsupported stop reason"
+			}
+		default:
+			result.Status = "failed"
+			result.Error = "dsh returned no terminal prompt result"
+		}
+		// 2026-10-08 coder(lq): Official ACP settles only after ordered updates have drained; no timing-based chunk guessing is needed.
+		output, _ := deliverable.result()
+		result.Output = output
+		usage := client.accumulatedUsage()
+		if acpUsagePresent(usage) {
+			if effectiveModel == "" {
+				effectiveModel = "unknown"
+			}
+			result.Usage = map[string]TokenUsage{effectiveModel: usage}
+		}
+	}()
+	return &Session{Messages: stream.ch, Result: results}, nil
 }
 
-type dshRunState struct {
-	ready         bool
-	sessionID     string
-	protocolError string
-	frameCount    int
-	invalidFrames int
-	usage         map[string]TokenUsage
-	result        *Result
+func validateDshACPInit(raw json.RawMessage) error {
+	var result struct {
+		ProtocolVersion int `json:"protocolVersion"`
+	}
+	if json.Unmarshal(raw, &result) != nil || result.ProtocolVersion != DshProtocolVersion {
+		return fmt.Errorf("unsupported DSH ACP protocol")
+	}
+	return nil
 }
 
-func handleDshFrame(frame dshFrame, requestID string, ch chan<- Message, state *dshRunState) {
-	if frame.Version != DshProtocolVersion {
-		state.protocolError = fmt.Sprintf("dsh returned unsupported protocol version %d", frame.Version)
-		return
-	}
-	if frame.RequestID != "" && frame.RequestID != requestID {
-		return
-	}
-	switch frame.Type {
-	case "ready":
-		state.ready = frame.Runtime == "dsh"
-	case "session":
-		state.sessionID = frame.SessionID
-		trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: frame.SessionID})
-	case "text":
-		if frame.Content != "" {
-			trySend(ch, Message{Type: MessageText, Content: frame.Content})
-		}
-	case "thinking":
-		if frame.Content != "" {
-			trySend(ch, Message{Type: MessageThinking, Content: frame.Content})
-		}
-	case "tool_call":
-		input := map[string]any{}
-		if frame.Arguments != "" && json.Unmarshal([]byte(frame.Arguments), &input) != nil {
-			input = map[string]any{"raw": frame.Arguments}
-		}
-		trySend(ch, Message{Type: MessageToolUse, Tool: frame.Name, CallID: frame.CallID, Input: input})
-	case "tool_result":
-		trySend(ch, Message{Type: MessageToolResult, Tool: frame.Name, CallID: frame.CallID, Output: frame.Output})
-	case "usage":
-		key := frame.Model
-		if frame.Provider != "" {
-			key = frame.Provider + "/" + frame.Model
-		}
-		if key != "" {
-			usage := state.usage[key]
-			usage.InputTokens += frame.InputTokens
-			usage.OutputTokens += frame.OutputTokens
-			usage.CacheReadTokens += frame.CacheReadTokens
-			usage.CacheWriteTokens += frame.CacheWriteTokens
-			state.usage[key] = usage
-		}
-	case "protocol_error":
-		state.protocolError = strings.TrimSpace(frame.Code + ": " + frame.Message)
-	case "result":
-		errorText := ""
-		if frame.Error != nil {
-			errorText = strings.TrimSpace(frame.Error.Code + ": " + frame.Error.Message)
-		}
-		state.result = &Result{
-			Status: frame.Status, Output: frame.Output, Error: errorText,
-			SessionID: frame.SessionID, Usage: state.usage, ResumeRejected: frame.ResumeRejected,
-		}
-		if state.result.SessionID == "" {
-			state.result.SessionID = state.sessionID
-		}
-	}
-}
-
-func discoverDshModels(ctx context.Context, runtimeCmd Command) ([]Model, error) {
-	if runtimeCmd.Path == "" {
-		runtimeCmd.Path = "dsh"
-	}
-	cmd := runtimeCmd.exec(ctx, "--profile", dshProfile, "--list-models")
-	hideAgentWindow(cmd)
-	cmd.WaitDelay = time.Second
-	stdout, err := cmd.StdoutPipe()
+func discoverDshModels(ctx context.Context, cmd Command) ([]Model, error) {
+	args, cleanup, err := prepareDshLaunch(os.Environ(), "")
 	if err != nil {
 		return nil, err
 	}
-	cmd.Stderr = io.Discard
-	if err := startOwnedProcessTree(cmd, runtimeCmd.logger); err != nil {
-		return nil, err
+	defer cleanup()
+	models, err := discoverACPModels(ctx, cmd, acpDiscoveryProvider{
+		defaultBin: "dsh", clientName: "missionos", tmpdirPrefix: "missionos-dsh-models-", acpArgs: args,
+		extraEnv: []string{"DSH_TELEMETRY_DISABLED=1"}, timeout: 8 * time.Second, strictErrors: true, closeSession: true,
+		annotate: annotateACPThinkingForSessionModel, validateInit: validateDshACPInit,
+	})
+	if err == nil && len(models) == 0 {
+		return nil, fmt.Errorf("DSH ACP returned no selectable models")
 	}
-	var models []Model
-	scanner := newAgentStreamScanner(stdout)
-	for scanner.Scan() {
-		var frame dshFrame
-		if json.Unmarshal(scanner.Bytes(), &frame) != nil || frame.Version != DshProtocolVersion || frame.Type != "models" {
-			continue
-		}
-		for _, item := range frame.Models {
-			model := Model{ID: item.ID, Label: item.Label, Provider: item.Provider, Default: item.Default}
-			if item.Thinking != nil && len(item.Thinking.SupportedLevels) > 0 {
-				model.Thinking = &ModelThinking{SupportedLevels: item.Thinking.SupportedLevels, DefaultLevel: item.Thinking.DefaultLevel}
+	return models, err
+}
+
+// 2026-10-08 coder(lq): InspectDshACP validates official ACP without creating a session or making a model request.
+func InspectDshACP(ctx context.Context, cmd Command) (string, error) {
+	version := ""
+	_, err := discoverACPModels(ctx, cmd, acpDiscoveryProvider{
+		defaultBin: "dsh", clientName: "missionos", acpArgs: dshLaunchArgs(), initializeOnly: true,
+		extraEnv: []string{"DSH_TELEMETRY_DISABLED=1"}, timeout: 8 * time.Second, strictErrors: true, validateInit: validateDshACPInit,
+		inspectInit: func(raw json.RawMessage) {
+			var result struct {
+				AgentInfo struct {
+					Version string `json:"version"`
+				} `json:"agentInfo"`
 			}
-			models = append(models, model)
-		}
-	}
-	scanErr := scanner.Err()
-	exitErr := cmd.Wait()
-	releaseProcessGroup(cmd)
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	if exitErr != nil {
-		return nil, exitErr
-	}
-	if len(models) == 0 {
-		return nil, errors.New("dsh returned an empty model catalog")
-	}
-	return models, nil
+			if json.Unmarshal(raw, &result) == nil {
+				version = result.AgentInfo.Version
+			}
+		},
+	})
+	return version, err
 }

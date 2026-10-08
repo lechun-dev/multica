@@ -100,7 +100,7 @@ func isACPResumeRejected(err error) bool {
 var acpSessionUnusableRe = regexp.MustCompile(
 	`(no such|unknown|invalid|expired|unrecogni[sz]ed|nonexistent|missing)\s+(session|conversation|thread)` +
 		`|no\s+(session|conversation|thread)\s+found` +
-		`|(session|conversation|thread)(\s+(id|identifier))?(\s+"?[\w-]+"?)?\s+(is\s+)?(not found|does not exist|doesn't exist|no longer exists|expired|invalid|unknown|unrecogni[sz]ed)`)
+		`|(session|conversation|thread)(\s+(id|identifier))?(\s+"?[\w-]+"?)?\s+(is\s+)?(not found|not resumable|does not exist|doesn't exist|no longer exists|expired|invalid|unknown|unrecogni[sz]ed)`)
 
 // acpSessionRequestComplaintRe matches the one verdict-first shape that is NOT
 // about the recorded session: a generic noun after it turns the phrase into a

@@ -12,150 +12,244 @@ import (
 	"time"
 )
 
-func TestNewDshBackend(t *testing.T) {
-	b, err := New("dsh", Config{ExecutablePath: "/nonexistent/dsh"})
-	if err != nil {
-		t.Fatalf("New(dsh): %v", err)
-	}
-	if _, ok := b.(*dshBackend); !ok {
-		t.Fatalf("New(dsh) returned %T", b)
-	}
-}
+const fakeDshACP = `#!/bin/sh
+[ "$1 $2" = "--profile acp" ] || exit 2
+if [ "$3" = "--patch" ] && [ -n "$DSH_TEST_PATCH_RECORD" ]; then
+ cat "$4" > "$DSH_TEST_PATCH_RECORD"
+ printf '%s' "$4" > "$DSH_TEST_PATCH_RECORD.path"
+fi
+while IFS= read -r line; do
+ [ -z "$DSH_TEST_RECORD" ] || printf '%s\n' "$line" >> "$DSH_TEST_RECORD"
+ id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+ case "$line" in
+ *'"method":"initialize"'*)
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"version":"0.2.0-test"},"agentCapabilities":{"mcpCapabilities":{"http":true}}}}\n' "$id" ;;
+ *'"method":"session/new"'*|*'"method":"session/resume"'*)
+  if [ "$DSH_TEST_REJECT" = "1" ]; then
+   printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32602,"message":"session is not resumable: old-multica-session"}}\n' "$id"
+  else
+   sessionField='"sessionId":"test-session",'
+   case "$line" in *'"method":"session/resume"'*) sessionField='' ;; esac
+   printf '{"jsonrpc":"2.0","id":%s,"result":{%s"configOptions":[{"id":"route","category":"model","type":"select","currentValue":"opaque/model%%2Fid","options":[{"group":"official","name":"Official","options":[{"value":"opaque/model%%2Fid","name":"Official model"}]}]},{"id":"reasoning_effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"off","name":"Off"},{"value":"high","name":"High"}]}]}}\n' "$id" "$sessionField"
+  fi ;;
+ *'"method":"session/set_config_option"'*)
+  if [ "$DSH_TEST_CONFIG_FAIL" = "1" ]; then
+   printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+  else
+   printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"route","category":"model","type":"select","currentValue":"opaque/model%%2Fid","options":[{"group":"official","name":"Official","options":[{"value":"opaque/model%%2Fid","name":"Official model"}]}]},{"id":"reasoning_effort","category":"thought_level","type":"select","currentValue":"off","options":[{"value":"off","name":"Off"}]}]}}\n' "$id"
+  fi ;;
+ *'"method":"session/prompt"'*)
+  [ "$DSH_TEST_WAIT" != "1" ] || continue
+  printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test-session","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test-session","update":{"sessionUpdate":"tool_call","toolCallId":"tc1","title":"Read file","status":"pending","rawInput":{"path":"test"}}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test-session","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"file"}}]}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"DSH_ACP_OK"}}}}'
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","usage":{"inputTokens":10,"outputTokens":20}}}\n' "$id" ;;
+ *'"method":"session/close"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; exit 0 ;;
+ esac
+done
+`
 
-func TestParseDshModelID(t *testing.T) {
-	got, err := parseDshModelID("deepseek-official/deepseek-v4%2Fflash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Provider != "deepseek-official" || got.ID != "deepseek-v4/flash" {
-		t.Fatalf("unexpected model: %#v", got)
-	}
-	if _, err := parseDshModelID("deepseek-v4-flash"); err == nil {
-		t.Fatal("unqualified DSH model should fail")
-	}
-}
-
-func TestBuildDshMCPServers(t *testing.T) {
-	raw := json.RawMessage(`{"mcpServers":{"files":{"command":"node","args":["server.js"],"env":{"TOKEN":"value"}},"remote":{"type":"streamable-http","url":"https://mcp.example/rpc","headers":{"Authorization":"Bearer test"}}}}`)
-	got, err := buildDshMCPServers(raw, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d MCP servers", len(got))
-	}
-	if got[0].Transport != "stdio" || got[0].Command != "node" || got[0].Env["TOKEN"] != "value" {
-		t.Fatalf("bad stdio server: %#v", got[0])
-	}
-	if got[1].Transport != "streamable-http" || got[1].Headers["Authorization"] != "Bearer test" {
-		t.Fatalf("bad HTTP server: %#v", got[1])
-	}
-}
-
-func TestBuildDshMCPServersRejectsSSE(t *testing.T) {
-	raw := json.RawMessage(`{"mcpServers":{"legacy":{"type":"sse","url":"https://mcp.example/sse"}}}`)
-	if _, err := buildDshMCPServers(raw, slog.Default()); err == nil || !strings.Contains(err.Error(), "SSE") {
-		t.Fatalf("expected SSE error, got %v", err)
-	}
-}
-
-func TestDshBackendExecuteStreamsProtocol(t *testing.T) {
+func writeDshFixture(t *testing.T, body string) string {
+	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("shell fixture")
+		t.Skip("Unix shell fixture")
 	}
-	bin := writeDshFixture(t, `
-if [ "$1" != "--profile" ] || [ "$2" != "multica" ] || [ "$3" != "--stdio" ]; then exit 9; fi
-printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","plugin_version":"test","capabilities":{}}'
-IFS= read -r command
-case "$command" in *'"type":"execute"'*) ;; *) exit 8 ;; esac
-printf '%s\n' '{"v":1,"type":"session","request_id":"task-1","session_id":"session-1","resumed":false}'
-printf '%s\n' '{"v":1,"type":"thinking","request_id":"task-1","content":"checking"}'
-printf '%s\n' '{"v":1,"type":"tool_call","request_id":"task-1","call_id":"call-1","name":"bash","arguments":"{\"command\":\"pwd\"}"}'
-printf '%s\n' '{"v":1,"type":"tool_result","request_id":"task-1","call_id":"call-1","name":"bash","output":"/work","is_error":false}'
-printf '%s\n' '{"v":1,"type":"text","request_id":"task-1","content":"done"}'
-printf '%s\n' '{"v":1,"type":"usage","request_id":"task-1","provider":"deepseek-official","model":"deepseek-v4-flash","input_tokens":12,"output_tokens":3,"cache_read_tokens":2}'
-printf '%s\n' '{"v":1,"type":"result","request_id":"task-1","status":"completed","session_id":"session-1","output":"done","resume_rejected":false}'
-`)
-	b, err := New("dsh", Config{ExecutablePath: bin, TaskID: "task-1", Logger: slog.Default()})
+	t.Setenv("DSH_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "dsh")
+	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestDshUsesOfficialDesktopConnectionWithoutCopyingSecrets(t *testing.T) {
+	home, record := t.TempDir(), filepath.Join(t.TempDir(), "connection.yml")
+	dir := filepath.Join(home, "profiles", "desktop")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	patch := "- id: llm-deepseek\n  config:\n    baseURL: https://old.example.test/v1\n    apiKeyEnv: CUSTOM_DSH_KEY\n- id: llm-deepseek\n  config:\n    baseURL: https://configured.example.test/\n- id: ui-chat\n  config:\n    secret: MUST_NOT_BE_COPIED\n"
+	if err := os.WriteFile(filepath.Join(dir, "cordis.patch.yml"), []byte(patch), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".credentials.yaml"), []byte("deliberately invalid: [SECRET_KEY_MUST_NOT_BE_READ"), 0000); err != nil {
+		t.Fatal(err)
+	}
+	result, _, _ := runDshFixture(t, map[string]string{"DSH_HOME": home, "DSH_TEST_PATCH_RECORD": record}, ExecOptions{})
+	if result.Status != "completed" {
+		t.Fatalf("execution failed: %+v", result)
+	}
+	connection, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal("no official desktop connection was passed to ACP")
+	}
+	for _, want := range []string{"https://configured.example.test/", "CUSTOM_DSH_KEY"} {
+		if !strings.Contains(string(connection), want) {
+			t.Fatalf("connection did not reuse the official desktop %s", want)
+		}
+	}
+	for _, forbidden := range []string{"old.example.test", "MUST_NOT_BE_COPIED", "SECRET_KEY", "ui-chat"} {
+		if strings.Contains(string(connection), forbidden) {
+			t.Fatal("connection overlay copied unrelated or secret content")
+		}
+	}
+	file, err := os.ReadFile(record + ".path")
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := b.Execute(context.Background(), "say done", ExecOptions{Cwd: t.TempDir(), Timeout: 5 * time.Second})
+	if _, err := os.Stat(string(file)); !os.IsNotExist(err) {
+		t.Fatal("temporary connection overlay was not removed after execution")
+	}
+}
+
+func runDshFixture(t *testing.T, env map[string]string, opts ExecOptions) (Result, []Message, string) {
+	t.Helper()
+	record := filepath.Join(t.TempDir(), "requests.jsonl")
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["DSH_TEST_RECORD"] = record
+	b, err := New("dsh", Config{ExecutablePath: writeDshFixture(t, fakeDshACP), Logger: slog.Default(), Env: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Cwd == "" {
+		opts.Cwd = t.TempDir()
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = 5 * time.Second
+	}
+	s, err := b.Execute(context.Background(), "test prompt", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var messages []Message
-	for message := range session.Messages {
-		messages = append(messages, message)
+	for msg := range s.Messages {
+		messages = append(messages, msg)
 	}
-	result := <-session.Result
-	if result.Status != "completed" || result.Output != "done" || result.SessionID != "session-1" {
-		t.Fatalf("bad result: %#v", result)
+	result := <-s.Result
+	requests, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
 	}
-	usage := result.Usage["deepseek-official/deepseek-v4-flash"]
-	if usage.InputTokens != 12 || usage.OutputTokens != 3 || usage.CacheReadTokens != 2 {
-		t.Fatalf("bad usage: %#v", usage)
+	return result, messages, string(requests)
+}
+
+func TestNewDshBackend(t *testing.T) {
+	b, err := New("dsh", Config{ExecutablePath: "/nonexistent/dsh"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(messages) != 5 || messages[0].SessionID != "session-1" || messages[2].Tool != "bash" {
-		t.Fatalf("bad messages: %#v", messages)
+	if _, ok := b.(*dshBackend); !ok {
+		t.Fatalf("unexpected %T", b)
 	}
 }
 
-func TestDshBackendCancellationUsesProtocol(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell fixture")
+func TestDshACPExecution(t *testing.T) {
+	result, messages, requests := runDshFixture(t, nil, ExecOptions{Model: "opaque/model%2Fid", ThinkingLevel: "off", McpConfig: json.RawMessage(`{"mcpServers":{"remote":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"fixture-only"}}}}`)})
+	if result.Status != "completed" || result.Output != "DSH_ACP_OK" || result.SessionID != "test-session" {
+		t.Fatalf("result: %+v", result)
 	}
-	bin := writeDshFixture(t, `
-printf '%s\n' '{"v":1,"type":"ready","runtime":"dsh","plugin_version":"test","capabilities":{}}'
-IFS= read -r execute
-printf '%s\n' '{"v":1,"type":"session","request_id":"task-cancel","session_id":"session-cancel","resumed":false}'
-IFS= read -r cancel
-case "$cancel" in *'"type":"cancel"'*) ;; *) exit 8 ;; esac
-printf '%s\n' '{"v":1,"type":"result","request_id":"task-cancel","status":"cancelled","session_id":"session-cancel","output":"","resume_rejected":false}'
-`)
-	b, err := New("dsh", Config{ExecutablePath: bin, TaskID: "task-cancel", Logger: slog.Default()})
+	if result.Usage["opaque/model%2Fid"].OutputTokens != 20 {
+		t.Fatalf("usage: %+v", result.Usage)
+	}
+	kinds := map[MessageType]bool{}
+	for _, msg := range messages {
+		kinds[msg.Type] = true
+	}
+	for _, kind := range []MessageType{MessageStatus, MessageThinking, MessageToolUse, MessageToolResult, MessageText} {
+		if !kinds[kind] {
+			t.Errorf("no %s", kind)
+		}
+	}
+	for _, want := range []string{`"method":"session/set_config_option"`, `"configId":"route"`, `"value":"opaque/model%2Fid"`, `"configId":"reasoning_effort"`, `"name":"Authorization"`, `"method":"session/close"`} {
+		if !strings.Contains(requests, want) {
+			t.Errorf("missing request fragment %s", want)
+		}
+	}
+	if strings.Contains(requests, "session/set_model") {
+		t.Fatal("legacy model RPC used")
+	}
+}
+
+func TestDshConfigFailureDoesNotPrompt(t *testing.T) {
+	for _, model := range []string{"unknown", "opaque/model%2Fid"} {
+		t.Run(model, func(t *testing.T) {
+			result, _, requests := runDshFixture(t, map[string]string{"DSH_TEST_CONFIG_FAIL": "1"}, ExecOptions{Model: model})
+			if result.Status != "failed" || strings.Contains(requests, `"method":"session/prompt"`) || result.SessionID != "" {
+				t.Fatalf("result: %+v", result)
+			}
+		})
+	}
+}
+
+func TestDshResumedConfigFailurePreservesSession(t *testing.T) {
+	result, _, requests := runDshFixture(t, map[string]string{"DSH_TEST_CONFIG_FAIL": "1"}, ExecOptions{
+		ResumeSessionID: "test-session", Model: "opaque/model%2Fid",
+	})
+	if result.Status != "failed" || result.SessionID != "test-session" || result.ResumeRejected || strings.Contains(requests, `"method":"session/prompt"`) {
+		t.Fatalf("resumed configuration failure lost its existing session: %+v", result)
+	}
+}
+
+func TestDshACPResume(t *testing.T) {
+	result, _, requests := runDshFixture(t, nil, ExecOptions{ResumeSessionID: "test-session"})
+	if result.Status != "completed" || !strings.Contains(requests, `"method":"session/resume"`) {
+		t.Fatalf("result: %+v", result)
+	}
+	result, _, requests = runDshFixture(t, map[string]string{"DSH_TEST_REJECT": "1"}, ExecOptions{ResumeSessionID: "old-multica-session"})
+	if result.Status != "failed" || !result.ResumeRejected || result.SessionID != "" || strings.Contains(requests, `"method":"session/new"`) {
+		t.Fatalf("rejection: %+v", result)
+	}
+}
+
+func TestDshACPCancellation(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "requests.jsonl")
+	b, err := New("dsh", Config{ExecutablePath: writeDshFixture(t, fakeDshACP), Env: map[string]string{
+		"DSH_TEST_WAIT": "1", "DSH_TEST_RECORD": record,
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	session, err := b.Execute(ctx, "wait", ExecOptions{Cwd: t.TempDir(), Timeout: 5 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := b.Execute(ctx, "test prompt", ExecOptions{Cwd: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	message := <-session.Messages
-	if message.SessionID != "session-cancel" {
-		t.Fatalf("bad session message: %#v", message)
+	ready := false
+	for msg := range s.Messages {
+		// 2026-10-08 coder(lq): Cancel after session creation, not after a wall-clock bootstrap deadline that varies with CI load.
+		if msg.Type == MessageStatus && msg.Status == "running" {
+			ready = true
+			cancel()
+		}
 	}
-	cancel()
-	for range session.Messages {
+	result := <-s.Result
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
 	}
-	result := <-session.Result
-	if result.Status != "cancelled" || result.SessionID != "session-cancel" {
-		t.Fatalf("bad cancellation result: %#v", result)
+	requests := string(data)
+	if !ready || result.Status != "aborted" || !strings.Contains(requests, `"method":"session/cancel"`) || !strings.Contains(requests, `"method":"session/close"`) {
+		t.Fatalf("result: %+v; requests: %s", result, requests)
 	}
 }
 
 func TestDiscoverDshModels(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell fixture")
-	}
-	bin := writeDshFixture(t, `
-printf '%s\n' '{"v":1,"type":"models","models":[{"id":"deepseek-official/deepseek-v4-flash","label":"DeepSeek V4 Flash","provider":"DeepSeek","default":true,"thinking":{"supported_levels":[{"value":"high","label":"High"},{"value":"max","label":"Max"}],"default_level":"high"}}]}'
-`)
-	models, err := discoverDshModels(context.Background(), Command{Path: bin})
+	models, err := discoverDshModels(context.Background(), Command{Path: writeDshFixture(t, fakeDshACP)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(models) != 1 || !models[0].Default || models[0].Thinking == nil || models[0].Thinking.DefaultLevel != "high" {
-		t.Fatalf("bad models: %#v", models)
+	if len(models) != 1 || models[0].ID != "opaque/model%2Fid" || models[0].Thinking == nil || models[0].Thinking.DefaultLevel != "high" {
+		t.Fatalf("catalog: %+v", models)
 	}
 }
 
-func writeDshFixture(t *testing.T, body string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "dsh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nset -eu\n"+body), 0o755); err != nil {
-		t.Fatal(err)
+func TestDshACPRejectsIncompatibleModelDiscovery(t *testing.T) {
+	bin := writeDshFixture(t, strings.Replace(fakeDshACP, `"protocolVersion":1`, `"protocolVersion":99`, 1))
+	if _, err := discoverDshModels(context.Background(), Command{Path: bin}); err == nil {
+		t.Fatal("incompatible ACP advertised a catalog")
 	}
-	return path
 }

@@ -1,86 +1,51 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { RESOURCES } from "@multica/views/locales";
 import { DshCliAction } from "./dsh-cli-dialog";
 import type { DshCliStatus } from "../../../shared/dsh-cli";
 
-const api = {
-  getDshCliStatus: vi.fn<() => Promise<DshCliStatus>>(),
-  repairDshCli: vi.fn<() => Promise<DshCliStatus>>(),
-};
+const api = { getDshCliStatus: vi.fn<() => Promise<DshCliStatus>>() };
 function show() {
-  const result = render(<I18nProvider locale="zh-Hans" resources={RESOURCES}><DshCliAction /></I18nProvider>);
+  render(<I18nProvider locale="zh-Hans" resources={RESOURCES}><DshCliAction /></I18nProvider>);
   fireEvent.click(screen.getByRole("button", { name: "DSH CLI" }));
-  return result;
 }
 beforeEach(() => {
-  vi.resetAllMocks();
-  api.getDshCliStatus.mockResolvedValue({ state: "not_installed" });
-  api.repairDshCli.mockResolvedValue({ state: "ready" });
+  vi.resetAllMocks(); api.getDshCliStatus.mockResolvedValue({ state: "not_installed" });
   Object.defineProperty(window, "daemonAPI", { configurable: true, value: api });
 });
 
 describe("DSH CLI runtime header dialog", () => {
-  it("does not detect or repair until the header entry is opened", async () => {
+  it("opens lazily and prompts official installation without offering global command repair", async () => {
     render(<I18nProvider locale="zh-Hans" resources={RESOURCES}><DshCliAction /></I18nProvider>);
     expect(api.getDshCliStatus).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "DSH CLI" }));
     expect(await screen.findByRole("dialog", { name: "DSH CLI" })).toBeInTheDocument();
-    expect(await screen.findByText(/请先安装 DSH 桌面端/)).toBeInTheDocument();
-    expect(api.getDshCliStatus).toHaveBeenCalledTimes(1);
-    expect(api.repairDshCli).not.toHaveBeenCalled();
-  });
-  it("only prompts to install DSH when absent; it does not offer or execute repair", async () => {
-    show();
-    expect(await screen.findByText(/请先安装 DSH 桌面端/)).toBeInTheDocument();
+    expect(await screen.findByText(/请先安装官方 DeepSeek Harness/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "安装／修复 CLI" })).not.toBeInTheDocument();
-    expect(api.repairDshCli).not.toHaveBeenCalled();
-    api.getDshCliStatus.mockResolvedValue({ state: "needs_repair" });
-    fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
-    expect(await screen.findByRole("button", { name: "安装／修复 CLI" })).toBeInTheDocument();
-    expect(api.repairDshCli).not.toHaveBeenCalled();
   });
-
-  it("repairs only on click, disables controls while pending, and renders the verified result", async () => {
-    api.getDshCliStatus.mockResolvedValue({ state: "needs_repair" });
-    let finish: (value: DshCliStatus) => void = () => {};
-    api.repairDshCli.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  it("shows official ACP readiness after rechecking and disables pending controls", async () => {
     show();
-    fireEvent.click(await screen.findByRole("button", { name: "安装／修复 CLI" }));
-    expect(api.repairDshCli).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "安装／修复 CLI" })).toBeDisabled();
+    const button = await screen.findByRole("button", { name: "重新检测" });
+    await screen.findByText(/请先安装官方/);
+    let finish: (s: DshCliStatus) => void = () => {};
+    api.getDshCliStatus.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    fireEvent.click(button);
     expect(screen.getByRole("button", { name: /检查中/ })).toBeDisabled();
     finish({ state: "ready" });
-    expect(await screen.findByText(/DSH CLI 可用/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "安装／修复 CLI" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/DSH CLI 可用，已通过官方 ACP/)).toBeInTheDocument();
   });
-
-  it("shows errors instead of a successful registration on failed repair", async () => {
-    api.getDshCliStatus.mockResolvedValue({ state: "needs_repair" });
-    api.repairDshCli.mockRejectedValue(new Error("worker failed"));
-    show();
-    fireEvent.click(await screen.findByRole("button", { name: "安装／修复 CLI" }));
+  it.each([
+    ["probe_timeout", /DSH 检测超时/], ["protocol_incompatible", /不支持兼容的 ACP/],
+    ["launch_failed", /DSH 命令无法启动/], ["probe_failed", /未完成官方 ACP 握手/],
+  ] as const)("renders actionable %s feedback", async (reason, text) => {
+    api.getDshCliStatus.mockResolvedValue({ state: "error", reason }); show();
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新检测" })).toBeEnabled();
+  });
+  it("handles IPC failure without displaying raw errors", async () => {
+    api.getDshCliStatus.mockRejectedValue(new Error("SECRET_TEST_VALUE")); show();
     expect(await screen.findByText(/无法验证 DSH CLI/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("button", { name: "重新检测" })).toBeEnabled());
-  });
-
-  it("shows the probe failure reason without calling a different-path wrapper a conflict", async () => {
-    api.getDshCliStatus.mockResolvedValue({ state: "error", reason: "probe_failed" });
-    show();
-    expect(await screen.findByText(/未返回兼容的 multica 协议/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "安装／修复 CLI" })).not.toBeInTheDocument();
-    expect(api.repairDshCli).not.toHaveBeenCalled();
-    api.getDshCliStatus.mockResolvedValue({ state: "ready" });
-    fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
-    expect(await screen.findByText(/DSH CLI 可用/)).toBeInTheDocument();
-  });
-
-  it("distinguishes unsupported installed versions from missing apps", async () => {
-    api.getDshCliStatus.mockResolvedValue({ state: "unsupported" });
-    show();
-    expect(await screen.findByText(/当前平台或 DSH 版本不支持 CLI 修复/)).toBeInTheDocument();
-    expect(screen.queryByText(/请先安装 DSH 桌面端/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SECRET_TEST_VALUE/)).not.toBeInTheDocument();
   });
 });

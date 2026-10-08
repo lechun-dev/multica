@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -18,14 +16,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
-// The loop backs off whenever a round cannot shrink the missing-runtime set,
-// and dsh sits in that set for as long as its runtime profile is absent. force
-// is what lets the automatic DSH install bypass that wait once it finishes:
-// without it the next scheduled attempt can be agentConvergeMaxBackoff (30m)
-// away, which is what made a finished install look like it had done nothing
-// until a manual daemon restart.
+// 2026-10-08 coder(lq): An explicit discovery kick bypasses retry backoff without changing the ordinary schedule.
 func TestConvergeAgentRuntimes_ForceIgnoresThePendingBackoff(t *testing.T) {
-	t.Setenv(dshProfileBundleEnv, "")
 	stubAgentProbe(t, map[string]AgentEntry{"dsh": {Path: "/nonexistent/dsh"}})
 
 	newDaemon := func() *Daemon {
@@ -54,7 +46,7 @@ func TestConvergeAgentRuntimes_ForceIgnoresThePendingBackoff(t *testing.T) {
 	backoff, nextRetry = time.Duration(0), pending
 	d.convergeAgentRuntimes(context.Background(), &backoff, &nextRetry, now, true)
 	if nextRetry.Equal(pending) {
-		t.Fatal("force did not bypass the pending backoff, so a finished DSH install would wait for it")
+		t.Fatal("force did not bypass the pending backoff, so an explicit discovery kick would wait for it")
 	}
 }
 
@@ -64,7 +56,6 @@ func TestConvergeAgentRuntimes_ForceIgnoresThePendingBackoff(t *testing.T) {
 // registration failed. Earning one would push the very demotion that round just
 // performed out to agentConvergeMaxBackoff.
 func TestConvergeAgentRuntimes_ForcedRoundWithNothingMissingKeepsTheBackoffClear(t *testing.T) {
-	t.Setenv(dshProfileBundleEnv, "")
 	stubAgentProbe(t, map[string]AgentEntry{"dsh": {Path: "/nonexistent/dsh"}})
 
 	d := &Daemon{
@@ -87,129 +78,6 @@ func TestConvergeAgentRuntimes_ForcedRoundWithNothingMissingKeepsTheBackoffClear
 	}
 }
 
-// The failure observed in the field: the profile is removed while dsh is
-// registered, and nothing takes the runtime offline — dsh is discovered and
-// holds a runtime, so no other part of the loop looks at it, and the server
-// routes the next chat task into a CLI that cannot start.
-//
-// The mismatch must be judged from live state rather than from a change since
-// the last look: the daemon that hit this had started a minute before the
-// removal, so its first observation was already "no profile".
-func TestDshRuntimeProfileMismatch(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("DSH_HOME", home)
-
-	registered := func() *Daemon {
-		d := &Daemon{
-			logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-			workspaces:   map[string]*workspaceState{"ws-1": {runtimeIDs: []string{"rt-dsh"}}},
-			runtimeIndex: map[string]Runtime{"rt-dsh": {ID: "rt-dsh", Provider: "dsh"}},
-		}
-		// A daemon that has discovered dsh, which is the only situation in
-		// which registering one is possible at all.
-		d.cfg.Agents = map[string]AgentEntry{"dsh": {Path: "/somewhere/dsh"}}
-		return d
-	}
-
-	// A registered dsh runtime with no profile on disk: the state that has to
-	// bring a round.
-	d := registered()
-	if d.dshRuntimeProfileMismatch() == dshMismatchNone {
-		t.Fatal("a registered dsh with no profile was judged consistent; the runtime keeps taking work")
-	}
-
-	// Installing the profile makes the two agree.
-	dir := filepath.Join(home, "profiles", dshMulticaProfileName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if d.dshRuntimeProfileMismatch() != dshMismatchNone {
-		t.Fatal("a registered dsh with its profile installed was judged inconsistent")
-	}
-
-	// The mirror image: a profile with nothing registered, which is what a
-	// manual install produces.
-	d = registered()
-	d.runtimeIndex = map[string]Runtime{}
-	if d.dshRuntimeProfileMismatch() == dshMismatchNone {
-		t.Fatal("an installed profile with no dsh runtime was judged consistent; it would never register")
-	}
-
-	// A custom runtime profile carrying the dsh provider is not the built-in
-	// one. With no dsh CLI discovered there is nothing a round could register,
-	// so the mismatch must not buy a full probe of every provider on every tick.
-	d = registered()
-	d.runtimeIndex = map[string]Runtime{"rt-dsh": {ID: "rt-dsh", Provider: "dsh", ProfileID: "prof-1"}}
-	d.cfg.Agents = map[string]AgentEntry{}
-	if d.dshRuntimeProfileMismatch() != dshMismatchNone {
-		t.Fatal("a mismatch no round could resolve was reported as inconsistent")
-	}
-
-	// With a dsh CLI present it is actionable again: the profile is installed
-	// and the built-in runtime is genuinely missing.
-	d.cfg.Agents = map[string]AgentEntry{"dsh": {Path: "/somewhere/dsh"}}
-	if d.dshRuntimeProfileMismatch() == dshMismatchNone {
-		t.Fatal("an installed profile plus a discovered dsh should earn a registration round")
-	}
-}
-
-// A registered dsh whose profile was removed has to keep forcing rounds until
-// it is condemned, because condemning it takes two of them: the first sighting
-// only starts condemnedConfirmWindow, and with dsh still registered nothing is
-// missing a runtime — so an unforced tick returns from convergeAgentRuntimes
-// without probing anything, and the second sighting never happens.
-//
-// Throttling this direction to one forced round (as the profile-without-runtime
-// direction is throttled, where no round is guaranteed to make progress) leaves
-// the runtime live and claiming work indefinitely. That is the bug this test
-// exists to catch, so it asserts the FORCE SEQUENCE, not just the mismatch kind.
-func TestDshRuntimeProfileMismatch_ForcingConvergesEachDirection(t *testing.T) {
-	// Replays the tick body of agentDiscoveryLoop.
-	forceSequence := func(mismatch dshProfileMismatch, ticks int) []bool {
-		var last dshProfileMismatch
-		out := make([]bool, 0, ticks)
-		for i := 0; i < ticks; i++ {
-			force := mismatch.forcesEveryTick() || (mismatch != dshMismatchNone && mismatch != last)
-			last = mismatch
-			out = append(out, force)
-		}
-		return out
-	}
-
-	for _, force := range forceSequence(dshMismatchRuntimeWithoutProfile, 4) {
-		if !force {
-			t.Fatal("a registered dsh with no profile stopped forcing rounds; " +
-				"the confirmation window needs a second probe round that nothing else schedules")
-		}
-	}
-
-	// The other direction stays throttled: it is the one a round cannot be
-	// relied on to resolve, so forcing every tick would bypass
-	// agentConvergeMaxBackoff forever.
-	got := forceSequence(dshMismatchProfileWithoutRuntime, 4)
-	if !got[0] {
-		t.Fatal("an installed profile with no runtime never earned its first round")
-	}
-	for _, force := range got[1:] {
-		if force {
-			t.Fatalf("profile-without-runtime forced more than once: %v", got)
-		}
-	}
-
-	if forceSequence(dshMismatchNone, 3)[0] {
-		t.Fatal("agreeing states forced a round")
-	}
-}
-
-// stubAgentProbe replaces CLI discovery for the duration of a test. The returned
-// setter swaps in the next probe result, simulating the user installing or
-// uninstalling a CLI while the daemon runs.
-//
-// Goroutine-safe: agentDiscoveryLoop calls the probe from its own goroutine
-// while the test body swaps the result.
 func stubAgentProbe(t *testing.T, initial map[string]AgentEntry) func(map[string]AgentEntry) {
 	t.Helper()
 	orig := probeAgentCLIs

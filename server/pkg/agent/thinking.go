@@ -892,7 +892,6 @@ var providerThinkingEnums = map[string]map[string]bool{
 // per-model check decide before execution.
 var thinkingDynamicCatalogProviders = map[string]bool{
 	"codex": true,
-	"dsh":   true,
 	// Grok advertises each model's effort catalog through session/new, so the
 	// server does not maintain a provider-wide fixed enum. The daemon applies
 	// the selected effort with `--effort`, not session/set_config_option.
@@ -923,6 +922,8 @@ var thinkingDynamicCatalogProviders = map[string]bool{
 //     value. This list is where that offline verification is recorded; the
 //     read-back is runtime diagnostics on top of it.
 var acpCatalogThinkingProviders = map[string]bool{
+	// 2026-10-08 coder(lq): Official DSH snapshots the advertised reasoning_effort for each ACP prompt.
+	"dsh": true,
 	// reasonix v1.21.5: session/new advertises option id `effort` (category
 	// `thought_level`), set_config_option returns the refreshed options, and
 	// the effort reaches the session controller rather than stopping at the

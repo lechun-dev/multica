@@ -1,29 +1,144 @@
-# DSH CLI setup in MissionOS Desktop
+# Official DeepSeek Harness integration
 
-The current machine's **Runtimes → Machine detail** header includes a **DSH CLI** button immediately before **Rename machine** on desktop. It opens a dialog and checks the CLI on demand. The old Local daemon settings entry has been removed.
+## Approved scope (2026-10-08)
 
-The button is only rendered for the current desktop machine, including its stopped-daemon placeholder. It does not appear on other machines or the web app. Detection does not run merely because the machine page is displayed.
+MissionOS uses the official DSH ACP profile (`dsh --profile acp`), not the
+custom `multica` bundle. Detection, model discovery, execution, configuration,
+resume, cancellation and shutdown must use the same protocol.
 
-- Check again detects the current installation and command state.
-- If DSH Desktop is absent, MissionOS only prompts the user to install it. It does not download DSH, install an npm CLI, or alter shell startup files.
-- If DSH Desktop is present but its command is missing or broken, the explicit **Install / repair CLI** action invokes that installation's bundled command manager.
-- Existing PATH commands, including Homebrew or user wrappers, are probed first and accepted without registration or replacement when compatible. A different file path alone is not a command conflict.
-- A failed custom-command probe never triggers replacement. A failed DSH-owned registered launcher may still be repaired through the bundled worker after ownership checks.
-- A ready result requires the selected launcher to return the DSH `multica` profile's version-1 discovery frame, not merely a successful command registration.
-- Restart the local daemon after successful registration to refresh discovered runtimes. MissionOS does not automatically interrupt running work.
+Desktop automatically selects an existing compatible CLI or the official
+App's bundled launcher before starting its local daemon. This selection is
+process-local (`MULTICA_DSH_PATH`); it never replaces commands, edits system
+PATH, elevates privileges, patches the App, or installs third-party plugins.
+An explicit operator override remains authoritative. No installed launcher
+means an installation prompt, not a download. The header dialog performs a
+bounded ACP initialize check and reports timeout/protocol/startup failures
+without exposing subprocess output or credentials.
 
-## Supported locations
+Official App locations: `/Applications/DeepSeek Harness.app`,
+`~/Applications/DeepSeek Harness.app`, and Windows DeepSeek Harness under
+LOCALAPPDATA/Programs or ProgramFiles. Other locations can use
+`MULTICA_DSH_PATH` or an existing PATH command. Linux supports existing CLIs.
 
-macOS: `/Applications/DeepSeek Harness.app` and `~/Applications/DeepSeek Harness.app`.
+## Implementation and acceptance sequence
 
-Windows: `%LOCALAPPDATA%\Programs\DeepSeek Harness`, `%ProgramFiles%\DeepSeek Harness`, and `%ProgramFiles(x86)%\DeepSeek Harness`.
+1. Replace custom JSONL execution/catalog with existing shared ACP transport,
+   MCP conversion, deliverable tracking, usage and session error handling.
+   Apply model/effort through advertised config option IDs, validating replies.
+2. Remove daemon profile-manifest gating and automatic plugin installation.
+   ACP initialize is the availability check; failed probes are not proof that
+   user configuration needs replacement. Prefer official bundled launchers.
+3. Replace desktop command registration/elevation with automatic process-local
+   launcher selection, bounded initialization, and truthful localized status.
+4. Fake-process tests first; then focused/full Go and desktop checks. Explicitly
+   authorized real-agent acceptance uses `agentintegration` and
+   `MULTICA_RUN_REAL_AGENT_SMOKE=1`, temporary cwd, normal user authorization,
+   and no credential output. Verify discovery, prompt, resume and cancellation.
+5. Review, merge to main, push and create a new prerelease tag only after
+   acceptance. Do not bypass release quality gates.
 
-A custom installation outside these locations is not considered proof that DSH is absent; the UI explicitly says it was not found in default locations and directs users to DSH's own command menu. Installed versions without `runtime/cli/command-manager.js` are shown as unsupported, not uninstalled. Linux command repair is not supported by the DSH worker.
+## Migration and safety
 
-## Safety boundaries
+No legacy adapter is retained. Existing custom multica session IDs may be
+rejected by ACP; a genuine resume rejection is reported so the daemon can
+start fresh. History is not claimed to be converted. Existing DSH profiles and
+credentials remain untouched. ACP owns its session persistence; the former
+MULTICA_DSH_SESSION_ROOT override is not an official ACP setting and is removed.
+MULTICA_DSH_PROFILE_BUNDLE and MULTICA_DSH_PLUGIN_PATH no longer install anything.
+Login/API credentials still require normal DSH authorization.
 
-Only the trusted main window can request command management. The renderer cannot supply executable paths, worker operations, or elevation scripts. Installation is user-triggered and serialized; the DSH worker's inspected fingerprint confirms each mutation, preserving its stale-state and ownership checks. Other command installations and commands shadowing DSH are not overwritten. Probe failure, command ownership conflict, unsuccessful registration, and denied registration permission have separate UI messages; raw command output and exception details are not sent to the renderer. On macOS, a permission failure invokes the native authorization prompt using fixed installation paths. Cancellation is not treated as success.
+### Reusing the official Desktop connection
 
-Windows registry PATH changes do not update the running MissionOS process automatically. Verified launcher directories are appended to its child-process PATH without reordering existing entries. This is process-local and does not independently write registry PATH values.
+The official App's settings form writes profile-local overrides. Launching
+`--profile acp` does not inherit `profiles/desktop/cordis.patch.yml`, even though
+both profiles share the official credential store. Using a gateway key against
+the default official API can therefore look like an invalid key.
 
-Unit tests inject fake discovery and worker execution. Default tests do not execute user-installed agent CLIs. Windows registration and macOS authorization still require manual installed-app acceptance testing; normal source tests cannot establish native OS prompt behavior.
+Before discovery or execution, read the current DSH home's Desktop patch
+(DSH_HOME, otherwise ~/.dsh), capped at 1 MiB. Copy only literal `baseURL` and
+`apiKeyEnv` fields for `llm-deepseek`, applying sequential overrides. Pass that
+pair through the official `--patch` option in a private temporary overlay,
+removed after process shutdown and on startup failure. Desktop's explicit
+connection takes precedence over ACP/home connection overrides for this launch.
+No App/profile files are modified and no unrelated Desktop plugins are loaded.
+
+The key value is never read or copied by MissionOS. Official DSH resolves the
+named credential, normally DEEPSEEK_API_KEY, using its normal environment/store
+precedence. A different DSH_HOME selects a different official credential store.
+With no Desktop connection override, official ACP defaults remain unchanged.
+Custom credential references require an explicit Desktop API URL so an endpoint
+and credential are not silently paired from different profiles. Malformed or
+dynamic connection fields fail closed with value-free errors.
+
+Contract references: official `packages/settings/settings/README.md`,
+`packages/credentials/credentials-local/README.md`,
+`packages/llm/llm-deepseek-api-key/README.md`, and
+`apps/cli/src/profile-boot.ts` (`--patch`).
+
+Primary contract: official DeepSeek Harness `packages/acp/acp/README.md`,
+`packages/bundle/acp-app/README.md`, and the installed official App's ACP
+handshake. Model IDs are opaque values from configOptions, not reconstructed
+provider/model strings. Sessions receive task cwd and MCP servers directly.
+
+## Local verification (2026-10-08)
+
+- Official macOS App: DeepSeek Harness 0.2.0-rc.2. Real launcher selection
+  returned ready in 610ms through the existing PATH wrapper and 701ms through
+  the bundled launcher with a restricted PATH. PATH was unchanged in both cases.
+- The opt-in official configuration smoke passed: initialize, three advertised
+  model choices, confirmed model/effort selection, close, cross-process resume
+  (whose response omits sessionId), and rejection of a nonexistent session.
+  This test uses isolated temporary DSH_HOME/cwd and makes no model requests.
+- Desktop: 70 test files / 756 tests passed; node/web and shared views type
+  checks passed; lint passed with one existing tab-content.tsx dependency
+  warning; the desktop build passed with existing bundler warnings.
+- DSH/shared ACP/Qoder and daemon regression checks passed with the race
+  detector and the real-agent CLI guard. The full daemon suite passed.
+  A regression test first reproduced a resumed session losing its ID on
+  configuration failure; the fix now preserves it without sending a prompt.
+- The complete default Go verification wrapper passed with the race detector
+  and an isolated CODEX_HOME/sessions directory. No tests were excluded and no
+  installed agent CLI was invoked. The wrapper's own regression tests passed.
+- Two Codex cancellation checks initially failed on both the unchanged baseline
+  and this branch. Their fake executions fell back to the ambient session
+  history scan. With an isolated CODEX_HOME containing an empty sessions
+  directory, both baseline checks passed three consecutive rounds. No Codex
+  production code, test assertions, or release gate was changed.
+- Go vulnerability scanning reported no vulnerabilities. The production
+  dependency audit still reports 181 findings (3 critical, 66 high, 96 moderate,
+  16 low); dependency manifests and the lockfile are unchanged by this migration.
+- The real dialog was previewed at desktop/mobile widths for readiness,
+  timeout, and recheck behavior using a mock-status browser harness. This is
+  distinct from the real launcher checks above, not a full installed desktop
+  end-to-end test. Native Windows acceptance was not run on this macOS host.
+
+### Desktop connection acceptance
+
+The initial invalid-key diagnosis was incomplete: ACP did not inherit the
+Desktop gateway URL. With the connection pair reused, the next attempt reached
+the gateway but its account group did not support ACP's default advisory model
+deepseek-v4-flash. The App was configured for deepseek-flash. Selecting its
+advertised opaque ACP ID explicitly made real model output and contextual
+cross-process resume pass without changing the user's URL, key or App settings.
+The opt-in smoke accepts MULTICA_DSH_SMOKE_MODEL only if ACP advertises that ID;
+it does not rewrite the product default or silently retry other models.
+
+The final opt-in smoke passed in 6.27s: real model output, contextual
+cross-process resume, and bounded cancellation of a long pending prompt after
+session setup. An earlier attempt to cancel on the first text update received
+a completed result; this gateway can deliver text only at the end. The final
+test cancels while waiting for the long response, not after buffered text arrives.
+The default fake test independently verifies session/cancel and session/close
+requests after session setup rather than relying on a 300ms startup deadline.
+
+Connection regressions passed three consecutive rounds, including duplicate
+overrides, literal-only parsing, value-free validation errors, private overlays,
+cleanup after execution/discovery/failed spawn, and no secret/unrelated-setting
+copying. The complete default Go wrapper passed again with the race detector
+and isolated CODEX_HOME/sessions; no packages or tests were excluded. The wrapper
+regression tests passed and Go vulnerability scanning again found no vulnerabilities.
+The desktop build was repeated with the updated embedded CLI and passed; the
+focused launcher/dialog suite also passed (2 files / 23 tests).
+No credential value is recorded here. The installed MissionOS Preview was not
+replaced during these checks; native Windows and full installed-App E2E remain
+outside this macOS acceptance.

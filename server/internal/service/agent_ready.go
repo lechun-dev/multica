@@ -292,22 +292,12 @@ func RuntimeUnusableNotice(agentName string, verdict AgentVerdict) string {
 	)
 }
 
-// runtimeProfileMissingNotice explains a runtime whose CLI runs but whose
-// Multica runtime profile is absent.
-//
-// No fenced command, deliberately. The install is `dsh plugin --profile multica
-// add <bundle>`, and <bundle> is the operator's own choice of package,
-// directory or tarball — Multica's bridge is not on a public registry yet
-// (multica#6936). Rendering that line in a code block presents a placeholder as
-// something to copy and run, which is the shape of instruction people paste
-// verbatim and then report as broken. Naming the two ways to supply a real
-// bundle, and pointing at the docs that list them, is the honest version.
+// 2026-10-08 coder(lq): Older daemons may still report dsh_profile; preserve the reason code but direct users to official ACP.
 func runtimeProfileMissingNotice(name string) string {
 	return fmt.Sprintf(
-		"%s could not start: the DeepSeek Harness CLI is installed on that machine, but the `multica` runtime profile it needs is not, so this trigger was not queued.\n\n"+
-			"The profile supplies the protocol Multica drives — the CLI itself is fine, and reinstalling it changes nothing. On that machine, either add the Multica DSH runtime bundle to the profile with `dsh plugin --profile multica add`, or set `MULTICA_DSH_PROFILE_BUNDLE` for the daemon so it installs the bundle itself. See the agent runtime install docs for the bundle to use.\n\n"+
-			"The runtime registers on its own within a couple of minutes after that; trigger the agent again then.",
-		name,
+		"%s could not start: this machine's daemon still expects the retired custom DeepSeek Harness runtime profile, so this trigger was not queued.\n\n"+
+			"Update MissionOS and its local daemon to a version that supports official DSH ACP, then restart the local service. The official DeepSeek Harness App is sufficient; do not install a third-party multica plugin. Existing DSH settings are not removed.\n\n"+
+			"Check the DSH CLI connection, select a model from its refreshed catalog, and trigger the agent again. Older custom-profile session history is not automatically migrated.", name,
 	)
 }
 

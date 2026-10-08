@@ -6,7 +6,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -44,35 +43,6 @@ func qoderDefaultBinary(providerType string) string {
 }
 
 var qoderReaderDrainGrace = 2 * time.Second
-
-type qoderMessageStream struct {
-	ch     chan Message
-	mu     sync.Mutex
-	closed bool
-}
-
-func newQoderMessageStream(size int) *qoderMessageStream {
-	return &qoderMessageStream{ch: make(chan Message, size)}
-}
-
-func (s *qoderMessageStream) send(msg Message) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	trySend(s.ch, msg)
-}
-
-func (s *qoderMessageStream) close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	s.closed = true
-	close(s.ch)
-}
 
 func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	execPath := b.cfg.ExecutablePath
@@ -145,7 +115,7 @@ func (b *qoderBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 
 	b.cfg.Logger.Info("qoder acp started", "pid", cmd.Process.Pid, "cwd", opts.Cwd)
 
-	msgStream := newQoderMessageStream(256)
+	msgStream := newACPMessageStream(256)
 	resCh := make(chan Result, 1)
 
 	// Qoder emits interim narration and the final answer as the same ACP

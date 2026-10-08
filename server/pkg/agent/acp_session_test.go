@@ -24,6 +24,11 @@ func TestIsACPResumeRejected(t *testing.T) {
 		want bool
 	}{
 		{
+			name: "official DSH session is not resumable",
+			err:  &acpRPCError{Method: "session/resume", Code: -32602, Message: "session is not resumable: old-multica-session"},
+			want: true,
+		},
+		{
 			name: "qodercli invalid session identifier",
 			// The frame that made GH #8116 permanent: qodercli 1.1.25 answers
 			// session/resume for an id it never persisted with invalid_params

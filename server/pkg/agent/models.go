@@ -1911,6 +1911,10 @@ const hermesDiscoveryTimeout = 40 * time.Second
 // `--acp`), and what to label temporary work directories so they're
 // easy to identify in logs.
 type acpDiscoveryProvider struct {
+	// 2026-10-08 coder(lq): Read-only availability checks stop before creating a persistent session.
+	initializeOnly   bool
+	closeSession     bool
+	validateInit     func(json.RawMessage) error
 	defaultBin       string
 	clientName       string
 	extraEnv         []string
@@ -2099,6 +2103,14 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 	if p.inspectInit != nil {
 		p.inspectInit(initResult)
 	}
+	if p.validateInit != nil {
+		if err := p.validateInit(initResult); err != nil {
+			return fail("protocol validation", err)
+		}
+	}
+	if p.initializeOnly {
+		return []Model{}, nil
+	}
 
 	// session/new requires a valid cwd — use a temp directory we
 	// clean up afterwards, not the daemon's workdir (which might
@@ -2128,6 +2140,13 @@ func discoverACPModels(ctx context.Context, runtimeCmd Command, p acpDiscoveryPr
 	})
 	if err != nil {
 		return fail("session/new", err)
+	}
+	if p.closeSession {
+		defer func() {
+			if id := extractACPSessionID(sessionResult); id != "" {
+				_, _ = requestACP("session/close", map[string]any{"sessionId": id})
+			}
+		}()
 	}
 	models := parseACPSessionNewModels(sessionResult)
 	if len(models) == 0 {
@@ -2265,16 +2284,12 @@ func parseACPSessionNewModels(raw json.RawMessage) []Model {
 // Returns nil when no model option is present, so the caller can keep
 // whatever the `models` block produced.
 func parseACPConfigOptionModels(raw json.RawMessage) []Model {
-	type acpConfigChoice struct {
-		Value string `json:"value"`
-		Name  string `json:"name"`
-	}
 	type acpConfigOption struct {
-		ID                string            `json:"id"`
-		Category          string            `json:"category"`
-		CurrentValue      string            `json:"currentValue"`
-		CurrentValueSnake string            `json:"current_value"`
-		Options           []acpConfigChoice `json:"options"`
+		ID                string           `json:"id"`
+		Category          string           `json:"category"`
+		CurrentValue      string           `json:"currentValue"`
+		CurrentValueSnake string           `json:"current_value"`
+		Options           []acpSelectEntry `json:"options"`
 	}
 	var resp struct {
 		ConfigOptions      []acpConfigOption `json:"configOptions"`
@@ -2298,7 +2313,7 @@ func parseACPConfigOptionModels(raw json.RawMessage) []Model {
 		}
 		models := make([]Model, 0, len(opt.Options))
 		seen := map[string]bool{}
-		for _, choice := range opt.Options {
+		for _, choice := range flattenACPSelectChoices(opt.Options) {
 			modelID := strings.TrimSpace(choice.Value)
 			if modelID == "" || seen[modelID] {
 				continue
