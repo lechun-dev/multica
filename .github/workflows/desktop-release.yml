@@ -103,16 +103,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Require macOS signing credentials
+      - name: Require macOS signing and notarization credentials
         if: matrix.platform == 'mac'
         shell: bash
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
-            echo "::error::MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD must both be configured."
+          missing=()
+          for name in \
+            CSC_LINK \
+            CSC_KEY_PASSWORD \
+            APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD \
+            APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Missing required macOS release credentials: %s\n' \
+              "${missing[*]}"
             exit 1
           fi
 
@@ -123,6 +138,9 @@ jobs:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           CSC_IDENTITY_AUTO_DISCOVERY: "true"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           # 2026-09-10 coder(lq): A prerelease tag must build the Preview app,
@@ -137,7 +155,7 @@ jobs:
             -c.forceCodeSigning=true \
             --publish never
 
-      - name: Verify macOS Developer ID signature
+      - name: Verify macOS Developer ID signature and notarization
         if: matrix.platform == 'mac'
         shell: bash
         run: |
@@ -169,6 +187,20 @@ jobs:
             fi
             codesign --verify --strict --verbose=2 "$executable_path"
           done
+
+          xcrun stapler validate "$app_path"
+          gatekeeper_info="$(
+            spctl --assess --type execute --verbose=4 "$app_path" 2>&1
+          )" || {
+            printf '%s\n' "$gatekeeper_info"
+            echo "::error::Gatekeeper rejected the packaged macOS application."
+            exit 1
+          }
+          printf '%s\n' "$gatekeeper_info"
+          if ! grep -Fq 'source=Notarized Developer ID' <<<"$gatekeeper_info"; then
+            echo "::error::The packaged app is missing an accepted Apple notarization ticket."
+            exit 1
+          fi
 
       - name: Build Windows installer
         if: matrix.platform == 'windows'
