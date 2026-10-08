@@ -57,6 +57,8 @@ MiniMax Code를 사용하려면 지원되는 Node.js 버전(`>=22.19 <23` 또는
 
 DeepSeek Harness는 **공식 앱**을 설치하고 정상적인 모델 인증을 설정하세요. MissionOS는 내장 공식 ACP(`dsh --profile acp`)를 사용하므로 직접 빌드한 앱이나 타사 `multica` 플러그인이 필요하지 않습니다. macOS와 Windows에서는 PATH에 명령이 없어도 공식 앱의 실행 경로를 자동으로 찾으며, 기존 호환 CLI를 덮어쓰지 않고 우선합니다. 사용자 경로는 `MULTICA_DSH_PATH`로 지정하세요. 데스크톱 **DSH CLI** 창은 제한 시간 내에 ACP를 확인하지만 모델 인증까지 보장하지는 않습니다. 모델과 추론 강도는 ACP 세션 설정에서 가져옵니다. 이전 프로토콜의 세션 ID는 이전하지 않으며, 재개가 거부되면 일반 재시도로 새 대화를 시작합니다.
 
+ACP 모델 검색과 실행 시 공식 Desktop 프로필에 명시된 API URL과 자격 증명 참조를 재사용합니다. 실제 비밀 값은 공식 DSH가 확인하며 MissionOS 설정이나 로그에 복사하지 않습니다. 앱과 같은 DSH_HOME을 사용하세요. 설정하지 않으면 ~/.dsh입니다. 후보 목록은 게이트웨이 계정의 모든 모델 사용 권한을 보장하지 않으므로 공식 앱에서 확인한 모델을 선택하세요.
+
 로그인 자격 증명은 도구가 로컬에 저장합니다. Multica는 Claude, Codex, Cursor 또는 다른 CLI의 로그인 token을 받지 않습니다.
 
 <Callout type="info">

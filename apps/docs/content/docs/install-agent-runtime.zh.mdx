@@ -57,6 +57,8 @@ Multica 当前会检测以下命令：
 
 DeepSeek Harness 请安装**官方 DeepSeek Harness 桌面端**，并按正常流程完成模型授权。MissionOS 使用内置的官方 ACP（`dsh --profile acp`），不再需要自打包 App 或第三方 `multica` 插件。macOS 和 Windows 上没有 PATH 命令时，会自动发现官方 App 内的启动入口；已有可用命令优先使用且不会被覆盖。自定义位置可通过 `MULTICA_DSH_PATH` 指定。桌面端 **DSH CLI** 弹窗会在限定时间内检查 ACP，检测成功不代表模型密钥有效。模型与思考强度来自 ACP 会话配置。旧自定义协议的会话 ID 不会迁移；ACP 拒绝续接时由正常重试流程开启新会话。
 
+MissionOS 会在 ACP 模型发现和执行时复用官方 Desktop 配置中明确设置的 API 地址与密钥引用。实际密钥由官方 DSH 解析，不复制到 MissionOS 配置或日志。请与官方 App 使用相同的 DSH_HOME；未设置时默认为 ~/.dsh。候选模型目录不代表网关账户具备全部模型权限，请选择已在官方 App 中验证可用的模型。
+
 这些登录凭据由工具保存在本机。Multica 不会接收 Claude、Codex、Cursor 或其他 CLI 的登录 token。
 
 <Callout type="info">

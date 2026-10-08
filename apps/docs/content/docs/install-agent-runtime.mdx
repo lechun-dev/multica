@@ -57,6 +57,8 @@ For MiniMax Code, install a supported Node.js release (`>=22.19 <23` or `>=24 <2
 
 For DeepSeek Harness, install the **official DeepSeek Harness App** and configure its model authorization normally. MissionOS uses the built-in official ACP profile (`dsh --profile acp`); no custom App or third-party `multica` plugin is required. On macOS and Windows, the official bundled launcher is discovered automatically when the CLI is not on PATH. An existing compatible CLI is preferred and never replaced. For a custom location, set `MULTICA_DSH_PATH` to the launcher. The desktop **DSH CLI** dialog checks ACP with a bounded timeout; successful detection does not validate model credentials. Models and reasoning effort come from ACP session configuration. Previous custom-profile session IDs are not migrated; an ACP resume rejection starts a fresh conversation through the normal retry flow.
 
+MissionOS reuses the official Desktop profile’s explicit API URL and credential reference for ACP discovery and execution. The secret is resolved by official DSH, never copied into MissionOS configuration or logs. Use the same DSH_HOME as the App; when unset, it defaults to ~/.dsh. The advertised model catalog does not guarantee that your gateway account can use every model: select one already verified in the App.
+
 Those login credentials are stored locally by the tool itself. Multica never receives login tokens from Claude, Codex, Cursor, or any other CLI.
 
 <Callout type="info">

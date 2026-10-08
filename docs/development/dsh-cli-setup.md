@@ -47,6 +47,34 @@ MULTICA_DSH_SESSION_ROOT override is not an official ACP setting and is removed.
 MULTICA_DSH_PROFILE_BUNDLE and MULTICA_DSH_PLUGIN_PATH no longer install anything.
 Login/API credentials still require normal DSH authorization.
 
+### Reusing the official Desktop connection
+
+The official App's settings form writes profile-local overrides. Launching
+`--profile acp` does not inherit `profiles/desktop/cordis.patch.yml`, even though
+both profiles share the official credential store. Using a gateway key against
+the default official API can therefore look like an invalid key.
+
+Before discovery or execution, read the current DSH home's Desktop patch
+(DSH_HOME, otherwise ~/.dsh), capped at 1 MiB. Copy only literal `baseURL` and
+`apiKeyEnv` fields for `llm-deepseek`, applying sequential overrides. Pass that
+pair through the official `--patch` option in a private temporary overlay,
+removed after process shutdown and on startup failure. Desktop's explicit
+connection takes precedence over ACP/home connection overrides for this launch.
+No App/profile files are modified and no unrelated Desktop plugins are loaded.
+
+The key value is never read or copied by MissionOS. Official DSH resolves the
+named credential, normally DEEPSEEK_API_KEY, using its normal environment/store
+precedence. A different DSH_HOME selects a different official credential store.
+With no Desktop connection override, official ACP defaults remain unchanged.
+Custom credential references require an explicit Desktop API URL so an endpoint
+and credential are not silently paired from different profiles. Malformed or
+dynamic connection fields fail closed with value-free errors.
+
+Contract references: official `packages/settings/settings/README.md`,
+`packages/credentials/credentials-local/README.md`,
+`packages/llm/llm-deepseek-api-key/README.md`, and
+`apps/cli/src/profile-boot.ts` (`--patch`).
+
 Primary contract: official DeepSeek Harness `packages/acp/acp/README.md`,
 `packages/bundle/acp-app/README.md`, and the installed official App's ACP
 handshake. Model IDs are opaque values from configOptions, not reconstructed
@@ -84,14 +112,33 @@ provider/model strings. Sessions receive task cwd and MCP servers directly.
   distinct from the real launcher checks above, not a full installed desktop
   end-to-end test. Native Windows acceptance was not run on this macOS host.
 
-### Release hold
+### Desktop connection acceptance
 
-The real prompt smoke reached the official ACP default model but failed provider
-authorization (invalid API key). No credential value is recorded here. The user
-must update authorization inside the official App; CLI preparation cannot
-replace or repair model credentials. Successful model output, contextual resume
-after a real prompt, and real active-turn cancellation remain unverified.
+The initial invalid-key diagnosis was incomplete: ACP did not inherit the
+Desktop gateway URL. With the connection pair reused, the next attempt reached
+the gateway but its account group did not support ACP's default advisory model
+deepseek-v4-flash. The App was configured for deepseek-flash. Selecting its
+advertised opaque ACP ID explicitly made real model output and contextual
+cross-process resume pass without changing the user's URL, key or App settings.
+The opt-in smoke accepts MULTICA_DSH_SMOKE_MODEL only if ACP advertises that ID;
+it does not rewrite the product default or silently retry other models.
 
-Keep these changes on the existing codex/dsh-cli-setup branch. Do not merge main,
-push a release, or create a prerelease tag until real-model acceptance succeeds.
-Do not replace the user's installed MissionOS Preview during this blocked state.
+The final opt-in smoke passed in 6.27s: real model output, contextual
+cross-process resume, and bounded cancellation of a long pending prompt after
+session setup. An earlier attempt to cancel on the first text update received
+a completed result; this gateway can deliver text only at the end. The final
+test cancels while waiting for the long response, not after buffered text arrives.
+The default fake test independently verifies session/cancel and session/close
+requests after session setup rather than relying on a 300ms startup deadline.
+
+Connection regressions passed three consecutive rounds, including duplicate
+overrides, literal-only parsing, value-free validation errors, private overlays,
+cleanup after execution/discovery/failed spawn, and no secret/unrelated-setting
+copying. The complete default Go wrapper passed again with the race detector
+and isolated CODEX_HOME/sessions; no packages or tests were excluded. The wrapper
+regression tests passed and Go vulnerability scanning again found no vulnerabilities.
+The desktop build was repeated with the updated embedded CLI and passed; the
+focused launcher/dialog suite also passed (2 files / 23 tests).
+No credential value is recorded here. The installed MissionOS Preview was not
+replaced during these checks; native Windows and full installed-App E2E remain
+outside this macOS acceptance.
