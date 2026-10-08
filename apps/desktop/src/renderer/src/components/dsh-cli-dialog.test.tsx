@@ -66,6 +66,17 @@ describe("DSH CLI runtime header dialog", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "重新检测" })).toBeEnabled());
   });
 
+  it("shows the probe failure reason without calling a different-path wrapper a conflict", async () => {
+    api.getDshCliStatus.mockResolvedValue({ state: "error", reason: "probe_failed" });
+    show();
+    expect(await screen.findByText(/未返回兼容的 multica 协议/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "安装／修复 CLI" })).not.toBeInTheDocument();
+    expect(api.repairDshCli).not.toHaveBeenCalled();
+    api.getDshCliStatus.mockResolvedValue({ state: "ready" });
+    fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
+    expect(await screen.findByText(/DSH CLI 可用/)).toBeInTheDocument();
+  });
+
   it("distinguishes unsupported installed versions from missing apps", async () => {
     api.getDshCliStatus.mockResolvedValue({ state: "unsupported" });
     show();

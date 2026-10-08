@@ -1378,6 +1378,10 @@
       "dsh_not_installed": "標準の場所に DSH が見つかりません。DSH Desktop をインストールしてください。別の場所の場合は DSH のコマンドメニューを使用してください。",
       "dsh_unsupported": "このプラットフォームまたは DSH バージョンでは CLI を修復できません。DSH のコマンドメニューを使用してください。",
       "dsh_error": "DSH CLI を検証できません。権限、コマンドの競合、DSH の multica 設定を確認してください。",
+      "dsh_probe_failed": "現在の dsh コマンドを起動できないか、互換性のある multica プロトコルが返されませんでした。既存のコマンドは変更していません。DSH Desktop の multica 設定を確認し、CLI を修復してから再確認してください。",
+      "dsh_command_conflict": "CLI の登録先は別のコマンドで使用されています。上書きはしていません。競合する dsh コマンドを確認して解消し、再確認してください。",
+      "dsh_registration_failed": "インストールまたは修復後も CLI の登録を確認できませんでした。DSH Desktop でコマンドのインストール状態を確認し、再確認してください。",
+      "dsh_permission_denied": "DSH CLI を登録する権限がありません。DSH Desktop でコマンドをインストールしてから再確認してください。",
       "dsh_repair": "CLI を登録／修復",
       "dsh_check": "再確認"
     }
