@@ -13,7 +13,11 @@ import (
 )
 
 const fakeDshACP = `#!/bin/sh
-[ "$*" = "--profile acp" ] || exit 2
+[ "$1 $2" = "--profile acp" ] || exit 2
+if [ "$3" = "--patch" ] && [ -n "$DSH_TEST_PATCH_RECORD" ]; then
+ cat "$4" > "$DSH_TEST_PATCH_RECORD"
+ printf '%s' "$4" > "$DSH_TEST_PATCH_RECORD.path"
+fi
 while IFS= read -r line; do
  [ -z "$DSH_TEST_RECORD" ] || printf '%s\n' "$line" >> "$DSH_TEST_RECORD"
  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
@@ -51,11 +55,52 @@ func writeDshFixture(t *testing.T, body string) string {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix shell fixture")
 	}
+	t.Setenv("DSH_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "dsh")
 	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestDshUsesOfficialDesktopConnectionWithoutCopyingSecrets(t *testing.T) {
+	home, record := t.TempDir(), filepath.Join(t.TempDir(), "connection.yml")
+	dir := filepath.Join(home, "profiles", "desktop")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	patch := "- id: llm-deepseek\n  config:\n    baseURL: https://old.example.test/v1\n    apiKeyEnv: CUSTOM_DSH_KEY\n- id: llm-deepseek\n  config:\n    baseURL: https://configured.example.test/\n- id: ui-chat\n  config:\n    secret: MUST_NOT_BE_COPIED\n"
+	if err := os.WriteFile(filepath.Join(dir, "cordis.patch.yml"), []byte(patch), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".credentials.yaml"), []byte("deliberately invalid: [SECRET_KEY_MUST_NOT_BE_READ"), 0000); err != nil {
+		t.Fatal(err)
+	}
+	result, _, _ := runDshFixture(t, map[string]string{"DSH_HOME": home, "DSH_TEST_PATCH_RECORD": record}, ExecOptions{})
+	if result.Status != "completed" {
+		t.Fatalf("execution failed: %+v", result)
+	}
+	connection, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal("no official desktop connection was passed to ACP")
+	}
+	for _, want := range []string{"https://configured.example.test/", "CUSTOM_DSH_KEY"} {
+		if !strings.Contains(string(connection), want) {
+			t.Fatalf("connection did not reuse the official desktop %s", want)
+		}
+	}
+	for _, forbidden := range []string{"old.example.test", "MUST_NOT_BE_COPIED", "SECRET_KEY", "ui-chat"} {
+		if strings.Contains(string(connection), forbidden) {
+			t.Fatal("connection overlay copied unrelated or secret content")
+		}
+	}
+	file, err := os.ReadFile(record + ".path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(string(file)); !os.IsNotExist(err) {
+		t.Fatal("temporary connection overlay was not removed after execution")
+	}
 }
 
 func runDshFixture(t *testing.T, env map[string]string, opts ExecOptions) (Result, []Message, string) {
@@ -160,8 +205,34 @@ func TestDshACPResume(t *testing.T) {
 }
 
 func TestDshACPCancellation(t *testing.T) {
-	result, _, requests := runDshFixture(t, map[string]string{"DSH_TEST_WAIT": "1"}, ExecOptions{Timeout: 300 * time.Millisecond})
-	if result.Status != "timeout" || !strings.Contains(requests, `"method":"session/cancel"`) || !strings.Contains(requests, `"method":"session/close"`) {
+	record := filepath.Join(t.TempDir(), "requests.jsonl")
+	b, err := New("dsh", Config{ExecutablePath: writeDshFixture(t, fakeDshACP), Env: map[string]string{
+		"DSH_TEST_WAIT": "1", "DSH_TEST_RECORD": record,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, err := b.Execute(ctx, "test prompt", ExecOptions{Cwd: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := false
+	for msg := range s.Messages {
+		// 2026-10-08 coder(lq): Cancel after session creation, not after a wall-clock bootstrap deadline that varies with CI load.
+		if msg.Type == MessageStatus && msg.Status == "running" {
+			ready = true
+			cancel()
+		}
+	}
+	result := <-s.Result
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := string(data)
+	if !ready || result.Status != "aborted" || !strings.Contains(requests, `"method":"session/cancel"`) || !strings.Contains(requests, `"method":"session/close"`) {
 		t.Fatalf("result: %+v; requests: %s", result, requests)
 	}
 }

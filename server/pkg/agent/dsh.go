@@ -77,11 +77,22 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	if err != nil {
 		return nil, fmt.Errorf("dsh invalid mcp_config: %w", err)
 	}
+	env := replaceEnvValue(buildEnv(b.cfg.Env), "DSH_TELEMETRY_DISABLED", "1")
+	args, cleanupConnection, err := prepareDshLaunch(env, opts.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	connectionStarted := false
+	defer func() {
+		if !connectionStarted {
+			cleanupConnection()
+		}
+	}()
 	runCtx, cancel := runContext(ctx, opts.Timeout)
-	cmd := b.cfg.commandAt(path).exec(runCtx, dshLaunchArgs()...)
+	cmd := b.cfg.commandAt(path).exec(runCtx, args...)
 	hideAgentWindow(cmd)
-	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(dshLaunchArgs()))
-	cmd.Env = replaceEnvValue(buildEnv(b.cfg.Env), "DSH_TELEMETRY_DISABLED", "1")
+	b.cfg.logAgentCommand(cmd, newAgentCommandLogArgs(args))
+	cmd.Env = env
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
@@ -104,6 +115,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		cancel()
 		return nil, fmt.Errorf("start dsh: %w", err)
 	}
+	connectionStarted = true
 	stream := newACPMessageStream(256)
 	results := make(chan Result, 1)
 	var delivering atomic.Bool
@@ -161,6 +173,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			cancel()
 			_ = stdout.Close()
 			<-readerDone
+			cleanupConnection()
 			_, diagnostics := deliverable.result()
 			result.Status, result.Error = promoteACPResultOnProviderError(result.Status, result.Error, diagnostics, providerErr)
 			stream.close()
@@ -306,8 +319,13 @@ func validateDshACPInit(raw json.RawMessage) error {
 }
 
 func discoverDshModels(ctx context.Context, cmd Command) ([]Model, error) {
+	args, cleanup, err := prepareDshLaunch(os.Environ(), "")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
 	models, err := discoverACPModels(ctx, cmd, acpDiscoveryProvider{
-		defaultBin: "dsh", clientName: "missionos", tmpdirPrefix: "missionos-dsh-models-", acpArgs: dshLaunchArgs(),
+		defaultBin: "dsh", clientName: "missionos", tmpdirPrefix: "missionos-dsh-models-", acpArgs: args,
 		extraEnv: []string{"DSH_TELEMETRY_DISABLED=1"}, timeout: 8 * time.Second, strictErrors: true, closeSession: true,
 		annotate: annotateACPThinkingForSessionModel, validateInit: validateDshACPInit,
 	})

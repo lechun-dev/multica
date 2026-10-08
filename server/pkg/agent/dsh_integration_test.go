@@ -38,6 +38,18 @@ func TestDshRealRuntimeSmoke(t *testing.T) {
 			selected = model
 		}
 	}
+	// 2026-10-08 coder(lq): A gateway may authorize only part of the advisory catalog; validate an explicit smoke selection without rewriting App settings.
+	if requested := os.Getenv("MULTICA_DSH_SMOKE_MODEL"); requested != "" {
+		found := false
+		for _, model := range models {
+			if model.ID == requested {
+				selected, found = model, true
+			}
+		}
+		if !found {
+			t.Fatal("MULTICA_DSH_SMOKE_MODEL is not advertised by the official ACP runtime")
+		}
+	}
 	level := ""
 	if selected.Thinking != nil {
 		for _, option := range selected.Thinking.SupportedLevels {
@@ -92,6 +104,46 @@ func TestDshRealRuntimeSmoke(t *testing.T) {
 	if resumeResult.SessionID != result.SessionID {
 		t.Fatalf("DSH resume changed session ID: %q -> %q", result.SessionID, resumeResult.SessionID)
 	}
+
+	// 2026-10-08 coder(lq): Cancel a long pending turn after setup; this gateway may buffer all text until completion, so first-text cancellation is too late.
+	cancelCtx, cancelTurn := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancelTurn()
+	active, err := b.Execute(cancelCtx, "Without using tools, write 2000 numbered sentences explaining how to count. Do not summarize or stop early.", ExecOptions{
+		Cwd: cwd, Model: selected.ID, ThinkingLevel: level,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cancelledAt time.Time
+	var cancelTimer *time.Timer
+	var cancelTick <-chan time.Time
+	defer func() {
+		if cancelTimer != nil {
+			cancelTimer.Stop()
+		}
+	}()
+drain:
+	for {
+		select {
+		case msg, ok := <-active.Messages:
+			if !ok {
+				break drain
+			}
+			if msg.Type == MessageStatus && msg.Status == "running" && cancelTimer == nil {
+				cancelTimer = time.NewTimer(time.Second)
+				cancelTick = cancelTimer.C
+			}
+		case <-cancelTick:
+			cancelledAt = time.Now()
+			cancelTurn()
+			cancelTick = nil
+		}
+	}
+	cancelResult := <-active.Result
+	if cancelledAt.IsZero() || cancelResult.Status != "aborted" || time.Since(cancelledAt) > 10*time.Second {
+		t.Fatalf("pending-turn cancellation failed: requestedCancel=%v status=%q error=%q", !cancelledAt.IsZero(), cancelResult.Status, cancelResult.Error)
+	}
+	t.Log("official Desktop connection verified: model output, contextual resume and bounded active-turn cancellation")
 }
 
 // 2026-10-08 coder(lq): Exercise the official App's config and persistence without model quota or user-state writes.
