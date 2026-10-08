@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { Button } from "@multica/ui/components/ui/button";
-import { SettingsRow } from "@multica/views/settings";
+import { Terminal } from "lucide-react";
+import {
+  Dialog, DialogTrigger, DialogContent, DialogHeader,
+  DialogTitle, DialogDescription, DialogFooter,
+} from "@multica/ui/components/ui/dialog";
 import { useT } from "@multica/views/i18n";
 import type { DshCliStatus } from "../../../shared/dsh-cli";
 
-export function DshCliSettingsRow() {
+function DshCliDialogBody() {
   const { t } = useT("settings");
   const [status, setStatus] = useState<DshCliStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -34,8 +38,12 @@ export function DshCliSettingsRow() {
     : t(($) => $.desktop.daemon.dsh_error);
 
   return (
-    <SettingsRow label="DSH CLI" description={description}>
-      <div className="flex shrink-0 flex-wrap justify-end gap-2" aria-busy={busy}>
+    <>
+      <DialogHeader>
+        <DialogTitle>DSH CLI</DialogTitle>
+        <DialogDescription aria-live="polite">{description}</DialogDescription>
+      </DialogHeader>
+      <DialogFooter aria-busy={busy}>
         {status?.state === "needs_repair" && (
           <Button variant="outline" size="sm" disabled={busy} onClick={() => void check(true)}>
             {t(($) => $.desktop.daemon.dsh_repair)}
@@ -44,7 +52,22 @@ export function DshCliSettingsRow() {
         <Button variant="outline" size="sm" disabled={busy || status === null} onClick={() => void check(false)}>
           {busy ? t(($) => $.desktop.daemon.cli_checking) : t(($) => $.desktop.daemon.dsh_check)}
         </Button>
-      </div>
-    </SettingsRow>
+      </DialogFooter>
+    </>
+  );
+}
+
+// 2026-10-08 coder(lq): Mount detection only when opened from this machine's runtime header.
+export function DshCliAction() {
+  return (
+    <Dialog>
+      <DialogTrigger render={<Button type="button" variant="outline" size="sm" />}>
+        <Terminal aria-hidden="true" className="size-3.5" />
+        DSH CLI
+      </DialogTrigger>
+      <DialogContent>
+        <DshCliDialogBody />
+      </DialogContent>
+    </Dialog>
   );
 }

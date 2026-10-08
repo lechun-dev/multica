@@ -23,7 +23,6 @@ function installDaemonAPI(status: DaemonStatus) {
     value: {
       getPrefs: vi.fn().mockResolvedValue({ autoStart: true, autoStop: false }),
       setPrefs: vi.fn().mockResolvedValue({ autoStart: true, autoStop: false }),
-      getDshCliStatus: vi.fn().mockResolvedValue({ state: "not_installed" }),
       isCliInstalled: vi.fn().mockResolvedValue(true),
       getStatus: vi.fn().mockResolvedValue(status),
       onStatusChange: vi.fn(() => () => {}),

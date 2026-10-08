@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { RESOURCES } from "@multica/views/locales";
-import { DshCliSettingsRow } from "./dsh-cli-settings-row";
+import { DshCliAction } from "./dsh-cli-dialog";
 import type { DshCliStatus } from "../../../shared/dsh-cli";
 
 const api = {
@@ -10,7 +10,9 @@ const api = {
   repairDshCli: vi.fn<() => Promise<DshCliStatus>>(),
 };
 function show() {
-  return render(<I18nProvider locale="zh-Hans" resources={RESOURCES}><DshCliSettingsRow /></I18nProvider>);
+  const result = render(<I18nProvider locale="zh-Hans" resources={RESOURCES}><DshCliAction /></I18nProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "DSH CLI" }));
+  return result;
 }
 beforeEach(() => {
   vi.resetAllMocks();
@@ -19,7 +21,17 @@ beforeEach(() => {
   Object.defineProperty(window, "daemonAPI", { configurable: true, value: api });
 });
 
-describe("DSH CLI settings", () => {
+describe("DSH CLI runtime header dialog", () => {
+  it("does not detect or repair until the header entry is opened", async () => {
+    render(<I18nProvider locale="zh-Hans" resources={RESOURCES}><DshCliAction /></I18nProvider>);
+    expect(api.getDshCliStatus).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "DSH CLI" }));
+    expect(await screen.findByRole("dialog", { name: "DSH CLI" })).toBeInTheDocument();
+    expect(await screen.findByText(/请先安装 DSH 桌面端/)).toBeInTheDocument();
+    expect(api.getDshCliStatus).toHaveBeenCalledTimes(1);
+    expect(api.repairDshCli).not.toHaveBeenCalled();
+  });
   it("only prompts to install DSH when absent; it does not offer or execute repair", async () => {
     show();
     expect(await screen.findByText(/请先安装 DSH 桌面端/)).toBeInTheDocument();

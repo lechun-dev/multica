@@ -1,6 +1,8 @@
 # DSH CLI setup in MissionOS Desktop
 
-The **Local daemon** settings page includes a **DSH CLI** row on desktop.
+The current machine's **Runtimes → Machine detail** header includes a **DSH CLI** button immediately before **Rename machine** on desktop. It opens a dialog and checks the CLI on demand. The old Local daemon settings entry has been removed.
+
+The button is only rendered for the current desktop machine, including its stopped-daemon placeholder. It does not appear on other machines or the web app. Detection does not run merely because the machine page is displayed.
 
 - Check again detects the current installation and command state.
 - If DSH Desktop is absent, MissionOS only prompts the user to install it. It does not download DSH, install an npm CLI, or alter shell startup files.

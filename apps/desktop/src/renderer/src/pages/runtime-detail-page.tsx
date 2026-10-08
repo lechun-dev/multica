@@ -8,6 +8,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { runtimeDisplayLabel } from "@multica/core/runtimes";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { DshCliAction } from "../components/dsh-cli-dialog";
 import { DaemonRuntimeActions } from "../components/daemon-runtime-card";
 import { useDesktopRuntimeContext } from "../components/use-desktop-runtime-context";
 
@@ -26,6 +27,7 @@ export function RuntimeDetailPage() {
       runtimeId={id}
       localDaemonId={context.localDaemonId}
       localMachineName={context.localMachineName}
+      localMachineLeadingActions={<DshCliAction />}
       localMachineActions={<DaemonRuntimeActions />}
       hasLocalMachine
       bootstrapping={context.bootstrapping}

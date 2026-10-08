@@ -36,6 +36,8 @@ export interface RuntimeDetailPageProps {
   runtimeId: string;
   localDaemonId?: string | null;
   localMachineName?: string | null;
+  /** 2026-10-08 coder(lq): Desktop-only setup actions before Rename; never rendered for another machine. */
+  localMachineLeadingActions?: React.ReactNode;
   localMachineActions?: React.ReactNode;
   hasLocalMachine?: boolean;
   bootstrapping?: boolean;
@@ -83,6 +85,7 @@ export function RuntimeDetailPage({
   runtimeId,
   localDaemonId,
   localMachineName,
+  localMachineLeadingActions,
   localMachineActions,
   hasLocalMachine,
   bootstrapping,
@@ -275,7 +278,9 @@ export function RuntimeDetailPage({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 self-end lg:self-start">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 self-end lg:self-start">
+              {/* 2026-10-08 coder(lq): Local setup must not repair this desktop while viewing a remote machine. */}
+              {machine.isCurrent && localMachineLeadingActions}
               {renameTarget && (
                 <Button
                   type="button"
