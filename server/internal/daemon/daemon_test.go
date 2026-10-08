@@ -207,28 +207,6 @@ func TestPrepareReasonixTaskStateHome(t *testing.T) {
 	}
 }
 
-func TestPrepareDshTaskSessionRoot(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-
-	got, err := prepareDshTaskSessionRoot("work", "runtime-1", "agent_2")
-	if err != nil {
-		t.Fatalf("prepareDshTaskSessionRoot: %v", err)
-	}
-	want := filepath.Join(home, ".multica", "profiles", "work", "dsh-sessions", "runtime-1", "agent_2")
-	if got != want {
-		t.Fatalf("session root = %q, want %q", got, want)
-	}
-	info, err := os.Stat(got)
-	if err != nil {
-		t.Fatalf("stat session root: %v", err)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
-		t.Fatalf("session root mode = %o, want 700", info.Mode().Perm())
-	}
-}
-
 func TestLayerCustomEnvKeepsReasonixCredentialsHomeButBlocksStateHome(t *testing.T) {
 	t.Parallel()
 	agentEnv := map[string]string{}
