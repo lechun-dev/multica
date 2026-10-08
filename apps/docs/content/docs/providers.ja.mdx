@@ -56,7 +56,7 @@ Multica は、普段使っている AI コーディングツールの代わり�
 
 QwenPaw と MiniMax Code は例外です。Multica 側で選んだモデルを受け付けないため、選択欄は操作できず「ランタイムで管理」と表示されます。モデルは各ツール側の設定で選んでください。モデル一覧が空なのは正常であり、ランタイムがオフラインであることを示すものではありません。
 
-DeepSeek Harness のモデルカタログはランタイム自身が提供します（`dsh --profile multica --list-models`）。モデル ID は `provider/model` 形式（例: `deepseek-official/deepseek-chat`）なので、一覧から完全な ID を選択してください。
+DeepSeek Harness のモデル一覧は公式 ACP の `session/new` 設定から取得し、プロバイダー別のグループにも対応します。モデル ID は不透明な値なので `provider/model` を組み立てず一覧から選択してください。推論強度は現在のモデルが公開する `reasoning_effort` から取得します。
 
 <Callout type="info">
 ツールによってモデル名が異なることがあります。AI コーディングツールを変更すると、以前のモデル値は新しいツールで使えないため、選び直す必要があります。
