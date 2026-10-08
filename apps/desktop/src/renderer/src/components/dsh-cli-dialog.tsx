@@ -21,10 +21,10 @@ function DshCliDialogBody() {
     return () => { active = false; };
   }, []);
 
-  async function check(repair: boolean) {
+  async function check() {
     setBusy(true);
     try {
-      setStatus(await (repair ? window.daemonAPI.repairDshCli() : window.daemonAPI.getDshCliStatus()));
+      setStatus(await window.daemonAPI.getDshCliStatus());
     } catch {
       setStatus({ state: "error" });
     } finally { setBusy(false); }
@@ -32,13 +32,11 @@ function DshCliDialogBody() {
 
   const description = status === null ? t(($) => $.desktop.daemon.cli_checking)
     : status.state === "ready" ? t(($) => $.desktop.daemon.dsh_ready)
-    : status.state === "needs_repair" ? t(($) => $.desktop.daemon.dsh_needs_repair)
     : status.state === "not_installed" ? t(($) => $.desktop.daemon.dsh_not_installed)
-    : status.state === "unsupported" ? t(($) => $.desktop.daemon.dsh_unsupported)
     : status.reason === "probe_failed" ? t(($) => $.desktop.daemon.dsh_probe_failed)
-    : status.reason === "command_conflict" ? t(($) => $.desktop.daemon.dsh_command_conflict)
-    : status.reason === "registration_failed" ? t(($) => $.desktop.daemon.dsh_registration_failed)
-    : status.reason === "permission_denied" ? t(($) => $.desktop.daemon.dsh_permission_denied)
+    : status.reason === "probe_timeout" ? t(($) => $.desktop.daemon.dsh_probe_timeout)
+    : status.reason === "protocol_incompatible" ? t(($) => $.desktop.daemon.dsh_protocol_incompatible)
+    : status.reason === "launch_failed" ? t(($) => $.desktop.daemon.dsh_launch_failed)
     : t(($) => $.desktop.daemon.dsh_error);
 
   return (
@@ -48,12 +46,7 @@ function DshCliDialogBody() {
         <DialogDescription aria-live="polite">{description}</DialogDescription>
       </DialogHeader>
       <DialogFooter aria-busy={busy}>
-        {status?.state === "needs_repair" && (
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => void check(true)}>
-            {t(($) => $.desktop.daemon.dsh_repair)}
-          </Button>
-        )}
-        <Button variant="outline" size="sm" disabled={busy || status === null} onClick={() => void check(false)}>
+        <Button variant="outline" size="sm" disabled={busy || status === null} onClick={() => void check()}>
           {busy ? t(($) => $.desktop.daemon.cli_checking) : t(($) => $.desktop.daemon.dsh_check)}
         </Button>
       </DialogFooter>
@@ -61,7 +54,7 @@ function DshCliDialogBody() {
   );
 }
 
-// 2026-10-08 coder(lq): Mount detection only when opened from this machine's runtime header.
+// 2026-10-08 coder(lq): The dialog checks on open; daemon startup prepares the official launcher independently.
 export function DshCliAction() {
   return (
     <Dialog>

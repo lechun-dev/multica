@@ -1203,6 +1203,9 @@ async function probeLocalRuntimes(): Promise<LocalRuntimeProbe> {
   });
 }
 
+// 2026-10-08 coder(lq): Share launcher selection between automatic daemon startup and the diagnostics dialog.
+const dshCli = new DshCliManager();
+
 // Env passed to every CLI child so the daemon process knows it was spawned
 // by the Desktop app. The server uses this to mark runtimes as managed and
 // hide CLI self-update UI. Computed lazily so it picks up the PATH fix
@@ -1303,6 +1306,7 @@ async function startDaemon(
     scheduleStatusRefresh();
     return { success: true };
   }
+  await dshCli.inspect();
   if (
     recoveryProfile &&
     !recoveryStartAllowed({
@@ -1742,8 +1746,7 @@ export function setupDaemonManager(
 ): void {
   getMainWindow = windowGetter;
 
-  const dshCli = new DshCliManager();
-  // 2026-10-08 coder(lq): Only the trusted settings window may invoke DSH command management.
+  // 2026-10-08 coder(lq): Only the trusted main window may request process-local DSH launcher selection.
   ipcMain.handle("daemon:dsh-cli-status", (event) =>
     event.sender === getMainWindow()?.webContents && event.senderFrame === event.sender.mainFrame
       ? dshCli.inspect() : { state: "error" },

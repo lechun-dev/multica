@@ -1,11 +1,6 @@
-export type DshCliState =
-  | "ready"
-  | "needs_repair"
-  | "not_installed"
-  | "unsupported"
-  | "error";
+export type DshCliState = "ready" | "not_installed" | "error";
 
 export interface DshCliStatus {
   state: DshCliState;
-  reason?: "probe_failed" | "command_conflict" | "registration_failed" | "permission_denied";
+  reason?: "probe_failed" | "probe_timeout" | "protocol_incompatible" | "launch_failed";
 }
