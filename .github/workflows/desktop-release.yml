@@ -122,7 +122,6 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          CSC_NAME: "Developer ID Application: Beijing Chaoti Yueqian Technology Co., Ltd. (664B2JZZP9)"
           CSC_IDENTITY_AUTO_DISCOVERY: "true"
         run: |
           set -euo pipefail

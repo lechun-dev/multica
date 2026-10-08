@@ -44,7 +44,7 @@ private integration branch.
 
 | Date | Change | Inventory impact |
 | --- | --- | --- |
-| 2026-10-08 | Added Developer ID Application signing to private macOS production and preview builds, including the bundled MissionOS CLI aliases, with fail-closed credential and signature verification in the release workflow. | Preserves the existing manual tag-to-Release pipeline while ensuring both macOS architectures carry the expected Team ID; Windows packaging and Apple notarization are unchanged. |
+| 2026-10-08 | Added Developer ID Application signing to private macOS production and preview builds, including the bundled MissionOS CLI aliases, with fail-closed credential and signature verification in the release workflow. The isolated imported P12 supplies the signing identity directly instead of passing an electron-builder certificate-name qualifier. | Preserves the existing manual tag-to-Release pipeline while ensuring both macOS architectures carry the expected Team ID; Windows packaging and Apple notarization are unchanged. |
 | 2026-09-23 | Made CI path filtering use the shared `.github/ci-paths.json` source of truth. | Prevents new validation scopes from being omitted by stale workflow configuration; no product behavior changed. |
 | 2026-09-23 | Restored the shared frontend quality gate in CI and normalized the remaining nonstandard radius utilities. | Keeps private frontend changes covered by wildcard-export, dead-code, and design-token checks; no product behavior changed. |
 | 2026-09-23 | Published the complete localized `v0.5.2` production changelog before creating the stable tag. | Keeps the private in-app changelog aligned with the immutable production release and satisfies the release-note contract. |
