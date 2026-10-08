@@ -1379,7 +1379,14 @@
       "waiting_logs": "Waiting for logs…",
       "reconnect_failed": "Couldn't reconnect the daemon",
       "try_again_moment": "Please try again in a moment.",
-      "try_again": "Please try again."
+      "try_again": "Please try again.",
+      "dsh_ready": "DSH CLI is available. Restart the local service to refresh runtimes.",
+      "dsh_needs_repair": "DSH is installed, but its CLI needs registration or repair.",
+      "dsh_not_installed": "DSH was not found in the default install locations. Install DSH Desktop first; for a custom location, use its command menu.",
+      "dsh_unsupported": "This platform or DSH version does not support CLI repair. Use DSH Desktop’s command menu.",
+      "dsh_error": "DSH CLI could not be verified. Check permissions, command conflicts, or the multica profile in DSH Desktop.",
+      "dsh_repair": "Install / repair CLI",
+      "dsh_check": "Check again"
     }
   },
   "permission_report": {

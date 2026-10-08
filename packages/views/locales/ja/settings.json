@@ -1372,7 +1372,14 @@
       "waiting_logs": "ログを待機中…",
       "reconnect_failed": "デーモンに再接続できませんでした",
       "try_again_moment": "しばらくしてからもう一度お試しください。",
-      "try_again": "もう一度お試しください。"
+      "try_again": "もう一度お試しください。",
+      "dsh_ready": "DSH CLI を利用できます。ローカルサービスを再起動してランタイムを更新してください。",
+      "dsh_needs_repair": "DSH はインストール済みですが、CLI の登録または修復が必要です。",
+      "dsh_not_installed": "標準の場所に DSH が見つかりません。DSH Desktop をインストールしてください。別の場所の場合は DSH のコマンドメニューを使用してください。",
+      "dsh_unsupported": "このプラットフォームまたは DSH バージョンでは CLI を修復できません。DSH のコマンドメニューを使用してください。",
+      "dsh_error": "DSH CLI を検証できません。権限、コマンドの競合、DSH の multica 設定を確認してください。",
+      "dsh_repair": "CLI を登録／修復",
+      "dsh_check": "再確認"
     }
   },
   "permission_report": {

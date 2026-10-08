@@ -1113,7 +1113,14 @@
       "waiting_logs": "로그를 기다리는 중...",
       "reconnect_failed": "데몬에 다시 연결하지 못했습니다",
       "try_again_moment": "잠시 후 다시 시도하세요.",
-      "try_again": "다시 시도하세요."
+      "try_again": "다시 시도하세요.",
+      "dsh_ready": "DSH CLI를 사용할 수 있습니다. 로컬 서비스를 재시작하여 런타임을 갱신하세요.",
+      "dsh_needs_repair": "DSH가 설치되어 있지만 CLI 등록 또는 복구가 필요합니다.",
+      "dsh_not_installed": "기본 설치 위치에서 DSH를 찾지 못했습니다. 먼저 DSH Desktop을 설치하세요. 사용자 지정 위치는 DSH 명령 메뉴를 이용하세요.",
+      "dsh_unsupported": "이 플랫폼 또는 DSH 버전은 CLI 복구를 지원하지 않습니다. DSH 명령 메뉴를 이용하세요.",
+      "dsh_error": "DSH CLI를 확인할 수 없습니다. 권한, 명령 충돌 또는 DSH의 multica 설정을 확인하세요.",
+      "dsh_repair": "CLI 등록 / 복구",
+      "dsh_check": "다시 확인"
     }
   },
   "permission_report": {

@@ -1267,7 +1267,14 @@
       "waiting_logs": "En attente de journaux…",
       "reconnect_failed": "Impossible de reconnecter le démon",
       "try_again_moment": "Veuillez réessayer dans un instant.",
-      "try_again": "Veuillez réessayer."
+      "try_again": "Veuillez réessayer.",
+      "dsh_ready": "DSH CLI est disponible. Redémarrez le service local pour actualiser les runtimes.",
+      "dsh_needs_repair": "DSH est installé, mais sa CLI doit être enregistrée ou réparée.",
+      "dsh_not_installed": "DSH est introuvable aux emplacements par défaut. Installez DSH Desktop ; pour un emplacement personnalisé, utilisez son menu de commandes.",
+      "dsh_unsupported": "Cette plateforme ou version de DSH ne permet pas de réparer la CLI. Utilisez le menu de commandes de DSH.",
+      "dsh_error": "Impossible de vérifier DSH CLI. Vérifiez les autorisations, les conflits de commandes ou le profil multica de DSH.",
+      "dsh_repair": "Installer / réparer la CLI",
+      "dsh_check": "Vérifier à nouveau"
     }
   },
   "members": {

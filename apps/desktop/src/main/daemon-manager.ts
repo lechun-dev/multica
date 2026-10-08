@@ -81,6 +81,7 @@ import {
   isAgentCliMissingError,
   verifyCodexCli,
 } from "./agent-cli-repair";
+import { DshCliManager } from "./dsh-cli";
 
 const POLL_INTERVAL_MS = 5_000;
 const PREFS_PATH = join(homedir(), ".multica", "desktop_prefs.json");
@@ -1740,6 +1741,17 @@ export function setupDaemonManager(
   windowGetter: () => BrowserWindow | null,
 ): void {
   getMainWindow = windowGetter;
+
+  const dshCli = new DshCliManager();
+  // 2026-10-08 coder(lq): Only the trusted settings window may invoke DSH command management.
+  ipcMain.handle("daemon:dsh-cli-status", (event) =>
+    event.sender === getMainWindow()?.webContents && event.senderFrame === event.sender.mainFrame
+      ? dshCli.inspect() : { state: "error" },
+  );
+  ipcMain.handle("daemon:dsh-cli-repair", (event) =>
+    event.sender === getMainWindow()?.webContents && event.senderFrame === event.sender.mainFrame
+      ? dshCli.repair() : { state: "error" },
+  );
 
   ipcMain.handle("daemon:set-target-api-url", async (_e, url: string) => {
     const normalized = url || null;

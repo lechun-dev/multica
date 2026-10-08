@@ -18,6 +18,7 @@ import {
   formatUptime,
 } from "../../../shared/daemon-types";
 import { daemonStateLabel } from "./daemon-i18n";
+import { DshCliSettingsRow } from "./dsh-cli-settings-row";
 
 // One row inside the diagnostics block. Values that are likely to be
 // long IDs / URLs render as monospaced + truncated with a tooltip.
@@ -183,6 +184,7 @@ export function DaemonSettingsTab() {
           )}
           {cliInstalled !== false && <span />}
         </SettingsRow>
+        <DshCliSettingsRow />
       </SettingsCard>
 
       {/* Diagnostics — moved out of the logs panel so the panel can focus

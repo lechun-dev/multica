@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
+import type { DshCliStatus } from "../shared/dsh-cli";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 import type {
@@ -263,6 +264,8 @@ type DaemonReauthResult =
   | { ok: false; reason: "transient"; message: string };
 
 const daemonAPI = {
+  getDshCliStatus: (): Promise<DshCliStatus> => ipcRenderer.invoke("daemon:dsh-cli-status"),
+  repairDshCli: (): Promise<DshCliStatus> => ipcRenderer.invoke("daemon:dsh-cli-repair"),
   start: (): Promise<DaemonActionResult> => ipcRenderer.invoke("daemon:start"),
   selectCodex: (): Promise<DaemonActionResult> =>
     ipcRenderer.invoke("daemon:select-codex"),

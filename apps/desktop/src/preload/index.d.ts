@@ -1,4 +1,5 @@
 import { ElectronAPI } from "@electron-toolkit/preload";
+import type { DshCliStatus } from "../shared/dsh-cli";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import type { NavigationGesture } from "../shared/navigation-gestures";
 import type { RendererRouteContextInput } from "../shared/renderer-route-context";
@@ -137,6 +138,8 @@ type DaemonReauthResult =
   | { ok: false; reason: "transient"; message: string };
 
 interface DaemonAPI {
+  getDshCliStatus: () => Promise<DshCliStatus>;
+  repairDshCli: () => Promise<DshCliStatus>;
   start: () => Promise<DaemonActionResult>;
   selectCodex: () => Promise<DaemonActionResult>;
   stop: () => Promise<DaemonActionResult>;
