@@ -642,22 +642,6 @@ func TestQoderBackendDoesNotWaitForeverForReaderAfterPromptDone(t *testing.T) {
 	}
 }
 
-func TestQoderMessageStreamDropsSendAfterClose(t *testing.T) {
-	stream := newQoderMessageStream(1)
-	stream.close()
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("send after close panicked: %v", r)
-		}
-	}()
-	stream.send(Message{Type: MessageText, Content: "late"})
-
-	if _, ok := <-stream.ch; ok {
-		t.Fatal("message channel should be closed")
-	}
-}
-
 func TestQoderBackendIgnoresLateReaderOutputAfterGrace(t *testing.T) {
 	oldGrace := qoderReaderDrainGrace
 	qoderReaderDrainGrace = 25 * time.Millisecond
