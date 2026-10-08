@@ -26,9 +26,6 @@ env:
   STAGING_API_URL: ${{ vars.STAGING_API_URL }}
   STAGING_WS_URL: ${{ vars.STAGING_WS_URL }}
   STAGING_APP_URL: ${{ vars.STAGING_APP_URL }}
-  # electron-builder otherwise tries to discover a signing identity on hosted
-  # macOS runners. The private distribution is intentionally unsigned.
-  CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
   verify:
@@ -106,8 +103,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build desktop installer
+      - name: Require macOS signing credentials
+        if: matrix.platform == 'mac'
         shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "::error::MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD must both be configured."
+            exit 1
+          fi
+
+      - name: Build signed macOS installer
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_NAME: "Developer ID Application: Beijing Chaoti Yueqian Technology Co., Ltd. (664B2JZZP9)"
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
         run: |
           set -euo pipefail
           # 2026-09-10 coder(lq): A prerelease tag must build the Preview app,
@@ -117,7 +133,57 @@ jobs:
             package_script=package:lechun-preview
           fi
           pnpm --filter @multica/desktop "$package_script" -- \
-            --${{ matrix.platform == 'windows' && 'win' || matrix.platform }} \
+            --mac \
+            --${{ matrix.arch }} \
+            -c.forceCodeSigning=true \
+            --publish never
+
+      - name: Verify macOS Developer ID signature
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find apps/desktop/dist -type d -name '*.app' -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo "::error::No packaged macOS application was found."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          signature_info="$(codesign --display --verbose=4 "$app_path" 2>&1)"
+          if ! grep -Fq \
+            'Authority=Developer ID Application: Beijing Chaoti Yueqian Technology Co., Ltd. (664B2JZZP9)' \
+            <<<"$signature_info"; then
+            echo "::error::The packaged app was not signed with the expected Developer ID certificate."
+            exit 1
+          fi
+          if ! grep -Fq 'TeamIdentifier=664B2JZZP9' <<<"$signature_info"; then
+            echo "::error::The packaged app has an unexpected Apple Team ID."
+            exit 1
+          fi
+
+          for executable in missionos multica; do
+            executable_path="$app_path/Contents/Resources/app.asar.unpacked/resources/bin/$executable"
+            if [[ ! -x "$executable_path" ]]; then
+              echo "::error::Missing packaged CLI executable: $executable_path"
+              exit 1
+            fi
+            codesign --verify --strict --verbose=2 "$executable_path"
+          done
+
+      - name: Build Windows installer
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          package_script=package:lechun
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            package_script=package:lechun-preview
+          fi
+          pnpm --filter @multica/desktop "$package_script" -- \
+            --win \
             --${{ matrix.arch }} \
             --publish never
 

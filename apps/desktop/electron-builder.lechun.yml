@@ -22,6 +22,11 @@ protocols:
 
 mac:
   artifactName: multica-lechun-${version}-mac-${arch}.${ext}
+  # The bundled Go CLIs live outside app.asar and must carry the same
+  # Developer ID signature as the Electron application.
+  binaries:
+    - Contents/Resources/app.asar.unpacked/resources/bin/missionos
+    - Contents/Resources/app.asar.unpacked/resources/bin/multica
 
 # `dmg.artifactName` overrides the parent mac target's name for DMG output.
 # Keep it in the Lechun namespace so the release workflow selects the DMG
