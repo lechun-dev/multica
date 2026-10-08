@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DshCliManager, dshDesktopCandidates } from "./dsh-cli";
@@ -17,9 +17,10 @@ function fixture(options: {
   after?: string;
   probe?: string;
   platform?: NodeJS.Platform;
+  path?: string;
 } = {}) {
   let installed = false;
-  const env = { PATH: "/existing", LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" };
+  const env = { PATH: options.path ?? "/existing", LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" };
   const run = vi.fn(async (_file: string, args: string[]) => {
     if (args.includes("install")) { installed = true; return worker(); }
     if (args.includes("inspect")) return installed ? options.after ?? worker() : options.initial ?? worker();
@@ -33,7 +34,53 @@ function fixture(options: {
 }
 
 describe("DSH desktop CLI setup", () => {
-  it("does not mutate when a PATH command shadows the installed launcher", async () => {
+  it("probes a test-created executable wrapper through the real process runner", async () => {
+    const home = await mkdtemp(join(tmpdir(), "missionos-dsh-process-test-"));
+    try {
+      const candidate = join(home, "dsh");
+      await writeFile(candidate, `#!/bin/sh
+[ "$1" = "--profile" ] && [ "$2" = "multica" ] && [ "$3" = "--probe" ] || exit 2
+printf '%s\\n' '${probe}'
+`);
+      await chmod(candidate, 0o700);
+      const env = { PATH: home };
+      const manager = new DshCliManager({
+        platform: "darwin", home, env,
+        // 2026-10-08 coder(lq): The process runner executes only this temporary wrapper, not any installed agent CLI.
+        isFile: async (path) => path.startsWith(home),
+      });
+      expect(await manager.inspect()).toEqual({ state: "ready" });
+      expect(await manager.repair()).toEqual({ state: "ready" });
+      expect(env.PATH).toBe(home);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
+  it("accepts a usable wrapper at a different path without installing or replacing it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "missionos-dsh-wrapper-test-"));
+    try {
+      const resources = join(home, "Applications", "DeepSeek Harness.app", "Contents", "Resources");
+      const commandDir = join(home, "bin");
+      const candidate = join(commandDir, "dsh");
+      const launcher = join(resources, "runtime", "cli", "bin", "dsh");
+      await mkdir(commandDir, { recursive: true });
+      await mkdir(join(resources, "runtime", "cli", "bin"), { recursive: true });
+      await writeFile(launcher, "fake bundled CLI");
+      await writeFile(candidate, "#!/bin/sh\n# fake wrapper, execution is injected\n");
+      const env = { PATH: commandDir };
+      const run = vi.fn(async () => probe);
+      const manager = new DshCliManager({
+        platform: "darwin", home, env, run,
+        isFile: async (path) => path.startsWith(home),
+      });
+      expect(await manager.inspect()).toEqual({ state: "ready" });
+      expect(await manager.repair()).toEqual({ state: "ready" });
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(run).toHaveBeenCalledWith(candidate, ["--profile", "multica", "--probe"], expect.any(Object));
+      expect(env.PATH).toBe(commandDir);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
+  it("reports failed verification without replacing an existing PATH command", async () => {
     const home = await mkdtemp(join(tmpdir(), "missionos-dsh-test-"));
     try {
       const resources = join(home, "Applications", "DeepSeek Harness.app", "Contents", "Resources");
@@ -46,11 +93,12 @@ describe("DSH desktop CLI setup", () => {
       const run = vi.fn(async () => worker());
       const manager = new DshCliManager({
         platform: "darwin", home, env: { PATH: commandDir }, run,
-        // Only test-created paths are discovered; no real /Applications app is inspected.
+        // 2026-10-08 coder(lq): Discover only test-created paths, never the user's installed agent app.
         isFile: async (path) => path.startsWith(home),
       });
-      expect(await manager.repair()).toEqual({ state: "error" });
-      expect(run).not.toHaveBeenCalled();
+      expect(await manager.repair()).toEqual({ state: "error", reason: "probe_failed" });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledWith(join(commandDir, "dsh"), ["--profile", "multica", "--probe"], expect.any(Object));
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 
@@ -59,8 +107,57 @@ describe("DSH desktop CLI setup", () => {
       fingerprint, managed: true, available: true, activeCommand: "C:\\Other\\dsh.cmd",
     } });
     const { manager, run } = fixture({ platform: "win32", initial: state });
-    expect(await manager.repair()).toEqual({ state: "error" });
+    expect(await manager.repair()).toEqual({ state: "error", reason: "command_conflict" });
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps repair available for a broken DSH-owned registered launcher", async () => {
+    const { manager, run } = fixture({ path: "/usr/local/bin" });
+    let repaired = false;
+    run.mockImplementation(async (_file, args) => {
+      if (args.includes("install")) { repaired = true; return worker(); }
+      if (args.includes("inspect")) return worker();
+      return repaired ? probe : "broken launcher";
+    });
+    expect(await manager.inspect()).toEqual({ state: "needs_repair" });
+    expect(run.mock.calls.some(([, args]) => args.includes("install"))).toBe(false);
+    expect(await manager.repair()).toEqual({ state: "ready" });
+    expect(run.mock.calls.filter(([, args]) => args.includes("install"))).toHaveLength(1);
+  });
+
+  it("does not replace an unowned command at the registered launcher path", async () => {
+    const { manager, run } = fixture({ path: "/usr/local/bin" });
+    run.mockImplementation(async (_file, args) => args.includes("inspect")
+      ? worker(false, true, "file") : "unrelated CLI");
+    expect(await manager.repair()).toEqual({ state: "error", reason: "command_conflict" });
+    expect(run.mock.calls.some(([, args]) => args.includes("install"))).toBe(false);
+  });
+
+  it("accepts an existing Windows wrapper via a fixed PowerShell invocation without registration", async () => {
+    const { manager, run, env } = fixture({ platform: "win32", path: "C:\\Custom tools" });
+    expect(await manager.inspect()).toEqual({ state: "ready" });
+    expect(await manager.repair()).toEqual({ state: "ready" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledWith(expect.stringContaining("powershell.exe"),
+      expect.arrayContaining(["& $env:MISSIONOS_DSH_LAUNCHER --profile multica --probe; exit $LASTEXITCODE"]),
+      expect.objectContaining({ MISSIONOS_DSH_LAUNCHER: "C:\\Custom tools\\dsh.exe" }));
+    expect(env.PATH).toBe("C:\\Custom tools");
+  });
+
+  it("reports failed startup without leaking the error or registering over a custom command", async () => {
+    const { manager, run } = fixture({ path: "/custom" });
+    run.mockRejectedValue(new Error("sensitive diagnostic"));
+    expect(await manager.repair()).toEqual({ state: "error", reason: "probe_failed" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinguishes denied registration permissions from an invalid probe", async () => {
+    const { manager, run } = fixture({ platform: "win32", initial: worker(false, false, "missing") });
+    run.mockImplementation(async (_file, args) => {
+      if (args.includes("install")) throw Object.assign(new Error("denied"), { code: "EACCES" });
+      return worker(false, false, "missing");
+    });
+    expect(await manager.repair()).toEqual({ state: "error", reason: "permission_denied" });
   });
 
   it("does not treat stale confirmation or failed writes as success", async () => {
@@ -144,7 +241,7 @@ describe("DSH desktop CLI setup", () => {
 
   it("never overwrites an unowned command", async () => {
     const { manager, run } = fixture({ initial: worker(false, true, "file") });
-    expect(await manager.repair()).toEqual({ state: "error" });
+    expect(await manager.repair()).toEqual({ state: "error", reason: "command_conflict" });
     expect(run).toHaveBeenCalledTimes(1);
   });
 
@@ -155,9 +252,9 @@ describe("DSH desktop CLI setup", () => {
   });
 
   it("does not report success if registration or protocol verification fails", async () => {
-    expect(await fixture({ initial: worker(false, false, "missing"), after: worker(true, false) }).manager.repair()).toEqual({ state: "error" });
-    expect(await fixture({ probe: '{"v":1,"type":"probe","runtime":"other","protocol_version":1}' }).manager.repair()).toEqual({ state: "error" });
-    expect(await fixture({ probe: "not JSON" }).manager.repair()).toEqual({ state: "error" });
+    expect(await fixture({ initial: worker(false, false, "missing"), after: worker(true, false) }).manager.repair()).toEqual({ state: "error", reason: "registration_failed" });
+    expect(await fixture({ probe: '{"v":1,"type":"probe","runtime":"other","protocol_version":1}' }).manager.repair()).toEqual({ state: "error", reason: "probe_failed" });
+    expect(await fixture({ probe: "not JSON" }).manager.repair()).toEqual({ state: "error", reason: "probe_failed" });
   });
 
   it("deduplicates concurrent repair requests", async () => {

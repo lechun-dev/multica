@@ -35,6 +35,10 @@ function DshCliDialogBody() {
     : status.state === "needs_repair" ? t(($) => $.desktop.daemon.dsh_needs_repair)
     : status.state === "not_installed" ? t(($) => $.desktop.daemon.dsh_not_installed)
     : status.state === "unsupported" ? t(($) => $.desktop.daemon.dsh_unsupported)
+    : status.reason === "probe_failed" ? t(($) => $.desktop.daemon.dsh_probe_failed)
+    : status.reason === "command_conflict" ? t(($) => $.desktop.daemon.dsh_command_conflict)
+    : status.reason === "registration_failed" ? t(($) => $.desktop.daemon.dsh_registration_failed)
+    : status.reason === "permission_denied" ? t(($) => $.desktop.daemon.dsh_permission_denied)
     : t(($) => $.desktop.daemon.dsh_error);
 
   return (

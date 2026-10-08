@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, posix, win32 } from "node:path";
 import { promisify } from "node:util";
@@ -12,7 +12,6 @@ interface Installation {
   node: string;
   worker: string;
   launcher: string;
-  bundledLauncher: string;
 }
 interface CommandState {
   fingerprint: string;
@@ -45,7 +44,7 @@ export function dshDesktopCandidates(
   return [];
 }
 
-// 2026-10-08 coder(lq): Execute only the installed DSH worker; never download a CLI or copy its ownership logic.
+// 2026-10-08 coder(lq): Registration uses only the installed DSH worker; existing commands are probed without replacing them.
 export class DshCliManager {
   private operation: Promise<DshCliStatus> | undefined;
   private readonly platform: NodeJS.Platform;
@@ -93,7 +92,6 @@ export class DshCliManager {
       return {
         node: path.join(resources, "runtime", "primary-runtime", "dependencies", "node", "bin", this.platform === "win32" ? "node.exe" : "node"),
         worker: path.join(resources, "runtime", "cli", "command-manager.js"),
-        bundledLauncher: path.join(resources, "runtime", "cli", "bin", this.platform === "win32" ? "dsh.cmd" : "dsh"),
         launcher: this.platform === "win32"
           ? path.join(resources, "runtime", "cli", "bin", "dsh.cmd")
           : "/usr/local/bin/dsh",
@@ -133,14 +131,14 @@ export class DshCliManager {
     };
   }
 
-  private async verify(installation: Installation): Promise<boolean> {
+  private async verify(candidate: string): Promise<boolean> {
     try {
       const args = ["--profile", "multica", "--probe"];
       const output = this.platform === "win32"
         ? await this.run(win32.join(this.env.SystemRoot ?? this.env.WINDIR ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
           ["-NoProfile", "-NonInteractive", "-Command", "& $env:MISSIONOS_DSH_LAUNCHER --profile multica --probe; exit $LASTEXITCODE"],
-          { ...this.workerEnv(), MISSIONOS_DSH_LAUNCHER: installation.launcher })
-        : await this.run(installation.launcher, args, this.workerEnv());
+          { ...this.workerEnv(), MISSIONOS_DSH_LAUNCHER: candidate })
+        : await this.run(candidate, args, this.workerEnv());
       const frame: unknown = JSON.parse(output.trim());
       return Boolean(frame && typeof frame === "object" && "v" in frame && frame.v === 1
         && "type" in frame && frame.type === "probe" && "runtime" in frame && frame.runtime === "dsh"
@@ -148,19 +146,17 @@ export class DshCliManager {
     } catch { return false; }
   }
 
-  private async commandShadowed(installation: Installation): Promise<boolean> {
+  private async currentCommand(): Promise<string | null> {
     const path = this.platform === "win32" ? win32 : posix;
     const names = this.platform === "win32" ? ["dsh.exe", "dsh.cmd", "dsh.bat"] : ["dsh"];
     for (const directory of (this.env.PATH ?? "").split(this.platform === "win32" ? ";" : ":").filter(Boolean)) {
       for (const name of names) {
         const candidate = path.join(directory, name);
         if (!await this.isFile(candidate)) continue;
-        const current = await realpath(candidate);
-        const expected = await realpath(installation.bundledLauncher);
-        return this.platform === "win32" ? current.toLowerCase() !== expected.toLowerCase() : current !== expected;
+        return candidate;
       }
     }
-    return false;
+    return null;
   }
 
   private async check(repair: boolean): Promise<DshCliStatus> {
@@ -168,11 +164,19 @@ export class DshCliManager {
       if (this.platform !== "darwin" && this.platform !== "win32") return { state: "unsupported" };
       const installation = await this.locate();
       if (!installation) return { state: "not_installed" };
+      // 2026-10-08 coder(lq): A Homebrew/user wrapper may launch the same DSH app; validate its protocol, not its file identity.
+      const currentCommand = await this.currentCommand();
+      if (currentCommand) {
+        if (await this.verify(currentCommand)) return { state: "ready" };
+        const isRegisteredLauncher = this.platform === "win32"
+          ? win32.normalize(currentCommand).toLowerCase() === win32.normalize(installation.launcher).toLowerCase()
+          : currentCommand === installation.launcher;
+        if (!isRegisteredLauncher) return { state: "error", reason: "probe_failed" };
+      }
       if (!await this.isFile(installation.node) || !await this.isFile(installation.worker)) return { state: "unsupported" };
-      if (await this.commandShadowed(installation)) return { state: "error" };
       let state = await this.worker(installation, "inspect");
-      if (state.shadowed || (!state.managed && state.occupied)) return { state: "error" };
-      if (state.available && await this.verify(installation)) {
+      if (state.shadowed || (!state.managed && state.occupied)) return { state: "error", reason: "command_conflict" };
+      if (!currentCommand && state.available && await this.verify(installation.launcher)) {
         this.refreshPath(installation);
         return { state: "ready" };
       }
@@ -184,10 +188,15 @@ export class DshCliManager {
         await this.worker(installation, "install", state.fingerprint, true);
       }
       state = await this.worker(installation, "inspect");
-      if (state.shadowed || !state.managed || !state.available || !await this.verify(installation)) return { state: "error" };
+      if (state.shadowed) return { state: "error", reason: "command_conflict" };
+      if (!state.managed || !state.available) return { state: "error", reason: "registration_failed" };
+      if (!await this.verify(installation.launcher)) return { state: "error", reason: "probe_failed" };
       this.refreshPath(installation);
       return { state: "ready" };
-    } catch {
+    } catch (error) {
+      if (["EACCES", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+        return { state: "error", reason: "permission_denied" };
+      }
       return { state: "error" };
     }
   }

@@ -7,4 +7,5 @@ export type DshCliState =
 
 export interface DshCliStatus {
   state: DshCliState;
+  reason?: "probe_failed" | "command_conflict" | "registration_failed" | "permission_denied";
 }

@@ -1385,6 +1385,10 @@
       "dsh_not_installed": "DSH was not found in the default install locations. Install DSH Desktop first; for a custom location, use its command menu.",
       "dsh_unsupported": "This platform or DSH version does not support CLI repair. Use DSH Desktop’s command menu.",
       "dsh_error": "DSH CLI could not be verified. Check permissions, command conflicts, or the multica profile in DSH Desktop.",
+      "dsh_probe_failed": "The current dsh command failed to start or did not return a compatible multica protocol. It was not replaced. Check the multica profile and repair the CLI in DSH Desktop, then check again.",
+      "dsh_command_conflict": "The CLI registration location is occupied by another command. Nothing was overwritten. Resolve the conflicting dsh command, then check again.",
+      "dsh_registration_failed": "CLI registration could not be confirmed after installation or repair. Check command installation in DSH Desktop, then check again.",
+      "dsh_permission_denied": "Permission to register DSH CLI was denied. Complete command installation in DSH Desktop, then check again.",
       "dsh_repair": "Install / repair CLI",
       "dsh_check": "Check again"
     }
