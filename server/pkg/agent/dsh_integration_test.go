@@ -14,6 +14,45 @@ import (
 	"time"
 )
 
+// 2026-10-09 coder(lq): Exercise the actual no-override path; selecting a known working model would hide broken Desktop default reuse.
+func TestDshRealDesktopDefaultSmoke(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_REAL_AGENT_SMOKE") != "1" {
+		t.Skip("set MULTICA_RUN_REAL_AGENT_SMOKE=1 to run the DSH integration smoke")
+	}
+	path := os.Getenv("MULTICA_DSH_PATH")
+	if path == "" {
+		t.Fatal("MULTICA_DSH_PATH is required")
+	}
+	models, err := discoverDshModels(context.Background(), Command{Path: path})
+	if err != nil || len(models) == 0 {
+		t.Fatalf("default catalog discovery failed: %v", err)
+	}
+	if expected := os.Getenv("MULTICA_DSH_SMOKE_MODEL"); expected != "" {
+		found := false
+		for _, model := range models {
+			t.Logf("catalog model=%q default=%v", model.ID, model.Default)
+			found = found || (model.ID == expected && model.Default)
+		}
+		if !found {
+			t.Fatal("official Desktop default was not advertised as the ACP catalog default")
+		}
+	}
+	b, err := New("dsh", Config{ExecutablePath: path, TaskID: "dsh-default-smoke", Logger: slog.Default()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := b.Execute(context.Background(), "Reply with exactly DSH_DEFAULT_OK and nothing else.", ExecOptions{Cwd: t.TempDir(), Timeout: 90 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range session.Messages {
+	}
+	result := <-session.Result
+	if result.Status != "completed" || strings.TrimSpace(result.Output) != "DSH_DEFAULT_OK" {
+		t.Fatalf("official Desktop default smoke failed: status=%q error=%q", result.Status, result.Error)
+	}
+}
+
 // 2026-10-08 coder(lq): TestDshRealRuntimeSmoke is opt-in because it calls the configured DeepSeek
 // model and consumes API quota. It exercises the complete Multica backend,
 // official DSH ACP profile, model provider, and terminal-result path.

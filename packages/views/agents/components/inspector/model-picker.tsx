@@ -52,6 +52,9 @@ export function ModelPicker({
     runtimeModelsOptions(runtimeOnline ? runtimeId : null),
   );
   const supported = modelsQuery.data?.supported ?? true;
+  const discoveryError = modelsQuery.error instanceof Error
+    ? modelsQuery.error.message.trim()
+    : "";
   // Memoise the model list so every downstream useMemo gets a stable
   // reference; `?? []` would mint a fresh array on every render and
   // invalidate filters needlessly.
@@ -238,7 +241,22 @@ export function ModelPicker({
           </PickerItem>
         ))}
 
-      {!modelsQuery.isLoading && filtered.length === 0 && !canCreate && (
+      {/* 2026-10-09 coder(lq): A transport/discovery failure is not evidence that the runtime has no models. Keep manual selection available. */}
+      {!modelsQuery.isLoading && modelsQuery.isError && (
+        <div role="alert" className="px-3 py-3 text-caption text-muted-foreground">
+          <div className="font-medium text-foreground">
+            {t(($) => $.pickers.model_discovery_failed_title)}
+          </div>
+          {discoveryError && (
+            <div className="mt-1 whitespace-pre-wrap break-words select-text">
+              {discoveryError}
+            </div>
+          )}
+          <div className="mt-1.5">{t(($) => $.pickers.model_discovery_failed_hint)}</div>
+        </div>
+      )}
+
+      {!modelsQuery.isLoading && !modelsQuery.isError && filtered.length === 0 && !canCreate && (
         <p className="px-3 py-3 text-center text-caption text-muted-foreground">
           {t(($) => $.pickers.model_empty)}
         </p>

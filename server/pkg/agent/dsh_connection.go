@@ -20,7 +20,7 @@ type dshDesktopConnection struct {
 
 var dshCredentialReference = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// 2026-10-08 coder(lq): Desktop form edits are profile-local. Pass only its endpoint/reference through official --patch; DSH resolves the secret itself.
+// 2026-10-09 coder(lq): Desktop form edits are profile-local. Share only its endpoint/reference and model route through official --patch; DSH resolves the secret itself.
 func prepareDshLaunch(env []string, cwd string) ([]string, func(), error) {
 	cleanup := func() {}
 	lookup := func(key string) string {
@@ -66,13 +66,33 @@ func prepareDshLaunch(env []string, cwd string) ([]string, func(), error) {
 		return nil, cleanup, fmt.Errorf("cannot read bounded official DSH desktop connection settings")
 	}
 	connection, err := parseDshDesktopConnection(data)
-	if err != nil || connection == nil {
+	if err != nil {
 		return dshLaunchArgs(), cleanup, err
 	}
-	patch := []struct {
-		ID     string                `yaml:"id"`
-		Config *dshDesktopConnection `yaml:"config"`
-	}{{ID: "llm-deepseek", Config: connection}}
+	// 2026-10-09 coder(lq): ACP explicitly overrides the shared default service. Map Desktop's route to ACP's documented provider/model fields.
+	model, err := parseDshDesktopFields(data, "agent-default-model", []string{"provider", "model"})
+	if err != nil {
+		return nil, cleanup, err
+	}
+	for _, value := range model {
+		if strings.TrimSpace(value) == "" {
+			return nil, cleanup, fmt.Errorf("official DSH desktop default model fields must not be empty")
+		}
+	}
+	type desktopPatch struct {
+		ID     string `yaml:"id"`
+		Config any    `yaml:"config"`
+	}
+	var patch []desktopPatch
+	if connection != nil {
+		patch = append(patch, desktopPatch{ID: "llm-deepseek", Config: connection})
+	}
+	if len(model) > 0 {
+		patch = append(patch, desktopPatch{ID: "acp", Config: model})
+	}
+	if len(patch) == 0 {
+		return dshLaunchArgs(), cleanup, nil
+	}
 	payload, err := yaml.Marshal(patch)
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("cannot encode official DSH desktop connection")
@@ -91,7 +111,7 @@ func prepareDshLaunch(env []string, cwd string) ([]string, func(), error) {
 	return append(dshLaunchArgs(), "--patch", overlay.Name()), cleanup, nil
 }
 
-func parseDshDesktopConnection(data []byte) (*dshDesktopConnection, error) {
+func parseDshDesktopFields(data []byte, plugin string, fields []string) (map[string]string, error) {
 	var patches []struct {
 		ID     string               `yaml:"id"`
 		Config map[string]yaml.Node `yaml:"config"`
@@ -102,10 +122,10 @@ func parseDshDesktopConnection(data []byte) (*dshDesktopConnection, error) {
 	}
 	values := map[string]string{}
 	for _, patch := range patches {
-		if patch.ID != "llm-deepseek" {
+		if patch.ID != plugin {
 			continue
 		}
-		for _, field := range []string{"baseURL", "apiKeyEnv"} {
+		for _, field := range fields {
 			node, ok := patch.Config[field]
 			if !ok {
 				continue
@@ -119,6 +139,14 @@ func parseDshDesktopConnection(data []byte) (*dshDesktopConnection, error) {
 			}
 			values[field] = node.Value
 		}
+	}
+	return values, nil
+}
+
+func parseDshDesktopConnection(data []byte) (*dshDesktopConnection, error) {
+	values, err := parseDshDesktopFields(data, "llm-deepseek", []string{"baseURL", "apiKeyEnv"})
+	if err != nil {
+		return nil, err
 	}
 	baseURL, hasURL := values["baseURL"]
 	if !hasURL {

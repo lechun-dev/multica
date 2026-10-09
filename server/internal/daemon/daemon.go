@@ -2397,6 +2397,10 @@ func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry Age
 			}
 			return "", "official DSH ACP initialize failed; check the installed DSH App or MULTICA_DSH_PATH", builtinProbeUnavailable
 		}
+		// 2026-10-09 coder(lq): Official agentInfo.version belongs to the ACP adapter, not the installed Desktop App release.
+		if version != "" {
+			version = "ACP " + version
+		}
 		d.setAgentVersion(name, version)
 		d.refreshHealedVersion(name, resolved.Path, version)
 		return version, "", builtinProbeOK

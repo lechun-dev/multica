@@ -32,10 +32,10 @@ func TestProbeBuiltinRuntimeDshUsesOfficialACPWithoutManifest(t *testing.T) {
 	t.Setenv("DSH_HOME", t.TempDir())
 	// 2026-10-08 coder(lq): A formerly configured plugin must never be invoked, even with no multica profile.
 	t.Setenv("MULTICA_DSH_PROFILE_BUNDLE", "do-not-install-this")
-	path := dshACPFixture(t, `printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"0.2.0-test"}}}'; cat >/dev/null`)
+	path := dshACPFixture(t, `printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"0.0.1"}}}'; cat >/dev/null`)
 	d := &Daemon{agentVersions: make(map[string]string), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	version, reason, verdict := d.probeBuiltinRuntime(context.Background(), "dsh", AgentEntry{Path: path})
-	if verdict != builtinProbeOK || reason != "" || version != "0.2.0-test" {
+	if verdict != builtinProbeOK || reason != "" || version != "ACP 0.0.1" {
 		t.Fatalf("%s %s %v", version, reason, verdict)
 	}
 	entries, err := os.ReadDir(os.Getenv("DSH_HOME"))

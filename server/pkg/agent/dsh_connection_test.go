@@ -8,7 +8,52 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestPrepareDshLaunchReusesDesktopDefaultModel(t *testing.T) {
+	for _, tt := range []struct {
+		name, patch string
+		invalid     bool
+		want        map[string]string
+	}{
+		{name: "model only", patch: "- id: agent-default-model\n  config:\n    model: desktop-flash\n", want: map[string]string{"model": "desktop-flash"}},
+		{name: "provider only", patch: "- id: agent-default-model\n  config:\n    provider: official\n", want: map[string]string{"provider": "official"}},
+		{name: "null removes earlier override", patch: "- id: agent-default-model\n  config:\n    provider: old\n    model: desktop-flash\n- id: agent-default-model\n  config:\n    provider: null\n", want: map[string]string{"model": "desktop-flash"}},
+		{name: "field overrides", patch: "- id: agent-default-model\n  config:\n    provider: official\n    model: old\n    reasoningEffort: high\n- id: agent-default-model\n  config:\n    model: desktop-flash\n    reasoningEffort: null\n", want: map[string]string{"provider": "official", "model": "desktop-flash"}},
+		{name: "expression", patch: "- id: agent-default-model\n  config:\n    model: !!js SECRET_SENTINEL\n", invalid: true},
+		{name: "empty model", patch: "- id: agent-default-model\n  config:\n    model: ''\n", invalid: true},
+		{name: "empty provider", patch: "- id: agent-default-model\n  config:\n    provider: '  '\n", invalid: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeDshDesktopPatch(t, home, tt.patch+"- id: ui\n  config:\n    secret: SECRET_SENTINEL\n")
+			args, cleanup, err := prepareDshLaunch([]string{"DSH_HOME=" + home}, "")
+			defer cleanup()
+			if tt.invalid {
+				if err == nil || strings.Contains(err.Error(), "SECRET_SENTINEL") {
+					t.Fatal("invalid default model must fail without quoting settings")
+				}
+				return
+			}
+			if err != nil || len(args) != 4 {
+				t.Fatalf("default model overlay was not prepared: %v", err)
+			}
+			data, err := os.ReadFile(args[3])
+			if err != nil {
+				t.Fatal(err)
+			}
+			var patches []struct {
+				ID     string            `yaml:"id"`
+				Config map[string]string `yaml:"config"`
+			}
+			if yaml.Unmarshal(data, &patches) != nil || len(patches) != 1 || patches[0].ID != "acp" || !reflect.DeepEqual(patches[0].Config, tt.want) {
+				t.Fatal("overlay did not preserve only the Desktop model selection")
+			}
+		})
+	}
+}
 
 func TestParseDshDesktopConnection(t *testing.T) {
 	for _, tt := range []struct {

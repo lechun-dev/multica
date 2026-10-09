@@ -142,3 +142,44 @@ focused launcher/dialog suite also passed (2 files / 23 tests).
 No credential value is recorded here. The installed MissionOS Preview was not
 replaced during these checks; native Windows and full installed-App E2E remain
 outside this macOS acceptance.
+
+## Default model and discovery follow-up (2026-10-09)
+
+The official Desktop `agent-default-model` route does not automatically apply
+to the ACP profile: ACP has an explicit `acp` provider/model configuration.
+MissionOS now maps only Desktop's literal provider/model fields to that row
+in the same private launch overlay used for the connection pair. It does not
+copy unrelated plugins or credentials, alter official App settings, or invent
+model IDs. Desktop reasoning effort is not copied because the ACP launch
+configuration does not support that field; explicit effort choices still use
+the advertised ACP session configuration options.
+
+The runtime version displayed by ACP is its adapter version, not the installed
+App's version. MissionOS labels it `ACP` to avoid implying that an official
+App reporting adapter version `0.0.1` is the wrong installation.
+
+Verification on this macOS host:
+
+- The installed official App at `/Applications/DeepSeek Harness.app`
+  (0.2.0-rc.2) passed the opt-in `TestDshRealDesktopDefaultSmoke` in 2.46s.
+  Discovery advertised the Desktop-configured model as default, and execution
+  with no model/effort override returned the exact expected reply.
+- The installed App also passed `TestDshRealRuntimeSmoke` in 5.34s: real model
+  output, contextual cross-process resume, and bounded active-turn cancellation.
+- The complete guarded default Go suite passed with the race detector and an
+  isolated `CODEX_HOME/sessions`. Default tests did not invoke installed agents.
+- Both model-picker component suites passed (2 files / 6 tests); focused lint
+  and shared views typechecking passed. Discovery failure is now distinguished
+  from a successful empty catalog, without changing saved/manual selections.
+- The desktop build, including its freshly bundled daemon CLI, passed. This
+  verifies compilation, not installation or full desktop end-to-end behavior.
+- Full installed MissionOS E2E is **not accepted yet**: staging model discovery
+  remains pending until its 30s timeout. A controlled request was delivered
+  by HTTP heartbeat, while a fresh WebSocket heartbeat returned a normal ack
+  without delivering its pending request. These diagnostics isolate a transport
+  discrepancy but do not establish its deployment/proxy/store root cause.
+  Diagnostic claims were closed with an intentional failure or expired; they
+  are not real model-list successes. No server configuration was changed.
+
+Do not treat source-level smoke success as a fix for the staging dispatch
+problem, or publish a production tag before desktop end-to-end acceptance.
