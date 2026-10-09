@@ -186,6 +186,7 @@
     "edit_title": "Edit runtime model",
     "form_description": "The model ID must be accepted by the selected CLI and its configured provider. Listing a model does not guarantee execution support.",
     "model_id": "Model ID",
+    "model_id_edit_hint": "Changing this ID updates the catalog only. Saved agent selections and existing runs are not changed.",
     "model_id_placeholder": "grok-4.6",
     "display_name": "Display name",
     "display_name_placeholder": "Grok 4.6",

@@ -56,6 +56,8 @@ SET display_name = $3,
     supports_explicit_standard_service_tier = $9,
     enabled = $10,
     sort_order = $11,
+    -- 2026-10-09 coder(lq): Correct the CLI ID on this catalog row without updating agent.model or past tasks.
+    model_id = $12,
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2

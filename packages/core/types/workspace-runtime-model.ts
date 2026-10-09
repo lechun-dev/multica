@@ -36,5 +36,5 @@ export interface WorkspaceRuntimeModelRequest {
 }
 
 export type UpdateWorkspaceRuntimeModelRequest = Partial<
-  Omit<WorkspaceRuntimeModelRequest, "runtime_provider" | "model_id">
+  Omit<WorkspaceRuntimeModelRequest, "runtime_provider">
 >;

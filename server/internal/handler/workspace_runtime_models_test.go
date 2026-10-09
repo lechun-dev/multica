@@ -3,9 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/testutil"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -254,4 +259,91 @@ func TestRuntimeModelCatalogBase(t *testing.T) {
 			t.Fatalf("non-Codex runtime should remain empty, got %+v", models)
 		}
 	})
+}
+
+func TestConfiguredModelCanBeDisabledAndDeletedWhileUsed(t *testing.T) {
+	for _, used := range []bool{false, true} {
+		t.Run(fmt.Sprintf("used_%v", used), func(t *testing.T) {
+			modelID := "catalog-removal-" + uuid.NewString()
+			rowID := dbfx.Insert(t, "workspace_runtime_model", testutil.Cols{
+				"workspace_id": testWorkspaceID, "runtime_provider": "codex",
+				"model_id": modelID, "display_name": "Removal test", "model_provider": "gateway", "enabled": true,
+			})
+			var agentID string
+			if used {
+				runtimeID := dbfx.Insert(t, "agent_runtime", testutil.Cols{
+					"workspace_id": testWorkspaceID, "name": "Catalog removal runtime", "provider": "codex",
+					"runtime_mode": "cloud", "status": "online", "device_info": "test", "metadata": testutil.Raw("'{}'::jsonb"), "owner_id": testUserID,
+				})
+				agentID = dbfx.Agent(t, "Catalog consumer", runtimeID, testutil.Cols{"model": modelID})
+			}
+			request := withURLParam(withURLParam(newRequest(http.MethodPatch, "/", map[string]any{"enabled": false}), "id", testWorkspaceID), "modelId", rowID)
+			testutil.Call(t, testHandler.UpdateWorkspaceRuntimeModel, request).Want(http.StatusOK)
+			var enabled bool
+			dbfx.QueryRow(t, "SELECT enabled FROM workspace_runtime_model WHERE id=$1", rowID).Scan(&enabled)
+			if enabled {
+				t.Fatal("model remains enabled")
+			}
+			request = withURLParam(withURLParam(newRequest(http.MethodDelete, "/", nil), "id", testWorkspaceID), "modelId", rowID)
+			testutil.Call(t, testHandler.DeleteWorkspaceRuntimeModel, request).Want(http.StatusNoContent)
+			var count int
+			dbfx.QueryRow(t, "SELECT count(*) FROM workspace_runtime_model WHERE id=$1", rowID).Scan(&count)
+			if count != 0 {
+				t.Fatal("model was not deleted")
+			}
+			if used {
+				var saved string
+				dbfx.QueryRow(t, "SELECT model FROM agent WHERE id=$1", agentID).Scan(&saved)
+				if saved != modelID {
+					t.Fatalf("saved agent model changed: %s", saved)
+				}
+			}
+			testutil.Call(t, testHandler.DeleteWorkspaceRuntimeModel, request).Want(http.StatusNotFound)
+		})
+	}
+}
+
+// 2026-10-09 coder(lq): CLI IDs are editable values, not row identities; edits must not silently migrate existing agent configurations.
+func TestConfiguredModelIDCanBeEdited(t *testing.T) {
+	oldID := "editable-" + uuid.NewString()
+	newID := fmt.Sprintf(`["deepseek-official","%s"]`, oldID)
+	rowID := dbfx.Insert(t, "workspace_runtime_model", testutil.Cols{
+		"workspace_id": testWorkspaceID, "runtime_provider": "codex", "model_id": oldID,
+		"display_name": "Editable model", "model_provider": "deepseek", "enabled": true,
+	})
+	runtimeID := dbfx.Insert(t, "agent_runtime", testutil.Cols{
+		"workspace_id": testWorkspaceID, "name": "Model ID editing runtime", "provider": "dsh",
+		"runtime_mode": "cloud", "status": "online", "device_info": "test", "metadata": testutil.Raw("'{}'::jsonb"), "owner_id": testUserID,
+	})
+	agentID := dbfx.Agent(t, "Existing model consumer", runtimeID, testutil.Cols{"model": oldID})
+	patch := func(workspace string, payload map[string]any, status int) {
+		t.Helper()
+		request := withURLParam(withURLParam(newRequest(http.MethodPatch, "/", payload), "id", workspace), "modelId", rowID)
+		testutil.Call(t, testHandler.UpdateWorkspaceRuntimeModel, request).Want(status)
+	}
+	patch(testWorkspaceID, map[string]any{"model_id": " " + newID + " "}, http.StatusOK)
+	var stored, name, saved string
+	dbfx.QueryRow(t, "SELECT model_id, display_name FROM workspace_runtime_model WHERE id=$1", rowID).Scan(&stored, &name)
+	if stored != newID || name != "Editable model" {
+		t.Fatalf("incorrect renamed row: %q %q", stored, name)
+	}
+	dbfx.QueryRow(t, "SELECT model FROM agent WHERE id=$1", agentID).Scan(&saved)
+	if saved != oldID {
+		t.Fatalf("saved agent selection was rewritten: %q", saved)
+	}
+	duplicateID := "duplicate-" + uuid.NewString()
+	dbfx.Insert(t, "workspace_runtime_model", testutil.Cols{
+		"workspace_id": testWorkspaceID, "runtime_provider": "codex", "model_id": duplicateID,
+		"display_name": "Other model", "model_provider": "gateway", "enabled": false,
+	})
+	patch(testWorkspaceID, map[string]any{"model_id": duplicateID}, http.StatusConflict)
+	patch(testWorkspaceID, map[string]any{"model_id": "   "}, http.StatusBadRequest)
+	patch(testWorkspaceID, map[string]any{"model_id": strings.Repeat("x", 121)}, http.StatusBadRequest)
+	patch(testWorkspaceID, map[string]any{"runtime_provider": "dsh"}, http.StatusBadRequest)
+	patch(uuid.NewString(), map[string]any{"model_id": oldID}, http.StatusNotFound)
+	patch(testWorkspaceID, map[string]any{"enabled": false}, http.StatusOK)
+	dbfx.QueryRow(t, "SELECT model_id FROM workspace_runtime_model WHERE id=$1", rowID).Scan(&stored)
+	if stored != newID {
+		t.Fatalf("partial/failed updates lost the renamed ID: %q", stored)
+	}
 }

@@ -342,14 +342,9 @@ func (h *Handler) UpdateWorkspaceRuntimeModel(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// 2026-09-17 coder(lq): Keys stay immutable so agent references and catalog
-	// cache identities cannot silently move to a different model.
+	// 2026-10-09 coder(lq): Keep the catalog row/provider stable; editing the CLI model ID never rewrites saved agent selections.
 	if req.RuntimeProvider != nil && strings.TrimSpace(*req.RuntimeProvider) != existing.RuntimeProvider {
 		writeError(w, http.StatusBadRequest, "runtime_provider cannot be changed")
-		return
-	}
-	if req.ModelID != nil && strings.TrimSpace(*req.ModelID) != existing.ModelID {
-		writeError(w, http.StatusBadRequest, "model_id cannot be changed")
 		return
 	}
 	current := workspaceRuntimeModelInputFor(existing)
@@ -358,20 +353,11 @@ func (h *Handler) UpdateWorkspaceRuntimeModel(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if existing.Enabled && !input.Enabled {
-		inUse, err := h.workspaceRuntimeModelUsageCount(r, existing)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to check runtime model usage")
-			return
-		}
-		if inUse > 0 {
-			writeError(w, http.StatusConflict, "runtime model is currently used by agents")
-			return
-		}
-	}
+	// 2026-10-09 coder(lq): Disabling a catalog entry must not rewrite saved agent models.
 	thinkingLevels, _ := json.Marshal(input.ThinkingLevels)
 	serviceTiers, _ := json.Marshal(input.ServiceTiers)
 	model, err := h.Queries.UpdateWorkspaceRuntimeModel(r.Context(), db.UpdateWorkspaceRuntimeModelParams{
+		ModelID:                             input.ModelID,
 		ID:                                  modelRowID,
 		WorkspaceID:                         workspaceID,
 		DisplayName:                         input.DisplayName,
@@ -389,6 +375,10 @@ func (h *Handler) UpdateWorkspaceRuntimeModel(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusNotFound, "runtime model not found")
 			return
 		}
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "this model already exists for the runtime")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to update runtime model")
 		return
 	}
@@ -404,24 +394,7 @@ func (h *Handler) DeleteWorkspaceRuntimeModel(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	existing, err := h.Queries.GetWorkspaceRuntimeModel(r.Context(), db.GetWorkspaceRuntimeModelParams{ID: modelRowID, WorkspaceID: workspaceID})
-	if err != nil {
-		if isNotFound(err) {
-			writeError(w, http.StatusNotFound, "runtime model not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load runtime model")
-		return
-	}
-	inUse, err := h.workspaceRuntimeModelUsageCount(r, existing)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to check runtime model usage")
-		return
-	}
-	if inUse > 0 {
-		writeError(w, http.StatusConflict, "runtime model is currently used by agents")
-		return
-	}
+	// 2026-10-09 coder(lq): Catalog deletion is independent of usage; existing runs and model IDs remain untouched.
 	deleted, err := h.Queries.DeleteWorkspaceRuntimeModel(r.Context(), db.DeleteWorkspaceRuntimeModelParams{ID: modelRowID, WorkspaceID: workspaceID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime model")
@@ -432,12 +405,4 @@ func (h *Handler) DeleteWorkspaceRuntimeModel(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) workspaceRuntimeModelUsageCount(r *http.Request, model db.WorkspaceRuntimeModel) (int64, error) {
-	return h.Queries.CountAgentsUsingWorkspaceRuntimeModel(r.Context(), db.CountAgentsUsingWorkspaceRuntimeModelParams{
-		WorkspaceID: model.WorkspaceID,
-		Provider:    model.RuntimeProvider,
-		Model:       pgtype.Text{String: model.ModelID, Valid: true},
-	})
 }

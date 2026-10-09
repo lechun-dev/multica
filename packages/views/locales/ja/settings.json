@@ -186,6 +186,7 @@
     "edit_title": "ランタイムモデルを編集",
     "form_description": "モデル ID は選択した CLI とプロバイダーが受け付ける必要があります。リストへの表示は実行を保証しません。",
     "model_id": "モデル ID",
+    "model_id_edit_hint": "ID の変更はモデル一覧のみに適用されます。保存済みのエージェント設定や既存の実行は変更されません。",
     "model_id_placeholder": "grok-4.6",
     "display_name": "表示名",
     "display_name_placeholder": "Grok 4.6",

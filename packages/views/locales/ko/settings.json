@@ -186,6 +186,7 @@
     "edit_title": "런타임 모델 편집",
     "form_description": "모델 ID는 선택한 CLI와 공급자가 지원해야 합니다. 목록에 표시되어도 실행이 보장되지는 않습니다.",
     "model_id": "모델 ID",
+    "model_id_edit_hint": "ID 변경은 모델 목록에만 적용됩니다. 저장된 에이전트 선택이나 기존 실행은 변경되지 않습니다.",
     "model_id_placeholder": "grok-4.6",
     "display_name": "표시 이름",
     "display_name_placeholder": "Grok 4.6",

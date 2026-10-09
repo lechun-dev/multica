@@ -168,6 +168,7 @@ export function RuntimeModelsTab() {
     }
 
     const payload = {
+      model_id: draft.modelId.trim(),
       display_name: draft.displayName.trim(),
       model_provider: draft.modelProvider.trim(),
       description: draft.description.trim(),
@@ -183,7 +184,6 @@ export function RuntimeModelsTab() {
       } else {
         await createModel.mutateAsync({
           runtime_provider: "codex",
-          model_id: draft.modelId.trim(),
           ...payload,
         });
       }
@@ -345,13 +345,18 @@ export function RuntimeModelsTab() {
               </Label>
               <Input
                 id="runtime-model-id"
+                aria-describedby={editing ? "runtime-model-id-edit-hint" : undefined}
                 value={draft.modelId}
-                disabled={editing !== null}
                 placeholder={t(($) => $.runtime_models.model_id_placeholder)}
                 onChange={(event) =>
                   setDraft({ ...draft, modelId: event.target.value })
                 }
               />
+              {editing && (
+                <p id="runtime-model-id-edit-hint" className="text-caption text-muted-foreground">
+                  {t(($) => $.runtime_models.model_id_edit_hint)}
+                </p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="runtime-model-name">

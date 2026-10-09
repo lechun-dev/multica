@@ -186,6 +186,7 @@
     "edit_title": "编辑运行时模型",
     "form_description": "模型 ID 必须符合所选 CLI 及其供应商的要求。出现在列表中不代表一定能够执行。",
     "model_id": "模型 ID",
+    "model_id_edit_hint": "修改 ID 只更新模型列表，不会自动更改智能体已选模型或已有运行。",
     "model_id_placeholder": "grok-4.6",
     "display_name": "显示名称",
     "display_name_placeholder": "Grok 4.6",

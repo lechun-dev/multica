@@ -312,6 +312,8 @@ SET display_name = $3,
     supports_explicit_standard_service_tier = $9,
     enabled = $10,
     sort_order = $11,
+    -- 2026-10-09 coder(lq): Correct the CLI ID on this catalog row without updating agent.model or past tasks.
+    model_id = $12,
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
@@ -330,6 +332,7 @@ type UpdateWorkspaceRuntimeModelParams struct {
 	SupportsExplicitStandardServiceTier bool        `json:"supports_explicit_standard_service_tier"`
 	Enabled                             bool        `json:"enabled"`
 	SortOrder                           int32       `json:"sort_order"`
+	ModelID                             string      `json:"model_id"`
 }
 
 func (q *Queries) UpdateWorkspaceRuntimeModel(ctx context.Context, arg UpdateWorkspaceRuntimeModelParams) (WorkspaceRuntimeModel, error) {
@@ -345,6 +348,7 @@ func (q *Queries) UpdateWorkspaceRuntimeModel(ctx context.Context, arg UpdateWor
 		arg.SupportsExplicitStandardServiceTier,
 		arg.Enabled,
 		arg.SortOrder,
+		arg.ModelID,
 	)
 	var i WorkspaceRuntimeModel
 	err := row.Scan(
