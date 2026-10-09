@@ -1692,6 +1692,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
+					// 2026-10-09 coder(lq): Agent pickers need the shared model
+					// catalog without owner privileges; mutations remain owner-only.
+					r.Get("/runtime-models", h.ListWorkspaceRuntimeModels)
 					r.Get("/projectauth/organizations", h.ListProjectAuthorizationOrganizations)
 					r.Post("/leave", h.LeaveWorkspace)
 					r.Get("/invitations", h.ListWorkspaceInvitations)
@@ -1785,7 +1788,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Owner-only access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner"))
-					r.Get("/runtime-models", h.ListWorkspaceRuntimeModels)
 					r.Post("/runtime-models", h.CreateWorkspaceRuntimeModel)
 					r.Patch("/runtime-models/{modelId}", h.UpdateWorkspaceRuntimeModel)
 					r.Put("/runtime-models/{modelId}", h.UpdateWorkspaceRuntimeModel)

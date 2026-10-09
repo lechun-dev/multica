@@ -171,7 +171,7 @@
   },
   "runtime_models": {
     "title": "运行时模型",
-    "description": "管理当前空间内 Codex 智能体可以使用的额外模型。",
+    "description": "管理当前空间的共享模型候选列表，不依赖 CLI 模型发现。",
     "loading": "正在加载运行时模型…",
     "load_failed": "加载运行时模型失败。",
     "empty": "还没有配置额外的运行时模型。",
@@ -184,7 +184,7 @@
     "delete_confirm": "删除“{{name}}”？",
     "create_title": "添加运行时模型",
     "edit_title": "编辑运行时模型",
-    "form_description": "模型 ID 必须与当前 Codex API 网关实际支持的 ID 一致。",
+    "form_description": "模型 ID 必须符合所选 CLI 及其供应商的要求。出现在列表中不代表一定能够执行。",
     "model_id": "模型 ID",
     "model_id_placeholder": "grok-4.6",
     "display_name": "显示名称",

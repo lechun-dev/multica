@@ -217,6 +217,7 @@
     "model_default": "기본값",
     "model_tooltip": "모델 · {{value}}",
     "model_managed_by_runtime": "런타임에서 관리",
+    "model_configuration_failed": "시스템 모델 설정을 불러오지 못했습니다. CLI 모델 선택과 직접 입력은 계속 사용할 수 있습니다.",
     "model_search_placeholder": "모델 ID 검색 또는 입력",
     "model_discovering": "모델 찾는 중...",
     "model_discovery_failed_title": "이 런타임의 모델을 가져오지 못했습니다.",

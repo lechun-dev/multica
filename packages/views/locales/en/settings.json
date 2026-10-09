@@ -171,7 +171,7 @@
   },
   "runtime_models": {
     "title": "Runtime models",
-    "description": "Manage additional models available to Codex agents in this workspace.",
+    "description": "Manage shared model candidates in this workspace, independently of CLI discovery.",
     "loading": "Loading runtime models…",
     "load_failed": "Failed to load runtime models.",
     "empty": "No additional runtime models configured.",
@@ -184,7 +184,7 @@
     "delete_confirm": "Delete {{name}}?",
     "create_title": "Add runtime model",
     "edit_title": "Edit runtime model",
-    "form_description": "The model ID must match the ID accepted by the configured Codex API gateway.",
+    "form_description": "The model ID must be accepted by the selected CLI and its configured provider. Listing a model does not guarantee execution support.",
     "model_id": "Model ID",
     "model_id_placeholder": "grok-4.6",
     "display_name": "Display name",

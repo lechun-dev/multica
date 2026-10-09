@@ -171,7 +171,7 @@
   },
   "runtime_models": {
     "title": "런타임 모델",
-    "description": "이 워크스페이스의 Codex 에이전트가 사용할 추가 모델을 관리합니다.",
+    "description": "CLI 모델 검색과 별개로 워크스페이스의 공유 모델 후보를 관리합니다.",
     "loading": "런타임 모델을 불러오는 중…",
     "load_failed": "런타임 모델을 불러오지 못했습니다.",
     "empty": "추가 런타임 모델이 설정되지 않았습니다.",
@@ -184,7 +184,7 @@
     "delete_confirm": "{{name}}을(를) 삭제할까요?",
     "create_title": "런타임 모델 추가",
     "edit_title": "런타임 모델 편집",
-    "form_description": "모델 ID는 설정된 Codex API 게이트웨이가 허용하는 ID와 일치해야 합니다.",
+    "form_description": "모델 ID는 선택한 CLI와 공급자가 지원해야 합니다. 목록에 표시되어도 실행이 보장되지는 않습니다.",
     "model_id": "모델 ID",
     "model_id_placeholder": "grok-4.6",
     "display_name": "표시 이름",

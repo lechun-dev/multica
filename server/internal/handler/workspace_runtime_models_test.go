@@ -11,6 +11,16 @@ import (
 )
 
 func TestInitiateListModels_ConfiguredCatalogReturnsImmediately(t *testing.T) {
+	for _, tc := range []struct{ provider, status string }{
+		{"codex", "online"}, {"dsh", "online"}, {"dsh", "offline"},
+	} {
+		t.Run(tc.provider+"_"+tc.status, func(t *testing.T) {
+			testConfiguredCatalogReturnsImmediately(t, tc.provider, tc.status)
+		})
+	}
+}
+
+func testConfiguredCatalogReturnsImmediately(t *testing.T, provider, status string) {
 	ctx := context.Background()
 	withModelListStores(t)
 
@@ -20,10 +30,10 @@ func TestInitiateListModels_ConfiguredCatalogReturnsImmediately(t *testing.T) {
 			workspace_id, daemon_id, name, runtime_mode, provider, status,
 			device_info, metadata, owner_id, last_seen_at
 		)
-		VALUES ($1, NULL, 'Configured Catalog Test Runtime', 'cloud', 'codex', 'online',
+		VALUES ($1, NULL, 'Configured Catalog Test Runtime', 'cloud', $3, $4,
 			'test', '{}'::jsonb, $2, now())
 		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
+	`, testWorkspaceID, testUserID, provider, status).Scan(&runtimeID); err != nil {
 		t.Fatalf("insert runtime: %v", err)
 	}
 	modelID := "configured-immediate-model-test"
@@ -79,8 +89,12 @@ func TestInitiateListModels_ConfiguredCatalogReturnsImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check background discovery: %v", err)
 	}
-	if !pending || recorder.count() != 1 {
-		t.Fatalf("expected one background daemon discovery: pending=%v hints=%d", pending, recorder.count())
+	if status == "online" {
+		if !pending || recorder.count() != 1 {
+			t.Fatalf("expected one background daemon discovery: pending=%v hints=%d", pending, recorder.count())
+		}
+	} else if pending || recorder.count() != 0 {
+		t.Fatalf("offline catalog must not enqueue discovery: pending=%v hints=%d", pending, recorder.count())
 	}
 }
 

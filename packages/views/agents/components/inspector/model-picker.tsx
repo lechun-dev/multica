@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { ChevronDown, Cpu, Loader2, Plus } from "lucide-react";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
+import { useRuntimeModelCatalog } from "@multica/core/runtimes";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import {
@@ -16,7 +16,7 @@ import { useT } from "../../../i18n";
 /**
  * Inline model picker for the agent inspector. Lighter cousin of
  * `ModelDropdown` (which is used in the create-agent dialog) — same data
- * source via `runtimeModelsOptions`, but renders inside a PropertyPicker so
+ * source via `useRuntimeModelCatalog`, but renders inside a PropertyPicker so
  * it fits a single PropRow. Drops the "select a runtime first" state because
  * the inspector only renders this picker after a runtime is bound.
  *
@@ -48,20 +48,13 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
-  );
-  const supported = modelsQuery.data?.supported ?? true;
+  const workspaceId = useWorkspaceId();
+  const modelsQuery = useRuntimeModelCatalog(workspaceId, runtimeId, runtimeOnline);
+  const supported = modelsQuery.supported;
   const discoveryError = modelsQuery.error instanceof Error
     ? modelsQuery.error.message.trim()
     : "";
-  // Memoise the model list so every downstream useMemo gets a stable
-  // reference; `?? []` would mint a fresh array on every render and
-  // invalidate filters needlessly.
-  const models = useMemo(
-    () => modelsQuery.data?.models ?? [],
-    [modelsQuery.data],
-  );
+  const models = modelsQuery.models;
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -87,7 +80,7 @@ export function ModelPicker({
     if (id !== value) await onChange(id);
   };
 
-  if (!supported && !modelsQuery.isLoading) {
+  if (!supported && !modelsQuery.isCatalogLoading) {
     if (variant === "field") {
       const control = (
         <div className="flex min-h-10 items-center gap-2 rounded-lg border border-dashed border-input bg-input/50 px-3 text-body text-muted-foreground">
@@ -202,6 +195,12 @@ export function ModelPicker({
         </div>
       }
     >
+      {modelsQuery.configurationError && (
+        <div role="alert" className="px-3 py-3 text-caption text-muted-foreground">
+          {t(($) => $.pickers.model_configuration_failed)}
+        </div>
+      )}
+
       {modelsQuery.isLoading && (
         <div className="flex items-center gap-2 p-3 text-caption text-muted-foreground">
           <Loader2
@@ -212,34 +211,33 @@ export function ModelPicker({
         </div>
       )}
 
-      {!modelsQuery.isLoading &&
-        filtered.map((m) => (
-          <PickerItem
-            key={m.id}
-            selected={m.id === value}
-            onClick={() => void select(m.id)}
-            // Tooltip carries the canonical model id even when the chip
-            // shows the friendlier label, so users can always see what
-            // string actually ships to the agent.
-            tooltip={m.label !== m.id ? `${m.label} · ${m.id}` : m.id}
-          >
-            {/* PickerItem wraps children in a flex `<span>`. Putting a
-                `<div>` inside that <span> is block-in-inline (invalid
-                HTML5) and triggers the browser-default centering quirk
-                that pushes descendants off-axis (model IDs floated to the
-                center instead of left-aligning under their labels). Use
-                `<span block text-left>` to keep layout deterministic —
-                matches the fix already applied in thinking-picker.tsx. */}
-            <span className="block min-w-0 flex-1 text-left">
-              <span className="block truncate text-label font-medium">{m.label}</span>
-              {m.label !== m.id && (
-                <span className="mt-0.5 block truncate font-mono text-micro leading-snug text-muted-foreground">
-                  {m.id}
-                </span>
-              )}
-            </span>
-          </PickerItem>
-        ))}
+      {filtered.map((m) => (
+        <PickerItem
+          key={m.id}
+          selected={m.id === value}
+          onClick={() => void select(m.id)}
+          // Tooltip carries the canonical model id even when the chip
+          // shows the friendlier label, so users can always see what
+          // string actually ships to the agent.
+          tooltip={m.label !== m.id ? `${m.label} · ${m.id}` : m.id}
+        >
+          {/* PickerItem wraps children in a flex `<span>`. Putting a
+              `<div>` inside that <span> is block-in-inline (invalid
+              HTML5) and triggers the browser-default centering quirk
+              that pushes descendants off-axis (model IDs floated to the
+              center instead of left-aligning under their labels). Use
+              `<span block text-left>` to keep layout deterministic —
+              matches the fix already applied in thinking-picker.tsx. */}
+          <span className="block min-w-0 flex-1 text-left">
+            <span className="block truncate text-label font-medium">{m.label}</span>
+            {m.label !== m.id && (
+              <span className="mt-0.5 block truncate font-mono text-micro leading-snug text-muted-foreground">
+                {m.id}
+              </span>
+            )}
+          </span>
+        </PickerItem>
+      ))}
 
       {/* 2026-10-09 coder(lq): A transport/discovery failure is not evidence that the runtime has no models. Keep manual selection available. */}
       {!modelsQuery.isLoading && modelsQuery.isError && (
@@ -256,7 +254,7 @@ export function ModelPicker({
         </div>
       )}
 
-      {!modelsQuery.isLoading && !modelsQuery.isError && filtered.length === 0 && !canCreate && (
+      {!modelsQuery.isCatalogLoading && !modelsQuery.configurationError && !modelsQuery.isError && filtered.length === 0 && !canCreate && (
         <p className="px-3 py-3 text-center text-caption text-muted-foreground">
           {t(($) => $.pickers.model_empty)}
         </p>

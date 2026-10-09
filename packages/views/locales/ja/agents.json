@@ -209,6 +209,7 @@
     "model_default": "デフォルト",
     "model_tooltip": "モデル · {{value}}",
     "model_managed_by_runtime": "ランタイムで管理",
+    "model_configuration_failed": "システムのモデル設定を読み込めませんでした。CLI のモデル選択と手動入力は引き続き利用できます。",
     "model_search_placeholder": "モデル ID を検索または入力",
     "model_discovering": "モデルを検出中...",
     "model_discovery_failed_title": "このランタイムのモデルを取得できませんでした。",

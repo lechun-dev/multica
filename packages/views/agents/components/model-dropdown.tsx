@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { ChevronDown, Cpu, Loader2, Plus, Check, Info } from "lucide-react";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
+import { useRuntimeModelCatalog } from "@multica/core/runtimes";
 import type { RuntimeModel } from "@multica/core/types";
 import {
   Popover,
@@ -45,17 +45,11 @@ export function ModelDropdown({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
-  );
+  const workspaceId = useWorkspaceId();
+  const modelsQuery = useRuntimeModelCatalog(workspaceId, runtimeId, runtimeOnline);
 
-  const supported = modelsQuery.data?.supported ?? true;
-  // Stable reference for the model list — `?? []` would mint a fresh
-  // array each render and force every downstream useMemo to invalidate.
-  const models = useMemo(
-    () => modelsQuery.data?.models ?? [],
-    [modelsQuery.data],
-  );
+  const supported = modelsQuery.supported;
+  const models = modelsQuery.models;
   const grouped = useMemo(() => groupByProvider(models), [models]);
   // resolveRuntimeModels throws the daemon's reported error text, so this is
   // the runtime's own message (plus any hint the daemon appended). It is only
@@ -69,10 +63,10 @@ export function ModelDropdown({
   // model selection, clear any previously-saved value so we don't
   // persist a ghost configuration that never takes effect.
   useEffect(() => {
-    if (!supported && value !== "") {
+    if (!supported && !modelsQuery.isCatalogLoading && value !== "") {
       onChange("");
     }
-  }, [supported, value, onChange]);
+  }, [supported, modelsQuery.isCatalogLoading, value, onChange]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return grouped;
@@ -109,7 +103,7 @@ export function ModelDropdown({
         ? t(($) => $.model_dropdown.default_provider)
         : t(($) => $.model_dropdown.runtime_offline_manual));
 
-  if (!supported && !modelsQuery.isLoading) {
+  if (!supported && !modelsQuery.isCatalogLoading) {
     return (
       <div className="flex flex-col min-w-0">
         <div className="flex h-6 items-center">
@@ -178,6 +172,12 @@ export function ModelDropdown({
             />
           </div>
           <div className="max-h-72 overflow-y-auto p-1">
+            {modelsQuery.configurationError && (
+              <div role="alert" className="px-3 py-3 text-caption text-muted-foreground">
+                {t(($) => $.pickers.model_configuration_failed)}
+              </div>
+            )}
+
             {modelsQuery.isLoading && (
               <div className="flex items-center gap-2 px-3 py-6 text-body text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -185,38 +185,37 @@ export function ModelDropdown({
               </div>
             )}
 
-            {!modelsQuery.isLoading &&
-              Object.entries(filtered).map(([provider, list]) => (
-                <div key={provider} className="mb-1">
-                  {provider && (
-                    <div className="px-2 pt-1.5 pb-0.5 text-caption font-medium uppercase tracking-wide text-muted-foreground">
-                      {provider}
-                    </div>
-                  )}
-                  {list.map((m) => (
-                    <button
-                      type="button"
-                      key={m.id}
-                      onClick={() => select(m.id)}
-                      className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body transition-colors ${
-                        m.id === value ? "bg-accent" : "hover:bg-accent/50"
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{m.label}</div>
-                        {m.label !== m.id && (
-                          <div className="truncate text-caption text-muted-foreground">
-                            {m.id}
-                          </div>
-                        )}
-                      </div>
-                      {m.id === value && (
-                        <Check className="h-4 w-4 shrink-0 text-primary" />
+            {Object.entries(filtered).map(([provider, list]) => (
+              <div key={provider} className="mb-1">
+                {provider && (
+                  <div className="px-2 pt-1.5 pb-0.5 text-caption font-medium uppercase tracking-wide text-muted-foreground">
+                    {provider}
+                  </div>
+                )}
+                {list.map((m) => (
+                  <button
+                    type="button"
+                    key={m.id}
+                    onClick={() => select(m.id)}
+                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body transition-colors ${
+                      m.id === value ? "bg-accent" : "hover:bg-accent/50"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{m.label}</div>
+                      {m.label !== m.id && (
+                        <div className="truncate text-caption text-muted-foreground">
+                          {m.id}
+                        </div>
                       )}
-                    </button>
-                  ))}
-                </div>
-              ))}
+                    </div>
+                    {m.id === value && (
+                      <Check className="h-4 w-4 shrink-0 text-primary" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            ))}
 
             {/* A failed discovery reports WHY here rather than in the label
                 row's caption, which has no room for a sentence. The runtime's
@@ -245,7 +244,8 @@ export function ModelDropdown({
               </div>
             )}
 
-            {!modelsQuery.isLoading &&
+            {!modelsQuery.isCatalogLoading &&
+              !modelsQuery.configurationError &&
               !modelsQuery.isError &&
               Object.keys(filtered).length === 0 &&
               !canCreate && (

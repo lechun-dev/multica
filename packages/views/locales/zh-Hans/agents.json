@@ -217,6 +217,7 @@
     "model_default": "默认",
     "model_tooltip": "模型 · {{value}}",
     "model_managed_by_runtime": "由运行时管理",
+    "model_configuration_failed": "系统模型配置加载失败，仍可选择 CLI 模型或手动输入模型 ID。",
     "model_search_placeholder": "搜索或输入模型 ID",
     "model_discovering": "正在发现模型...",
     "model_discovery_failed_title": "无法列出该运行时的模型。",

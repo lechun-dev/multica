@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import type { RuntimeModelsResult } from "@multica/core/types";
+import type { RuntimeModelsResult, WorkspaceRuntimeModel } from "@multica/core/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
@@ -32,18 +32,21 @@ const CODEX_MODELS: RuntimeModelsResult = {
 // daemon's reported error text, so a failure is modelled as a throwing queryFn.
 let discovery: () => Promise<RuntimeModelsResult> = async () => CODEX_MODELS;
 
-vi.mock("@multica/core/runtimes", () => ({
-  runtimeModelsOptions: (runtimeId: string | null) => ({
-    enabled: Boolean(runtimeId),
-    queryKey: ["runtime-models", runtimeId, discoveryKey],
-    queryFn: () => discovery(),
-  }),
+let configuredModels: WorkspaceRuntimeModel[] = [];
+let configurationFails = false;
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws" }));
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@multica/core/api")>(),
+  api: {
+    listWorkspaceRuntimeModels: async () => {
+      if (configurationFails) throw new Error("configuration unavailable");
+      return configuredModels;
+    },
+    initiateListModels: async () => ({ id: "req", runtime_id: "rt-codex", status: "completed", ...await discovery() }),
+  },
 }));
 
-// Bumped per test so React Query cannot serve a previous case's cached result.
-let discoveryKey = 0;
-
-function renderDropdown() {
+function renderDropdown(runtimeOnline = true) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -53,7 +56,7 @@ function renderDropdown() {
       <QueryClientProvider client={queryClient}>
         <ModelDropdown
           runtimeId="rt-codex"
-          runtimeOnline
+          runtimeOnline={runtimeOnline}
           value=""
           onChange={onChange}
         />
@@ -71,11 +74,28 @@ function openDropdown(container: HTMLElement) {
   fireEvent.click(trigger);
 }
 
+const systemModel: WorkspaceRuntimeModel = {
+  id: "config", workspace_id: "ws", runtime_provider: "codex", model_id: "system-model",
+  display_name: "System model", model_provider: "gateway", description: "", thinking_levels: [],
+  default_thinking_level: "", service_tiers: [], supports_explicit_standard_service_tier: false,
+  enabled: true, sort_order: 0, created_at: "", updated_at: "",
+};
+
 describe("ModelDropdown", () => {
+  it.each(["pending", "failed", "empty", "offline"])("keeps configured models selectable when discovery is %s", async (state) => {
+    configuredModels = [systemModel, { ...systemModel, model_id: "disabled-model", display_name: "Disabled model", enabled: false }];
+    discovery = state === "pending" ? () => new Promise(() => {}) : state === "failed" ? async () => { throw new Error("CLI failed"); } : async () => ({ models: [], supported: true });
+    const { container, onChange } = renderDropdown(state !== "offline");
+    openDropdown(container);
+    fireEvent.click(await screen.findByText("System model"));
+    expect(onChange).toHaveBeenCalledWith("system-model");
+    expect(screen.queryByText("Disabled model")).toBeNull();
+  });
   afterEach(() => {
     cleanup();
     discovery = async () => CODEX_MODELS;
-    discoveryKey += 1;
+    configuredModels = [];
+    configurationFails = false;
   });
 
   it("offers the gpt-5.6 Codex models and submits their canonical IDs", async () => {
@@ -91,6 +111,15 @@ describe("ModelDropdown", () => {
 
     fireEvent.click(screen.getByText("GPT-5.6 Terra"));
     expect(onChange).toHaveBeenCalledWith("gpt-5.6-terra");
+  });
+
+  it("keeps CLI models usable and reports a configuration load failure", async () => {
+    configurationFails = true;
+    const { container, onChange } = renderDropdown();
+    openDropdown(container);
+    expect(await screen.findByText(enAgents.pickers.model_configuration_failed)).toBeTruthy();
+    fireEvent.click(await screen.findByText("GPT-5.6 Sol"));
+    expect(onChange).toHaveBeenCalledWith("gpt-5.6-sol");
   });
 
   // MUL-6606: a runtime that could not enumerate its models used to report an

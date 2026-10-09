@@ -329,15 +329,11 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if rt.Status != "online" {
-		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
-		return
-	}
 	resolvedRuntimeID := uuidToString(rt.ID)
 
 	if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {
 		age := cached.Age(time.Now())
-		if age >= modelCatalogRevalidateAfter {
+		if rt.Status == "online" && age >= modelCatalogRevalidateAfter {
 			h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
 		}
 		models, supported := h.workspaceModelCatalog(r.Context(), rt.WorkspaceID, rt.Provider, cached.Models, cached.Supported)
@@ -359,7 +355,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	configured, err := h.enabledWorkspaceRuntimeModels(r.Context(), rt.WorkspaceID, rt.Provider)
+	configured, err := h.enabledWorkspaceRuntimeModels(r.Context(), rt.WorkspaceID)
 	if err != nil {
 		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(rt.WorkspaceID), "runtime_provider", rt.Provider)
 	} else if len(configured) > 0 {
@@ -369,7 +365,9 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		// making the first open wait on an offline or slow daemon.
 		now := time.Now()
 		models := mergeWorkspaceRuntimeModels(runtimeModelCatalogBase(rt.Provider, nil, true), configured)
-		h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
+		if rt.Status == "online" {
+			h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
+		}
 		writeJSON(w, http.StatusOK, &ModelListRequest{
 			ID:        randomID(),
 			RuntimeID: resolvedRuntimeID,
@@ -384,6 +382,10 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rt.Status != "online" {
+		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
+		return
+	}
 	req, err := h.ModelListStore.Create(r.Context(), resolvedRuntimeID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue model list request: "+err.Error())
@@ -490,7 +492,7 @@ func (h *Handler) workspaceModelCatalog(ctx context.Context, workspaceID pgtype.
 	if len(discovered) == 0 && len(base) > 0 {
 		slog.Warn("runtime reported an empty model catalog; using server fallback", "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
 	}
-	configured, err := h.enabledWorkspaceRuntimeModels(ctx, workspaceID, runtimeProvider)
+	configured, err := h.enabledWorkspaceRuntimeModels(ctx, workspaceID)
 	if err != nil {
 		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(workspaceID), "runtime_provider", runtimeProvider)
 		return base, supported
@@ -499,11 +501,20 @@ func (h *Handler) workspaceModelCatalog(ctx context.Context, workspaceID pgtype.
 	return models, supported || len(configured) > 0
 }
 
-func (h *Handler) enabledWorkspaceRuntimeModels(ctx context.Context, workspaceID pgtype.UUID, runtimeProvider string) ([]db.WorkspaceRuntimeModel, error) {
-	return h.Queries.ListEnabledWorkspaceRuntimeModelsByProvider(ctx, db.ListEnabledWorkspaceRuntimeModelsByProviderParams{
-		WorkspaceID:     workspaceID,
-		RuntimeProvider: runtimeProvider,
-	})
+func (h *Handler) enabledWorkspaceRuntimeModels(ctx context.Context, workspaceID pgtype.UUID) ([]db.WorkspaceRuntimeModel, error) {
+	// 2026-10-09 coder(lq): Configured models are workspace-wide candidates,
+	// independent of the selected CLI. Runtime/account support is checked at execution.
+	models, err := h.Queries.ListWorkspaceRuntimeModels(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	enabled := make([]db.WorkspaceRuntimeModel, 0, len(models))
+	for _, model := range models {
+		if model.Enabled {
+			enabled = append(enabled, model)
+		}
+	}
+	return enabled, nil
 }
 
 func runtimeModelCatalogBase(runtimeProvider string, discovered []ModelEntry, supported bool) []ModelEntry {
