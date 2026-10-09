@@ -2,8 +2,28 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
+
+func TestCommentEnqueueFailureDistinguishesTaskPermissionAndStorage(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want DispatchReasonCode
+	}{
+		{projectauth.ErrForbidden, "task_permission_denied"},
+		{projectauth.ErrStorageUnavailable, "task_permission_unavailable"},
+		{projectauth.ErrMigrationRequired, "task_permission_unavailable"},
+		{projectauth.ErrDisabled, "task_permission_unavailable"},
+		{errors.New("unclassified failure"), ReasonInternalError},
+	} {
+		if got := commentEnqueueFailureReason(fmt.Errorf("enqueue: %w", tc.err)); got != tc.want {
+			t.Fatalf("reason for %v = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
 
 // TestDecidePostMergeMiss is Elon round-4 must-fix: the active-task check governs
 // what happens after a comment merge misses. A query FAILURE must fail closed —

@@ -31,6 +31,11 @@ func TestCreateComment_MixedMentionSurfacesPartialTriggerOutcomes(t *testing.T) 
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
+	// 2026-10-09 coder(lq): Only a caller lacking agent visibility is denied;
+	// workspace administrators can invoke the agents they can see.
+	setRuntimeTestMemberRole(t, testUserID, "member")
+	t.Cleanup(func() { setRuntimeTestMemberRole(t, testUserID, "owner") })
+
 	ctx := context.Background()
 
 	allowedAgentID := createHandlerTestAgent(t, "Outcome Allowed Agent", nil)
@@ -105,6 +110,11 @@ func TestCreateComment_BlockedMentionReasonDoesNotEnumeratePrivateAgent(t *testi
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
+
+	// 2026-10-09 coder(lq): Revocation is exercised as a regular member;
+	// administrators retain both visibility and invocation rights.
+	setRuntimeTestMemberRole(t, testUserID, "member")
+	t.Cleanup(func() { setRuntimeTestMemberRole(t, testUserID, "owner") })
 
 	privateAgentID, _, _ := privateAgentTestFixture(t)
 	issueID := createCommentTriggerPreviewIssue(t, "blocked mention enumeration safety", "", "")

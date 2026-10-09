@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -1921,6 +1922,15 @@ func (h *Handler) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, or
 		h.Metrics.RecordProjectAuthorizationShadow("single", "candidate_deny")
 		return nil
 	}
+	// 2026-10-09 coder(lq): A failed storage check is not evidence that the
+	// human lacks AgentUse; keep the audit distinction and underlying cause.
+	action := "task_agent_use_denied"
+	if result == "error" {
+		action = "task_agent_use_check_failed"
+		slog.ErrorContext(ctx, "task agent permission check failed", "workspace_id", subject.WorkspaceID,
+			"issue_id", issueIDString(issue), "user_id", subject.UserID, "phase", phase,
+			"sqlstate", projectPermissionSQLState(err), "error", err)
+	}
 	if h.DB == nil {
 		return projectauth.ErrStorageUnavailable
 	}
@@ -1928,11 +1938,11 @@ func (h *Handler) authorizeIssueAgentUse(ctx context.Context, issue db.Issue, or
 		WorkspaceID: subject.WorkspaceID,
 		IssueID:     issueIDString(issue),
 		ActorUserID: subject.UserID,
-		Action:      "task_agent_use_denied",
-		Details:     map[string]any{"phase": phase, "permission": projectauth.AgentUse},
+		Action:      action,
+		Details:     map[string]any{"phase": phase, "permission": projectauth.AgentUse, "result": result},
 	})
 	if auditErr != nil {
-		return projectauth.ErrStorageUnavailable
+		return fmt.Errorf("%w: record agent-use audit: %w", projectauth.ErrStorageUnavailable, auditErr)
 	}
 	return err
 }
@@ -2037,6 +2047,11 @@ func (h *Handler) effectiveIssueAccessAllowed(ctx context.Context, subject proje
 	explanation, err := resolver.ExplainIssue(ctx, subject, issueID, permission)
 	if err != nil {
 		result = "error"
+		if errors.Is(err, projectauth.ErrMigrationRequired) || errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrDisabled) {
+			slog.ErrorContext(ctx, "task permission read failed", "workspace_id", subject.WorkspaceID,
+				"issue_id", issueID, "user_id", subject.UserID, "permission", permission,
+				"sqlstate", projectPermissionSQLState(err), "error", err)
+		}
 		if errors.Is(err, projectauth.ErrMigrationRequired) {
 			return false, "migration"
 		}

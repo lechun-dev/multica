@@ -8,9 +8,9 @@ import type { AgentInvocationTarget, AgentPermissionMode } from "../types";
  * indistinguishable from a truly owner-only agent — so the list shows this
  * three-state value instead.
  *
- * Mapping mirrors the server's `canInvokeAgent` gate
- * (`server/internal/handler/agent_access.go`):
- *   - owner-only      = `private` (only the owner may invoke)
+ * 2026-10-09 coder(lq): Visibility scopes exclude the workspace administrators' governance access.
+ * Anyone who can view an agent can invoke it:
+ *   - owner-only      = `private` (personal scope, plus workspace administrators)
  *   - workspace       = `public_to` with a workspace target (any member/agent/system)
  *   - specific-people = `public_to` without a workspace target (member/team targets)
  */

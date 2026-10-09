@@ -284,9 +284,9 @@
     "access": {
       "label": "액세스",
       "private_title": "비공개",
-      "private_desc": "본인만 이 에이전트를 실행할 수 있습니다",
+      "private_desc": "본인과 워크스페이스 관리자가 보고 실행할 수 있습니다",
       "public_title": "공개",
-      "public_desc": "이 에이전트를 실행할 수 있는 사람을 선택하세요",
+      "public_desc": "이 에이전트를 볼 수 있는 사람을 선택하세요",
       "public_workspace_option": "이 워크스페이스의 모든 사람",
       "public_members_group": "특정 사용자",
       "public_members_empty": "선택할 수 있는 워크스페이스 멤버가 없습니다",
@@ -658,7 +658,7 @@
   "visibility": {
     "private": {
       "label": "개인",
-      "tooltip": "개인 · 소유자와 소유자가 허용한 사람만 이 에이전트를 실행할 수 있습니다"
+      "tooltip": "개인 · 본인, 워크스페이스 관리자 및 공유 대상에게 표시"
     },
     "workspace": {
       "label": "워크스페이스",
@@ -666,8 +666,8 @@
     }
   },
   "access": {
-    "section_title": "이 에이전트를 실행할 수 있는 사용자",
-    "tooltip": "접근 권한 · 누가 이 에이전트를 실행할 수 있는지",
+    "section_title": "공개 범위",
+    "tooltip": "이 에이전트를 볼 수 있는 사람은 실행할 수 있습니다",
     "trigger_private": "나만",
     "trigger_workspace": "워크스페이스",
     "scope_labels": {
@@ -679,9 +679,9 @@
     "trigger_members_empty": "특정 사용자",
     "trigger_team": "팀",
     "private_title": "비공개",
-    "private_desc": "나만 이 에이전트를 실행할 수 있습니다",
+    "private_desc": "본인과 워크스페이스 관리자가 보고 실행할 수 있습니다",
     "shared_title": "공유",
-    "shared_desc": "이 에이전트를 실행할 워크스페이스 또는 특정 사용자를 선택합니다",
+    "shared_desc": "이 에이전트를 볼 수 있는 사람을 선택하세요",
     "shared_target_required": "저장하기 전에 워크스페이스 또는 한 명 이상의 사용자를 선택하세요.",
     "workspace_title": "워크스페이스에 공개",
     "workspace_desc": "이 워크스페이스의 모든 사람이 이 에이전트를 실행할 수 있습니다",

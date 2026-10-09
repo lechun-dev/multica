@@ -10,30 +10,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Agent invocation permission model (MUL-3963).
-//
-// Two distinct questions, previously conflated in canAccessPrivateAgent:
-//
-//   - "can this actor SEE / open this agent in the UI"  -> canAccessPrivateAgent
-//   - "can this actor TRIGGER a run for this agent"      -> canInvokeAgent
-//
-// The invoke gate is the security-critical one: a workspace admin must NOT be
-// able to invoke someone's private agent (and thereby use that owner's
-// Composio/OAuth connections) just because they are an admin. Admin retains
-// management + inventory visibility, not the ability to run.
-//
-// permission_mode drives invoke:
-//   - private   -> only the agent owner may invoke; NO admin bypass, NO A2A bypass.
-//   - public_to -> the agent_invocation_target allow-list decides:
-//       * workspace target -> any workspace member (and workspace-internal
-//         agent/system principals) may invoke.
-//       * member target    -> only the specific user may invoke.
-//       * team target       -> reserved, inert in V1.
-//
-// A2A is judged by the top-of-chain human originator, never by the immediate
-// agent actor: if user U triggers agent A and A @-mentions agent B, B is only
-// invocable when U (the originator) is in B's allow-list. This prevents agents
-// from forming a channel that bypasses the owner's white-list.
+// 2026-10-09 coder(lq): Human invocation uses the same visibility gate as
+// list/detail. Delegated calls use the accountable human's visibility, never
+// the immediate agent actor's unconditional inspection access. Unattributed
+// system calls retain only the existing workspace-shared admission rule.
 
 // canInvokeAgent reports whether a run may be enqueued for `agent` on behalf of
 // the given actor. Judgement is by the *effective invoking user*:
@@ -78,14 +58,12 @@ func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actor
 		effectiveUser = originatorUserID
 	}
 
-	// The agent owner may always invoke their own agent.
-	if effectiveUser != "" && uuidToString(agent.OwnerID) == effectiveUser {
-		return true
+	if effectiveUser != "" {
+		return h.canAccessPrivateAgent(ctx, agent, "member", effectiveUser, workspaceID)
 	}
 
 	if agent.PermissionMode != "public_to" {
-		// private (or any unknown mode) is deny-by-default: no admin bypass,
-		// no A2A bypass. Only the owner branch above passes.
+		// No attributed human can authorize a private or unknown-mode target.
 		return false
 	}
 
@@ -94,47 +72,24 @@ func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actor
 		return false
 	}
 
-	// Agents and system triggers are workspace-internal principals: a
-	// workspace target admits them even when no human originator resolved.
-	// This is a DELIBERATE, product-approved exception (MUL-3963): webhook /
-	// system / workspace-wide automation must be able to trigger a
-	// `public_to workspace` agent even though there is no human at the top of
-	// the chain. It is scoped tightly — it ONLY relaxes the *workspace* target.
-	// member/team targets still require a resolved human originator to match,
-	// so an unattributed agent/system trigger FAILS CLOSED against a
-	// member-/team-scoped private-ish allow-list and can never smuggle itself
-	// onto someone's specific-people grant.
+	// No human principal: only the existing workspace-wide system exception
+	// applies. Member-scoped shares cannot match an unattributed trigger.
 	workspaceBroad := actorType == "agent" || actorType == "system"
-	isWorkspaceMember := false
-	if effectiveUser != "" {
-		if _, err := h.getWorkspaceMember(ctx, effectiveUser, workspaceID); err == nil {
-			isWorkspaceMember = true
-		}
-	}
 
 	for _, t := range targets {
 		switch t.TargetType {
 		case "workspace":
-			if isWorkspaceMember || workspaceBroad {
+			if workspaceBroad {
 				return true
 			}
-		case "member":
-			// Requires a resolved human. agent/system triggers with no
-			// originator (effectiveUser == "") never match here — fail closed.
-			if effectiveUser != "" && uuidToString(t.TargetID) == effectiveUser {
-				return true
-			}
-		case "team":
-			// Reserved: team membership does not exist yet in V1, so team
-			// targets never admit anyone (also fail-closed for system/agent).
 		}
 	}
 	return false
 }
 
-// canAccessPrivateAgent gates the VIEW surfaces (list/detail navigation, chat
-// transcript read, task-cancel authorization). It is NOT the trigger gate —
-// see canInvokeAgent for that.
+// 2026-10-09 coder(lq): canAccessPrivateAgent is the human visibility and invocation authority.
+// Agent actors retain inspection access; invocation must instead call this
+// with their human originator, as canInvokeAgent does.
 //
 // Rules:
 //   - agent actors always pass (A2A collaboration + inspection preserved).

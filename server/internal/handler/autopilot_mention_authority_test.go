@@ -615,16 +615,11 @@ func TestCreateComment_AutopilotWorkerResultWakesSquadLeader(t *testing.T) {
 	}
 }
 
-// TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage is the MUL-4857
-// must-fix (review round 3): a workspace admin may EDIT another author's comment,
-// but that manage right is NOT an invoke right over the author's private agents
-// (canInvokeAgent is deny-by-default for private agents — no admin bypass). When an
-// admin edits an autopilot Agent's comment to add a private @mention while the
-// target is busy, the immediate save is blocked on the admin's own member identity,
-// AND the persisted source_task_id MUST be cleared. Otherwise the deferred
-// completion-reconcile — which routes the comment under its ORIGINAL agent author on
-// the unattributed autopilot chain — would read the stale lineage and resurrect the
-// autopilot creator's authority once the target frees up.
+// 2026-10-09 coder(lq): TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage
+// preserves MUL-4857 lineage isolation under visibility-based invocation. An
+// admin may invoke the visible private agent under their own identity, but must
+// not retain the original author's source_task_id. Deferred reconciliation must
+// not reuse that stale lineage to enqueue another run as the autopilot creator.
 func TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -670,10 +665,10 @@ func TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage(t *testing.T) {
 		t.Fatalf("admin UpdateComment: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Immediate save is judged on the admin's member identity, which holds no invoke
-	// right over the private worker — nothing is enqueued.
-	if got := countQueued(); got != 0 {
-		t.Fatalf("admin edit must be blocked immediately (no invoke right over a private agent); got %d queued", got)
+	// 2026-10-09 coder(lq): The admin can see and invoke the worker. This
+	// explicit edit is allowed, without borrowing the old autopilot lineage.
+	if got := countQueued(); got != 1 {
+		t.Fatalf("admin edit must enqueue its visible agent once; got %d queued", got)
 	}
 
 	// The stale autopilot lineage MUST be cleared so the deferred reconcile fails closed.
@@ -697,7 +692,7 @@ func TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage(t *testing.T) {
 		t.Fatalf("load worker task: %v", err)
 	}
 	testHandler.reconcileCommentsOnCompletion(ctx, &workerTask)
-	if got := countQueued(); got != 0 {
-		t.Fatalf("completion reconcile must not borrow the stale autopilot authority after an admin edit; got %d queued", got)
+	if got := countQueued(); got != 1 {
+		t.Fatalf("completion reconcile must not add a second run using stale lineage; got %d queued", got)
 	}
 }

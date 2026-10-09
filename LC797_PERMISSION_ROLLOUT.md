@@ -169,6 +169,23 @@ separate data-loss decision.
 
 ## Cache, subscription and recovery drills
 
+### Storage errors with SQLSTATE 22P02
+
+`project permission storage unavailable` may wrap a grant-query failure rather
+than a disconnected database. Correlate the backend enqueue/read failure with
+the PostgreSQL error timestamp before changing role grants or deployment flags.
+An optional empty issue ID must pass through `NULLIF(..., '')` before a UUID
+cast: a generic bitmap plan can evaluate an index expression before the outer
+boolean guard, even when a custom plan succeeds. Do not rely on `OR`/`AND`
+short-circuiting or treat a restart as a permanent fix.
+
+`TestListAccessGrantsOptionalIssuePreservesScope` covers custom and generic
+index plans with session-local production-shaped fixtures. Verify project-only
+reads exclude task grants and task reads do not include another task's grants.
+Deploy the fixed reader before claiming recovery; do not disable authorization
+to mask this error. Confirm the actual database target separately for every
+deployment environment before any migration or write.
+
 Authorization decisions are not cached across requests. List SQL reuses
 authorization state only within one statement. After granting, revoking,
 expiring or changing policy, verify an already-open browser subscription and a

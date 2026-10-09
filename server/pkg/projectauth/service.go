@@ -904,7 +904,9 @@ func authorizationStorageError(err error) error {
 			return err
 		}
 	}
-	return ErrStorageUnavailable
+	// 2026-10-09 coder(lq): Keep the database/driver cause for server-side
+	// diagnosis while HTTP adapters continue returning a stable, safe 503.
+	return fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 }
 
 func (s *Service) rolePermissions(ctx context.Context, workspaceID string, role ProjectRole) ([]Permission, bool, error) {

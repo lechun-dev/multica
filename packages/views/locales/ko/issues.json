@@ -612,7 +612,11 @@
       "bar_authors_more_other": "{{names}} 외 {{count}}명",
       "resolve_failed": "스레드를 해결하지 못했습니다",
       "unresolve_failed": "스레드 해결을 취소하지 못했습니다"
-    }
+    },
+    "trigger_blocked_task_permission_denied": "에이전트를 실행하려면 작업 Member 이상의 권한이 필요합니다.",
+    "trigger_blocked_task_permission_unavailable": "작업 권한 확인을 일시적으로 사용할 수 없습니다. 나중에 다시 시도하세요.",
+    "trigger_blocked_short_task_permission_denied": "작업 권한 필요",
+    "trigger_blocked_short_task_permission_unavailable": "권한 확인 불가"
   },
   "reply": {
     "placeholder": "답글 남기기...",

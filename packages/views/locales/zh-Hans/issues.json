@@ -612,7 +612,11 @@
       "bar_authors_more_other": "{{names}} 等 {{count}} 人",
       "resolve_failed": "标记已解决失败",
       "unresolve_failed": "重新打开失败"
-    }
+    },
+    "trigger_blocked_task_permission_denied": "需要任务 Member 或更高权限才能启动智能体。",
+    "trigger_blocked_task_permission_unavailable": "任务权限校验暂时不可用，请稍后重试。",
+    "trigger_blocked_short_task_permission_denied": "缺少任务权限",
+    "trigger_blocked_short_task_permission_unavailable": "权限校验暂不可用"
   },
   "reply": {
     "placeholder": "回复...",

@@ -580,7 +580,11 @@
       "bar_authors_more_other": "{{names}} et {{count}} autres",
       "resolve_failed": "Échec de la résolution du fil",
       "unresolve_failed": "Échec de la réouverture du fil"
-    }
+    },
+    "trigger_blocked_task_permission_denied": "L’accès Member ou supérieur à la tâche est requis pour lancer un agent.",
+    "trigger_blocked_task_permission_unavailable": "La vérification des droits de la tâche est temporairement indisponible. Réessayez plus tard.",
+    "trigger_blocked_short_task_permission_denied": "Droits sur la tâche requis",
+    "trigger_blocked_short_task_permission_unavailable": "Vérification des droits indisponible"
   },
   "reply": {
     "placeholder": "Laisser une réponse...",

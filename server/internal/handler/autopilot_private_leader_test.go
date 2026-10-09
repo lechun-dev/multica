@@ -223,7 +223,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 // stable, enumeration-safe reason_code (not a silent success). This is the exact
 // case where the old creator-based admission and clicker-based attribution
 // forked.
-func TestTriggerAutopilot_SquadPrivateLeader_NonOwnerClicker_Blocked(t *testing.T) {
+func TestTriggerAutopilot_SquadPrivateLeader_VisibleAdminClicker_Allowed(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -267,7 +267,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_NonOwnerClicker_Blocked(t *testing.
 
 	// The workspace owner (testUserID) — NOT the private agent's owner — clicks
 	// Run now. requireAutopilotWrite passes (workspace owner can manage), but the
-	// invoke gate keys on the clicker and denies them.
+	// visibility gate keys on the clicker and admits them.
 	w = httptest.NewRecorder()
 	r = newRequest("POST", "/api/autopilots/"+ap.ID+"/trigger?workspace_id="+testWorkspaceID, nil)
 	r = withURLParam(r, "id", ap.ID)
@@ -279,15 +279,8 @@ func TestTriggerAutopilot_SquadPrivateLeader_NonOwnerClicker_Blocked(t *testing.
 	if err := json.NewDecoder(w.Body).Decode(&run); err != nil {
 		t.Fatalf("decode run: %v", err)
 	}
-	if run.Status != "skipped" {
-		t.Fatalf("run status = %q, want skipped (non-owner clicker blocked)", run.Status)
-	}
-	if run.ReasonCode == nil || *run.ReasonCode != string(ReasonInvocationNotAllowed) {
-		got := "<nil>"
-		if run.ReasonCode != nil {
-			got = *run.ReasonCode
-		}
-		t.Fatalf("reason_code = %s, want %s", got, ReasonInvocationNotAllowed)
+	if run.Status != "issue_created" {
+		t.Fatalf("run status = %q, want issue_created for a visible agent", run.Status)
 	}
 }
 
@@ -330,10 +323,10 @@ func TestTriggerAutopilot_SquadPrivateLeader_PlainMemberCreator_Blocked(t *testi
 		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
 	})
 
-	// Trigger as workspace owner — the dispatch should fail because the
+	// Trigger as the creator — the dispatch should fail because the
 	// autopilot's creator (plain member) cannot access the private leader.
 	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	r := newRequestAs(memberID, "POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
 	r = withURLParam(r, "id", apID)
 	testHandler.TriggerAutopilot(w, r)
 	// Dispatch returns 200 with status=skipped (or failed) — the run is created
@@ -391,7 +384,7 @@ func TestTriggerAutopilot_RunOnly_SquadPrivateLeader_PlainMemberCreator_Blocked(
 	})
 
 	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	r := newRequestAs(memberID, "POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
 	r = withURLParam(r, "id", apID)
 	testHandler.TriggerAutopilot(w, r)
 	if w.Code != http.StatusOK {

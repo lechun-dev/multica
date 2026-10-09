@@ -612,7 +612,11 @@
       "bar_authors_more_other": "{{names}} 他 {{count}} 名",
       "resolve_failed": "スレッドを解決できませんでした",
       "unresolve_failed": "スレッドの解決を取り消せませんでした"
-    }
+    },
+    "trigger_blocked_task_permission_denied": "エージェントを実行するにはタスクの Member 以上の権限が必要です。",
+    "trigger_blocked_task_permission_unavailable": "タスクの権限確認を一時的に利用できません。後でもう一度お試しください。",
+    "trigger_blocked_short_task_permission_denied": "タスク権限が必要",
+    "trigger_blocked_short_task_permission_unavailable": "権限確認を利用できません"
   },
   "reply": {
     "placeholder": "返信を残す...",

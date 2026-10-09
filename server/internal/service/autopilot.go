@@ -1911,16 +1911,8 @@ func (s *AutopilotService) getIssuePrefix(workspaceID pgtype.UUID) string {
 	return ws.IssuePrefix
 }
 
-// canCreatorInvokeAgent checks whether the autopilot's creator may invoke the
-// target agent under the invocation-permission model (MUL-3963). It mirrors
-// handler.canInvokeAgent with the autopilot creator as the effective user:
-//   - member creator who owns the agent -> always
-//   - private agent -> only the owner (NO admin bypass, NO agent-created bypass)
-//   - public_to agent -> workspace target admits any workspace-member creator
-//     (and agent-created autopilots as workspace principals); member target
-//     admits the matching creator; team targets are inert.
-//
-// Fail-closed on any lookup error.
+// 2026-10-09 coder(lq): Autopilot humans use agent visibility as invocation
+// authority. Unattributed agent-created automation keeps only workspace shares.
 // autopilotAdmitInvoke decides whether the dispatch's admission principal may
 // invoke the target agent (MUL-4525). A MANUAL "run now" (actorUserID valid) is
 // a direct human action gated by the CURRENT clicker's access, so admission and
@@ -1938,45 +1930,27 @@ func (s *AutopilotService) autopilotAdmitInvoke(ctx context.Context, ap db.Autop
 // under the invocation-permission model (MUL-3963). It mirrors
 // handler.canInvokeAgent with a member effective user — used for a manual
 // autopilot "run now" where the clicker, not the creator, is the admission
-// principal. Fail-closed on any lookup error; no admin bypass.
+// principal. Fail-closed on any lookup error.
 func (s *AutopilotService) canMemberInvokeAgent(ctx context.Context, agent db.Agent, memberUserID pgtype.UUID, workspaceID pgtype.UUID) bool {
 	return CanMemberInvokeAgent(ctx, s.Queries, agent, memberUserID, workspaceID)
 }
 
 func (s *AutopilotService) canCreatorInvokeAgent(ctx context.Context, ap db.Autopilot, agent db.Agent) bool {
-	creatorID := util.UUIDToString(ap.CreatedByID)
-	if ap.CreatedByType == "member" && util.UUIDToString(agent.OwnerID) == creatorID {
-		return true
+	if ap.CreatedByType == "member" {
+		return CanMemberInvokeAgent(ctx, s.Queries, agent, ap.CreatedByID, ap.WorkspaceID)
 	}
+
 	if agent.PermissionMode != "public_to" {
-		// private (or unknown mode): deny-by-default; only the owner branch
-		// above passes. Admins and agent-created autopilots do not bypass.
+		// Unattributed automation cannot invoke a private target.
 		return false
 	}
 	targets, err := s.Queries.ListAgentInvocationTargets(ctx, agent.ID)
 	if err != nil {
 		return false
 	}
-	// Agent-created autopilots are workspace-internal principals: a workspace
-	// target admits them. Member creators must be workspace members.
-	workspaceBroad := ap.CreatedByType == "agent"
-	isWorkspaceMember := false
-	if ap.CreatedByType == "member" {
-		if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-			UserID:      ap.CreatedByID,
-			WorkspaceID: ap.WorkspaceID,
-		}); err == nil {
-			isWorkspaceMember = true
-		}
-	}
-	for _, t := range targets {
-		switch t.TargetType {
-		case "workspace":
-			if isWorkspaceMember || workspaceBroad {
-				return true
-			}
-		case "member":
-			if ap.CreatedByType == "member" && util.UUIDToString(t.TargetID) == creatorID {
+	if ap.CreatedByType == "agent" {
+		for _, target := range targets {
+			if target.TargetType == "workspace" {
 				return true
 			}
 		}

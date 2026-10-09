@@ -23,6 +23,17 @@ const t = ((selector: (bundle: unknown) => Leaf) => {
 }) as Parameters<typeof blockedReasonLabel>[1];
 
 describe("blocked trigger copy", () => {
+  it("distinguishes task permission denial from a failed permission check", () => {
+    expect(blockedShortReasonLabel("task_permission_denied", t)).toBe(
+      "Task permission required",
+    );
+    expect(blockedShortReasonLabel("task_permission_unavailable", t)).toBe(
+      "Permission check unavailable",
+    );
+    expect(blockedReasonLabel("task_permission_unavailable", t)).not.toBe(
+      en.comment.trigger_blocked_generic,
+    );
+  });
   it("distinguishes an unbound agent from an offline runtime", () => {
     const unbound = blockedReasonLabel("agent_runtime_required", t);
     const offline = blockedReasonLabel("runtime_offline", t);

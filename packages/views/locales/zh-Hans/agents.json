@@ -378,9 +378,9 @@
     "access": {
       "label": "访问权限",
       "private_title": "私有",
-      "private_desc": "只有你可以运行该智能体",
+      "private_desc": "你和工作区管理员可见，可见即可调用",
       "public_title": "公开",
-      "public_desc": "选择谁可以运行该智能体",
+      "public_desc": "选择哪些人可以看到该智能体",
       "public_workspace_option": "工作区内所有人",
       "public_members_group": "指定成员",
       "public_members_empty": "没有可选择的工作区成员",
@@ -752,7 +752,7 @@
   "visibility": {
     "private": {
       "label": "个人",
-      "tooltip": "个人 · 仅 owner 和其授权的人可以运行该智能体"
+      "tooltip": "个人 · 你、工作区管理员及共享对象可见"
     },
     "workspace": {
       "label": "工作区",
@@ -760,8 +760,8 @@
     }
   },
   "access": {
-    "section_title": "谁可以运行该智能体",
-    "tooltip": "访问权限 · 谁可以运行该智能体",
+    "section_title": "可见范围",
+    "tooltip": "能看到该智能体的人即可调用",
     "trigger_private": "仅自己",
     "trigger_workspace": "工作区",
     "scope_labels": {
@@ -773,9 +773,9 @@
     "trigger_members_empty": "指定成员",
     "trigger_team": "团队",
     "private_title": "仅自己",
-    "private_desc": "只有你可以运行该智能体",
+    "private_desc": "你和工作区管理员可见，可见即可调用",
     "shared_title": "共享",
-    "shared_desc": "向整个工作区或指定成员开放该智能体",
+    "shared_desc": "选择哪些人可以看到该智能体",
     "shared_target_required": "保存前，请至少选择一名成员。",
     "workspace_title": "整个工作区",
     "workspace_desc": "默认允许工作区内所有成员运行该智能体",

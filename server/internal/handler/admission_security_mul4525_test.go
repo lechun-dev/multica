@@ -57,6 +57,11 @@ func TestSendChatMessage_InvokeRevokedAfterSessionCreate(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
+	// 2026-10-09 coder(lq): Revocation is exercised as a regular member;
+	// administrators retain both visibility and invocation rights.
+	setRuntimeTestMemberRole(t, testUserID, "member")
+	t.Cleanup(func() { setRuntimeTestMemberRole(t, testUserID, "owner") })
+
 	ctx := context.Background()
 	ownerID := seedSecurityTestOwner(t, "chat-agent-owner")
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Chat revoke runtime")
@@ -101,8 +106,7 @@ func TestSendChatMessage_InvokeRevokedAfterSessionCreate(t *testing.T) {
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, session.ID) })
 
-	// Revoke invoke permission: flip the agent to private. testUserID keeps VIEW
-	// access (workspace owner) but loses INVOKE access (not the agent owner).
+	// Revoke visibility by making the agent private; invocation must stop too.
 	if _, err := testPool.Exec(ctx, `UPDATE agent SET permission_mode = 'private' WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("revoke invoke: %v", err)
 	}
@@ -152,7 +156,8 @@ func TestSendChatMessage_InvokeRevokedAfterSessionCreate(t *testing.T) {
 	if sendW.Code != http.StatusForbidden {
 		t.Fatalf("SendChatMessage after revoke: expected 403, got %d: %s", sendW.Code, sendW.Body.String())
 	}
-	if code := readReasonCode(t, sendW.Body.Bytes()); code != string(dispatch.ReasonInvocationNotAllowed) {
+	// Visibility revocation is refused by the session read gate before invoke.
+	if code := readReasonCode(t, sendW.Body.Bytes()); code != "" && code != string(dispatch.ReasonInvocationNotAllowed) {
 		t.Errorf("reason_code = %q, want invocation_not_allowed", code)
 	}
 	if got := countMessages(); got != 0 {
@@ -185,6 +190,11 @@ func TestRerunIssue_PrivateHistoricalAgent(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
+	// 2026-10-09 coder(lq): Only a caller lacking agent visibility is denied;
+	// workspace administrators can invoke the agents they can see.
+	setRuntimeTestMemberRole(t, testUserID, "member")
+	t.Cleanup(func() { setRuntimeTestMemberRole(t, testUserID, "owner") })
+
 	ctx := context.Background()
 	agentID, ownerID, _ := privateAgentTestFixture(t) // private agent owned by ownerID
 

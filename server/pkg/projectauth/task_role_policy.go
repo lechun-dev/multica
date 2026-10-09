@@ -37,8 +37,10 @@ func DefaultTaskPolicy() TaskPolicy {
 	return TaskPolicy{roles: map[TaskRole]map[Permission]bool{
 		TaskOwner:   clonePermissionMap(ownerAndManager),
 		TaskManager: clonePermissionMap(ownerAndManager),
-		TaskMember:  {View: true, Edit: true, IssueComment: true, IssueChildCreate: true},
-		TaskViewer:  {View: true},
+		// 2026-10-09 coder(lq): Task collaborators may run agents they can see;
+		// task Viewer remains read-only and does not gain execution rights.
+		TaskMember: {View: true, Edit: true, IssueComment: true, AgentUse: true, IssueChildCreate: true},
+		TaskViewer: {View: true},
 	}}
 }
 

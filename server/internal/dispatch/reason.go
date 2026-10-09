@@ -24,6 +24,10 @@ const (
 	// target under the invocation-permission model. Deliberately generic — it
 	// does not distinguish "target is private" from "target does not exist".
 	ReasonInvocationNotAllowed ReasonCode = "invocation_not_allowed"
+	// 2026-10-09 coder(lq): Task denial and unavailable authorization storage
+	// have different recovery paths and must not collapse into internal_error.
+	ReasonTaskPermissionDenied      ReasonCode = "task_permission_denied"
+	ReasonTaskPermissionUnavailable ReasonCode = "task_permission_unavailable"
 	// ReasonTargetUnavailable: the target cannot run (archived agent, deleted /
 	// archived squad, unresolvable leader, or no assignee).
 	ReasonTargetUnavailable ReasonCode = "target_unavailable"

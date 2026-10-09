@@ -111,7 +111,7 @@ func TestAutopilotDispatchAdmitsClickerNotCreator(t *testing.T) {
 		t.Fatalf("seed ap creator: %v", err)
 	}
 	t.Cleanup(func() { pool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, apCreatorID) })
-	if _, err := pool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'admin')`,
+	if _, err := pool.Exec(ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`,
 		workspaceID, apCreatorID); err != nil {
 		t.Fatalf("seed ap creator member: %v", err)
 	}
@@ -132,8 +132,8 @@ func TestAutopilotDispatchAdmitsClickerNotCreator(t *testing.T) {
 		t.Fatalf("manual dispatch by the agent owner should be admitted, got skip: %q", reason)
 	}
 
-	// Automation (no human actor) falls back to the creator gate, which denies
-	// the admin-but-non-owner creator on a private agent — and the typed reason
+	// 2026-10-09 coder(lq): Scheduled runs use the creator's visibility; a
+	// regular member cannot see this unshared private agent. The typed reason
 	// code is decided at that branch, not guessed from text.
 	reason, code, skip := svc.shouldSkipDispatch(ctx, ap, pgtype.UUID{})
 	if !skip {

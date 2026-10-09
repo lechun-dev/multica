@@ -7,11 +7,21 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// CanMemberInvokeAgent applies the existing invocation policy for durable triggers.
+// 2026-10-09 coder(lq): Durable triggers use human visibility too; an owner or
+// admin can invoke any agent they can view, just like interactive entry points.
 func CanMemberInvokeAgent(ctx context.Context, queries *db.Queries, agent db.Agent, memberUserID pgtype.UUID, workspaceID pgtype.UUID) bool {
 	userID := util.UUIDToString(memberUserID)
 	if userID == "" {
 		return false
+	}
+	member, err := queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID: memberUserID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return false
+	}
+	if member.Role == "owner" || member.Role == "admin" {
+		return true
 	}
 	if util.UUIDToString(agent.OwnerID) == userID {
 		return true
@@ -23,19 +33,10 @@ func CanMemberInvokeAgent(ctx context.Context, queries *db.Queries, agent db.Age
 	if err != nil {
 		return false
 	}
-	isWorkspaceMember := false
-	if _, err := queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		UserID:      memberUserID,
-		WorkspaceID: workspaceID,
-	}); err == nil {
-		isWorkspaceMember = true
-	}
 	for _, t := range targets {
 		switch t.TargetType {
 		case "workspace":
-			if isWorkspaceMember {
-				return true
-			}
+			return true
 		case "member":
 			if util.UUIDToString(t.TargetID) == userID {
 				return true

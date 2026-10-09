@@ -438,13 +438,11 @@ func TestCreateIssue_AssignToPrivateAgentForbidsPlainMember(t *testing.T) {
 		}
 	}
 
-	// Workspace owner (testUserID) who is NOT the agent owner: DENIED under
-	// the invocation-permission model (MUL-3963) — admin/owner status no
-	// longer grants the ability to invoke someone else's private agent.
+	// 2026-10-09 coder(lq): A workspace owner can invoke agents they can view.
 	w := httptest.NewRecorder()
 	testHandler.CreateIssue(w, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body(testUserID)))
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("CreateIssue as workspace owner (not agent owner): expected 403, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue as workspace owner (not agent owner): expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Agent owner (plain member who happens to own the agent): allowed.
@@ -763,11 +761,11 @@ func TestShouldEnqueueOnComment_PrivateAgentGate(t *testing.T) {
 			reason:    "agent owner is always in the allowed_principals set",
 		},
 		{
-			name:      "workspace owner — denied (not agent owner)",
+			name:      "workspace owner — visible agent allowed",
 			actorType: "member",
 			actorID:   testUserID,
-			want:      false,
-			reason:    "MUL-3963: workspace owners/admins no longer bypass a private agent's invocation gate",
+			want:      true,
+			reason:    "Visible agents are invocable by the same human",
 		},
 		{
 			name:      "agent-to-agent — denied without allowed originator",

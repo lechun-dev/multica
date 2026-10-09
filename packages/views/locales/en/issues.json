@@ -629,7 +629,11 @@
       "bar_authors_more_other": "{{names}} and {{count}} others",
       "resolve_failed": "Failed to resolve thread",
       "unresolve_failed": "Failed to unresolve thread"
-    }
+    },
+    "trigger_blocked_task_permission_denied": "You need task Member access or higher to run an agent.",
+    "trigger_blocked_task_permission_unavailable": "Task permission checks are temporarily unavailable. Please try again later.",
+    "trigger_blocked_short_task_permission_denied": "Task permission required",
+    "trigger_blocked_short_task_permission_unavailable": "Permission check unavailable"
   },
   "reply": {
     "placeholder": "Leave a reply...",

@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -2345,6 +2346,12 @@ func commentBlockedTargetOutcomes(targets []commentMentionTarget) []CommentTrigg
 // infrastructure error that stays an unclassified internal error rather than
 // leaking the raw message.
 func commentEnqueueFailureReason(err error) DispatchReasonCode {
+	if errors.Is(err, projectauth.ErrStorageUnavailable) || errors.Is(err, projectauth.ErrMigrationRequired) || errors.Is(err, projectauth.ErrDisabled) {
+		return ReasonTaskPermissionUnavailable
+	}
+	if errors.Is(err, projectauth.ErrForbidden) || errors.Is(err, projectauth.ErrNotWorkspaceMember) || errors.Is(err, projectauth.ErrNoProjectAccess) {
+		return ReasonTaskPermissionDenied
+	}
 	if errors.Is(err, service.ErrAttributionFailClosed) {
 		return ReasonAttributionBlocked
 	}

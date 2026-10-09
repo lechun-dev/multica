@@ -488,6 +488,9 @@ func taskPermissionAllowedForCompatibility(permission projectauth.Permission) bo
 // 2026-08-31 coder(lq): Unified grant reads are kept in this adapter so the
 // projectauth package remains independent of PostgreSQL and generated models.
 func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceID, projectID, issueID string) ([]projectauth.AccessGrant, error) {
+	// 2026-10-09 coder(lq): Generic bitmap plans can evaluate UUID index keys
+	// before boolean guards. Convert the optional empty task ID to NULL inside
+	// the cast, preserving project-only reads without relying on OR short-circuiting.
 	query := `
 		SELECT g.id::text, g.workspace_id::text, g.project_id::text, COALESCE(g.issue_id::text, ''),
 		       subject_type, COALESCE(subject_id, ''), COALESCE(role_key, ''),
@@ -496,7 +499,7 @@ func (r *projectAuthRepository) ListAccessGrants(ctx context.Context, workspaceI
 		FROM projectauth_access_grants g
 		LEFT JOIN projectauth_grant_constraints c
 		  ON c.workspace_id = g.workspace_id AND c.grant_id = g.id
-		WHERE g.workspace_id = $1 AND g.project_id = $2 AND (($3 = '' AND g.issue_id IS NULL) OR ($3 <> '' AND (g.issue_id IS NULL OR g.issue_id = $3::uuid)))
+		WHERE g.workspace_id = $1 AND g.project_id = $2 AND (g.issue_id IS NULL OR g.issue_id = NULLIF($3::text, '')::uuid)
 		ORDER BY g.created_at, g.id`
 	rows, err := r.db.Query(ctx, query, workspaceID, projectID, issueID)
 	if err != nil {
@@ -1131,7 +1134,7 @@ func (r *projectAuthRepository) ensureTaskSystemRoleDefinitions(ctx context.Cont
 			('owner','project.issue.child.create'), ('manager','project.view'), ('manager','project.edit'),
 			('manager','project.issue.comment'), ('manager','project.issue.manage'), ('manager','project.issue.archive'),
 			('manager','project.agent.use'), ('manager','project.issue.child.create'), ('member','project.view'),
-			('member','project.edit'), ('member','project.issue.comment'), ('member','project.issue.child.create'),
+			('member','project.edit'), ('member','project.issue.comment'), ('member','project.agent.use'), ('member','project.issue.child.create'),
 			('viewer','project.view')
 		) AS defaults(role_key, permission) ON defaults.role_key = role.role_key
 		ON CONFLICT DO NOTHING`, workspaceID)
@@ -1194,7 +1197,7 @@ func wrapProjectPermissionRepositoryError(err error) error {
 		return nil
 	}
 	if errors.Is(err, projectauth.ErrMigrationRequired) || projectPermissionSchemaMissing(err) {
-		return fmt.Errorf("%w: %v", projectauth.ErrMigrationRequired, err)
+		return fmt.Errorf("%w: %w", projectauth.ErrMigrationRequired, err)
 	}
 	return err
 }

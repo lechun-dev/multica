@@ -11,7 +11,7 @@ func TestDefaultTaskPolicyMatchesDocumentedSystemRoles(t *testing.T) {
 	want := map[TaskRole][]Permission{
 		TaskOwner:   {View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse, IssueChildCreate},
 		TaskManager: {View, Edit, IssueComment, IssueManage, IssueArchive, AgentUse, IssueChildCreate},
-		TaskMember:  {View, Edit, IssueComment, IssueChildCreate},
+		TaskMember:  {View, Edit, IssueComment, AgentUse, IssueChildCreate},
 		TaskViewer:  {View},
 	}
 

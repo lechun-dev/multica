@@ -57,16 +57,6 @@ func TestAssignAgent_DenialReasonNamesPermissionNotMode(t *testing.T) {
 		}
 	}
 
-	// A workspace OWNER who does not own the agent. Management access is not
-	// invoke access (MUL-3963), and the refusal must not tell them why in terms
-	// of the agent's configuration.
-	t.Run("workspace owner is refused without naming the mode", func(t *testing.T) {
-		resp := testutil.Call(t, testHandler.CreateIssue,
-			newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, assignBody(privateAgentID)),
-		).Want(http.StatusForbidden)
-		assertDenialReason(t, resp, wantAgentReason)
-	})
-
 	t.Run("plain member is refused without naming the mode", func(t *testing.T) {
 		resp := testutil.Call(t, testHandler.CreateIssue,
 			newRequestAs(plainMemberID, "POST", "/api/issues?workspace_id="+testWorkspaceID, assignBody(privateAgentID)),
@@ -74,12 +64,11 @@ func TestAssignAgent_DenialReasonNamesPermissionNotMode(t *testing.T) {
 		assertDenialReason(t, resp, wantAgentReason)
 	})
 
-	// An AGENT actor with no resolvable human originator (no X-Task-ID). A2A is
-	// judged by the top of the chain, so this fails closed like any other
-	// principal — there is no unconditional agent-to-agent bypass.
-	t.Run("agent actor with no originator is refused without naming the mode", func(t *testing.T) {
+	// 2026-10-09 coder(lq): An untrusted agent header must not widen the
+	// authenticated member's visibility or invocation authority.
+	t.Run("agent header cannot widen member visibility", func(t *testing.T) {
 		callerAgentID := createHandlerTestAgent(t, "assign-denial-caller-agent", nil)
-		req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, assignBody(privateAgentID))
+		req := newRequestAs(plainMemberID, "POST", "/api/issues?workspace_id="+testWorkspaceID, assignBody(privateAgentID))
 		req.Header.Set("X-Agent-ID", callerAgentID)
 		resp := testutil.Call(t, testHandler.CreateIssue, req).Want(http.StatusForbidden)
 		assertDenialReason(t, resp, wantAgentReason)

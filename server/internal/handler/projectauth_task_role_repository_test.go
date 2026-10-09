@@ -27,6 +27,7 @@ func TestTaskRolePermissionsUseIndependentPersistentMatrix(t *testing.T) {
 		projectauth.View:             true,
 		projectauth.Edit:             true,
 		projectauth.IssueComment:     true,
+		projectauth.AgentUse:         true,
 		projectauth.IssueChildCreate: true,
 	}
 	if len(permissions) != len(want) {

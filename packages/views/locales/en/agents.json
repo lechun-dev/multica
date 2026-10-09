@@ -388,9 +388,9 @@
     "access": {
       "label": "Access",
       "private_title": "Private",
-      "private_desc": "Only you can run this agent",
+      "private_desc": "You and workspace administrators can see and run this agent",
       "public_title": "Public",
-      "public_desc": "Choose who can run this agent",
+      "public_desc": "Choose who can see this agent",
       "public_workspace_option": "Everyone in this workspace",
       "public_members_group": "Specific people",
       "public_members_empty": "No workspace members to choose from",
@@ -767,7 +767,7 @@
   "visibility": {
     "private": {
       "label": "Personal",
-      "tooltip": "Personal · only the owner and people they allow can run this agent"
+      "tooltip": "Personal · visible to you, workspace administrators and people you share with"
     },
     "workspace": {
       "label": "Workspace",
@@ -775,8 +775,8 @@
     }
   },
   "access": {
-    "section_title": "Who can run this agent",
-    "tooltip": "Access · who may run this agent",
+    "section_title": "Visibility",
+    "tooltip": "Anyone who can see this agent can run it",
     "trigger_private": "Only me",
     "trigger_workspace": "Workspace",
     "scope_labels": {
@@ -788,9 +788,9 @@
     "trigger_members_empty": "Specific people",
     "trigger_team": "Team",
     "private_title": "Only me",
-    "private_desc": "Only you can run this agent",
+    "private_desc": "You and workspace administrators can see and run this agent",
     "shared_title": "Shared",
-    "shared_desc": "Choose the workspace or specific people who can run this agent",
+    "shared_desc": "Choose who can see this agent",
     "shared_target_required": "Select at least one person before saving.",
     "workspace_title": "Entire workspace",
     "workspace_desc": "All workspace members can run this agent",

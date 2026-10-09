@@ -390,9 +390,9 @@
     "access": {
       "label": "Accès",
       "private_title": "Privé",
-      "private_desc": "Vous seul pouvez exécuter cet agent",
+      "private_desc": "Vous et les administrateurs de l’espace pouvez voir et lancer cet agent",
       "public_title": "Public",
-      "public_desc": "Choisissez qui peut exécuter cet agent",
+      "public_desc": "Choisissez qui peut voir cet agent",
       "public_workspace_option": "Tout le monde dans cet espace de travail",
       "public_members_group": "Personnes précises",
       "public_members_empty": "Aucun membre de l'espace de travail à choisir",
@@ -769,7 +769,7 @@
   "visibility": {
     "private": {
       "label": "Personnel",
-      "tooltip": "Personnel · vous seul et les administrateurs de l'espace de travail pouvez utiliser cet agent"
+      "tooltip": "Personnel · visible par vous, les administrateurs et les personnes autorisées"
     },
     "workspace": {
       "label": "Espace de travail",
@@ -777,8 +777,8 @@
     }
   },
   "access": {
-    "section_title": "Qui peut exécuter cet agent",
-    "tooltip": "Accès · qui peut exécuter cet agent",
+    "section_title": "Visibilité",
+    "tooltip": "Toute personne pouvant voir cet agent peut le lancer",
     "trigger_private": "Moi uniquement",
     "trigger_workspace": "Espace de travail",
     "scope_labels": {
@@ -790,9 +790,9 @@
     "trigger_members_empty": "Personnes précises",
     "trigger_team": "Équipe",
     "private_title": "Moi uniquement",
-    "private_desc": "Vous seul pouvez exécuter cet agent",
+    "private_desc": "Vous et les administrateurs de l’espace pouvez voir et lancer cet agent",
     "shared_title": "Partagé",
-    "shared_desc": "Choisissez l'espace de travail ou les personnes précises qui peuvent exécuter cet agent",
+    "shared_desc": "Choisissez qui peut voir cet agent",
     "shared_target_required": "Sélectionnez au moins une personne avant d'enregistrer.",
     "workspace_title": "Tout l'espace de travail",
     "workspace_desc": "Tous les membres de l'espace de travail peuvent exécuter cet agent",

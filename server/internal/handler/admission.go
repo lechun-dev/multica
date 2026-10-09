@@ -50,21 +50,23 @@ const (
 type DispatchReasonCode = dispatch.ReasonCode
 
 const (
-	ReasonQueued                = dispatch.ReasonQueued
-	ReasonCoalesced             = dispatch.ReasonCoalesced
-	ReasonDeferred              = dispatch.ReasonDeferred
-	ReasonInvocationNotAllowed  = dispatch.ReasonInvocationNotAllowed
-	ReasonTargetUnavailable     = dispatch.ReasonTargetUnavailable
-	ReasonRuntimeOffline        = dispatch.ReasonRuntimeOffline
-	ReasonRuntimeUnusable       = dispatch.ReasonRuntimeUnusable
-	ReasonRuntimeAccessDenied   = dispatch.ReasonRuntimeAccessDenied
-	ReasonRuntimeProfileMissing = dispatch.ReasonRuntimeProfileMissing
-	ReasonAgentRuntimeRequired  = dispatch.ReasonAgentRuntimeRequired
-	ReasonAttributionBlocked    = dispatch.ReasonAttributionBlocked
-	ReasonAlreadyActive         = dispatch.ReasonAlreadyActive
-	ReasonSelfTriggerSuppressed = dispatch.ReasonSelfTriggerSuppressed
-	ReasonIssueInTriage         = dispatch.ReasonIssueInTriage
-	ReasonInternalError         = dispatch.ReasonInternalError
+	ReasonQueued                    = dispatch.ReasonQueued
+	ReasonCoalesced                 = dispatch.ReasonCoalesced
+	ReasonDeferred                  = dispatch.ReasonDeferred
+	ReasonInvocationNotAllowed      = dispatch.ReasonInvocationNotAllowed
+	ReasonTaskPermissionDenied      = dispatch.ReasonTaskPermissionDenied
+	ReasonTaskPermissionUnavailable = dispatch.ReasonTaskPermissionUnavailable
+	ReasonTargetUnavailable         = dispatch.ReasonTargetUnavailable
+	ReasonRuntimeOffline            = dispatch.ReasonRuntimeOffline
+	ReasonRuntimeUnusable           = dispatch.ReasonRuntimeUnusable
+	ReasonRuntimeAccessDenied       = dispatch.ReasonRuntimeAccessDenied
+	ReasonRuntimeProfileMissing     = dispatch.ReasonRuntimeProfileMissing
+	ReasonAgentRuntimeRequired      = dispatch.ReasonAgentRuntimeRequired
+	ReasonAttributionBlocked        = dispatch.ReasonAttributionBlocked
+	ReasonAlreadyActive             = dispatch.ReasonAlreadyActive
+	ReasonSelfTriggerSuppressed     = dispatch.ReasonSelfTriggerSuppressed
+	ReasonIssueInTriage             = dispatch.ReasonIssueInTriage
+	ReasonInternalError             = dispatch.ReasonInternalError
 )
 
 // DispatchTarget is the caller-visible reference to an execution target. Name
@@ -114,6 +116,10 @@ func (h *Handler) writeDispatchBlocked(w http.ResponseWriter, status int, code D
 // to show to a caller who is not allowed to know whether the target exists.
 func dispatchBlockedFallbackMessage(code DispatchReasonCode) string {
 	switch code {
+	case ReasonTaskPermissionDenied:
+		return "you do not have permission to run agents on this task"
+	case ReasonTaskPermissionUnavailable:
+		return "task permission checks are temporarily unavailable"
 	case ReasonInvocationNotAllowed:
 		return "you don't have permission to use this target"
 	case ReasonTargetUnavailable:

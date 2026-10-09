@@ -43,6 +43,8 @@ private integration branch.
 
 ## Private change register
 
+2026-10-09: Task Member includes AgentUse, including persisted system roles upgraded by migration 601. Human agent invocation follows the same visibility gate as list/detail across comments, assignment, chat, autopilots and durable wakeups; delegated callers cannot borrow the immediate agent actor's inspection privileges. Authorization storage errors retain their server-side cause, have a distinct audit action, and produce separate localized task-denied/unavailable trigger outcomes. Read-only server diagnosis reproduced SQLSTATE 22P02 when a generic bitmap plan evaluates an optional empty issue ID as UUID before its boolean guard; grant reads now use NULLIF before casting. Contracts: `agent_visibility_invocation_test.go`, `projectauth_task_role_repository_test.go`, `projectauth_grant_query_test.go` (custom and generic plans), `storage_error_test.go`, `comment_decision_test.go`, and `blocked-trigger-copy.test.ts`. Deployment and live recovery verification remain pending; diagnostic changes alone do not establish recovery.
+
 | Date | Change | Inventory impact |
 | --- | --- | --- |
 | 2026-10-09 | Added existing-tag manual recovery for missed Release push events, exact-commit build metadata, and a patched-toolchain vulnerability gate for private desktop packaging. | Tags remain immutable; recovery cannot substitute main for tagged source or skip test/security/signing gates. Deployment remains explicit after images publish. |

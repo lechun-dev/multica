@@ -276,9 +276,9 @@
     "access": {
       "label": "アクセス",
       "private_title": "プライベート",
-      "private_desc": "このエージェントを実行できるのはあなただけです",
+      "private_desc": "あなたとワークスペース管理者が表示・実行できます",
       "public_title": "公開",
-      "public_desc": "このエージェントを実行できる人を選択します",
+      "public_desc": "このエージェントを表示できる人を選択",
       "public_workspace_option": "ワークスペース全員",
       "public_members_group": "特定のメンバー",
       "public_members_empty": "選択できるワークスペースメンバーがいません",
@@ -650,7 +650,7 @@
   "visibility": {
     "private": {
       "label": "個人",
-      "tooltip": "個人 · オーナーとオーナーが許可した人のみがこのエージェントを実行できます"
+      "tooltip": "個人 · あなた、ワークスペース管理者、共有相手に表示"
     },
     "workspace": {
       "label": "ワークスペース",
@@ -658,8 +658,8 @@
     }
   },
   "access": {
-    "section_title": "このエージェントを実行できるユーザー",
-    "tooltip": "アクセス · 誰がこのエージェントを実行できるか",
+    "section_title": "公開範囲",
+    "tooltip": "このエージェントを表示できる人は実行できます",
     "trigger_private": "自分のみ",
     "trigger_workspace": "ワークスペース",
     "scope_labels": {
@@ -671,9 +671,9 @@
     "trigger_members_empty": "特定のメンバー",
     "trigger_team": "チーム",
     "private_title": "プライベート",
-    "private_desc": "あなただけがこのエージェントを実行できます",
+    "private_desc": "あなたとワークスペース管理者が表示・実行できます",
     "shared_title": "共有",
-    "shared_desc": "このエージェントを実行できるワークスペースまたはメンバーを選択します",
+    "shared_desc": "このエージェントを表示できる人を選択",
     "shared_target_required": "保存する前に、ワークスペースまたは1人以上のメンバーを選択してください。",
     "workspace_title": "ワークスペースに公開",
     "workspace_desc": "このワークスペースの全員がこのエージェントを実行できます",

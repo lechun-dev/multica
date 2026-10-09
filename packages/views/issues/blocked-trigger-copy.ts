@@ -39,6 +39,10 @@ type IssuesT = ReturnType<typeof useT<"issues">>["t"];
 // Full sentence — for tooltips and other surfaces with room to explain.
 export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
   switch (reasonCode) {
+    case "task_permission_denied":
+      return t(($) => $.comment.trigger_blocked_task_permission_denied);
+    case "task_permission_unavailable":
+      return t(($) => $.comment.trigger_blocked_task_permission_unavailable);
     case "invocation_not_allowed":
       return t(($) => $.comment.trigger_blocked_invocation_not_allowed);
     case "target_unavailable":
@@ -62,6 +66,10 @@ export function blockedReasonLabel(reasonCode: string, t: IssuesT): string {
 // "who" and the reason only needs to say why in a couple of words.
 export function blockedShortReasonLabel(reasonCode: string, t: IssuesT): string {
   switch (reasonCode) {
+    case "task_permission_denied":
+      return t(($) => $.comment.trigger_blocked_short_task_permission_denied);
+    case "task_permission_unavailable":
+      return t(($) => $.comment.trigger_blocked_short_task_permission_unavailable);
     case "invocation_not_allowed":
       return t(($) => $.comment.trigger_blocked_short_invocation_not_allowed);
     case "target_unavailable":
