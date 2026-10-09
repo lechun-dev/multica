@@ -255,6 +255,7 @@ type Handler struct {
 	DaemonTokenCache             *auth.DaemonTokenCache
 	MembershipCache              *auth.MembershipCache
 	AgentMetricsCache            *AgentMetricsCache
+	FrequentReadCache            *FrequentReadCache
 	WebhookRateLimiter           WebhookRateLimiter
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter

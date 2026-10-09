@@ -25,6 +25,7 @@ import (
 
 var (
 	testServer      *httptest.Server
+	testBus         *events.Bus
 	testPool        *pgxpool.Pool
 	testToken       string
 	testUserID      string
@@ -70,6 +71,7 @@ func TestMain(m *testing.M) {
 	go hub.Run()
 
 	bus := events.New()
+	testBus = bus
 	registerListeners(bus, hub)
 	router := NewRouter(pool, hub, bus, analytics.NoopClient{}, nil)
 	testServer = httptest.NewServer(router)
@@ -1010,8 +1012,12 @@ func TestInboxUnreadSummaryThroughRouter(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE id = $1`, itemID)
+		testBus.Publish(events.Event{Type: "inbox:archived", WorkspaceID: testWorkspaceID})
 	})
 
+	// 2026-10-09 coder(lq): SQL fixture inserts emit the same invalidation
+	// signal as production notification creation; state changes use the API.
+	testBus.Publish(events.Event{Type: "inbox:new", WorkspaceID: testWorkspaceID})
 	resp := authRequest(t, "GET", "/api/inbox/unread-summary", nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("UnreadInboxSummary: expected 200, got %d", resp.StatusCode)
@@ -1036,9 +1042,11 @@ func TestInboxUnreadSummaryThroughRouter(t *testing.T) {
 	}
 
 	// After marking it read, the workspace should drop out of the summary.
-	if _, err := testPool.Exec(ctx, `UPDATE inbox_item SET read = true WHERE id = $1`, itemID); err != nil {
-		t.Fatalf("failed to mark item read: %v", err)
+	readResponse := authRequest(t, "POST", "/api/inbox/"+itemID+"/read", nil)
+	if readResponse.StatusCode != http.StatusOK {
+		t.Fatalf("mark read status=%d", readResponse.StatusCode)
 	}
+	readResponse.Body.Close()
 	resp = authRequest(t, "GET", "/api/inbox/unread-summary", nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("UnreadInboxSummary (after read): expected 200, got %d", resp.StatusCode)
@@ -1388,6 +1396,7 @@ func TestInboxUnreadSummaryDedupesByIssue(t *testing.T) {
 	// Deleting the issue cascades to its inbox_item rows (FK ON DELETE CASCADE).
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		testBus.Publish(events.Event{Type: "issue:deleted", WorkspaceID: testWorkspaceID})
 	})
 
 	// Older sibling stays unread; newer sibling is read (the one "opening the
@@ -1401,6 +1410,7 @@ func TestInboxUnreadSummaryDedupesByIssue(t *testing.T) {
 		t.Fatalf("failed to seed inbox items: %v", err)
 	}
 
+	testBus.Publish(events.Event{Type: "inbox:new", WorkspaceID: testWorkspaceID})
 	resp := authRequest(t, "GET", "/api/inbox/unread-summary", nil)
 	if resp.StatusCode != 200 {
 		t.Fatalf("UnreadInboxSummary: expected 200, got %d", resp.StatusCode)
@@ -1418,11 +1428,15 @@ func TestInboxUnreadSummaryDedupesByIssue(t *testing.T) {
 
 	// Now mark the newest item unread again → the issue becomes unread and the
 	// workspace reappears in the summary.
-	if _, err := testPool.Exec(ctx, `
-		UPDATE inbox_item SET read = false WHERE issue_id = $1 AND title = 'newer'
-	`, issueID); err != nil {
-		t.Fatalf("failed to flip newest item unread: %v", err)
+	var newestID string
+	if err := testPool.QueryRow(ctx, "SELECT id FROM inbox_item WHERE issue_id=$1 AND title='newer'", issueID).Scan(&newestID); err != nil {
+		t.Fatal(err)
 	}
+	unreadResponse := authRequest(t, "POST", "/api/inbox/"+newestID+"/unread", nil)
+	if unreadResponse.StatusCode != http.StatusOK {
+		t.Fatalf("mark unread status=%d", unreadResponse.StatusCode)
+	}
+	unreadResponse.Body.Close()
 	resp = authRequest(t, "GET", "/api/inbox/unread-summary", nil)
 	readJSON(t, resp, &summary)
 	var found bool

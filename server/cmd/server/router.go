@@ -1349,6 +1349,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.DaemonTokenCache = daemonTokenCache
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 	h.AgentMetricsCache = handler.NewAgentMetricsCache(rdb)
+	h.FrequentReadCache = handler.NewFrequentReadCache(rdb, signupConfig.PublicURL)
+	bus.SubscribeAll(h.FrequentReadCache.Observe)
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
 	// Fleet. Returns nil when no Cloud URL is configured — the Auth /
@@ -1627,6 +1629,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
+		r.Use(h.FrequentReadCache.MutationMiddleware)
 
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
@@ -2015,17 +2018,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/issues", func(r chi.Router) {
 				r.Get("/access-request-target/{id}", h.GetIssueAccessRequestTarget)
 				r.Get("/limit-usage", h.GetIssueLimitUsage)
-				r.Post("/table/groups", h.ListIssueTableGroups)
-				r.Post("/table/rows", h.ListIssueTableRows)
-				r.Post("/table/facets", h.ListIssueTableFacets)
+				r.Post("/table/groups", h.CacheFrequentRead(h.ListIssueTableGroups))
+				r.Post("/table/rows", h.CacheFrequentRead(h.ListIssueTableRows))
+				r.Post("/table/facets", h.CacheFrequentRead(h.ListIssueTableFacets))
 				r.Get("/search", h.SearchIssues)
-				r.Get("/child-progress", h.ChildIssueProgress)
+				r.Get("/child-progress", h.CacheFrequentRead(h.ChildIssueProgress))
 				r.Get("/children", h.ListChildrenByParents)
 				r.Get("/grouped", h.ListGroupedIssues)
-				r.Get("/", h.ListIssues)
+				r.Get("/", h.CacheFrequentRead(h.ListIssues))
 				// POST twin of GET /api/issues for oversized filter sets
 				// (agents-working ids facet) — see QueryIssues.
-				r.Post("/query", h.QueryIssues)
+				r.Post("/query", h.CacheFrequentRead(h.QueryIssues))
 				r.Post("/", h.CreateIssue)
 				r.Post("/quick-create", h.QuickCreateIssue)
 				r.Post("/preview-trigger", h.PreviewIssueTrigger)
@@ -2463,10 +2466,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/archived", h.ListArchivedInbox)
 				r.Get("/archived/page", h.ListArchivedInboxPage)
 				r.Get("/archived/facets", h.GetArchivedInboxFacets)
-				r.Get("/unread-count", h.CountUnreadInbox)
+				r.Get("/unread-count", h.CacheFrequentRead(h.CountUnreadInbox))
 				// Cross-workspace unread summary: account-level, keyed on the
 				// user. Backs the workspace-switcher dot for OTHER workspaces.
-				r.Get("/unread-summary", h.UnreadInboxSummary)
+				r.Get("/unread-summary", h.CacheFrequentRead(h.UnreadInboxSummary))
 				r.Post("/mark-all-read", h.MarkAllInboxRead)
 				r.Post("/archive-all", h.ArchiveAllInbox)
 				r.Post("/archive-all-read", h.ArchiveAllReadInbox)
