@@ -34,7 +34,19 @@ function uniquePaths(paths: Array<string | undefined>): string[] {
 
 export function codexCandidatesForSelection(selectedPath: string): string[] {
   if (selectedPath.toLowerCase().endsWith(".app")) {
-    return [join(selectedPath, "Contents", "Resources", "codex")];
+    return [
+      join(
+        selectedPath,
+        "Contents",
+        "Resources",
+        "codex-cli",
+        "CodexCLI.app",
+        "Contents",
+        "MacOS",
+        "codex",
+      ),
+      join(selectedPath, "Contents", "Resources", "codex"),
+    ];
   }
   return [selectedPath];
 }
@@ -82,8 +94,21 @@ export async function codexDiscoveryCandidates({
     ...pathCandidates,
     ...(platform === "darwin"
       ? [
+          "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
           "/Applications/ChatGPT.app/Contents/Resources/codex",
           "/Applications/Codex.app/Contents/Resources/codex",
+          join(
+            home,
+            "Applications",
+            "ChatGPT.app",
+            "Contents",
+            "Resources",
+            "codex-cli",
+            "CodexCLI.app",
+            "Contents",
+            "MacOS",
+            "codex",
+          ),
           join(
             home,
             "Applications",
