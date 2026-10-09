@@ -57,6 +57,7 @@ describe("ModelPicker discovery", () => {
     pending = state === "pending";
     response = catalog(state === "failed" ? { status: "failed", error: "CLI failed" } : {});
     const onChange = renderPicker("", state !== "offline");
+    expect(await screen.findByText(enAgents.pickers.model_source_configured)).toBeTruthy();
     fireEvent.click(await screen.findByText("Configured system model"));
     expect(onChange).toHaveBeenCalledWith("configured-model");
   });

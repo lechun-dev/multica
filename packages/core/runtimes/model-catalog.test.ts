@@ -20,12 +20,13 @@ describe("mergeRuntimeModelCatalog", () => {
   });
   it("deduplicates exact IDs, preserves live metadata, and excludes disabled configuration", () => {
     const live = { id: "shared-model", label: "CLI label", default: true };
-    expect(mergeRuntimeModelCatalog([live, live, { id: "live-only", label: "Live" }], [configured, { ...configured, model_id: "disabled", enabled: false }])).toEqual([live, { id: "live-only", label: "Live" }]);
+    expect(mergeRuntimeModelCatalog([live, live, { id: "live-only", label: "Live" }], [configured, { ...configured, model_id: "disabled", enabled: false }])).toEqual([{ ...live, catalogSource: "runtime" }, { id: "live-only", label: "Live", catalogSource: "runtime" }]);
   });
   it("preserves opaque CLI IDs and does not mutate either input", () => {
     const opaque = { ...configured, model_id: '["deepseek-official","deepseek-flash"]' };
     const result = mergeRuntimeModelCatalog([], [opaque]);
     expect(result[0]?.id).toBe(opaque.model_id);
+    expect(result[0]?.catalogSource).toBe("configured");
     expect(opaque).toEqual({ ...configured, model_id: '["deepseek-official","deepseek-flash"]' });
   });
 });

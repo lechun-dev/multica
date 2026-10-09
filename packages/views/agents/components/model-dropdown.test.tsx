@@ -87,6 +87,7 @@ describe("ModelDropdown", () => {
     discovery = state === "pending" ? () => new Promise(() => {}) : state === "failed" ? async () => { throw new Error("CLI failed"); } : async () => ({ models: [], supported: true });
     const { container, onChange } = renderDropdown(state !== "offline");
     openDropdown(container);
+    expect(await screen.findByText(enAgents.pickers.model_source_configured)).toBeTruthy();
     fireEvent.click(await screen.findByText("System model"));
     expect(onChange).toHaveBeenCalledWith("system-model");
     expect(screen.queryByText("Disabled model")).toBeNull();
@@ -118,6 +119,7 @@ describe("ModelDropdown", () => {
     const { container, onChange } = renderDropdown();
     openDropdown(container);
     expect(await screen.findByText(enAgents.pickers.model_configuration_failed)).toBeTruthy();
+    expect(screen.getAllByText(enAgents.pickers.model_source_cli).length).toBeGreaterThan(0);
     fireEvent.click(await screen.findByText("GPT-5.6 Sol"));
     expect(onChange).toHaveBeenCalledWith("gpt-5.6-sol");
   });

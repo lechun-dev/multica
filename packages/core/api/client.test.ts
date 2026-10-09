@@ -2243,6 +2243,17 @@ describe("ApiClient model discovery response schema", () => {
     );
   }
 
+  it("requests a real catalog on both initiation and polling without changing the response schema", async () => {
+    stubJSON(completed);
+    const client = new ApiClient("https://api.example.test");
+    await client.initiateListModels("rt-1", { force: true });
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0]).toBe("https://api.example.test/api/runtimes/rt-1/models?force=true");
+    stubJSON(completed);
+    const result = await client.getListModelsResult("rt-1", "req-1", { force: true });
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0]).toBe("https://api.example.test/api/runtimes/rt-1/models/req-1?force=true");
+    expect(result.models?.[0]?.id).toBe("claude-sonnet-4-6");
+  });
+
   it("parses a live completed discovery", async () => {
     stubJSON(completed);
 

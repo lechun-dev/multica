@@ -2706,9 +2706,11 @@ export class ApiClient {
   async getListModelsResult(
     runtimeId: string,
     requestId: string,
+    options: { force?: boolean } = {},
   ): Promise<RuntimeModelListRequest> {
+    const query = options.force === true ? "?force=true" : "";
     const raw = await this.fetch<unknown>(
-      `/api/runtimes/${runtimeId}/models/${requestId}`,
+      `/api/runtimes/${runtimeId}/models/${requestId}${query}`,
     );
     return parseWithFallback<RuntimeModelListRequest>(
       raw,

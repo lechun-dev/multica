@@ -330,8 +330,10 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resolvedRuntimeID := uuidToString(rt.ID)
+	// 2026-10-09 coder(lq): Explicit discovery must await a daemon result, not treat configured candidates or a snapshot as fresh CLI discovery.
+	force := r.URL.Query().Get("force") == "true"
 
-	if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); cached != nil {
+	if cached := h.cachedModelCatalog(r.Context(), resolvedRuntimeID); !force && cached != nil {
 		age := cached.Age(time.Now())
 		if rt.Status == "online" && age >= modelCatalogRevalidateAfter {
 			h.revalidateModelCatalog(r.Context(), resolvedRuntimeID)
@@ -358,7 +360,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	configured, err := h.enabledWorkspaceRuntimeModels(r.Context(), rt.WorkspaceID)
 	if err != nil {
 		slog.Warn("workspace runtime model catalog read failed", "error", err, "workspace_id", uuidToString(rt.WorkspaceID), "runtime_provider", rt.Provider)
-	} else if len(configured) > 0 {
+	} else if !force && len(configured) > 0 {
 		// 2026-09-17 coder(lq): Workspace-configured models are authoritative
 		// enough for the picker to render immediately. Keep daemon discovery in
 		// the background so a later refresh can merge its live catalog without
@@ -481,7 +483,7 @@ func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := *req
-	if req.Status == ModelListCompleted {
+	if req.Status == ModelListCompleted && r.URL.Query().Get("force") != "true" {
 		response.Models, response.Supported = h.workspaceModelCatalog(r.Context(), rt.WorkspaceID, rt.Provider, req.Models, req.Supported)
 	}
 	writeJSON(w, http.StatusOK, &response)

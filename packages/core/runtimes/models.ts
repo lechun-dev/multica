@@ -67,8 +67,9 @@ export const MODELS_GC_TIME_MS = 30 * 60_000;
 // window past what the server itself promises.
 export async function resolveRuntimeModels(
   runtimeId: string,
+  options: { force?: boolean } = {},
 ): Promise<RuntimeModelsResult> {
-  const initial = await api.initiateListModels(runtimeId);
+  const initial = await api.initiateListModels(runtimeId, options);
   const start = Date.now();
   let current = initial;
   while (current.status === "pending" || current.status === "running") {
@@ -76,7 +77,7 @@ export async function resolveRuntimeModels(
       throw new Error("model discovery timed out");
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    current = await api.getListModelsResult(runtimeId, initial.id);
+    current = await api.getListModelsResult(runtimeId, initial.id, options);
   }
   // Only an explicit `completed` is a catalog. Anything else — failed, timeout,
   // or a status this client does not know (newer server, or a response that fell
@@ -88,6 +89,10 @@ export async function resolveRuntimeModels(
     throw new Error(
       current.error || `model discovery failed (status: ${current.status})`,
     );
+  }
+  // 2026-10-09 coder(lq): Older backends ignore force; do not mislabel their configured/cache-only response as a CLI result.
+  if (options.force === true && current.cached === true) {
+    throw new Error("server did not perform live model discovery; update the backend and retry");
   }
   return {
     models: current.models ?? [],
@@ -114,12 +119,11 @@ export function staleTimeFor(data: RuntimeModelsResult | undefined): number {
   return data.cached ? 0 : LIVE_MODELS_STALE_TIME_MS;
 }
 
-export function runtimeModelsOptions(runtimeId: string | null | undefined) {
+export function runtimeModelsOptions(runtimeId: string | null | undefined, options: { force?: boolean } = {}) {
+  const key = runtimeId ? runtimeModelsKeys.forRuntime(runtimeId) : runtimeModelsKeys.all();
   return queryOptions({
-    queryKey: runtimeId
-      ? runtimeModelsKeys.forRuntime(runtimeId)
-      : runtimeModelsKeys.all(),
-    queryFn: () => resolveRuntimeModels(runtimeId as string),
+    queryKey: options.force === true ? [...key, "discovery"] : key,
+    queryFn: () => resolveRuntimeModels(runtimeId as string, options),
     enabled: Boolean(runtimeId),
     staleTime: (query) => staleTimeFor(query.state.data),
     gcTime: MODELS_GC_TIME_MS,

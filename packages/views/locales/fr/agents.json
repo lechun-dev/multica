@@ -226,6 +226,8 @@
     "model_default": "Par défaut",
     "model_tooltip": "Modèle · {{value}}",
     "model_managed_by_runtime": "Géré par le runtime",
+    "model_source_cli": "Catalogue CLI",
+    "model_source_configured": "Configuration",
     "model_configuration_failed": "Impossible de charger les modèles configurés. Les modèles CLI et la saisie manuelle restent disponibles.",
     "model_search_placeholder": "Rechercher ou saisir un identifiant de modèle",
     "model_discovering": "Détection des modèles…",

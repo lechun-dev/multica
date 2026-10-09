@@ -71,7 +71,7 @@ export function ModelDropdown({
   const filtered = useMemo(() => {
     if (!search.trim()) return grouped;
     const needle = search.toLowerCase();
-    const out: Record<string, RuntimeModel[]> = {};
+    const out: typeof grouped = {};
     for (const [provider, list] of Object.entries(grouped)) {
       const matches = list.filter(
         (m) =>
@@ -202,7 +202,12 @@ export function ModelDropdown({
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{m.label}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-medium">{m.label}</span>
+                        <span className="shrink-0 text-micro text-muted-foreground">
+                          {m.catalogSource === "runtime" ? t(($) => $.pickers.model_source_cli) : t(($) => $.pickers.model_source_configured)}
+                        </span>
+                      </div>
                       {m.label !== m.id && (
                         <div className="truncate text-caption text-muted-foreground">
                           {m.id}
@@ -283,8 +288,8 @@ export function ModelDropdown({
   );
 }
 
-function groupByProvider(models: RuntimeModel[]): Record<string, RuntimeModel[]> {
-  const out: Record<string, RuntimeModel[]> = {};
+function groupByProvider<T extends RuntimeModel>(models: T[]): Record<string, T[]> {
+  const out: Record<string, T[]> = {};
   for (const m of models) {
     const key = m.provider ?? "";
     if (!out[key]) out[key] = [];

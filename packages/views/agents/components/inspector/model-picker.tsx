@@ -229,7 +229,12 @@ export function ModelPicker({
               `<span block text-left>` to keep layout deterministic —
               matches the fix already applied in thinking-picker.tsx. */}
           <span className="block min-w-0 flex-1 text-left">
-            <span className="block truncate text-label font-medium">{m.label}</span>
+            <span className="flex items-center gap-2">
+              <span className="truncate text-label font-medium">{m.label}</span>
+              <span className="shrink-0 text-micro text-muted-foreground">
+                {m.catalogSource === "runtime" ? t(($) => $.pickers.model_source_cli) : t(($) => $.pickers.model_source_configured)}
+              </span>
+            </span>
             {m.label !== m.id && (
               <span className="mt-0.5 block truncate font-mono text-micro leading-snug text-muted-foreground">
                 {m.id}

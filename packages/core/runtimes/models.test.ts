@@ -14,9 +14,9 @@ const getListModelsResult = vi.fn();
 
 vi.mock("../api", () => ({
   api: {
-    initiateListModels: (runtimeId: string) => initiateListModels(runtimeId),
-    getListModelsResult: (runtimeId: string, requestId: string) =>
-      getListModelsResult(runtimeId, requestId),
+    initiateListModels: (runtimeId: string, options?: { force?: boolean }) => initiateListModels(runtimeId, options),
+    getListModelsResult: (runtimeId: string, requestId: string, options?: { force?: boolean }) =>
+      getListModelsResult(runtimeId, requestId, options),
   },
 }));
 
@@ -55,6 +55,18 @@ beforeEach(() => {
 });
 
 describe("resolveRuntimeModels", () => {
+  it("does not label a cached/configured reply from an older backend as live discovery", async () => {
+    initiateListModels.mockResolvedValue(cachedResponse(catalog, "2026-07-29T00:00:00Z"));
+    await expect(resolveRuntimeModels("rt-1", { force: true })).rejects.toThrow("did not perform live model discovery");
+  });
+  it("forces discovery and preserves the discovery-only poll contract", async () => {
+    initiateListModels.mockResolvedValue(request({ status: "pending" }));
+    getListModelsResult.mockResolvedValue(request({ status: "completed", models: catalog }));
+    await resolveRuntimeModels("rt-1", { force: true });
+    expect(initiateListModels).toHaveBeenCalledWith("rt-1", { force: true });
+    expect(getListModelsResult).toHaveBeenCalledWith("rt-1", "req-1", { force: true });
+    expect(runtimeModelsOptions("rt-1", { force: true }).queryKey).not.toEqual(runtimeModelsOptions("rt-1").queryKey);
+  });
   // The server answers a warm runtime straight from its catalog cache
   // (MUL-5444). That response is already terminal, so discovery must resolve on
   // the POST alone — one round trip, no polling, no spinner.
@@ -96,7 +108,7 @@ describe("resolveRuntimeModels", () => {
     expect(result.models).toEqual(catalog);
     expect(result.supported).toBe(true);
     expect(getListModelsResult).toHaveBeenCalledTimes(2);
-    expect(getListModelsResult).toHaveBeenLastCalledWith("rt-1", "req-1");
+    expect(getListModelsResult).toHaveBeenLastCalledWith("rt-1", "req-1", {});
   });
 
   // MUL-6606 review: the client budget has to cover the server's pending AND

@@ -227,6 +227,8 @@
     "model_default": "Default",
     "model_tooltip": "Model · {{value}}",
     "model_managed_by_runtime": "Managed by runtime",
+    "model_source_cli": "CLI catalog",
+    "model_source_configured": "Configured",
     "model_configuration_failed": "System model configuration could not be loaded. CLI models and manual entry remain available.",
     "model_search_placeholder": "Search or type a model ID",
     "model_discovering": "Discovering models…",

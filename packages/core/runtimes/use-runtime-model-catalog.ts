@@ -11,7 +11,8 @@ export function useRuntimeModelCatalog(
   runtimeId: string | null,
   runtimeOnline: boolean,
 ) {
-  const discovery = useQuery(runtimeModelsOptions(runtimeOnline ? runtimeId : null));
+  // 2026-10-09 coder(lq): The configured list loads separately; the discovery query must expose real CLI completion or failure.
+  const discovery = useQuery(runtimeModelsOptions(runtimeOnline ? runtimeId : null, { force: true }));
   // 2026-10-09 coder(lq): Fetch configuration independently so slow/failed
   // discovery and offline runtimes never hide the workspace's configured list.
   const configured = useQuery({
