@@ -326,7 +326,7 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
 function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
   const { t } = useT("issues");
   const trigger = useTriggerText(task);
-  const statusLabel = useStatusLabel(task.status);
+  const statusLabel = useStatusLabel(task.status, task.queue_reason);
   const summary = summarizeTaskUsage(task.usage);
   if (!summary) return null;
 

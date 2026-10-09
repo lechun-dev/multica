@@ -487,8 +487,11 @@ func main() {
 			switch relayMode {
 			case "legacy":
 				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				relay = realtime.NewRedisRelayWithClientsAndConfig(hub, relayWriteRedis, relayReadRedis, relayConfig.RetentionConfig())
-				slog.Info("daemon websocket wakeup: Redis fanout disabled in legacy realtime relay mode")
+				// 2026-10-09 coder(lq): Legacy mode also needs cross-node daemon wakeups, independently of browser subscriptions.
+				legacy := realtime.NewRedisRelayWithClientsAndConfig(hub, relayWriteRedis, relayReadRedis, relayConfig.RetentionConfig())
+				legacy.SetDaemonRuntimeDeliverer(daemonHub)
+				relay = legacy
+				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, legacy)
 			case "dual":
 				shardedReadRedis = newNamedRedisClient(opts, "realtime-read-sharded")
 				legacyReadRedis = newNamedRedisClient(opts, "realtime-read-legacy")

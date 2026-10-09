@@ -263,3 +263,33 @@ func (p *localFirstPublisher) PublishWithID(scopeType, scopeID, exclude string, 
 	}
 	return nil
 }
+
+// 2026-10-09 coder(lq): Legacy wakeups must work on a node with daemon sockets but no browser subscriptions.
+func TestLegacyDaemonHintsUseSharedStreamAndPreserveRouting(t *testing.T) {
+	relay := NewRedisRelay(NewHub(), nil)
+	recorder := &recordingDaemonRuntimeDeliverer{}
+	relay.SetDaemonRuntimeDeliverer(recorder)
+	scopes := relay.localScopes()
+	if len(scopes) != 1 || scopes[0] != sk(ScopeDaemonRuntime, "all") {
+		t.Fatalf("daemon-only subscriptions: %+v", scopes)
+	}
+	if StreamKey(ScopeDaemonRuntime, "runtime-a") != StreamKey(ScopeDaemonRuntime, "runtime-b") {
+		t.Fatal("daemon hints are stranded on per-runtime streams")
+	}
+	if StreamKey(ScopeWorkspace, "a") == StreamKey(ScopeWorkspace, "b") {
+		t.Fatal("browser streams lost workspace isolation")
+	}
+	for _, key := range []string{"runtime-a", "user-b", "workspace-c"} {
+		ev := newEnvelope("other-node", ScopeDaemonRuntime, key, "", []byte(`{"type":"daemon:task_available"}`), "event-"+key)
+		relay.deliverMessage(ScopeDaemonRuntime, "all", redis.XMessage{ID: "1-0", Values: envelopeRedisValues(ev)})
+		if recorder.scopeID != key || recorder.eventID != "event-"+key {
+			t.Fatalf("routing lost: %+v", recorder)
+		}
+	}
+}
+
+type recordingDaemonRuntimeDeliverer struct{ scopeID, eventID string }
+
+func (d *recordingDaemonRuntimeDeliverer) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string) {
+	d.scopeID, d.eventID = scopeID, eventID
+}

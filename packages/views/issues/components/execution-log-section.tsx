@@ -314,7 +314,7 @@ export function ActiveTaskRow({
   const [cancelling, setCancelling] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const tone = STATUS_TONE[task.status];
-  const label = useStatusLabel(task.status);
+  const label = useStatusLabel(task.status, task.queue_reason);
   const trigger = useTriggerText(task);
 
   // Running rows show a live-ticking elapsed timer (the ticking digits carry
@@ -427,7 +427,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t: tAgents } = useT("agents");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
-  const label = useStatusLabel(task.status);
+  const label = useStatusLabel(task.status, task.queue_reason);
   const trigger = useTriggerText(task);
   const time = task.completed_at ? timeAgo(task.completed_at) : "—";
   // A failed run always explains itself. A cancelled one only when the SERVER

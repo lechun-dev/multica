@@ -298,6 +298,8 @@ export interface TaskCancellationActor {
 }
 
 export interface AgentTask {
+  /** Server-observed queue admission hint; absence does not imply capacity is full. */
+  queue_reason?: "awaiting_claim" | "agent_capacity_full" | (string & {});
   wakeup_id?: string;
   id: string;
   agent_id: string;

@@ -51,10 +51,11 @@ export function useTriggerText(task: AgentTask): string {
   return t(($) => $.execution_log.trigger_initial);
 }
 
-export function useStatusLabel(status: AgentTask["status"]): string {
+export function useStatusLabel(status: AgentTask["status"], queueReason?: AgentTask["queue_reason"]): string {
   const { t } = useT("issues");
   switch (status) {
-    case "queued": return t(($) => $.execution_log.status_queued);
+    case "queued": return queueReason === "agent_capacity_full"
+      ? t(($) => $.inline_run.capacity_full) : t(($) => $.execution_log.status_queued);
     case "dispatched": return t(($) => $.execution_log.status_dispatched);
     case "waiting_local_directory":
       return t(($) => $.execution_log.status_waiting_local_directory);

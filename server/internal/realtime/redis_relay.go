@@ -16,6 +16,10 @@ import (
 
 // Stream / registry key naming. Centralised so tests can introspect.
 func StreamKey(scopeType, scopeID string) string {
+	// 2026-10-09 coder(lq): Every API node consumes daemon hints; routing stays in the envelope, not browser subscriptions.
+	if scopeType == ScopeDaemonRuntime {
+		scopeID = "all"
+	}
 	return fmt.Sprintf("ws:scope:%s:%s:stream", scopeType, scopeID)
 }
 func NodesKey(scopeType, scopeID string) string {
@@ -225,6 +229,15 @@ func (r *RedisRelay) Stop() {
 	r.mu.Unlock()
 }
 
+// 2026-10-09 coder(lq): Daemon sockets belong to a different hub, so legacy relay must subscribe without a browser client.
+func (r *RedisRelay) localScopes() []scopeKey {
+	scopes := r.hub.LocalScopes()
+	if r.daemonRuntime != nil {
+		scopes = append(scopes, sk(ScopeDaemonRuntime, "all"))
+	}
+	return scopes
+}
+
 // Start wires the hub→relay subscription callbacks, kicks off the heartbeat
 // goroutine, and spins up consumers for any scopes the hub already knows
 // about. ctx controls all background goroutines: cancelling it shuts the
@@ -252,7 +265,7 @@ func (r *RedisRelay) Start(ctx context.Context) {
 		func(scopeType, scopeID string) { r.stopConsumer(scopeType, scopeID) },
 	)
 
-	for _, key := range r.hub.LocalScopes() {
+	for _, key := range r.localScopes() {
 		r.startConsumer(ctx, key.Type, key.ID)
 	}
 
@@ -497,7 +510,7 @@ func (r *RedisRelay) heartbeatOnce(ctx context.Context) {
 	}
 	M.RedisConnected.Store(true)
 	expiry := float64(time.Now().Add(heartbeatTTL).Unix())
-	for _, key := range r.hub.LocalScopes() {
+	for _, key := range r.localScopes() {
 		r.writeRDB.ZAdd(hbCtx, NodesKey(key.Type, key.ID), redis.Z{Score: expiry, Member: r.nodeID})
 	}
 }
@@ -525,7 +538,7 @@ func (r *RedisRelay) sweepLegacyStreams(ctx context.Context) {
 	minID := streamMinID(now, r.retention.TrimHorizon)
 	localStreams := make(map[string]struct{})
 
-	for _, key := range r.hub.LocalScopes() {
+	for _, key := range r.localScopes() {
 		stream := StreamKey(key.Type, key.ID)
 		localStreams[stream] = struct{}{}
 		r.observeLegacyScanKey(stream)

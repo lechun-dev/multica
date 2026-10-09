@@ -351,7 +351,7 @@ describe("InlineCommentRun", () => {
     vi.mocked(api.cancelTask).mockResolvedValue(task({ status: "cancelled" }));
     setup(task({ status: state }));
     if (state === "queued") {
-      expect(screen.getByText("Waiting for an available agent.")).toBeInTheDocument();
+      expect(screen.getByText("Waiting for the runtime to claim this task.")).toBeInTheDocument();
       expect(api.listTaskMessages).not.toHaveBeenCalled();
       vi.mocked(api.listTaskMessages).mockResolvedValue([]);
       fireEvent.click(screen.getByRole("button", { name: /View activity/ }));
@@ -384,5 +384,18 @@ describe("InlineCommentRun", () => {
 
     rerender(task({ status: "cancelled", completed_at: "2026-09-07T00:01:23Z" }));
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+});
+
+// 2026-10-09 coder(lq): Missing/unknown queue hints must never imply that an otherwise idle runtime is busy.
+describe("queue admission hints", () => {
+  it.each([undefined, "awaiting_claim", "unknown_future_reason"])("shows neutral waiting for %s", async (queue_reason) => {
+    setup(task({ status: "queued", queue_reason }));
+    expect(screen.getAllByText("Waiting for the runtime to claim this task.").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Agent execution capacity is full.")).not.toBeInTheDocument();
+  });
+  it("shows confirmed agent capacity saturation", () => {
+    setup(task({ status: "queued", queue_reason: "agent_capacity_full" }));
+    expect(screen.getAllByText("Agent execution capacity is full.").length).toBeGreaterThan(0);
   });
 });

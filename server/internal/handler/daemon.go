@@ -5479,6 +5479,7 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 		resp[i] = taskToResponse(t, workspaceID)
 	}
 	// Same issue-facing attribution surface as ListTasksByIssue — hydrate names.
+	h.hydrateTaskQueueReasons(r.Context(), resp)
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": resp})
@@ -5632,6 +5633,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	// Execution-log rows render the "on behalf of <member>" badge, so this
 	// issue-facing surface must resolve initiator/originator names (departed-safe,
 	// one batch) — otherwise the badge falls back to "someone" on issue detail.
+	h.hydrateTaskQueueReasons(r.Context(), resp)
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	if !activeOnly {
 		h.hydrateTaskUsage(r.Context(), issue.ID, resp)

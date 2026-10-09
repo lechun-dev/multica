@@ -460,3 +460,16 @@ func TestPollLoopBatchShutdown(t *testing.T) {
 		t.Fatal("pollLoop did not return within shutdown deadline")
 	}
 }
+
+// 2026-10-09 coder(lq): A healthy socket can miss a push; default recovery must not leave an idle runtime waiting minutes.
+func TestDefaultWSClaimSafetyPollBound(t *testing.T) {
+	d := New(Config{}, slog.Default())
+	generation := d.wsRPC.attach(func([]byte) (*wsOutbound, error) { return nil, nil })
+	d.wsRPC.markRPCV1Supported(generation)
+	for i := 0; i < 100; i++ {
+		got := d.taskClaimPollInterval(claimTasksResult{ClaimedOverWS: true, ClaimPollHintSupported: true})
+		if got < 25*time.Second || got > 30*time.Second {
+			t.Fatalf("default safety interval: %v", got)
+		}
+	}
+}

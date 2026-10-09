@@ -64,7 +64,7 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
   const { t: tAgents } = useT("agents");
   const { getActorName } = useActorName();
   const name = getActorName("agent", task.agent_id);
-  const status = useStatusLabel(task.status);
+  const status = useStatusLabel(task.status, task.queue_reason);
   const statusText = cancellationActorLabel(task, tAgents) ?? status;
   const active = isActiveCommentRun(task);
   const localViewState = useInlineCommentRunState();
@@ -108,7 +108,8 @@ export function InlineCommentRun({ run, className, viewState, showIdentity = fal
     : latestNarrative?.kind === "thinking"
       ? thinkingPreview(latestNarrative.item.content, formatText) || t(($) => $.inline_run.thinking)
     : t(($) => $.inline_run.waiting_response);
-  const summary = task.status === "queued" ? t(($) => $.inline_run.queued)
+  const summary = task.status === "queued" ? task.queue_reason === "agent_capacity_full"
+    ? t(($) => $.inline_run.capacity_full) : t(($) => $.inline_run.queued)
     : task.status === "dispatched" ? t(($) => $.inline_run.starting)
     : task.status === "waiting_local_directory" ? t(($) => $.inline_run.waiting_directory)
     : activitySummary;
