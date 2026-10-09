@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,13 @@ import (
 
 const fakeDshACP = `#!/bin/sh
 [ "$1 $2" = "--profile acp" ] || exit 2
+if [ -n "$DSH_TEST_TASK_PATH_RECORD" ]; then
+ for arg in "$@"; do
+  if [ -f "$arg" ] && grep -q 'missionos-task-env' "$arg"; then
+   printf '%s' "$arg" > "$DSH_TEST_TASK_PATH_RECORD"
+  fi
+ done
+fi
 if [ "$3" = "--patch" ] && [ -n "$DSH_TEST_PATCH_RECORD" ]; then
  cat "$4" > "$DSH_TEST_PATCH_RECORD"
  printf '%s' "$4" > "$DSH_TEST_PATCH_RECORD.path"
@@ -39,6 +47,7 @@ while IFS= read -r line; do
    printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"route","category":"model","type":"select","currentValue":"opaque/model%%2Fid","options":[{"group":"official","name":"Official","options":[{"value":"opaque/model%%2Fid","name":"Official model"}]}]},{"id":"reasoning_effort","category":"thought_level","type":"select","currentValue":"off","options":[{"value":"off","name":"Off"}]}]}}\n' "$id"
   fi ;;
  *'"method":"session/prompt"'*)
+  [ -z "$DSH_TEST_READY" ] || : > "$DSH_TEST_READY"
   [ "$DSH_TEST_WAIT" != "1" ] || continue
   printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test-session","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test-session","update":{"sessionUpdate":"tool_call","toolCallId":"tc1","title":"Read file","status":"pending","rawInput":{"path":"test"}}}}'
@@ -105,6 +114,11 @@ func TestDshUsesOfficialDesktopConnectionWithoutCopyingSecrets(t *testing.T) {
 
 func runDshFixture(t *testing.T, env map[string]string, opts ExecOptions) (Result, []Message, string) {
 	t.Helper()
+	return runDshFixtureContext(t, context.Background(), env, opts)
+}
+
+func runDshFixtureContext(t *testing.T, ctx context.Context, env map[string]string, opts ExecOptions) (Result, []Message, string) {
+	t.Helper()
 	record := filepath.Join(t.TempDir(), "requests.jsonl")
 	if env == nil {
 		env = map[string]string{}
@@ -120,7 +134,7 @@ func runDshFixture(t *testing.T, env map[string]string, opts ExecOptions) (Resul
 	if opts.Timeout == 0 {
 		opts.Timeout = 5 * time.Second
 	}
-	s, err := b.Execute(context.Background(), "test prompt", opts)
+	s, err := b.Execute(ctx, "test prompt", opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,5 +299,84 @@ func TestDshModelTuplePassedUnchanged(t *testing.T) {
 	}
 	if _, err := applyDshConfig(context.Background(), request, "session", state, "model", id); err != nil || !called {
 		t.Fatalf("exact ID rejected: %v", err)
+	}
+}
+
+func TestDshTaskEnvironmentCleanup(t *testing.T) {
+	for _, wait := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%v", wait), func(t *testing.T) {
+			env := dshTaskFixture(t)
+			home := t.TempDir()
+			writeDshDesktopPatch(t, home, "- id: agent-default-model\n  config:\n    model: fixture\n")
+			env["DSH_HOME"] = home
+			record := filepath.Join(t.TempDir(), "task-overlay-path")
+			env["DSH_TEST_TASK_PATH_RECORD"] = record
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts := ExecOptions{Timeout: 15 * time.Second}
+			ready := make(chan bool, 1)
+			if wait {
+				env["DSH_TEST_WAIT"] = "1"
+				readyPath := filepath.Join(t.TempDir(), "prompt-ready")
+				env["DSH_TEST_READY"] = readyPath
+				// 2026-10-09 coder(lq): Cancel only after the fixture accepts the prompt; fixed startup deadlines are flaky under race/full-suite load.
+				go func() {
+					deadline := time.NewTimer(10 * time.Second)
+					defer deadline.Stop()
+					ticker := time.NewTicker(10 * time.Millisecond)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ticker.C:
+							if _, err := os.Stat(readyPath); err == nil {
+								ready <- true
+								cancel()
+								return
+							}
+						case <-deadline.C:
+							ready <- false
+							cancel()
+							return
+						case <-ctx.Done():
+							ready <- false
+							return
+						}
+					}
+				}()
+			}
+			result, _, _ := runDshFixtureContext(t, ctx, env, opts)
+			if !wait && result.Status != "completed" {
+				t.Fatalf("execution failed: %+v", result)
+			}
+			if wait && (!<-ready || result.Status == "completed") {
+				t.Fatal("fixture did not accept the prompt before cancellation")
+			}
+			path, err := os.ReadFile(record)
+			if err != nil {
+				t.Fatal("task overlay was not passed alongside Desktop settings")
+			}
+			if _, err := os.Stat(filepath.Dir(string(path))); !os.IsNotExist(err) {
+				t.Fatal("task environment files survived execution")
+			}
+		})
+	}
+}
+
+func TestDshTaskStartFailureCleanup(t *testing.T) {
+	path := writeDshFixture(t, "#!/missing-missionos-test-interpreter\n")
+	env := dshTaskFixture(t)
+	env["DSH_HOME"] = t.TempDir()
+	cwd, temporary := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	backend, err := New("dsh", Config{ExecutablePath: path, Logger: slog.Default(), Env: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Execute(context.Background(), "fixture", ExecOptions{Cwd: cwd}); err == nil {
+		t.Fatal("missing interpreter started")
+	}
+	entries, err := os.ReadDir(temporary)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("task overlay remains after process start failure")
 	}
 }

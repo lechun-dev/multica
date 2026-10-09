@@ -378,8 +378,9 @@ func inAgentExecutionContext() bool {
 // MULTICA_TASK_ID but still run under the daemon environment. In this context
 // workspace and token must come from daemon-provided env; falling back to
 // user-global ~/.multica/config.json can make agent writes land as a member.
+// 2026-10-09 coder(lq): A DSH bridge is task-context evidence even if original markers were lost; never enable Owner-profile discovery.
 func inDaemonManagedExecutionContext() bool {
-	return inAgentExecutionContext() || os.Getenv("MULTICA_DAEMON_PORT") != "" || hasDaemonTaskContextMarker()
+	return inAgentExecutionContext() || os.Getenv("DSH_MULTICA_TOKEN") != "" || os.Getenv("MULTICA_DAEMON_PORT") != "" || hasDaemonTaskContextMarker()
 }
 
 // inDaemonTaskIdentityContext reports strong evidence that the current process
@@ -387,7 +388,7 @@ func inDaemonManagedExecutionContext() bool {
 // sufficient: older host/container setups may export that otherwise inert
 // task hint before login or daemon startup.
 func inDaemonTaskIdentityContext() bool {
-	return inAgentExecutionContext() ||
+	return inAgentExecutionContext() || os.Getenv("DSH_MULTICA_TOKEN") != "" ||
 		strings.TrimSpace(os.Getenv(cli.TaskConfigRootEnv)) != "" ||
 		hasDaemonTaskContextMarker()
 }

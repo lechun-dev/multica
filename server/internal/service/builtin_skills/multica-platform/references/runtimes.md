@@ -94,11 +94,12 @@ Push any commits you still need before using `--fresh`. This needs a daemon
 that includes the change; older daemons always start over.
 
 `repo checkout` requires both `MULTICA_DAEMON_PORT` and the injected task-scoped
-`MULTICA_TOKEN`; it is intended to run inside the active daemon task and from
+credential (`MULTICA_TOKEN`, or the managed DSH task bridge); it is intended
+to run inside the active daemon task and from
 that task's workdir (or a descendant). The local daemon authenticates the token
 against its active-task registry, derives workspace/task/agent identity itself,
-and rejects a caller-supplied workdir outside that task. If either variable is
-absent, you are not in the normal agent checkout path. When a project
+and rejects a caller-supplied workdir outside that task. If the port or active
+task credential is absent, you are not in the normal agent checkout path. When a project
 `github_repo` resource has `resource_ref.ref`, `repo checkout <url>` uses that
 ref by default for the current task; an explicit
 `repo checkout <url> --ref <branch-or-sha>` overrides it.
@@ -108,6 +109,16 @@ ref by default for the current task; an explicit
 The daemon injects a task-scoped `mat_` credential for Multica API commands and
 a private task-local Multica configuration root. Inside that managed task
 context:
+
+DSH shell tools receive the same task credential through the per-run
+`DSH_MULTICA_TOKEN` registry contribution because DSH scrubs inherited secrets.
+The CLI resolves this automatically, only with `DSH_SHELL=1` and matching task,
+agent, workspace, and task-config-root snapshots. A missing `MULTICA_TOKEN` in
+DSH alone is not evidence that task authentication failed. Do not inspect,
+print, copy, or recover credential values; use the CLI and report its error if
+verification fails. Identity mismatch or conflicting credentials fail closed.
+The temporary plugin/overlay contains no credential values, does not change the
+installed DSH profile, and is removed when execution finishes or is canceled.
 
 - Both `multica` and `missionos` are already on PATH and invoke the same binary.
   If a command is missing, stop and report it; do not search the disk.

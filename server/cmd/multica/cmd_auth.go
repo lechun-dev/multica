@@ -71,6 +71,9 @@ func init() {
 }
 
 func resolveToken(cmd *cobra.Command) string {
+	if token, present := cli.DshTaskToken(); present {
+		return token
+	}
 	if v := strings.TrimSpace(os.Getenv("MULTICA_TOKEN")); v != "" {
 		return v
 	}

@@ -85,10 +85,19 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 	if err != nil {
 		return nil, err
 	}
+	args, cleanupTaskEnvironment, err := prepareDshTaskEnvironment(args, b.cfg.Env)
+	if err != nil {
+		cleanupConnection()
+		return nil, err
+	}
+	cleanupLaunch := func() {
+		cleanupTaskEnvironment()
+		cleanupConnection()
+	}
 	connectionStarted := false
 	defer func() {
 		if !connectionStarted {
-			cleanupConnection()
+			cleanupLaunch()
 		}
 	}()
 	runCtx, cancel := runContext(ctx, opts.Timeout)
@@ -176,7 +185,7 @@ func (b *dshBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 			cancel()
 			_ = stdout.Close()
 			<-readerDone
-			cleanupConnection()
+			cleanupLaunch()
 			_, diagnostics := deliverable.result()
 			result.Status, result.Error = promoteACPResultOnProviderError(result.Status, result.Error, diagnostics, providerErr)
 			stream.close()
