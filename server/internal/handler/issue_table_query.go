@@ -809,7 +809,8 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 
 	if visibilityUserRef != "" {
 		includeWorkspaceOwned := spec.Filters.IncludeWorkspaceOwned == nil || *spec.Filters.IncludeWorkspaceOwned
-		visibilityCTEs = issueVisibilityCandidateCTEDefs("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "))
+		organizationSQL := h.organizationReadSQL(r, "$1", visibilityUserRef, addArg)
+		visibilityCTEs = issueVisibilityCandidateCTEDefsWithOrganizations("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "), organizationSQL)
 		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
 	}
 

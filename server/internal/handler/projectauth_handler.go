@@ -494,6 +494,8 @@ func (scope issueVisibilitySQL) principal(alias string) string {
 	)`, alias, alias, alias, alias, alias, alias, alias, orgs)
 }
 
+// 2026-10-09 coder(lq): Share active ancestry between live repository reads
+// and list SQL; UNION also terminates malformed organization-parent cycles.
 func userOrganizationIDsSQL(workspaceRef, userRef string) string {
 	return fmt.Sprintf(`
 			WITH RECURSIVE user_orgs(organization_id, parent_id) AS (

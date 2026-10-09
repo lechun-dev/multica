@@ -671,24 +671,18 @@ func (r *projectAuthRepository) GetAccessGrant(ctx context.Context, workspaceID,
 }
 
 func (r *projectAuthRepository) ListUserOrganizations(ctx context.Context, workspaceID, userID string) ([]string, error) {
-	rows, err := r.db.Query(ctx, `
-		-- 2026-09-03 coder(lq): A user's effective organization set includes
-		-- every active ancestor, so a grant on a parent department is inherited
-		-- by members of all descendant departments. UNION (rather than UNION ALL)
-		-- also makes malformed parent cycles terminate safely.
-		WITH RECURSIVE user_orgs(organization_id, parent_id) AS (
-			SELECT org.id, org.parent_id
-			FROM projectauth_organization_members om
-			JOIN projectauth_organizations org ON org.id = om.organization_id
-			WHERE om.workspace_id = $1 AND om.user_id = $2
-			  AND org.workspace_id = $1 AND org.status = 'active'
-			UNION
-			SELECT parent.id, parent.parent_id
-			FROM user_orgs child
-			JOIN projectauth_organizations parent ON parent.id = child.parent_id
-			WHERE parent.workspace_id = $1 AND parent.status = 'active'
-		)
-		SELECT organization_id::text FROM user_orgs`, workspaceID, userID)
+	if scope, ok := ctx.Value(organizationReadScopeKey{}).(*organizationReadScope); ok && scope.userID == userID && scope.loader != nil {
+		entry, err := scope.cache.load(ctx, workspaceID, userID, scope.loader)
+		if err == nil {
+			scope.boundExpiry(entry.ExpiresAt)
+			return append([]string{}, entry.IDs...), nil
+		}
+	}
+	return r.listUserOrganizations(ctx, workspaceID, userID)
+}
+
+func (r *projectAuthRepository) listUserOrganizations(ctx context.Context, workspaceID, userID string) ([]string, error) {
+	rows, err := r.db.Query(ctx, userOrganizationIDsSQL("$1", "$2"), workspaceID, userID)
 	if err != nil {
 		return nil, wrapProjectPermissionRepositoryError(err)
 	}

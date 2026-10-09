@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -63,6 +64,17 @@ func TestIssueVisibilityCTEsMatchStandalonePolicy(t *testing.T) {
 		) differences`, old, old)
 		if n := fx.Count(t, difference, ws, reader); n != 0 {
 			t.Fatalf("materialized visibility differs by %d rows", n)
+		}
+		// 2026-10-09 coder(lq): Bound organization IDs must preserve the same
+		// policy under ancestry cycles, disabled parents and empty role overrides.
+		organizations, err := (&projectAuthRepository{db: testPool}).listUserOrganizations(context.Background(), ws, reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bound := "WITH " + issueVisibilityCandidateCTEDefsWithOrganizations("$1", "$2", includeOwned, "TRUE", "SELECT unnest($3::text[])")
+		boundDifference := strings.Replace(difference, ctes, bound, 1)
+		if n := fx.Count(t, boundDifference, ws, reader, organizations); n != 0 {
+			t.Fatalf("bound organization visibility differs by %d rows", n)
 		}
 		oldProgress := fmt.Sprintf(`SELECT i.parent_issue_id, count(*)::bigint total,
 			count(*) FILTER (WHERE issue_effective_status(i.workspace_id, i.status) IN ('done', 'cancelled'))::bigint done

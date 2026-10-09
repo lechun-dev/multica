@@ -4,7 +4,7 @@ import "fmt"
 
 // 2026-09-14 coder(lq): The zero scope retains the standalone ACL predicates.
 // Heavy reads reuse those same rules with statement-local materialized sets;
-// nothing survives a request, so revocation needs no cache invalidation.
+// standalone checks remain live; human list reads may bind cached organization IDs.
 type issueVisibilitySQL struct {
 	materialized         bool
 	projectsMaterialized bool
@@ -22,6 +22,12 @@ func issueVisibilityCTEDefs(workspaceRef, userRef string, includeWorkspaceOwned 
 // their direct parents without the list filters. Cross-project and archived
 // parents still contribute Base, but grandparent inheritance never propagates.
 func issueVisibilityCandidateCTEDefs(workspaceRef, userRef string, includeWorkspaceOwned bool, candidateWhere string) string {
+	return issueVisibilityCandidateCTEDefsWithOrganizations(workspaceRef, userRef, includeWorkspaceOwned, candidateWhere, userOrganizationIDsSQL(workspaceRef, userRef))
+}
+
+// 2026-10-09 coder(lq): Only the organization source varies for cached reads;
+// grants, roles, membership and direct-parent inheritance retain the same SQL.
+func issueVisibilityCandidateCTEDefsWithOrganizations(workspaceRef, userRef string, includeWorkspaceOwned bool, candidateWhere, organizationSQL string) string {
 	principals := issueVisibilitySQL{materialized: true}
 	issues := issueVisibilitySQL{materialized: true, projectsMaterialized: true}
 	ownerClause := "FALSE"
@@ -55,7 +61,7 @@ func issueVisibilityCandidateCTEDefs(workspaceRef, userRef string, includeWorksp
 		WHERE %s OR c.id IN (SELECT id FROM issue_auth_base)
 		  OR c.parent_issue_id IN (SELECT id FROM issue_auth_base)
 	)
-	`, userOrganizationIDsSQL(workspaceRef, userRef), workspaceRef, candidateWhere,
+	`, organizationSQL, workspaceRef, candidateWhere,
 		workspaceRef, workspaceRef, projectCandidateWhere, principals.projectAccess("visible_project.id", workspaceRef, userRef),
 		workspaceRef, baseCandidateWhere, issues.base("visible_issue", workspaceRef, userRef), ownerClause)
 }
@@ -74,11 +80,15 @@ func terminalIssueStatusSetSQL(workspaceRef string) string {
 		  AND key NOT IN ('backlog', 'todo', 'in_progress', 'in_review', 'done', 'blocked', 'cancelled')`, workspaceRef)
 }
 
-func childIssueProgressAuthorizedSQL(includeWorkspaceOwned bool) string {
+func childIssueProgressAuthorizedSQL(includeWorkspaceOwned bool, organizationSource ...string) string {
 	// 2026-10-09 coder(lq): Standalone tasks cannot contribute progress; keep
 	// only hierarchy participants while retaining the parents' own ACL sources.
 	candidateWhere := "i.parent_issue_id IS NOT NULL OR i.id IN (SELECT child.parent_issue_id FROM issue child WHERE child.workspace_id = $1 AND child.parent_issue_id IS NOT NULL)"
-	return "WITH " + issueVisibilityCandidateCTEDefs("$1", "$2", includeWorkspaceOwned, candidateWhere) + fmt.Sprintf(`
+	organizationSQL := userOrganizationIDsSQL("$1", "$2")
+	if len(organizationSource) > 0 {
+		organizationSQL = organizationSource[0]
+	}
+	return "WITH " + issueVisibilityCandidateCTEDefsWithOrganizations("$1", "$2", includeWorkspaceOwned, candidateWhere, organizationSQL) + fmt.Sprintf(`
 	SELECT i.parent_issue_id,
 		COUNT(*)::bigint AS total,
 		COUNT(*) FILTER (WHERE i.status IN (%s))::bigint AS done

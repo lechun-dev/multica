@@ -256,6 +256,7 @@ type Handler struct {
 	MembershipCache              *auth.MembershipCache
 	AgentMetricsCache            *AgentMetricsCache
 	FrequentReadCache            *FrequentReadCache
+	OrganizationReadCache        *OrganizationReadCache
 	WebhookRateLimiter           WebhookRateLimiter
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter

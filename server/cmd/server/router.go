@@ -1351,6 +1351,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.AgentMetricsCache = handler.NewAgentMetricsCache(rdb)
 	h.FrequentReadCache = handler.NewFrequentReadCache(rdb, signupConfig.PublicURL)
 	bus.SubscribeAll(h.FrequentReadCache.Observe)
+	h.OrganizationReadCache = handler.NewOrganizationReadCache(rdb, signupConfig.PublicURL)
+	bus.SubscribeAll(h.OrganizationReadCache.Observe)
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
 	// Fleet. Returns nil when no Cloud URL is configured — the Auth /
@@ -1736,8 +1738,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Get("/projectauth/organizations/template", h.ProjectAuthorizationOrganizationTemplate)
 					r.Post("/projectauth/organizations/import/preview", h.PreviewProjectAuthorizationOrganizationImport)
-					r.Post("/projectauth/organizations/import", h.ImportProjectAuthorizationOrganizations)
-					r.Post("/projectauth/organizations/sync", dingtalkLogin.SyncDingTalkOrganizations)
+					r.With(h.OrganizationReadCache.MutationMiddleware).Post("/projectauth/organizations/import", h.ImportProjectAuthorizationOrganizations)
+					r.With(h.OrganizationReadCache.MutationMiddleware).Post("/projectauth/organizations/sync", dingtalkLogin.SyncDingTalkOrganizations)
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)

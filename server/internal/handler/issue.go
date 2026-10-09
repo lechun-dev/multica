@@ -1723,7 +1723,8 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	if visibilityUserRef != "" {
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		visibilityCTEs = "WITH " + issueVisibilityCandidateCTEDefs("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "))
+		organizationSQL := h.organizationReadSQL(r, "$1", visibilityUserRef, addArg)
+		visibilityCTEs = "WITH " + issueVisibilityCandidateCTEDefsWithOrganizations("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "), organizationSQL)
 		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
 	}
 	whereSql := strings.Join(where, " AND ")
@@ -2859,8 +2860,13 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		query := childIssueProgressAuthorizedSQL(includeWorkspaceOwned)
-		rows, err := h.DB.Query(r.Context(), query, wsUUID, userID)
+		args := []any{wsUUID, userID}
+		addArg := func(value any) string {
+			args = append(args, value)
+			return fmt.Sprintf("$%d", len(args))
+		}
+		query := childIssueProgressAuthorizedSQL(includeWorkspaceOwned, h.organizationReadSQL(r, "$1", "$2", addArg))
+		rows, err := h.DB.Query(r.Context(), query, args...)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
 			return

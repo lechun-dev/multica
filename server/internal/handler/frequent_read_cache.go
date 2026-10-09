@@ -149,7 +149,18 @@ func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cache := h.FrequentReadCache
 		user := requestUserID(r)
-		if cache == nil || user == "" || isMachineCredentialActor(r) || r.Header.Get("X-Agent-ID") != "" {
+		if user == "" || isMachineCredentialActor(r) || r.Header.Get("X-Agent-ID") != "" {
+			next(w, r)
+			return
+		}
+		if h.OrganizationReadCache != nil {
+			// 2026-10-09 coder(lq): Preload through the original DB pool. A
+			// timeout inside a table snapshot transaction would abort that transaction.
+			repo := &projectAuthRepository{db: h.DB}
+			scope := &organizationReadScope{cache: h.OrganizationReadCache, userID: user, loader: repo.listUserOrganizations}
+			r = r.WithContext(context.WithValue(r.Context(), organizationReadScopeKey{}, scope))
+		}
+		if cache == nil {
 			next(w, r)
 			return
 		}
@@ -250,6 +261,13 @@ func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
 // that expired while the list was executing. Failed expiry reads disable caching.
 func (h *Handler) frequentReadExpiry(ctx context.Context, workspace, user string, started time.Time) time.Duration {
 	ttl := time.Until(started.Add(frequentReadTTL))
+	// 2026-10-09 coder(lq): Layered caches must share the oldest expiry;
+	// otherwise a 14-second-old organization set could live another 15 seconds.
+	if scope, ok := ctx.Value(organizationReadScopeKey{}).(*organizationReadScope); ok {
+		if expiry := scope.expiresAt.Load(); expiry > 0 {
+			ttl = min(ttl, time.Until(time.Unix(0, expiry)))
+		}
+	}
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return ttl
 	}
