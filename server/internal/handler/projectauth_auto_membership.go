@@ -686,18 +686,12 @@ func (h *Handler) IssueAccessBeforeCommitForChannel() func(context.Context, pgx.
 // issue assignment/mention and its inherited project role cannot diverge.
 func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID pgtype.UUID, statusKey string, params db.UpdateIssueParams, subjects ...projectauth.Subject) (db.Issue, error) {
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
-		var issue db.Issue
-		err := h.runWithIssueStatusGuard(ctx, workspaceID, statusKey, func(q *db.Queries) error {
-			var updateErr error
-			issue, updateErr = q.UpdateIssue(ctx, params)
-			return updateErr
-		})
-		return issue, err
+		return h.updateIssueWithStatusGuard(ctx, workspaceID, statusKey, params)
 	}
 	if h.TxStarter == nil {
 		return db.Issue{}, errors.New("project access issue update requires transaction starter")
 	}
-	tx, err := h.TxStarter.Begin(ctx)
+	tx, err := h.beginWakeupWrite(ctx)
 	if err != nil {
 		return db.Issue{}, fmt.Errorf("begin project access issue update: %w", err)
 	}
@@ -707,11 +701,18 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	if err := assertIssueStatusStillActive(ctx, qtx, workspaceID, statusKey); err != nil {
 		return db.Issue{}, err
 	}
+	// 2026-10-10 coder(lq): The private ACL wrapper shares upstream duplicate
+	// locks and wakeup settlement in the same transaction as access promotion.
+	if params.DuplicateOfIssueID.Valid {
+		if err := lockAndCheckDuplicateMark(ctx, qtx, workspaceID, params.ID, params.DuplicateOfIssueID); err != nil {
+			return db.Issue{}, err
+		}
+	}
 	previous, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: params.ID, WorkspaceID: workspaceID})
 	if err != nil {
 		return db.Issue{}, err
 	}
-	issue, err := qtx.UpdateIssue(ctx, params)
+	issue, cancelledWakeups, err := updateIssueStoppingWakeups(ctx, qtx, params)
 	if err != nil {
 		return db.Issue{}, err
 	}
@@ -728,6 +729,7 @@ func (h *Handler) updateIssueWithProjectAccess(ctx context.Context, workspaceID 
 	if err := tx.Commit(ctx); err != nil {
 		return db.Issue{}, fmt.Errorf("commit project access issue update: %w", err)
 	}
+	h.broadcastCancelledWakeups(ctx, workspaceID, cancelledWakeups)
 	return issue, nil
 }
 

@@ -25,6 +25,7 @@
  *   - All handlers self-gate on `issue_id === issueId` so we only react
  *     to events for the currently-viewed issue.
  */
+import { isRenderableCommentSnapshot } from "@multica/core/issues/comment-snapshot";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
   TaskCancelledPayload,
@@ -131,6 +132,10 @@ export function useIssueRealtime(
         // ----- Comments / activity -----
         ws.on("comment:created", (payload) => {
           if (payload.comment.issue_id !== issueId) return;
+          if (!isRenderableCommentSnapshot(payload.comment)) {
+            qc.invalidateQueries({ queryKey: issueKeys.timeline(wsId, issueId) });
+            return;
+          }
           appendTimelineEntry(
             qc,
             wsId,
@@ -141,6 +146,10 @@ export function useIssueRealtime(
         }),
         ws.on("comment:updated", (payload) => {
           if (payload.comment.issue_id !== issueId) return;
+          if (!isRenderableCommentSnapshot(payload.comment)) {
+            qc.invalidateQueries({ queryKey: issueKeys.timeline(wsId, issueId) });
+            return;
+          }
           const entry = commentToTimelineEntry(payload.comment);
           replaceCommentTimelineEntry(qc, wsId, issueId, entry);
           // Edits and tombstoning deletes can advance the owner issue
@@ -160,11 +169,19 @@ export function useIssueRealtime(
         // costs a full timeline refetch and busts every CommentCard memo).
         ws.on("comment:resolved", (payload) => {
           if (payload.comment.issue_id !== issueId) return;
+          if (!isRenderableCommentSnapshot(payload.comment)) {
+            qc.invalidateQueries({ queryKey: issueKeys.timeline(wsId, issueId) });
+            return;
+          }
           const entry = commentToTimelineEntry(payload.comment);
           replaceCommentTimelineEntry(qc, wsId, issueId, entry);
         }),
         ws.on("comment:unresolved", (payload) => {
           if (payload.comment.issue_id !== issueId) return;
+          if (!isRenderableCommentSnapshot(payload.comment)) {
+            qc.invalidateQueries({ queryKey: issueKeys.timeline(wsId, issueId) });
+            return;
+          }
           const entry = commentToTimelineEntry(payload.comment);
           replaceCommentTimelineEntry(qc, wsId, issueId, entry);
         }),

@@ -20,7 +20,13 @@ import (
 // then perform one UPDATE ... RETURNING so chat cleanup/broadcast semantics
 // stay identical to the upstream bulk path without changing generated SQL.
 func (h *Handler) cancelAgentTasksWithProjectPermission(ctx context.Context, agentID pgtype.UUID, userID, workspaceID string) ([]db.AgentTaskQueue, error) {
-	tasks, err := h.Queries.ListAgentTasks(ctx, agentID)
+	// 2026-10-10 coder(lq): Cancellation needs every active row; history pagination must not truncate it.
+	rowsToCheck, err := h.DB.Query(ctx, `SELECT * FROM agent_task_queue WHERE agent_id = $1
+		AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := pgx.CollectRows(rowsToCheck, pgx.RowToStructByName[db.AgentTaskQueue])
 	if err != nil {
 		return nil, err
 	}
@@ -2117,4 +2123,31 @@ func (h *Handler) requireParentIssueProjectPermission(w http.ResponseWriter, r *
 		return true
 	}
 	return h.requireIssueProjectPermission(w, r, parent, projectauth.IssueChildCreate)
+}
+
+// 2026-10-10 coder(lq): Apply task visibility before LIMIT so hidden history cannot truncate a page.
+func (h *Handler) listAgentTasksPageWithProjectPermission(ctx context.Context, workspaceID, userID string, args db.ListAgentTasksParams, includeWorkspaceOwned bool) ([]db.AgentTaskQueue, error) {
+	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() || h.ProjectAuth.ShadowEnabled() {
+		tasks, err := h.Queries.ListAgentTasks(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		return h.filterTasksByProjectPermissionWithWorkspaceScope(ctx, workspaceID, userID, tasks, includeWorkspaceOwned)
+	}
+	if userID == "" {
+		return []db.AgentTaskQueue{}, nil
+	}
+	query := fmt.Sprintf(`SELECT atq.* FROM agent_task_queue atq
+		WHERE atq.agent_id = $1
+		AND NOT (atq.escalation_for_task_id IS NOT NULL AND atq.started_at IS NULL
+			AND atq.status IN ('deferred', 'cancelled'))
+		AND (atq.created_at, atq.id) < ($2::timestamptz, $3::uuid)
+		AND %s
+		ORDER BY atq.created_at DESC, atq.id DESC LIMIT $4`,
+		projectVisibleTaskPredicateWithWorkspaceScope("atq", "$5", "$6", includeWorkspaceOwned))
+	rows, err := h.DB.Query(ctx, query, args.AgentID, args.BeforeCreatedAt, args.BeforeID, args.PageLimit, parseUUID(workspaceID), parseUUID(userID))
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByName[db.AgentTaskQueue])
 }

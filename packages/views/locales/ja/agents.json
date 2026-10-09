@@ -805,7 +805,9 @@
     "human_edit": "編集 {{subject}}",
     "human_tool": "ツールを使用 {{subject}}",
     "human_error": "実行中に問題が発生しました：{{text}}",
-    "human_group": "{{tool}}の操作を{{count}}回実行"
+    "human_group": "{{tool}}の操作を{{count}}回実行",
+    "trigger_text": "トリガー",
+    "trigger_wakeup": "起動"
   },
   "task_failure": {
     "cancelled_by_system": "システムによってキャンセルされました",

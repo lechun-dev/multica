@@ -907,7 +907,9 @@
     "human_edit": "修改：{{subject}}",
     "human_tool": "使用工具：{{subject}}",
     "human_error": "执行遇到问题：{{text}}",
-    "human_group": "执行 {{count}} 次{{tool}}操作"
+    "human_group": "执行 {{count}} 次{{tool}}操作",
+    "trigger_text": "触发内容",
+    "trigger_wakeup": "唤醒触发"
   },
   "task_failure": {
     "cancelled_by_system": "已由系统取消",

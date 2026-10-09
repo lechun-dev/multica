@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+
+	"github.com/google/uuid"
 	"testing"
 )
 
@@ -14,6 +17,7 @@ import (
 func createPlainMember(t *testing.T, email string) string {
 	t.Helper()
 	ctx := context.Background()
+	email = strings.Replace(email, "@", "+"+uuid.NewString()+"@", 1)
 
 	var userID string
 	if err := testPool.QueryRow(ctx,
@@ -95,6 +99,20 @@ func grantAutopilotAccess(t *testing.T, caller, apID, targetUserID string, wantS
 
 func setAutopilotDirectExecutor(t *testing.T, autopilotID, userID string) {
 	t.Helper()
+	var agentID string
+	var previousOwner *string
+	if err := testPool.QueryRow(context.Background(), `SELECT a.id::text, a.owner_id::text
+		FROM agent a JOIN autopilot ap ON ap.assignee_id=a.id
+		WHERE ap.id=$1 AND ap.assignee_type='agent'`, autopilotID).Scan(&agentID, &previousOwner); err != nil {
+		t.Fatalf("load direct autopilot executor: %v", err)
+	}
+	// 2026-10-10 coder(lq): Restore the agent owner before member cleanup;
+	// the owner foreign key otherwise leaves users behind across test runs.
+	t.Cleanup(func() {
+		if _, err := testPool.Exec(context.Background(), `UPDATE agent SET owner_id=$1 WHERE id=$2`, previousOwner, agentID); err != nil {
+			t.Errorf("restore direct autopilot executor: %v", err)
+		}
+	})
 	if _, err := testPool.Exec(context.Background(), `
 		UPDATE agent
 		SET owner_id = $1

@@ -32,8 +32,9 @@ func TestAutopilotWebhookTokenIsNotBroadcastToTheWorkspace(t *testing.T) {
 		t.Fatalf("reader jwt: %v", err)
 	}
 
-	var agentID string
-	fx.QueryRow(t, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID)
+	// 2026-10-10 coder(lq): Private visibility admits the effective executor;
+	// this reader still holds no write or webhook-secret grant.
+	agentID := fx.Agent(t, "Webhook read executor", "", testutil.Cols{"owner_id": reader, "kind": "user"})
 	autopilotID := fx.Insert(t, "autopilot", testutil.Cols{
 		"workspace_id": testWorkspaceID, "title": "webhook broadcast redaction",
 		"assignee_id": agentID, "assignee_type": "agent", "execution_mode": "run_only",
@@ -103,11 +104,8 @@ func TestAutopilotWebhookTokenIsNotBroadcastToTheWorkspace(t *testing.T) {
 	}
 
 	var event struct {
-		Type    string `json:"type"`
-		Payload struct {
-			AutopilotID string                           `json:"autopilot_id"`
-			Trigger     handler.AutopilotTriggerResponse `json:"trigger"`
-		} `json:"payload"`
+		Type    string         `json:"type"`
+		Payload map[string]any `json:"payload"`
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -119,23 +117,14 @@ func TestAutopilotWebhookTokenIsNotBroadcastToTheWorkspace(t *testing.T) {
 		if err := json.Unmarshal(raw, &event); err != nil {
 			t.Fatalf("parse websocket frame: %v", err)
 		}
-		if event.Type == "autopilot:updated" && event.Payload.AutopilotID == autopilotID {
+		if event.Type == "autopilot:updated" {
 			break
 		}
 	}
 
-	if event.Payload.Trigger.WebhookToken != nil || event.Payload.Trigger.WebhookPath != nil || event.Payload.Trigger.WebhookURL != nil {
-		// Presence, not value: a failure message is not a place to print a
-		// live credential.
-		t.Fatalf("a non-writer received the webhook credential over the workspace websocket: token=%t path=%t url=%t",
-			event.Payload.Trigger.WebhookToken != nil,
-			event.Payload.Trigger.WebhookPath != nil,
-			event.Payload.Trigger.WebhookURL != nil)
-	}
-	// The event must still arrive and identify the trigger: clients react by
-	// refetching through the authenticated endpoint, which is what makes
-	// carrying no secret cost nothing.
-	if event.Payload.Trigger.ID != triggerID {
-		t.Errorf("broadcast trigger id = %q, want %q — clients cannot tell what to refetch", event.Payload.Trigger.ID, triggerID)
+	// 2026-10-10 coder(lq): Private workspace fanout is an empty refresh
+	// signal. Identifiers and credentials are fetched through the scoped API.
+	if len(event.Payload) != 0 {
+		t.Fatal("autopilot workspace broadcast must contain only an empty refresh payload")
 	}
 }

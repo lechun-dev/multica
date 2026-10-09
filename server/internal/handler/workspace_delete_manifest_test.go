@@ -159,6 +159,19 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"workspace_invitation":                     workspaceDelete,
 	"workspace_runtime_model":                  workspaceDelete,
 	"workspace_share_link":                     workspaceDelete,
+	"channel_reply_delivery":                   workspaceDelete,
+	"channel_typing_reaction":                  workspaceDeleteSettle, // Source deletion makes retained anchors eligible for the cleanup worker.
+	"instance_telemetry_state":                 workspaceDeleteKeep,
+	"issue_wakeup":                             workspaceDelete,
+	"issue_wakeup_receipt":                     workspaceDelete,
+	"issue_child_event":                        workspaceDelete,
+	"issue_pr_automation":                      workspaceDelete,
+	"issue_pull_request_exclusion":             workspaceDelete,
+	"maintenance_job":                          workspaceDeleteKeep, // Global maintenance audit history, not workspace-owned.
+	"search_index_change":                      workspaceDelete,
+	"search_index_prune_mark":                  workspaceDeleteKeep,
+	"task_supplement":                          workspaceDelete,
+	"task_supplement_capability":               workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {

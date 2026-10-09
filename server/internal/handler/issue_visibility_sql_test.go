@@ -178,7 +178,7 @@ func TestIssueVisibilityCandidatesPreserveDirectParentBase(t *testing.T) {
 func TestTerminalIssueStatusSetMatchesEffectiveStatus(t *testing.T) {
 	ws := dbfx.Workspace(t, "Status SQL", "status-sql")
 	fx := testutil.New(testPool, ws, testUserID)
-	for _, pair := range [][2]string{{"done", "todo"}, {"todo", "done"}, {"custom_done", "done"}, {"custom_cancelled", "cancelled"}, {"custom_active", "in_progress"}} {
+	for _, pair := range [][2]string{{"done", "unstarted"}, {"todo", "done"}, {"custom_done", "done"}, {"custom_cancelled", "closed"}, {"custom_active", "started"}} {
 		fx.Insert(t, "issue_status", testutil.Cols{"workspace_id": ws, "key": pair[0], "name": pair[0], "category": pair[1], "color": "#000000", "position": 0})
 	}
 	query := fmt.Sprintf(`SELECT count(*) FROM (

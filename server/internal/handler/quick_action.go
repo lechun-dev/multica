@@ -945,7 +945,7 @@ func (h *Handler) RunQuickAction(w http.ResponseWriter, r *http.Request) {
 	})
 
 	delegationAuthority := h.autopilotDelegationAuthorityFromRequest(r, issue, actorType, actorID)
-	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil)
+	resp.TriggerOutcomes = h.triggerTasksForComment(r.Context(), issue, comment, nil, actorType, actorID, originatorUserID, delegationAuthority, nil, nil)
 
 	// Usage telemetry is best-effort and deliberately outside the run's
 	// success path: a failed counter must never cost the user the run.

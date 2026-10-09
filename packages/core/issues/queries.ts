@@ -19,6 +19,7 @@ import type {
   ListIssuesCache,
 } from "../types";
 import { ALL_STATUSES } from "./config";
+import { issueColumnCategory } from "./status-category";
 
 export function issueTasksOptions(issueId: string) {
   return queryOptions({
@@ -132,6 +133,11 @@ export const issueKeys = {
   /** Resolve a bare issue identifier (e.g. "MUL-123") to an issue. */
   identifier: (wsId: string, identifier: string) =>
     [...issueKeys.all(wsId), "identifier", identifier] as const,
+  /** Prefix for every per-issue duplicate-relation query in a workspace. */
+  duplicatesAll: (wsId: string) =>
+    [...issueKeys.all(wsId), "duplicates"] as const,
+  duplicates: (wsId: string, id: string) =>
+    [...issueKeys.duplicatesAll(wsId), id] as const,
   /** Prefix for every per-parent children query in a workspace. */
   childrenAll: (wsId: string) =>
     [...issueKeys.all(wsId), "children"] as const,
@@ -250,7 +256,7 @@ export type AssigneeGroupedIssuesFilter = Omit<
   "group_by" | "limit" | "offset" | "group_assignee_type" | "group_assignee_id"
 >;
 
-/** Page size per status column. */
+/** Size of the issue list's first page, all categories together. */
 export const ISSUE_PAGE_SIZE = 50;
 
 /**
@@ -275,28 +281,20 @@ export function flattenIssueBuckets(data: ListIssuesCache) {
   return out;
 }
 
-async function fetchFirstPages(
-  filter: MyIssuesFilter = {},
-  sort?: IssueSortParam,
-  includeWorkspaceOwned = true,
-): Promise<ListIssuesCache> {
-  const responses = await Promise.all(
-    PAGINATED_CATEGORIES.map((category) =>
-      api.listIssues({
-        status_category: category,
-        limit: ISSUE_PAGE_SIZE,
-        offset: 0,
-        ...sort,
-        ...filter,
-        ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }),
-      }),
-    ),
-  );
+/**
+ * One request for the list's first page, grouped into the category buckets
+ * here. Every reader of this cache looks an issue up by id and none pages a
+ * bucket, so one shared window serves them all. Each bucket's `total` is its
+ * own row count. A custom status the server did not resolve falls back to
+ * `issueColumnCategory`'s bucket, so no row is dropped.
+ */
+async function fetchFirstPages(filter: MyIssuesFilter = {}, sort?: IssueSortParam, includeWorkspaceOwned = true): Promise<ListIssuesCache> {
+  const res = await api.listIssues({ limit: ISSUE_PAGE_SIZE, offset: 0, ...sort, ...filter, ...(includeWorkspaceOwned ? {} : { include_workspace_owned: false }) });
   const byStatus: ListIssuesCache["byStatus"] = {};
-  PAGINATED_CATEGORIES.forEach((status: IssueStatusCategory, i: number) => {
-    const res = responses[i]!;
-    byStatus[status] = { issues: res.issues, total: res.total };
-  });
+  for (const category of PAGINATED_CATEGORIES) {
+    const issues = res.issues.filter((issue) => issueColumnCategory(issue) === category);
+    byStatus[category] = { issues, total: issues.length };
+  }
   return { byStatus };
 }
 
@@ -380,7 +378,7 @@ export function issueTableFacetsOptions(
  * `Issue[]` for consumers. Mutations and ws-updaters must use
  * `setQueryData<ListIssuesCache>(...)` and preserve the byStatus shape.
  *
- * Fetches the first page of each paginated status in parallel.
+ * Fetches the first page in one request and buckets it by category.
  */
 export function issueListOptions(
   wsId: string,
@@ -512,9 +510,9 @@ export function issueIdentifierOptions(
     queryKey: includeWorkspaceOwned
       ? issueKeys.identifier(wsId, identifier)
       : ([...issueKeys.identifier(wsId, identifier), { includeWorkspaceOwned }] as const),
-    queryFn: async ({ signal }) => {
+    queryFn: async () => {
       try {
-        return await api.getIssue(identifier, { signal, includeWorkspaceOwned });
+        return await api.getIssue(identifier, { includeWorkspaceOwned });
       } catch (err) {
         // Unknown identifier / wrong workspace prefix → render as plain text.
         // Any other failure (401/5xx) must keep propagating so the query
@@ -542,6 +540,18 @@ export function childIssueProgressOptions(wsId: string, includeWorkspaceOwned = 
       }
       return map;
     },
+  });
+}
+
+/** Both sides of an issue's duplicate relation: its original and its duplicates. */
+export function issueDuplicatesOptions(wsId: string, id: string) {
+  return queryOptions({
+    queryKey: issueKeys.duplicates(wsId, id),
+    queryFn: () => api.listIssueDuplicates(id),
+    // Same reason as childIssuesOptions: a mark written while this workspace
+    // is not the active realtime subscription would otherwise leave the
+    // Infinity-stale snapshot wrong when the issue is opened again.
+    refetchOnMount: "always",
   });
 }
 

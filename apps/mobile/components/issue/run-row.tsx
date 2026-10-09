@@ -17,6 +17,7 @@ import { ActorAvatar } from "@/components/ui/actor-avatar";
 import { useCancelTask } from "@/data/mutations/issues";
 import { useActorLookup } from "@/data/use-actor-name";
 import { timeAgo } from "@/lib/time-ago";
+import { useT } from "@/lib/i18n";
 
 interface Props {
   task: AgentTask;
@@ -31,8 +32,10 @@ const ACTIVE_STATUSES: readonly AgentTask["status"][] = [
 
 export function RunRow({ task, issueId }: Props) {
   const { getName } = useActorLookup();
+  const { t } = useT("issues");
   const isActive = ACTIVE_STATUSES.includes(task.status);
-  const summary = task.trigger_summary?.trim() || fallbackSummary(task);
+  const summary =
+    task.trigger_summary?.trim() || fallbackSummary(task, t);
   // Past tasks use completed_at when present (server fills it for terminal
   // statuses); active tasks fall back to created_at so the user sees how
   // long it's been waiting.
@@ -62,7 +65,8 @@ export function RunRow({ task, issueId }: Props) {
 }
 
 function StatusBadge({ task }: { task: AgentTask }) {
-  const label = STATUS_LABEL[task.status] ?? task.status;
+  const { t } = useT("issues");
+  const label = t(`runs.status.${task.status}`);
   const cls = STATUS_CLASS[task.status] ?? "text-muted-foreground";
   // For failed tasks, surface the failure_reason inline so users don't have
   // to drill in. Missing / empty / unrecognised stays as just "Failed".
@@ -87,15 +91,16 @@ function CancelButton({
   issueId: string;
 }) {
   const mutation = useCancelTask(issueId);
+  const { t } = useT("issues");
 
   const onPress = () => {
     Alert.alert(
-      "Cancel task?",
-      "The agent will stop after the current step.",
+      t("cancel.title"),
+      t("cancel.message"),
       [
-        { text: "Keep running", style: "cancel" },
+        { text: t("cancel.keep_running"), style: "cancel" },
         {
-          text: "Cancel task",
+          text: t("cancel.cancel_task"),
           style: "destructive",
           onPress: () => mutation.mutate(taskId),
         },
@@ -109,37 +114,31 @@ function CancelButton({
       disabled={mutation.isPending}
       className="px-3 py-1.5 rounded-md bg-secondary active:opacity-70"
     >
-      <Text className="text-xs font-medium text-foreground">Cancel</Text>
+      <Text className="text-xs font-medium text-foreground">
+        {t("common:actions.cancel")}
+      </Text>
     </Pressable>
   );
 }
 
-function fallbackSummary(task: AgentTask): string {
+function fallbackSummary(
+  task: AgentTask,
+  t: (key: string) => string,
+): string {
   switch (task.kind) {
     case "comment":
-      return "Comment task";
+      return t("summary.comment");
     case "autopilot":
-      return "Autopilot run";
+      return t("summary.autopilot");
     case "chat":
-      return "Chat task";
+      return t("summary.chat");
     case "quick_create":
-      return "Quick create";
+      return t("summary.quick_create");
     case "direct":
     default:
-      return "Task";
+      return t("summary.direct");
   }
 }
-
-const STATUS_LABEL: Record<AgentTask["status"], string> = {
-  queued: "Queued",
-  deferred: "Queued",
-  dispatched: "Starting",
-  waiting_local_directory: "Waiting for directory",
-  running: "Running",
-  completed: "Done",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
 
 const STATUS_CLASS: Record<AgentTask["status"], string> = {
   queued: "text-muted-foreground",

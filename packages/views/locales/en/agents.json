@@ -926,7 +926,9 @@
     "human_edit": "edit {{subject}}",
     "human_tool": "use tool {{subject}}",
     "human_error": "Execution ran into a problem: {{text}}",
-    "human_group": "make {{count}} {{tool}} actions"
+    "human_group": "make {{count}} {{tool}} actions",
+    "trigger_text": "Trigger",
+    "trigger_wakeup": "Wakeup"
   },
   "task_failure": {
     "cancelled_by_system": "Cancelled by the system",

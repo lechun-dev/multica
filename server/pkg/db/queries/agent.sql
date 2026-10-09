@@ -295,8 +295,14 @@ RETURNING *;
 
 -- name: ListAgentTasks :many
 SELECT * FROM agent_task_queue
-WHERE agent_id = $1
-ORDER BY created_at DESC;
+WHERE agent_id = @agent_id
+  -- Apply visibility before LIMIT so hidden fallbacks cannot end a page early.
+  -- Keep this predicate in sync with handler.visibleTaskHistory.
+  AND NOT (escalation_for_task_id IS NOT NULL AND started_at IS NULL
+           AND status IN ('deferred', 'cancelled'))
+  AND (created_at, id) < (@before_created_at::timestamptz, @before_id::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT @page_limit;
 
 -- name: ListActiveSiblingIssueTasks :many
 -- Claim-time context for agents that can work concurrently. Only tasks already
@@ -1097,6 +1103,7 @@ WHERE agent_task_queue.id = $1
 RETURNING *;
 
 -- name: StartAgentTask :one
+-- Legacy single-winner transition; generation-aware callers lock the claim first.
 -- Transitions a task to running. Accepts either 'dispatched' (the normal
 -- claim → run flow) or 'waiting_local_directory' (the daemon held the row in
 -- a wait state while another task owned the local_directory path lock; once
@@ -1119,6 +1126,14 @@ WHERE agent_task_queue.id = $1
       )
   )
 RETURNING *;
+
+-- name: LockAgentTaskStartClaim :one
+-- Serialize start/replay with reclaim and cancellation. A stale delivery must
+-- never start or acknowledge a newer claim, even on the same runtime.
+SELECT * FROM agent_task_queue
+WHERE id = $1 AND runtime_id = $2 AND dispatched_at = $3
+  AND status IN ('dispatched', 'waiting_local_directory', 'running')
+FOR UPDATE;
 
 -- name: MarkAgentTaskWaitingLocalDirectory :one
 -- Transitions a freshly-dispatched task into 'waiting_local_directory' while
@@ -1921,6 +1936,11 @@ WHERE agent_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_direc
 SELECT * FROM agent
 WHERE id = $1
 FOR UPDATE;
+
+-- name: HasTaskForIssue :one
+-- Returns true if the issue has any task in any status. Webhook recovery
+-- treats even a terminal task as proof that ownership moved downstream.
+SELECT EXISTS (SELECT 1 FROM agent_task_queue WHERE issue_id = $1);
 
 -- name: HasActiveTaskForIssue :one
 -- Returns true if there is any queued, dispatched, waiting_local_directory,
@@ -2736,17 +2756,22 @@ GROUP BY agent_id;
 -- Keep total activity separate from outcomes: cancelled runs belong in the
 -- history, but success rate is completed / (completed + failed).
 SELECT
-    agent_id,
-	(stat_date::timestamp AT TIME ZONE 'UTC')::timestamptz AS bucket,
-	task_count::int,
-	failed_count::int,
-	completed_count::int,
-	cancelled_count::int
-FROM agent_daily_stats
-WHERE workspace_id = $1
-  AND stat_date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 29
-  AND (task_count > 0 OR failed_count > 0 OR completed_count > 0 OR cancelled_count > 0)
-ORDER BY agent_id, stat_date;
+    atq.agent_id,
+    DATE_TRUNC('day', atq.completed_at)::timestamptz AS bucket,
+    COUNT(*)::int AS task_count,
+    COUNT(*) FILTER (WHERE atq.status = 'failed')::int AS failed_count,
+    COUNT(*) FILTER (WHERE atq.status = 'completed')::int AS completed_count,
+    COUNT(*) FILTER (WHERE atq.status = 'cancelled')::int AS cancelled_count,
+    COALESCE(SUM(EXTRACT(EPOCH FROM (atq.completed_at - atq.started_at)) * 1000)
+        FILTER (WHERE atq.completed_at > atq.started_at), 0)::float8 AS duration_ms,
+    COUNT(*) FILTER (WHERE atq.completed_at > atq.started_at)::int AS duration_count
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE a.workspace_id = $1
+  AND atq.completed_at IS NOT NULL
+  AND atq.completed_at > now() - INTERVAL '30 days'
+GROUP BY atq.agent_id, bucket
+ORDER BY atq.agent_id, bucket;
 
 -- name: ListWorkspaceAgentTaskSnapshot :many
 -- Returns the tasks the front-end reads off one workspace-wide snapshot:

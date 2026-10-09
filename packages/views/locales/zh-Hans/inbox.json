@@ -76,7 +76,10 @@
     "quick_create_failed": "通过智能体创建失败",
     "task_access_request": "任务权限申请",
     "task_access_granted": "已获得任务权限",
-    "quick_create_unconfirmed": "通过智能体创建结果未确认"
+    "quick_create_unconfirmed": "通过智能体创建结果未确认",
+    "children_done": "子任务已全部结束",
+    "autopilot_paused": "Autopilot paused",
+    "autopilot_quota_exceeded": "Autopilot quota exceeded"
   },
   "labels": {
     "set_status_to": "状态设为",
@@ -89,7 +92,9 @@
     "removed_due_date": "移除了截止日期",
     "reacted_to_comment": "用 {{emoji}} 回应了你的评论",
     "created_with_agent": "通过智能体创建：{{identifier}}",
-    "failed_with_detail": "失败：{{detail}}"
+    "failed_with_detail": "失败：{{detail}}",
+    "children_done_stage": "第 {{stage}} 阶段的子任务已全部结束",
+    "autopilot_quota_blocked": "Run blocked by quota limit"
   },
   "toasts": {
     "source_context_retry_started": "已使用原始上下文开始重试",

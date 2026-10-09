@@ -998,6 +998,7 @@ func codexDesktopBundlePathsFor(home string) []string {
 	}
 	layouts := []string{
 		"ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+		"ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
 		"ChatGPT.app/Contents/Resources/codex",
 		"Codex.app/Contents/Resources/codex",
 	}

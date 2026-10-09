@@ -36,6 +36,7 @@ describe("Codex CLI discovery", () => {
   it("expands a selected macOS app bundle to its bundled CLI", () => {
     expect(codexCandidatesForSelection("/Custom/ChatGPT.app")).toEqual([
       "/Custom/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+      "/Custom/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
       "/Custom/ChatGPT.app/Contents/Resources/codex",
     ]);
   });
@@ -58,6 +59,9 @@ describe("Codex CLI discovery", () => {
       "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
     const flatChatGPT = "/Applications/ChatGPT.app/Contents/Resources/codex";
     expect(candidates).toContain(nestedChatGPT);
+    const binChatGPT = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+    expect(candidates).toContain(binChatGPT);
+    expect(candidates.indexOf(binChatGPT)).toBeLessThan(candidates.indexOf(flatChatGPT));
     expect(candidates).toContain(flatChatGPT);
     expect(candidates.indexOf(nestedChatGPT)).toBeLessThan(
       candidates.indexOf(flatChatGPT),

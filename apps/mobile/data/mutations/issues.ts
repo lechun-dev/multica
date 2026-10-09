@@ -32,7 +32,7 @@ import {
 } from "@multica/core/issues/comment-deletion";
 import { api } from "@/data/api";
 import { isBuiltInIssueStatus, statusCategoryOfKey } from "@/lib/issue-status";
-import { appConfigOptions } from "@/data/queries/billing";
+import { appConfigOptions } from "@/data/app-config";
 import { issueKeys } from "@/data/queries/issues";
 import { inboxKeys } from "@/data/queries/inbox";
 import { useAuthStore } from "@/data/auth-store";

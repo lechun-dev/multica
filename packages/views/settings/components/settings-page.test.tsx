@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SidebarProvider, useSidebar } from "@multica/ui/components/ui/sidebar";
@@ -16,40 +16,48 @@ const stub = vi.hoisted(() => (name: string) => () => ({
 }));
 vi.mock("./account-tab", stub("AccountTab"));
 vi.mock("./preferences-tab", stub("PreferencesTab"));
-vi.mock("./chat-tab", stub("ChatTab"));
-vi.mock("./issue-tab", stub("IssueTab"));
 vi.mock("./tokens-tab", stub("TokensTab"));
 vi.mock("./workspace-tab", stub("WorkspaceTab"));
 vi.mock("./members-tab", stub("MembersTab"));
-vi.mock("./repositories-tab", stub("RepositoriesTab"));
-vi.mock("./github-tab", stub("GitHubTab"));
-vi.mock("./integrations-tab", stub("IntegrationsTab"));
+vi.mock("./code-tab", stub("CodeTab"));
+vi.mock("./channels-tab", stub("ChannelsTab"));
 vi.mock("./notifications-tab", stub("NotificationsTab"));
 vi.mock("./labels-tab", stub("LabelsTab"));
+vi.mock("./issue-statuses-tab", stub("IssueStatusesTab"));
 vi.mock("./properties-tab", stub("PropertiesTab"));
 vi.mock("./quick-actions-tab", stub("QuickActionsTab"));
 vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
 vi.mock("./plugins-tab", stub("PluginsTab"));
+vi.mock("./mcp-tab", stub("McpTab"));
 vi.mock("./billing-tab", stub("BillingTab"));
-vi.mock("./project-permissions-tab", stub("ProjectPermissionsTab"));
-vi.mock("./project-permission-roles-tab", stub("ProjectPermissionRolesTab"));
-vi.mock("./project-authorization-organizations-tab", stub("ProjectAuthorizationOrganizationsTab"));
-vi.mock("./task-retry-policies-tab", stub("TaskRetryPoliciesTab"));
-vi.mock("./runtime-models-tab", stub("RuntimeModelsTab"));
+
+const shell = vi.hoisted(() => ({
+  appsAvailable: false,
+  role: "owner" as "owner" | "admin" | "member",
+}));
+vi.mock("./connected-apps-tab", () => ({
+  ConnectedAppsTab: () => <div>ConnectedAppsTab</div>,
+  useComposioAvailable: () => shell.appsAvailable,
+}));
 
 vi.mock("@multica/core/paths", () => ({
-  useCurrentWorkspace: () => ({ id: "workspace-1", name: "Acme" }),
+  useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme" }),
 }));
-
-const memberState = { role: "owner" as "owner" | "admin" | "member" | null };
+vi.mock("@multica/core/workspace/avatar-url", () => ({
+  resolvePublicFileUrl: (url: string | null | undefined) => url ?? null,
+}));
 vi.mock("@multica/core/permissions", () => ({
-  useCurrentMember: () => ({
-    userId: "user-1",
-    role: memberState.role,
-    member: null,
-    isLoading: false,
-  }),
+  useCurrentMember: () => ({ role: shell.role, isLoading: false }),
 }));
+vi.mock("@multica/core/auth", () => {
+  const state = { user: { id: "user-1", name: "Ada Lovelace", avatar_url: null } };
+  const useAuthStore = Object.assign(
+    (selector?: (s: typeof state) => unknown) =>
+      selector ? selector(state) : state,
+    { getState: () => state },
+  );
+  return { useAuthStore };
+});
 
 const replace = vi.fn();
 const push = vi.fn();
@@ -84,16 +92,18 @@ function trigger() {
   return screen.getByRole("button", { name: "Toggle left sidebar" });
 }
 
+function nav() {
+  return screen.getByRole("navigation", { name: "Settings" });
+}
+
 beforeEach(() => {
   layout.compact = true;
   navigationState.search = "";
-  memberState.role = "owner";
+  shell.appsAvailable = false;
+  shell.role = "owner";
   configStore.getState().setFeatureFlags({});
-  configStore.getState().setAuthConfig({
-    allowSignup: true,
-    projectPermissionsEnabled: false,
-  });
   replace.mockClear();
+  push.mockClear();
 });
 
 describe("SettingsPage nav trigger", () => {
@@ -135,7 +145,7 @@ describe("SettingsPage nav trigger", () => {
     expect(
       screen.queryByRole("button", { name: "Toggle left sidebar" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Settings")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
   });
 });
 
@@ -188,6 +198,185 @@ describe("SettingsPage workspace subscription feature flag", () => {
     expect(screen.getByText("BillingTab")).toBeInTheDocument();
   });
 });
+
+describe("SettingsPage information architecture", () => {
+  it("groups pages by who they affect, then by topic", () => {
+    renderWithI18n(<SettingsPage />);
+    const personal = within(nav()).getByRole("region", { name: /Personal/ });
+    expect(within(personal).getByRole("link", { name: "Preferences" })).toBeInTheDocument();
+    expect(within(personal).getByRole("link", { name: "API Tokens" })).toBeInTheDocument();
+
+    // The workspace group is named after the workspace it configures.
+    const workspace = within(nav()).getByRole("region", { name: /Acme/ });
+    const issues = within(workspace).getByRole("group", { name: "Issues & workflow" });
+    expect(
+      within(issues).getByRole("link", { name: "Issue Statuses" }),
+    ).toBeInTheDocument();
+    const connections = within(workspace).getByRole("group", {
+      name: "Connections & extensions",
+    });
+    for (const name of ["Code", "Messaging", "MCP servers"]) {
+      expect(within(connections).getByRole("link", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("keeps retired pages out of navigation", () => {
+    renderWithI18n(<SettingsPage />);
+    expect(
+      within(nav()).queryByRole("link", {
+        name: /^(GitHub|Integrations|Repositories)$/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens old issue bookmarks in preferences", () => {
+    navigationState.search = "tab=issue";
+    renderWithI18n(<SettingsPage />);
+    expect(screen.getByText("PreferencesTab")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Preferences" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("opens the GitHub App return URL on the Code page", () => {
+    navigationState.search = "tab=repositories&github_connected=1";
+    renderWithI18n(<SettingsPage />);
+    expect(screen.getByText("CodeTab")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Code" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("lists Connected apps with the personal pages only when Composio is available", () => {
+    const first = renderWithI18n(<SettingsPage />);
+    expect(screen.queryByRole("link", { name: "Connected apps" })).toBeNull();
+    first.unmount();
+
+    shell.appsAvailable = true;
+    navigationState.search = "tab=integrations&connected=notion";
+    renderWithI18n(<SettingsPage />);
+    const personal = within(nav()).getByRole("region", { name: /Personal/ });
+    expect(
+      within(personal).getByRole("link", { name: "Connected apps" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByText("ConnectedAppsTab")).toBeInTheDocument();
+  });
+
+  it("marks pages a member can only view", () => {
+    shell.role = "member";
+    renderWithI18n(<SettingsPage />);
+    const general = screen.getByRole("link", { name: /^General/ });
+    expect(
+      within(general).getByLabelText("Only owners and admins can change this"),
+    ).toBeInTheDocument();
+    // Labels stay editable for every member, so they carry no lock.
+    const labels = screen.getByRole("link", { name: "Labels" });
+    expect(within(labels).queryByLabelText(/Only owners/)).toBeNull();
+  });
+
+  it("places platform settings in a device group", () => {
+    renderWithI18n(
+      <SettingsPage
+        extraDeviceTabs={[
+          {
+            value: "updates",
+            label: "Updates",
+            icon: () => null,
+            content: <div>Device updates</div>,
+          },
+        ]}
+      />,
+    );
+    const device = screen.getByRole("region", { name: "This device" });
+    expect(
+      within(device).getByRole("link", { name: "Updates" }),
+    ).toBeInTheDocument();
+  });
+
+  it("navigates from the compact selector and clears the old detail", () => {
+    navigationState.search = "tab=channels&integration=slack&keep=1";
+    renderWithI18n(<SettingsPage />);
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "Go to settings page" }),
+      { target: { value: "preferences" } },
+    );
+    expect(push).toHaveBeenCalledWith("/acme/settings?tab=preferences&keep=1");
+  });
+});
+
+describe("SettingsPage search", () => {
+  it("finds settings inside pages and opens the one chosen", () => {
+    renderWithI18n(<SettingsPage />);
+    const input = screen.getByRole("searchbox", { name: "Search settings" });
+
+    fireEvent.change(input, { target: { value: "time zone" } });
+
+    const results = screen.getByRole("listbox", { name: "Search settings" });
+    const option = within(results).getByRole("option", { name: /Time zone/ });
+    expect(option).toHaveTextContent("Personal › Preferences");
+
+    fireEvent.click(option);
+    expect(push).toHaveBeenCalledWith(
+      "/acme/settings?tab=preferences&section=timezone",
+    );
+  });
+
+  it("opens the highlighted result from the keyboard and clears on Escape", () => {
+    renderWithI18n(<SettingsPage />);
+    const input = screen.getByRole("searchbox", { name: "Search settings" });
+
+    fireEvent.change(input, { target: { value: "slack" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(push).toHaveBeenCalledWith(
+      "/acme/settings?tab=channels&integration=slack",
+    );
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("finds the issue-opening preference by the name of its options", () => {
+    renderWithI18n(<SettingsPage />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), {
+      target: { value: "side preview" },
+    });
+    const results = screen.getByRole("listbox", { name: "Search settings" });
+    const option = within(results).getByRole("option", { name: /Opening issues/ });
+    expect(within(results).getAllByRole("option")).toHaveLength(1);
+    fireEvent.click(option);
+    expect(push).toHaveBeenCalledWith(
+      "/acme/settings?tab=preferences&section=issue-opening",
+    );
+  });
+
+  it("does not offer pages hidden by feature flags", () => {
+    renderWithI18n(<SettingsPage />);
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search settings" }),
+      { target: { value: "plugins" } },
+    );
+    expect(screen.getByText("No matching settings")).toBeInTheDocument();
+  });
+});
+
+vi.mock("./project-permissions-tab", () => ({ProjectPermissionsTab: () => <div>ProjectPermissionsTab</div>}));
+
+vi.mock("./project-permission-roles-tab", () => ({ProjectPermissionRolesTab: () => <div>ProjectPermissionRolesTab</div>}));
+
+vi.mock("./project-authorization-organizations-tab", () => ({ProjectAuthorizationOrganizationsTab: () => <div>ProjectAuthorizationOrganizationsTab</div>}));
+
+vi.mock("./task-retry-policies-tab", () => ({TaskRetryPoliciesTab: () => <div>TaskRetryPoliciesTab</div>}));
+
+vi.mock("./runtime-models-tab", () => ({RuntimeModelsTab: () => <div>RuntimeModelsTab</div>}));
+
+vi.mock("./labs-tab", () => ({LabsTab: () => <div>LabsTab</div>}));
+
+vi.mock("./issue-tab", () => ({IssueTab: () => <div>IssueTab</div>}));
+
+vi.mock("./chat-tab", () => ({ChatTab: () => <div>ChatTab</div>}));
 
 describe("SettingsPage project permissions switch", () => {
   it("hides project permission tabs and falls back when the server disables them", () => {
@@ -266,7 +455,7 @@ describe("SettingsPage runtime models ownership", () => {
 
   it("hides runtime model settings and falls back for non-owners", () => {
     navigationState.search = "tab=runtime-models";
-    memberState.role = "admin";
+    shell.role = "admin";
 
     renderWithI18n(<SettingsPage />);
 

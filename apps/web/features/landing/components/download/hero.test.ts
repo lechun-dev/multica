@@ -13,7 +13,7 @@ describe("resolveContent", () => {
         macX64Zip: "https://downloads.test/mac-x64.zip",
       },
       false,
-      createEnDict(true).download.hero,
+      createEnDict(true, "/docs").download.hero,
     );
 
     expect(content.primary).toEqual({
@@ -32,7 +32,7 @@ describe("resolveContent", () => {
       { os: "windows", arch: "arm64", archConfident: true },
       { winX64Exe: "https://downloads.test/windows-x64.exe" },
       false,
-      createEnDict(true).download.hero,
+      createEnDict(true, "/docs").download.hero,
     );
 
     expect(content.primary).toEqual({

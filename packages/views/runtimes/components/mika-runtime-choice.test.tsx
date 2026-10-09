@@ -9,6 +9,9 @@ import enCommon from "../../locales/en/common.json";
 import enRuntimes from "../../locales/en/runtimes.json";
 import { MikaRuntimeChoice } from "./mika-runtime-choice";
 
+// 2026-10-10 coder(lq): Runtime model queries now require explicit workspace context.
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
+
 vi.mock("@multica/core/api", () => ({ api: { listRuntimeModels: vi.fn() } }));
 
 const RESOURCES = {

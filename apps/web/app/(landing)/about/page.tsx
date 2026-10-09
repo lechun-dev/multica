@@ -5,7 +5,7 @@ import { PRODUCT_NAME } from "@/config/product-brand";
 export const metadata: Metadata = {
   title: "About",
   description:
-    `Learn about ${PRODUCT_NAME} — multiplexed information and computing agent. An open-source project management platform for human + agent teams.`,
+    `Learn about ${PRODUCT_NAME} — multiplexed information and computing agent. An source-available project management platform for human + agent teams.`,
   openGraph: {
     title: `About ${PRODUCT_NAME}`,
     description:

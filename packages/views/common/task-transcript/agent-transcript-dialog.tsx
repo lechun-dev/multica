@@ -5,6 +5,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useTraceIssueLabels } from "./use-trace-issue-labels";
 import { Virtuoso, type VirtuosoHandle, type Components } from "react-virtuoso";
 import {
+  Clock,
   Bot,
   Brain,
   CircleAlert,
@@ -12,7 +13,6 @@ import {
   XCircle,
   X,
   Loader2,
-  Clock,
   Copy,
   Check,
   ChevronRight,
@@ -45,6 +45,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
 import { AttributionBadge } from "../../issues/components/attribution-badge";
+import { plainTriggerSummary } from "../../issues/components/task-run-labels";
 import { cancellationActorLabel, cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { RichContent } from "../../rich-content";
 import { api } from "@multica/core/api";
@@ -107,6 +108,7 @@ import {
   formatUsd,
   summarizeTaskUsage,
 } from "../../runtimes/utils";
+import { formatBytes } from "../format-bytes";
 import "../../editor/styles/code.css";
 import "./task-transcript.css";
 
@@ -572,11 +574,6 @@ export function AgentTranscriptDialog({
       ? Math.max(0, (timeMs(selectedStep.startedAt) ?? runStartMs) - runStartMs)
       : undefined;
 
-  // Keyed on the run having produced nothing at all, not on the filtered view
-  // being empty — a filter that hides every step is not a runtime limitation.
-  const isAntigravityLiveEmpty =
-    isLive && steps.length === 0 && runtimeInfo?.provider === "antigravity";
-
   // Newest-first shows live events as PREPENDS, and Virtuoso items opt out of
   // native scroll anchoring (`overflow-anchor: none`), so without compensation
   // every 500ms flush shifts the reading position. Virtuoso's contract: a
@@ -752,6 +749,7 @@ export function AgentTranscriptDialog({
 
   // Status badge — full state machine, so queued/dispatched/cancelled render as
   // proper labels instead of raw enum text.
+  const isAntigravityLiveEmpty = isLive && steps.length === 0 && runtimeInfo?.provider === "antigravity";
   const effectiveStatus = isLive ? "running" : task.status;
   const statusBadge = (() => {
     const base = "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-caption font-medium";
@@ -830,7 +828,9 @@ export function AgentTranscriptDialog({
   // up front than the runtime/provider diagnostics, which live in the ⓘ popover.
   const triggerLabel = task.parent_task_id
     ? t(($) => $.transcript.trigger_retry)
-    : task.kind === "comment" || task.trigger_comment_id
+    : task.wakeup_id
+      ? t(($) => $.transcript.trigger_wakeup)
+      : task.kind === "comment" || task.trigger_comment_id
       ? t(($) => $.transcript.trigger_comment)
       : task.kind === "autopilot" || task.autopilot_run_id
         ? t(($) => $.transcript.trigger_autopilot)
@@ -1104,6 +1104,9 @@ export function AgentTranscriptDialog({
           </div>
         </div>
 
+        {/* ── What was asked ─────────────────────────────────────────── */}
+        <RunTriggerRow task={task} />
+
         {/* ── What the run produced ──────────────────────────────────── */}
         <RunOutcomeRow outcome={outcome} branch={task.branch_name} />
 
@@ -1330,7 +1333,7 @@ export function AgentTranscriptDialog({
                     <Clock className="h-4 w-4 shrink-0" />
                     {t(($) => $.transcript.antigravity_live_unavailable)}
                   </div>
-                ) : isLive ? (
+                ) : isLive && steps.length === 0 ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     {t(($) => $.transcript.waiting_events)}
@@ -1389,6 +1392,32 @@ function FactDot() {
  * Renders nothing when the run produced nothing nameable; a row of zeroes
  * would read as "it did nothing" rather than "we have nothing to summarize".
  */
+/**
+ * What the person asked for, in full. The header names only how the run was
+ * triggered ("Comment"), and the lists that open this dialog show the ask on
+ * one truncated line — so this is where a long request is read whole. The
+ * snapshot itself is capped at ~200 runes by the server; it is shown as it
+ * was captured, wrapping rather than truncating.
+ */
+function RunTriggerRow({ task }: { task: AgentTask }) {
+  const { t } = useT("agents");
+  const { t: tIssues } = useT("issues");
+  if (!task.trigger_summary) return null;
+  const text = plainTriggerSummary(
+    task.trigger_summary,
+    tIssues(($) => $.execution_log.trigger_image),
+  );
+  if (!text) return null;
+  return (
+    <div className="flex shrink-0 items-baseline gap-2 border-b px-4 py-2">
+      <span className="shrink-0 text-micro text-muted-foreground">
+        {t(($) => $.transcript.trigger_text)}
+      </span>
+      <p className="min-w-0 whitespace-pre-wrap break-words text-caption text-foreground">{text}</p>
+    </div>
+  );
+}
+
 function RunOutcomeRow({
   outcome,
   branch,
@@ -1946,10 +1975,4 @@ function readPathFromInput(input: Record<string, unknown> | undefined): string |
   if (!input) return undefined;
   const path = input.file_path ?? input.path;
   return typeof path === "string" ? path : undefined;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

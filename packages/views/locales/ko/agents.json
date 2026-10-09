@@ -813,7 +813,9 @@
     "human_edit": "수정 {{subject}}",
     "human_tool": "도구 사용 {{subject}}",
     "human_error": "실행 중 문제가 발생했습니다: {{text}}",
-    "human_group": "{{tool}} 작업 {{count}}회 실행"
+    "human_group": "{{tool}} 작업 {{count}}회 실행",
+    "trigger_text": "트리거",
+    "trigger_wakeup": "깨우기"
   },
   "task_failure": {
     "cancelled_by_system": "시스템에서 취소함",

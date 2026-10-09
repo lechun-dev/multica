@@ -76,7 +76,7 @@ func terminalIssueStatusSetSQL(workspaceRef string) string {
 	return fmt.Sprintf(`SELECT key FROM (VALUES ('done'), ('cancelled')) canonical(key)
 		UNION
 		SELECT key FROM issue_status
-		WHERE workspace_id = %s AND category IN ('done', 'cancelled')
+		WHERE workspace_id = %s AND category IN ('done', 'closed')
 		  AND key NOT IN ('backlog', 'todo', 'in_progress', 'in_review', 'done', 'blocked', 'cancelled')`, workspaceRef)
 }
 

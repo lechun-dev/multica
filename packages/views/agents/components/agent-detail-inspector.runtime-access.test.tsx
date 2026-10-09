@@ -13,6 +13,9 @@ import { renderWithI18n } from "../../test/i18n";
 const mockInitiateListModels = vi.hoisted(() => vi.fn());
 const mockGetListModelsResult = vi.hoisted(() => vi.fn());
 
+// 2026-10-10 coder(lq): Runtime model queries now require explicit workspace context.
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
+
 vi.mock("@multica/core/api", () => ({
   api: {
     initiateListModels: (...args: unknown[]) =>
@@ -115,7 +118,7 @@ describe("AgentDetailInspector runtime access", () => {
     renderInspector(privateRuntime.owner_id);
 
     await waitFor(() => {
-      expect(mockInitiateListModels).toHaveBeenCalledWith(privateRuntime.id);
+      expect(mockInitiateListModels).toHaveBeenCalledWith(privateRuntime.id, {});
     });
   });
 });

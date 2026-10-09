@@ -44,6 +44,24 @@ func TestUnreadInboxScopedVisibilityKeepsLatestNotification(t *testing.T) {
 			if got := counts[parseUUID(ws)]; got != want {
 				t.Fatalf("workspace %s count=%d want=%d", suffix, got, want)
 			}
+			// 2026-10-10 coder(lq): Raw badges count both child notices and the
+			// older unread notice; summaries retain only each task's newest row.
+			wantRaw := int64(2)
+			if want == 2 {
+				wantRaw = 4
+			}
+			raw, err := h.countUnreadInboxWithinProjectPermissions(t.Context(), parseUUID(ws), parseUUID(reader), true)
+			if err != nil || raw != wantRaw {
+				t.Fatalf("raw count=%d want=%d err=%v", raw, wantRaw, err)
+			}
+			windowRaw, err := h.countUnreadInboxWithinWindow(t.Context(), parseUUID(ws), parseUUID(reader), issueWindowPolicy{limit: 100}, true)
+			if err != nil || windowRaw != wantRaw {
+				t.Fatalf("window raw count=%d want=%d err=%v", windowRaw, wantRaw, err)
+			}
+			windowSummary, err := h.unreadInboxCountsWithinWindows(t.Context(), parseUUID(reader), []pgtype.UUID{parseUUID(ws)}, []int64{100}, true)
+			if err != nil || windowSummary[parseUUID(ws)] != want {
+				t.Fatalf("window summary=%v want=%d err=%v", windowSummary, want, err)
+			}
 			ids := []string{child, child, hidden}
 			requested := []pgtype.UUID{}
 			for _, id := range ids {

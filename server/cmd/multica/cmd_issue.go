@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -254,7 +255,13 @@ var issueChildrenCmd = &cobra.Command{
 var issueCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new issue",
-	RunE:  runIssueCreate,
+	Long: `Create a new issue. Use --property "Name=Value" to set a custom property
+atomically with creation (repeatable, one distinct property per flag).
+For multi_text / multi_url, use a JSON array of strings when entries contain
+commas or the value starts with "["; simple entries can use comma-separated values:
+  multica issue create --title "Review specs" --property 'Aliases=["Smith, John","[draft] spec"]'
+  multica issue create --title "Read docs" --property 'Related links=["https://en.wikipedia.org/wiki/Washington,_D.C."]'`,
+	RunE: runIssueCreate,
 }
 
 var issueUpdateCmd = &cobra.Command{
@@ -277,7 +284,11 @@ var issueStatusCmd = &cobra.Command{
 	Long: "Change an issue's status. The argument is a status KEY, not its display name.\n" +
 		"Built-in keys: backlog, todo, in_progress, in_review, done, blocked, cancelled.\n" +
 		"A workspace may define custom statuses on top of these; their keys are shown in\n" +
-		"Workspace Settings > Issue Statuses, and an unknown value errors with the full list.",
+		"Workspace Settings > Issue Statuses, and an unknown value errors with the full list.\n\n" +
+		"To cancel an issue because it duplicates another, mark it instead of only cancelling:\n" +
+		"  multica issue status <id> cancelled --duplicate-of <original>\n" +
+		"The original then lists it as a duplicate. Moving the issue to any status other\n" +
+		"than cancelled later removes the mark.",
 	Args: exactArgs(2),
 	RunE: runIssueStatus,
 }
@@ -484,7 +495,7 @@ var validIssueFields = []string{
 	"id", "workspace_id", "number", "identifier", "title", "description",
 	"status", "status_category", "status_name", "priority", "assignee_type",
 	"assignee_id", "creator_type", "creator_id", "parent_issue_id",
-	"project_id", "position", "stage", "start_date", "due_date", "created_at",
+	"duplicate_of", "project_id", "position", "stage", "start_date", "due_date", "created_at",
 	"updated_at", "revision", "last_activity_at", "metadata", "properties",
 	"labels",
 }
@@ -614,15 +625,17 @@ func init() {
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
-	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
+	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times). Each file is uploaded and its markdown reference is appended to the description, which is what makes it render on the issue page")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
+	issueCreateCmd.Flags().StringArray("property", nil, `Set a custom property atomically with creation as "Name=Value" (repeatable, one distinct property per flag). Multi-value properties use comma-separated values; multi_text/multi_url also accept JSON arrays (required for commas in entries or values starting with "["). Property and option/member names are case-insensitive; UUIDs are accepted. Filter-only __none__, >=, <=, and != forms are rejected.`)
 
 	// issue update
 	issueUpdateCmd.Flags().String("title", "", "New title")
 	issueUpdateCmd.Flags().String("description", "", "New description (decodes \\n, \\r, \\t, \\\\; pipe via --description-stdin to preserve literal backslashes)")
 	issueUpdateCmd.Flags().Bool("description-stdin", false, "Read new description from stdin (preserves multi-line content verbatim)")
 	issueUpdateCmd.Flags().String("description-file", "", "Read new description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
-	issueUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --description-file to read a path outside the current working directory. Off by default so a stale temp file from another run/environment can't be picked up (MUL-4252).")
+	issueUpdateCmd.Flags().Bool("allow-external-file", false, "Allow --description-file / --attachment to read a path outside the current working directory. Off by default so a stale temp file from another run/environment can't be picked up (MUL-4252).")
+	issueUpdateCmd.Flags().StringSlice("attachment", nil, "Local file path(s) to attach to the issue description (repeatable); references are appended to the end of the description")
 	issueUpdateCmd.Flags().String("status", "", "New status")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
 	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
@@ -634,10 +647,12 @@ func init() {
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
 	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the update without starting an agent run")
+	issueUpdateCmd.Flags().String("duplicate-of", "", "Mark the issue as a duplicate of this original issue (key like MUL-123, or full UUID) and cancel it; --status, if given, must be cancelled, and description/attachment changes must go in a separate update")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue status
 	issueStatusCmd.Flags().Bool("no-start", false, "Change status without starting an agent run")
+	issueStatusCmd.Flags().String("duplicate-of", "", "Mark the issue as a duplicate of this original issue (key like MUL-123, or full UUID); the status must be cancelled")
 	issueStatusCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue reorder
@@ -686,7 +701,7 @@ func init() {
 	issueCommentAddCmd.Flags().String("content-file", "", "Read comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes). The path must be inside the current working directory unless --allow-external-file is set.")
 	issueCommentAddCmd.Flags().Bool("allow-external-file", false, "Allow --content-file / --attachment to read a path outside the current working directory. Off by default so a stale file from another run/environment can't be picked up (MUL-4252).")
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID to reply under. A comment-triggered agent run must reply under its trigger comment; omitting --parent to post a top-level comment is rejected")
-	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
+	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times). Non-image files, HTML included, show as file cards that open in the viewer; to render a chart inside the comment, put a ```html or ```mermaid block in the content instead")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue comment update
@@ -1301,7 +1316,8 @@ type pendingAttachment struct {
 // returns an error with nothing uploaded. Both `issue create` and
 // `comment add` share this so an invalid attachment can never leave an earlier
 // one uploaded as an orphaned issue attachment while the issue/comment is never
-// created (which would duplicate on retry).
+// created (which would duplicate on retry). `issue update` also uses this
+// preflight so an invalid later path cannot leave earlier files uploaded.
 func collectLocalAttachments(cmd *cobra.Command, attachments []string) ([]pendingAttachment, error) {
 	pending := make([]pendingAttachment, 0, len(attachments))
 	for _, filePath := range attachments {
@@ -1319,6 +1335,49 @@ func collectLocalAttachments(cmd *cobra.Command, attachments []string) ([]pendin
 		pending = append(pending, pendingAttachment{path: filePath, data: data})
 	}
 	return pending, nil
+}
+
+// appendAttachmentReferences appends the markdown snippet of every uploaded
+// attachment to an issue description, so the file renders on the issue page
+// instead of only existing as a stored row. Each snippet goes in its own
+// paragraph because file cards are block-level. An attachment the description
+// already references is skipped — a caller may have composed the markdown
+// itself (quick-create keeps the user's pasted image inline), and appending it
+// again would render the same file twice.
+func appendAttachmentReferences(description string, attachments []cli.AttachmentResponse) string {
+	snippets := make([]string, 0, len(attachments))
+	for _, att := range attachments {
+		if descriptionReferencesAttachment(description, att) {
+			continue
+		}
+		snippets = append(snippets, attachmentMarkdown(filepath.Base(att.Filename), att.ContentType, att.MarkdownURL))
+	}
+	if len(snippets) == 0 {
+		return description
+	}
+	appended := strings.Join(snippets, "\n\n")
+	if strings.TrimSpace(description) == "" {
+		return appended
+	}
+	return strings.TrimRight(description, "\n") + "\n\n" + appended
+}
+
+// descriptionReferencesAttachment reports whether a description body already
+// points at this attachment. It matches the durable `markdown_url` and the
+// `/api/attachments/<id>` path it is built from rather than the raw storage
+// `url`, which bodies never carry — the same rule the web composers use
+// (`contentReferencesAttachment`).
+func descriptionReferencesAttachment(description string, att cli.AttachmentResponse) bool {
+	if description == "" {
+		return false
+	}
+	if att.MarkdownURL != "" && strings.Contains(description, att.MarkdownURL) {
+		return true
+	}
+	if att.ID != "" && strings.Contains(description, "/api/attachments/"+att.ID) {
+		return true
+	}
+	return false
 }
 
 func appendUniqueStrings(dst []string, values ...string) []string {
@@ -1383,6 +1442,24 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	body := map[string]any{"title": title}
+	propertyFlags, _ := cmd.Flags().GetStringArray("property")
+	var createProperties map[string]json.RawMessage
+	if len(propertyFlags) > 0 {
+		var config struct {
+			IssueCreatePropertiesSupported bool `json:"issue_create_properties_supported"`
+		}
+		if err := client.GetJSON(ctx, "/api/config", &config); err != nil {
+			return fmt.Errorf("check issue-create property support: %w", err)
+		}
+		if !config.IssueCreatePropertiesSupported {
+			return errors.New("this server version does not support atomic custom properties on issue creation; update the server before using --property")
+		}
+		createProperties, err = buildIssueCreateProperties(ctx, client, propertyFlags)
+		if err != nil {
+			return err
+		}
+		body["properties"] = createProperties
+	}
 	desc, hasDesc, err := resolveTextFlag(cmd, "description")
 	if err != nil {
 		return err
@@ -1392,7 +1469,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 			"Deliver the file itself with `multica issue create --attachment <path>` (repeatable) and drop the link."); err != nil {
 			return err
 		}
-		body["description"] = desc
 	}
 	if statusFlag != "" {
 		body["status"] = statusFlag
@@ -1456,9 +1532,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	attachmentIDs = appendUniqueStrings(attachmentIDs, envAttachmentIDs...)
-	if len(attachmentIDs) > 0 {
-		body["attachment_ids"] = attachmentIDs
-	}
 
 	// Pre-validate attachments BEFORE creating the issue so a bad path can
 	// never produce a half-created issue (which would otherwise trigger
@@ -1471,6 +1544,33 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Upload BEFORE creating the issue, and append each file's markdown to the
+	// description. A file is visible on an issue only when the description
+	// references it — every other writer honors that (the web create dialog and
+	// the description editor bind exactly what the body references). Uploading
+	// after the create, as this used to, stored the file with an `issue_id` and
+	// left the description untouched, so it rendered nowhere on web, desktop or
+	// mobile (MUL-7600 / #8692). Uploading first also removes the old
+	// partial-success state: a failure here means no issue was created, so the
+	// retry is safe and cannot duplicate.
+	uploaded := make([]cli.AttachmentResponse, 0, len(pending))
+	for _, att := range pending {
+		result, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, "")
+		if uploadErr != nil {
+			return fmt.Errorf("upload attachment %s (no issue created): %w", att.path, uploadErr)
+		}
+		uploaded = append(uploaded, result)
+		attachmentIDs = appendUniqueStrings(attachmentIDs, result.ID)
+		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+	}
+	desc = appendAttachmentReferences(desc, uploaded)
+	if hasDesc || len(uploaded) > 0 {
+		body["description"] = desc
+	}
+	if len(attachmentIDs) > 0 {
+		body["attachment_ids"] = attachmentIDs
+	}
+
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues", body, &result); err != nil {
 		if msg, ok := activeDuplicateIssueCreateMessage(err); ok {
@@ -1478,19 +1578,8 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("create issue: %w", err)
 	}
-
-	// Upload attachments and link them to the newly created issue.
-	// Failures here are partial-success: the issue exists already, so
-	// turning a non-zero exit on the caller would invite a retry that
-	// duplicates the issue. Warn on stderr and continue.
-	issueID := strVal(result, "id")
-	for _, att := range pending {
-		if _, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID); uploadErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: upload attachment %s failed (issue already created, %s): %v\n",
-				att.path, strVal(result, "identifier"), uploadErr)
-			continue
-		}
-		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+	if err := verifyIssueCreateProperties(createProperties, result); err != nil {
+		return fmt.Errorf("issue %s was created, but the server did not confirm its custom properties; review it before retrying: %w", issueDisplayKey(result), err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -1507,6 +1596,30 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	return cli.PrintJSON(os.Stdout, result)
+}
+
+func verifyIssueCreateProperties(expected map[string]json.RawMessage, issue map[string]any) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	bag, ok := issue["properties"].(map[string]any)
+	if !ok {
+		return errors.New("response omitted the properties snapshot")
+	}
+	for propertyID, encoded := range expected {
+		actual, exists := bag[propertyID]
+		if !exists {
+			return fmt.Errorf("response omitted property %s", propertyID)
+		}
+		var want any
+		if err := json.Unmarshal(encoded, &want); err != nil {
+			return fmt.Errorf("decode expected property %s: %w", propertyID, err)
+		}
+		if !reflect.DeepEqual(actual, want) {
+			return fmt.Errorf("response property %s does not match the canonical value", propertyID)
+		}
+	}
+	return nil
 }
 
 func activeDuplicateIssueCreateMessage(err error) (string, bool) {
@@ -1528,6 +1641,7 @@ func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
+	attachmentPaths, _ := cmd.Flags().GetStringSlice("attachment")
 	noStart, _ := cmd.Flags().GetBool("no-start")
 	statusChanged := cmd.Flags().Changed("status")
 	statusFlag, _ := cmd.Flags().GetString("status")
@@ -1543,13 +1657,28 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	duplicateOf, err := duplicateOfFlag(cmd, statusFlag, statusChanged)
+	if err != nil {
+		return err
+	}
+	// The server rejects a mark alongside description or attachment writes,
+	// and attachments upload before the update, so refuse the combination
+	// before anything is uploaded and left unbound.
+	if duplicateOf != "" && (len(attachmentPaths) > 0 || cmd.Flags().Changed("description") ||
+		cmd.Flags().Changed("description-stdin") || cmd.Flags().Changed("description-file")) {
+		return fmt.Errorf("--duplicate-of cannot be combined with --description, --description-stdin, --description-file or --attachment; mark the duplicate first, then change the description in a separate update")
+	}
 
 	client, err := newAPIClient(cmd)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
+	timeout := cli.APITimeout()
+	if len(attachmentPaths) > 0 {
+		timeout = cli.AtLeastAPITimeout(60 * time.Second)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	issueRef, err := resolveIssueRef(ctx, client, args[0])
@@ -1567,11 +1696,8 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		// `issue update` has no --attachment flag, so the hint must point at the
-		// command that does. Telling the agent to "pass --attachment" here would
-		// name an argument this command rejects.
 		if err := guardLocalPathLinks(desc, "issue description",
-			"`multica issue update` cannot carry files — deliver the file with `multica issue comment add <issue-id> --attachment <path>` instead, and drop the link."); err != nil {
+			"Attach the file with `multica issue update <issue-id> --attachment <path>` and drop the local-path link."); err != nil {
 			return err
 		}
 		body["description"] = desc
@@ -1624,6 +1750,13 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 			body["parent_issue_id"] = parent.ID
 		}
 	}
+	if duplicateOf != "" {
+		original, err := resolveIssueRef(ctx, client, duplicateOf)
+		if err != nil {
+			return fmt.Errorf("resolve --duplicate-of issue: %w", err)
+		}
+		body["duplicate_of_issue_id"] = original.ID
+	}
 	if cmd.Flags().Changed("stage") {
 		stage, _ := cmd.Flags().GetInt("stage")
 		if stage < 1 {
@@ -1636,8 +1769,44 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		body["position"] = v
 	}
 
-	if len(body) == 0 {
+	if len(body) == 0 && len(attachmentPaths) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
+	}
+	// Validate every path before any upload so an invalid later path cannot
+	// leave earlier files uploaded and unbound.
+	pending, err := collectLocalAttachments(cmd, attachmentPaths)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 && len(pending) == 0 {
+		return fmt.Errorf("no local attachments to update; --attachment accepts file paths, not URLs")
+	}
+	desc, changed := body["description"].(string)
+	if len(pending) > 0 && !changed {
+		var issue struct {
+			Description *string `json:"description"`
+		}
+		if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID), &issue); err != nil {
+			return fmt.Errorf("get issue description before binding attachments: %w", err)
+		}
+		if issue.Description != nil {
+			desc = *issue.Description
+		}
+	}
+	attachmentIDs := make([]string, 0, len(pending))
+	attachmentRefs := make([]cli.AttachmentResponse, 0, len(pending))
+	for _, att := range pending {
+		uploaded, uploadErr := client.UploadIssueAttachment(ctx, att.data, att.path, "")
+		if uploadErr != nil {
+			return fmt.Errorf("upload attachment %s: %w; already uploaded IDs: %v", att.path, uploadErr, attachmentIDs)
+		}
+		attachmentIDs = append(attachmentIDs, uploaded.ID)
+		attachmentRefs = append(attachmentRefs, uploaded)
+		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+	}
+	if len(attachmentRefs) > 0 {
+		body["description"] = appendAttachmentReferences(desc, attachmentRefs)
+		body["attachment_ids"] = attachmentIDs
 	}
 	if noStart {
 		body["suppress_run"] = true
@@ -1645,7 +1814,15 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
+		if len(attachmentIDs) > 0 {
+			return fmt.Errorf("update issue (uploaded IDs: %v): %w", attachmentIDs, err)
+		}
 		return fmt.Errorf("update issue: %w", err)
+	}
+	if duplicateOf != "" {
+		if _, err := recordedDuplicateOf(result, duplicateOf); err != nil {
+			return err
+		}
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -1740,6 +1917,10 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 	if err := validateIssueStatus(status); err != nil {
 		return err
 	}
+	duplicateOf, err := duplicateOfFlag(cmd, status, true)
+	if err != nil {
+		return err
+	}
 
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -1755,6 +1936,13 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{"status": status}
+	if duplicateOf != "" {
+		original, err := resolveIssueRef(ctx, client, duplicateOf)
+		if err != nil {
+			return fmt.Errorf("resolve --duplicate-of issue: %w", err)
+		}
+		body["duplicate_of_issue_id"] = original.ID
+	}
 	if noStart {
 		body["suppress_run"] = true
 	}
@@ -1763,13 +1951,58 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update status: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Issue %s status changed to %s.\n", issueDisplayKey(result), status)
+	if duplicateOf != "" {
+		original, err := recordedDuplicateOf(result, duplicateOf)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Issue %s status changed to %s as a duplicate of %s.\n", issueDisplayKey(result), status, original)
+	} else {
+		fmt.Fprintf(os.Stderr, "Issue %s status changed to %s.\n", issueDisplayKey(result), status)
+	}
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	return nil
+}
+
+// duplicateOfFlag returns the --duplicate-of reference, or "" when the flag is
+// unset. A duplicate is a cancelled issue that remembers its original
+// (MUL-7349): the server cancels the issue along with the mark and rejects
+// any other status, so that combination fails here before any request.
+func duplicateOfFlag(cmd *cobra.Command, status string, statusSet bool) (string, error) {
+	if !cmd.Flags().Changed("duplicate-of") {
+		return "", nil
+	}
+	ref, _ := cmd.Flags().GetString("duplicate-of")
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("--duplicate-of requires the original issue's key (e.g. MUL-123) or full UUID")
+	}
+	if statusSet && status != "cancelled" {
+		return "", fmt.Errorf("--duplicate-of cancels the issue, so the status must be cancelled, not %q", status)
+	}
+	return ref, nil
+}
+
+// recordedDuplicateOf returns the original an update response names, failing
+// when the server applied the update without the mark. Servers before v0.5.2
+// ignore duplicate_of_issue_id and have no duplicate_of field, so the key's
+// absence is the signal; a null value only means the original could not be
+// read back, so the caller's own reference names it instead.
+func recordedDuplicateOf(result map[string]any, ref string) (string, error) {
+	raw, ok := result["duplicate_of"]
+	if !ok {
+		return "", fmt.Errorf("issue %s was updated, but the server did not record the duplicate mark; marking duplicates needs server v0.5.2 or later", issueDisplayKey(result))
+	}
+	if original, ok := raw.(map[string]any); ok {
+		if key := strVal(original, "identifier"); key != "" {
+			return key, nil
+		}
+	}
+	return ref, nil
 }
 
 // ---------------------------------------------------------------------------
