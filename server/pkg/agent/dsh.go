@@ -40,13 +40,16 @@ func applyDshConfig(ctx context.Context, request acpRequestFn, sessionID string,
 			continue
 		}
 		supported := false
+		available := make([]string, 0)
 		for _, choice := range flattenACPSelectChoices(option.Options) {
+			available = append(available, choice.Value)
 			if choice.Value == value {
 				supported = true
 			}
 		}
 		if !supported {
-			return nil, fmt.Errorf("dsh does not advertise requested %s %q", category, value)
+			// 2026-10-09 coder(lq): Show exact opaque selector values so operators can fix configuration without guessing aliases.
+			return nil, fmt.Errorf("dsh does not advertise requested %s %q; advertised IDs: %q", category, value, available)
 		}
 		result, err := request(ctx, "session/set_config_option", map[string]any{"sessionId": sessionID, "configId": option.ID, "value": value})
 		if err != nil {

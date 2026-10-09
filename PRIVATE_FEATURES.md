@@ -51,6 +51,7 @@ private integration branch.
 
 | Date | Change | Inventory impact |
 | --- | --- | --- |
+| 2026-10-09 | Exposed advertised DSH selector IDs on model-selection rejection. | Provider/model tuple IDs pass unchanged without alias guessing or automatic model changes. Covered by `TestDshUnknownModelReportsAdvertisedID` and `TestDshModelTuplePassedUnchanged`. |
 | 2026-10-09 | Added daemon-only shared-stream wakeup fanout in legacy Redis mode and reduced the default healthy-WebSocket safety poll to 30 seconds. | Preserve opaque routing keys in envelopes, retain browser scope isolation, and subscribe on API nodes without browser clients. Explicit polling overrides remain supported; deployment and incident root-cause verification remain separate. Covered by `TestLegacyDaemonHintsUseSharedStreamAndPreserveRouting` and `TestDefaultWSClaimSafetyPollBound`. |
 | 2026-10-09 | Distinguished queued tasks awaiting claim from confirmed agent-capacity saturation. | Queue hints are workspace-scoped live snapshots using dispatched/running/directory-waiting capacity states; failed reads remain neutral. Covered by queue-hint UI tests, `TestTaskQueueReason`, and `TestTaskCapacityStatesMatchClaimAdmission`. |
 | 2026-10-09 | Added existing-tag manual recovery for missed Release push events, exact-commit build metadata, and a patched-toolchain vulnerability gate for private desktop packaging. | Tags remain immutable; recovery cannot substitute main for tagged source or skip test/security/signing gates. Deployment remains explicit after images publish. |

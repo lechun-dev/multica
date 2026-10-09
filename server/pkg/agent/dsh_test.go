@@ -253,3 +253,37 @@ func TestDshACPRejectsIncompatibleModelDiscovery(t *testing.T) {
 		t.Fatal("incompatible ACP advertised a catalog")
 	}
 }
+
+// 2026-10-09 coder(lq): Human model names are not ACP selector IDs; diagnostics must provide the authoritative opaque choice.
+func TestDshUnknownModelReportsAdvertisedID(t *testing.T) {
+	result, _, requests := runDshFixture(t, nil, ExecOptions{Model: "deepseek-v41-flash"})
+	if result.Status != "failed" || !strings.Contains(result.Error, "advertised IDs") || !strings.Contains(result.Error, "opaque/model%2Fid") {
+		t.Fatalf("missing actionable model diagnosis: %+v", result)
+	}
+	if strings.Contains(requests, `"method":"session/prompt"`) || strings.Contains(requests, `"method":"session/set_config_option"`) {
+		t.Fatal("unsupported model was guessed or executed")
+	}
+}
+
+// 2026-10-09 coder(lq): Official provider/model tuples are opaque strings, not model aliases or JSON for MissionOS to reconstruct.
+func TestDshModelTuplePassedUnchanged(t *testing.T) {
+	id := `["deepseek-official","deepseek-flash"]`
+	state, err := json.Marshal(map[string]any{"configOptions": []any{map[string]any{
+		"id": "route", "category": "model", "currentValue": id, "options": []any{map[string]any{"value": id, "name": "DeepSeek-V41-Flash"}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	request := func(ctx context.Context, method string, params any) (json.RawMessage, error) {
+		called = true
+		options := params.(map[string]any)
+		if method != "session/set_config_option" || options["value"] != id || options["configId"] != "route" {
+			t.Fatalf("opaque tuple was altered: %v %v", method, params)
+		}
+		return state, nil
+	}
+	if _, err := applyDshConfig(context.Background(), request, "session", state, "model", id); err != nil || !called {
+		t.Fatalf("exact ID rejected: %v", err)
+	}
+}
