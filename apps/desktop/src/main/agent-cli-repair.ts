@@ -82,6 +82,10 @@ export async function codexDiscoveryCandidates({
   env = process.env,
   platform = process.platform,
 }: CodexDiscoveryOptions): Promise<string[]> {
+  // 2026-10-09 coder(lq): Respect explicit overrides; only automatic
+  // discovery prefers bundled CLIs over npm/PATH installations.
+  const explicit = env.MULTICA_CODEX_PATH?.trim();
+  if (explicit) return [explicit];
   const pathCandidates = (env.PATH ?? "")
     .split(platform === "win32" ? ";" : ":")
     .filter(Boolean)
@@ -91,42 +95,30 @@ export async function codexDiscoveryCandidates({
   const managedCandidates = await versionManagerCandidates(home);
 
   return uniquePaths([
-    ...pathCandidates,
     ...(platform === "darwin"
       ? [
-          "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-          "/Applications/ChatGPT.app/Contents/Resources/codex",
-          "/Applications/Codex.app/Contents/Resources/codex",
-          join(
-            home,
-            "Applications",
-            "ChatGPT.app",
-            "Contents",
-            "Resources",
-            "codex-cli",
-            "CodexCLI.app",
-            "Contents",
-            "MacOS",
-            "codex",
+          ...["/Applications", join(home, "Applications")].map((root) =>
+            join(
+              root,
+              "ChatGPT.app",
+              "Contents",
+              "Resources",
+              "codex-cli",
+              "CodexCLI.app",
+              "Contents",
+              "MacOS",
+              "codex",
+            ),
           ),
-          join(
-            home,
-            "Applications",
-            "ChatGPT.app",
-            "Contents",
-            "Resources",
-            "codex",
+          ...["/Applications", join(home, "Applications")].map((root) =>
+            join(root, "ChatGPT.app", "Contents", "Resources", "codex"),
           ),
-          join(
-            home,
-            "Applications",
-            "Codex.app",
-            "Contents",
-            "Resources",
-            "codex",
+          ...["/Applications", join(home, "Applications")].map((root) =>
+            join(root, "Codex.app", "Contents", "Resources", "codex"),
           ),
         ]
       : []),
+    ...pathCandidates,
     join(home, ".volta", "bin", platform === "win32" ? "codex.exe" : "codex"),
     join(home, ".local", "bin", platform === "win32" ? "codex.exe" : "codex"),
     join(home, "Library", "pnpm", "codex"),
@@ -140,7 +132,12 @@ export async function verifyCodexCli(candidate: string): Promise<boolean> {
       candidate,
       ["--version"],
       { timeout: VERIFY_TIMEOUT_MS, windowsHide: true },
-      (error) => resolve(error === null),
+      // 2026-10-09 coder(lq): A successful exit without a readable version
+      // must not pin a broken bundle as an explicit daemon override.
+      (error, stdout, stderr) =>
+        resolve(
+          error === null && /\bv?\d+\.\d+\.\d+\b/.test(`${stdout}\n${stderr}`),
+        ),
     );
   });
 }

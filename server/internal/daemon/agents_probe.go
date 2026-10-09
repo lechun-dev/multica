@@ -89,7 +89,8 @@ func cachedShellResolvedAgents() map[string]string {
 //
 // A var so tests can stub discovery without installing real CLIs.
 var probeAgentCLIs = func() map[string]AgentEntry {
-	// Probe available agent CLIs. exec.LookPath is the primary path, but on
+	// 2026-10-09 coder(lq): Automatic Codex checks app bundles first; other
+	// agents primarily use exec.LookPath. On
 	// macOS/Linux a GUI-launched daemon (Electron, Launchpad) does not
 	// inherit the user's interactive shell PATH — fnm/nvm/volta multishells,
 	// the Anthropic native installer prefix, and per-user npm prefixes all
@@ -114,6 +115,11 @@ var probeAgentCLIs = func() map[string]AgentEntry {
 	getShellResolved := cachedShellResolvedAgents
 	probe := func(envVar, defaultCmd, modelEnv string) (AgentEntry, bool) {
 		cmd := envOrDefault(envVar, defaultCmd)
+		if defaultCmd == "codex" {
+			if path, ok := preferredAutomaticCodexBundle(cmd); ok {
+				return AgentEntry{Path: path, Command: cmd, Model: strings.TrimSpace(os.Getenv(modelEnv))}, true
+			}
+		}
 		if path, err := resolveAgentExecutablePath(cmd); err == nil {
 			return AgentEntry{
 				Path:    path,
@@ -135,19 +141,7 @@ var probeAgentCLIs = func() map[string]AgentEntry {
 				Model:   strings.TrimSpace(os.Getenv(modelEnv)),
 			}, true
 		}
-		if defaultCmd == "codex" && cmd == defaultCmd {
-			// Codex Desktop bundles its CLI inside the macOS app instead of
-			// installing it onto PATH.
-			for _, p := range codexDesktopAppBundlePaths() {
-				if _, err := os.Stat(p); err == nil {
-					return AgentEntry{
-						Path:    p,
-						Command: cmd,
-						Model:   strings.TrimSpace(os.Getenv(modelEnv)),
-					}, true
-				}
-			}
-		}
+
 		if defaultCmd == "dsh" && cmd == defaultCmd {
 			// 2026-10-08 coder(lq): Use the official App launcher without installing a global command.
 			for _, p := range dshDesktopAppBundlePaths() {

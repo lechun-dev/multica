@@ -1145,7 +1145,13 @@ func (d *Daemon) healAgentPath(ctx context.Context, provider, command string) he
 			newPath = launchPath
 		}
 	}
-	return d.adoptAgentPath(ctx, provider, command, newPath, "re-resolved after pinned path vanished")
+	outcome := d.adoptAgentPath(ctx, provider, command, newPath, "re-resolved after pinned path vanished")
+	if outcome.adopted.path == "" && automaticCodexBundleEntry(provider, command, newPath) {
+		if fallback := d.adoptAutomaticCodexFallback(ctx, newPath); fallback.adopted.path != "" {
+			return fallback
+		}
+	}
+	return outcome
 }
 
 func (d *Daemon) adoptAgentPath(ctx context.Context, provider, command, newPath, reason string) healOutcome {
@@ -2389,6 +2395,16 @@ func newRuntimeVerdict(verdict builtinProbeVerdict, reason, execPath string) run
 // not installed" apart from "CLI installed but dropped at registration", which
 // was previously only visible in the daemon log (MUL-5439).
 func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry AgentEntry) (string, string, builtinProbeVerdict) {
+	version, reason, verdict := d.probeBuiltinRuntimeCandidate(ctx, name, entry)
+	if verdict != builtinProbeOK && automaticCodexBundleEntry(name, entry.Command, entry.Path) {
+		if fallback := d.adoptAutomaticCodexFallback(ctx, entry.Path); fallback.adopted.path != "" {
+			return fallback.adopted.version, "", builtinProbeOK
+		}
+	}
+	return version, reason, verdict
+}
+
+func (d *Daemon) probeBuiltinRuntimeCandidate(ctx context.Context, name string, entry AgentEntry) (string, string, builtinProbeVerdict) {
 	if name == "dsh" {
 		resolved, _, _ := d.resolveAgentEntryWithHeal(ctx, name, entry)
 		version, err := agent.InspectDshACP(ctx, agent.Command{Path: resolved.Path})

@@ -6,7 +6,20 @@ import {
   codexDiscoveryCandidates,
   findUsableCodexCli,
   isAgentCliMissingError,
+  verifyCodexCli,
 } from "./agent-cli-repair";
+
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn<
+    (
+      file: string,
+      args: string[],
+      options: unknown,
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => void
+  >(),
+}));
+vi.mock("child_process", () => ({ execFile: execFileMock }));
 
 describe("agent CLI startup error detection", () => {
   it("matches only the daemon's no-agent startup failure", () => {
@@ -49,7 +62,76 @@ describe("Codex CLI discovery", () => {
     expect(candidates.indexOf(nestedChatGPT)).toBeLessThan(
       candidates.indexOf(flatChatGPT),
     );
+    expect(candidates.indexOf(flatChatGPT)).toBeLessThan(
+      candidates.indexOf("/custom/bin/codex"),
+    );
+    expect(
+      candidates.indexOf(
+        "/Users/tester/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+      ),
+    ).toBeLessThan(candidates.indexOf(flatChatGPT));
     expect(new Set(candidates).size).toBe(candidates.length);
+  });
+
+  it.each(["/custom/codex", "codex"])(
+    "keeps explicit override %s authoritative",
+    async (explicit) => {
+      expect(
+        await codexDiscoveryCandidates({
+          home: "/Users/tester",
+          env: { MULTICA_CODEX_PATH: explicit, PATH: "/npm/bin" },
+          platform: "darwin",
+        }),
+      ).toEqual([explicit]);
+    },
+  );
+
+  it("preserves PATH priority outside macOS", async () => {
+    const candidates = await codexDiscoveryCandidates({
+      home: "/home/tester",
+      env: { PATH: "/npm/bin" },
+      platform: "linux",
+    });
+    expect(candidates[0]).toBe("/npm/bin/codex");
+    expect(candidates.some((path) => path.includes("ChatGPT.app"))).toBe(false);
+  });
+
+  it.each(["flat", "PATH"])(
+    "falls back from broken nested bundles to %s",
+    async (fallback) => {
+      const candidates = await codexDiscoveryCandidates({
+        home: "/Users/tester",
+        env: { PATH: "/npm/bin" },
+        platform: "darwin",
+      });
+      const expected =
+        fallback === "flat"
+          ? "/Applications/ChatGPT.app/Contents/Resources/codex"
+          : "/npm/bin/codex";
+      const verify = vi.fn(async (path: string) => path === expected);
+      expect(await findUsableCodexCli(candidates, verify)).toBe(expected);
+      expect(verify.mock.calls[0]?.[0]).toContain("codex-cli/CodexCLI.app");
+    },
+  );
+
+  it.each([
+    ["codex-cli 0.162.0-alpha.17.2", "", true],
+    ["", "codex-cli 0.150.1", true],
+    ["codex-cli v0.150.1", "", true],
+    ["", "", false],
+    ["not a version", "", false],
+  ])("checks readable version output %s", async (stdout, stderr, usable) => {
+    execFileMock.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, String(stdout), String(stderr));
+    });
+    expect(await verifyCodexCli("/isolated/codex")).toBe(usable);
+  });
+
+  it("rejects a failing version command", async () => {
+    execFileMock.mockImplementation((_file, _args, _options, callback) => {
+      callback(new Error("broken bundle"), "codex-cli 0.162.0", "");
+    });
+    expect(await verifyCodexCli("/isolated/codex")).toBe(false);
   });
 
   it("returns the first candidate that can actually execute", async () => {

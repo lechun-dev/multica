@@ -860,17 +860,18 @@ func agentExecutablePresent(path string) bool {
 	return err == nil
 }
 
-// reresolveAgentCommand re-runs the startup resolution for a single agent
-// command name, returning the freshly resolved absolute path. It mirrors the
-// probe() order in LoadConfig: exec.LookPath (with the ~/.multica/hooks
-// exclusion preserved via resolveAgentExecutablePath) first, then the login
-// shell fallback for a bare command name a GUI-launched daemon can't see on
-// its own PATH, then Codex's known macOS app-bundle locations. It is only
-// called on the miss path — when a previously pinned path has disappeared —
-// so the login-shell cost is paid rarely, never on a normal launch.
+// reresolveAgentCommand re-runs startup resolution for a single agent command.
+// 2026-10-09 coder(lq): Automatic Codex discovery prefers macOS bundles, then
+// PATH (excluding Multica hooks) and the login shell. Explicit overrides retain
+// their original resolution. Only vanished pinned paths pay the shell cost.
 func reresolveAgentCommand(provider, cmd string) (string, bool) {
 	if cmd == "" {
 		return "", false
+	}
+	if provider == "codex" {
+		if path, ok := preferredAutomaticCodexBundle(cmd); ok {
+			return path, true
+		}
 	}
 	if path, err := resolveAgentExecutablePath(cmd); err == nil {
 		return path, true
@@ -883,13 +884,6 @@ func reresolveAgentCommand(provider, cmd string) (string, bool) {
 	if !strings.ContainsAny(cmd, "/\\") {
 		if path, ok := resolveAgentsViaLoginShell([]string{cmd})[cmd]; ok {
 			return path, true
-		}
-		if provider == "codex" && cmd == "codex" {
-			for _, path := range codexDesktopAppBundlePaths() {
-				if agentExecutablePresent(path) {
-					return path, true
-				}
-			}
 		}
 	}
 	return "", false
@@ -988,19 +982,46 @@ var defaultAgentCommandNames = append([]string{
 // current nested path is tried before the former flat ChatGPT.app path while
 // both remain ahead of the legacy Codex.app path.
 var codexDesktopAppBundlePaths = func() []string {
-	paths := []string{
-		"/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-		"/Applications/ChatGPT.app/Contents/Resources/codex",
-		"/Applications/Codex.app/Contents/Resources/codex",
+	if runtime.GOOS != "darwin" {
+		return nil
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths,
-			filepath.Join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"),
-			filepath.Join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
-			filepath.Join(home, "Applications", "Codex.app", "Contents", "Resources", "codex"),
-		)
+	home, _ := os.UserHomeDir()
+	return codexDesktopBundlePathsFor(home)
+}
+
+// 2026-10-09 coder(lq): Prefer both system/user nested installs before former
+// flat installs, then legacy Codex.app. Explicit operator paths bypass this list.
+func codexDesktopBundlePathsFor(home string) []string {
+	roots := []string{"/Applications"}
+	if home != "" {
+		roots = append(roots, filepath.Join(home, "Applications"))
+	}
+	layouts := []string{
+		"ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+		"ChatGPT.app/Contents/Resources/codex",
+		"Codex.app/Contents/Resources/codex",
+	}
+	paths := make([]string, 0, len(roots)*len(layouts))
+	for _, layout := range layouts {
+		for _, root := range roots {
+			paths = append(paths, filepath.Join(root, layout))
+		}
 	}
 	return paths
+}
+
+// 2026-10-09 coder(lq): Startup and live path repair share bundle preference;
+// any explicit override, including a bare command name, keeps its original priority.
+func preferredAutomaticCodexBundle(cmd string) (string, bool) {
+	if cmd != "codex" || strings.TrimSpace(os.Getenv("MULTICA_CODEX_PATH")) != "" {
+		return "", false
+	}
+	for _, path := range codexDesktopAppBundlePaths() {
+		if executableCandidate(path) {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 // dshDesktopAppBundlePaths returns candidate locations for the DSH CLI that

@@ -1442,7 +1442,7 @@ func TestLoadConfig_UsesChatGPTAppBundleCodexPath(t *testing.T) {
 }
 
 func TestCodexDesktopAppBundlePaths_IncludesCurrentFormerAndLegacy(t *testing.T) {
-	paths := codexDesktopAppBundlePaths()
+	paths := codexDesktopBundlePathsFor("/Users/tester")
 	var hasCurrentChatGPT, hasFormerChatGPT, hasLegacy bool
 	for _, p := range paths {
 		slashPath := filepath.ToSlash(p)
