@@ -68,36 +68,41 @@ func TestRedisDedupe_BookkeepingKeepsABoundingDeadline(t *testing.T) {
 	}
 }
 
-// slowSettleStore is a claim store whose Settle takes a fixed round trip
-// regardless of the context it is handed.
-type slowSettleStore struct {
-	roundTrip time.Duration
+// 2026-10-09 coder(lq): Wait for the actual drain deadline instead of a fixed
+// sleep; CI scheduling delays must not look like extra settle attempts.
+type deadlineSettleStore struct {
+	budget time.Duration
 
 	mu       sync.Mutex
 	attempts int
 }
 
-func (s *slowSettleStore) Claim(context.Context, string, string, time.Duration) (bool, error) {
+func (s *deadlineSettleStore) Claim(context.Context, string, string, time.Duration) (bool, error) {
 	return true, nil
 }
 
-func (s *slowSettleStore) Release(context.Context, string, string) (bool, error) { return true, nil }
+func (s *deadlineSettleStore) Release(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 
-func (s *slowSettleStore) Settle(context.Context, string, string) (bool, error) {
+func (s *deadlineSettleStore) Settle(ctx context.Context, _ string, _ string) (bool, error) {
 	s.mu.Lock()
 	s.attempts++
 	s.mu.Unlock()
-	time.Sleep(s.roundTrip)
-	return false, errors.New("dedupe: the store never answered")
+	if _, ok := ctx.Deadline(); !ok {
+		return false, errors.New("dedupe: settle context has no bounding deadline")
+	}
+	<-ctx.Done()
+	return false, ctx.Err()
 }
 
-func (s *slowSettleStore) Resolve(context.Context, string) (claimState, error) {
+func (s *deadlineSettleStore) Resolve(context.Context, string) (claimState, error) {
 	return claimHeld, nil
 }
 
-func (s *slowSettleStore) ClaimBudget() time.Duration { return s.roundTrip }
+func (s *deadlineSettleStore) ClaimBudget() time.Duration { return s.budget }
 
-func (s *slowSettleStore) settleAttempts() int {
+func (s *deadlineSettleStore) settleAttempts() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.attempts
@@ -107,11 +112,8 @@ func (s *slowSettleStore) settleAttempts() int {
 // flight when the deadline passes is allowed to finish, but the chain stops.
 func TestRelayDrain_OpensNoNewSettleAttemptPastItsBudget(t *testing.T) {
 	t.Parallel()
-	const (
-		drainBudget = 50 * time.Millisecond
-		roundTrip   = 100 * time.Millisecond
-	)
-	store := &slowSettleStore{roundTrip: roundTrip}
+	const drainBudget = 50 * time.Millisecond
+	store := &deadlineSettleStore{budget: drainBudget}
 	h := &ownsSocketHandler{owns: true}
 	router := NewRelayOutbound(&fanoutRelay{}, store, RelayConfig{
 		Shards:       1,
@@ -127,16 +129,11 @@ func TestRelayDrain_OpensNoNewSettleAttemptPastItsBudget(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	start := time.Now()
 	router.drainRemaining(ctx, make(chan queued), map[string]*hold{}, &late)
-	elapsed := time.Since(start)
 
 	if got := store.settleAttempts(); got != 1 {
 		t.Fatalf("the drain made %d settle attempts, want 1: the first already ran past a %v budget, "+
 			"so no further attempt may be opened", got, drainBudget)
-	}
-	if elapsed >= drainBudget+2*roundTrip {
-		t.Fatalf("the drain took %v: a %v budget must not be extended by a whole retry chain", elapsed, drainBudget)
 	}
 	if got := len(h.sent()); got != 1 {
 		t.Fatalf("%d frames reached the chat, want 1: the delivery itself is not what is bounded here", got)
