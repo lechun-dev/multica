@@ -269,6 +269,21 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.4",
+          date: "2026-10-09",
+          title: "태스크 목록 성능과 Codex 감지 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "태스크 목록, 테이블 통계 및 하위 태스크 진행 상황 조회에서 중복 권한 계산을 줄였습니다.",
+            "사용자 목록과 읽지 않은 알림 통계 결과를 최대 15초 동안 재사용합니다. 관련 API 변경 시 결과 캐시가 무효화되고, 조직 변경 시 조직 소속 캐시가 무효화됩니다.",
+            "태스크 수락과 쓰기 권한은 계속 실시간으로 확인하며, 결과 캐시는 조직 캐시와 기한이 있는 권한의 만료 시간을 넘지 않습니다.",
+          ],
+          fixes: [
+            "데스크톱 앱 업데이트로 이동한 내장 Codex 실행 파일을 감지하여 런타임 감지가 복구될 수 있도록 했습니다.",
+          ],
+        },
+        {
           version: "0.5.3",
           date: "2026-10-09",
           title: "공식 DeepSeek Harness 연동과 태스크 권한 통합",

@@ -294,6 +294,21 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.4",
+        date: "2026-10-09",
+        title: "Faster task lists and more reliable Codex discovery",
+        changes: [],
+        features: [],
+        improvements: [
+          "Reduce repeated permission calculations when loading task lists, table statistics and child-task progress.",
+          "Reuse human list and unread-statistic results for up to 15 seconds. Related API updates invalidate the response cache, and organization changes invalidate cached organization membership.",
+          "Keep task claiming and write authorization live, and cap response caching by organization and timed-grant expiry.",
+        ],
+        fixes: [
+          "Recognize relocated Codex executables bundled with the desktop app so runtime discovery can recover after an app upgrade.",
+        ],
+      },
+      {
         version: "0.5.3",
         date: "2026-10-09",
         title: "Official DeepSeek Harness and unified task permissions",
