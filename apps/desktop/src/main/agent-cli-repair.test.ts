@@ -22,6 +22,7 @@ describe("agent CLI startup error detection", () => {
 describe("Codex CLI discovery", () => {
   it("expands a selected macOS app bundle to its bundled CLI", () => {
     expect(codexCandidatesForSelection("/Custom/ChatGPT.app")).toEqual([
+      "/Custom/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
       "/Custom/ChatGPT.app/Contents/Resources/codex",
     ]);
   });
@@ -40,8 +41,13 @@ describe("Codex CLI discovery", () => {
     });
 
     expect(candidates).toContain("/custom/bin/codex");
-    expect(candidates).toContain(
-      "/Applications/ChatGPT.app/Contents/Resources/codex",
+    const nestedChatGPT =
+      "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+    const flatChatGPT = "/Applications/ChatGPT.app/Contents/Resources/codex";
+    expect(candidates).toContain(nestedChatGPT);
+    expect(candidates).toContain(flatChatGPT);
+    expect(candidates.indexOf(nestedChatGPT)).toBeLessThan(
+      candidates.indexOf(flatChatGPT),
     );
     expect(new Set(candidates).size).toBe(candidates.length);
   });

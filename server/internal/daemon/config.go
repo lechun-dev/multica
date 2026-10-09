@@ -865,10 +865,10 @@ func agentExecutablePresent(path string) bool {
 // probe() order in LoadConfig: exec.LookPath (with the ~/.multica/hooks
 // exclusion preserved via resolveAgentExecutablePath) first, then the login
 // shell fallback for a bare command name a GUI-launched daemon can't see on
-// its own PATH. It is only called on the miss path — when a previously pinned
-// path has disappeared — so the login-shell cost is paid rarely, never on a
-// normal launch.
-func reresolveAgentCommand(cmd string) (string, bool) {
+// its own PATH, then Codex's known macOS app-bundle locations. It is only
+// called on the miss path — when a previously pinned path has disappeared —
+// so the login-shell cost is paid rarely, never on a normal launch.
+func reresolveAgentCommand(provider, cmd string) (string, bool) {
 	if cmd == "" {
 		return "", false
 	}
@@ -883,6 +883,13 @@ func reresolveAgentCommand(cmd string) (string, bool) {
 	if !strings.ContainsAny(cmd, "/\\") {
 		if path, ok := resolveAgentsViaLoginShell([]string{cmd})[cmd]; ok {
 			return path, true
+		}
+		if provider == "codex" && cmd == "codex" {
+			for _, path := range codexDesktopAppBundlePaths() {
+				if agentExecutablePresent(path) {
+					return path, true
+				}
+			}
 		}
 	}
 	return "", false
@@ -976,18 +983,19 @@ var defaultAgentCommandNames = append([]string{
 }, agent.BuiltinRuntimeCommands()...)
 
 // codexDesktopAppBundlePaths returns candidate macOS app-bundle locations for
-// the bundled Codex CLI. OpenAI relocated the Desktop app from Codex.app to
-// ChatGPT.app (#5205). Candidates are ordered by install location first
-// (system /Applications before user ~/Applications); within each location the
-// new ChatGPT.app path is tried before the legacy Codex.app path, so updated
-// installs win while older installs still resolve.
+// the bundled Codex CLI. OpenAI first relocated the Desktop app from Codex.app
+// to ChatGPT.app (#5205), then moved the CLI into a nested CodexCLI.app. The
+// current nested path is tried before the former flat ChatGPT.app path while
+// both remain ahead of the legacy Codex.app path.
 var codexDesktopAppBundlePaths = func() []string {
 	paths := []string{
+		"/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
 		"/Applications/ChatGPT.app/Contents/Resources/codex",
 		"/Applications/Codex.app/Contents/Resources/codex",
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		paths = append(paths,
+			filepath.Join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"),
 			filepath.Join(home, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
 			filepath.Join(home, "Applications", "Codex.app", "Contents", "Resources", "codex"),
 		)

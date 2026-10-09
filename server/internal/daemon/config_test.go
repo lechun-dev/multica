@@ -1441,35 +1441,43 @@ func TestLoadConfig_UsesChatGPTAppBundleCodexPath(t *testing.T) {
 	}
 }
 
-func TestCodexDesktopAppBundlePaths_IncludesChatGPTAndLegacy(t *testing.T) {
+func TestCodexDesktopAppBundlePaths_IncludesCurrentFormerAndLegacy(t *testing.T) {
 	paths := codexDesktopAppBundlePaths()
-	var hasChatGPT, hasLegacy bool
+	var hasCurrentChatGPT, hasFormerChatGPT, hasLegacy bool
 	for _, p := range paths {
-		if strings.Contains(p, "ChatGPT.app") && strings.HasSuffix(filepath.ToSlash(p), "Contents/Resources/codex") {
-			hasChatGPT = true
+		slashPath := filepath.ToSlash(p)
+		if strings.Contains(p, "ChatGPT.app") && strings.HasSuffix(slashPath, "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex") {
+			hasCurrentChatGPT = true
 		}
-		if strings.Contains(p, "Codex.app") && strings.HasSuffix(filepath.ToSlash(p), "Contents/Resources/codex") {
+		if strings.Contains(p, "ChatGPT.app") && strings.HasSuffix(slashPath, "Contents/Resources/codex") {
+			hasFormerChatGPT = true
+		}
+		if strings.Contains(p, "Codex.app") && strings.HasSuffix(slashPath, "Contents/Resources/codex") {
 			hasLegacy = true
 		}
 	}
-	if !hasChatGPT {
-		t.Fatalf("codexDesktopAppBundlePaths missing ChatGPT.app entry: %#v", paths)
+	if !hasCurrentChatGPT {
+		t.Fatalf("codexDesktopAppBundlePaths missing current nested ChatGPT.app entry: %#v", paths)
+	}
+	if !hasFormerChatGPT {
+		t.Fatalf("codexDesktopAppBundlePaths missing former flat ChatGPT.app entry: %#v", paths)
 	}
 	if !hasLegacy {
 		t.Fatalf("codexDesktopAppBundlePaths missing legacy Codex.app entry: %#v", paths)
 	}
-	// New path must be preferred (listed before legacy).
-	chatgptIdx, legacyIdx := -1, -1
+	// The current nested path must be preferred over the former flat path.
+	currentIdx, formerIdx := -1, -1
 	for i, p := range paths {
-		if chatgptIdx < 0 && strings.Contains(p, "ChatGPT.app") {
-			chatgptIdx = i
+		slashPath := filepath.ToSlash(p)
+		if currentIdx < 0 && strings.Contains(p, "ChatGPT.app") && strings.Contains(slashPath, "/codex-cli/CodexCLI.app/") {
+			currentIdx = i
 		}
-		if legacyIdx < 0 && strings.Contains(p, "Codex.app") {
-			legacyIdx = i
+		if formerIdx < 0 && strings.Contains(p, "ChatGPT.app") && strings.HasSuffix(slashPath, "Contents/Resources/codex") {
+			formerIdx = i
 		}
 	}
-	if chatgptIdx < 0 || legacyIdx < 0 || chatgptIdx > legacyIdx {
-		t.Fatalf("expected ChatGPT.app before Codex.app, got indices chat=%d legacy=%d paths=%#v", chatgptIdx, legacyIdx, paths)
+	if currentIdx < 0 || formerIdx < 0 || currentIdx > formerIdx {
+		t.Fatalf("expected current nested ChatGPT.app path before former flat path, got indices current=%d former=%d paths=%#v", currentIdx, formerIdx, paths)
 	}
 }
 

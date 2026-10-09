@@ -290,6 +290,9 @@ func TestResolveAgentEntry_UninstalledLeavesEntryUnchanged(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-specific layout")
 	}
+	oldBundlePaths := codexDesktopAppBundlePaths
+	codexDesktopAppBundlePaths = func() []string { return nil }
+	t.Cleanup(func() { codexDesktopAppBundlePaths = oldBundlePaths })
 
 	root := t.TempDir()
 	stableBin := filepath.Join(root, "bin")
@@ -309,6 +312,66 @@ func TestResolveAgentEntry_UninstalledLeavesEntryUnchanged(t *testing.T) {
 	got, _ := d.resolveAgentEntry(context.Background(), "codex", entry)
 	if got.Path != pinned {
 		t.Fatalf("expected entry unchanged when binary is gone, got %q want %q", got.Path, pinned)
+	}
+}
+
+// TestResolveAgentEntry_SelfHealsToCodexDesktopBundle covers ChatGPT.app
+// updates that relocate the bundled CLI while a live daemon still has the old
+// flat bundle path pinned. PATH and the login shell deliberately cannot find
+// codex, so the macOS bundle fallback is the only possible repair.
+func TestResolveAgentEntry_SelfHealsToCodexDesktopBundle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable layout")
+	}
+
+	root := t.TempDir()
+	nestedCodex := filepath.Join(root, "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex")
+	writeExecStub(t, nestedCodex)
+
+	oldBundlePaths := codexDesktopAppBundlePaths
+	codexDesktopAppBundlePaths = func() []string { return []string{nestedCodex} }
+	t.Cleanup(func() { codexDesktopAppBundlePaths = oldBundlePaths })
+
+	origDetect := detectAgentVersion
+	detectAgentVersion = func(_ context.Context, runtimeCmd agent.Command) (string, error) {
+		if runtimeCmd.Path != nestedCodex {
+			t.Fatalf("version detection path = %q, want %q", runtimeCmd.Path, nestedCodex)
+		}
+		return "0.162.0", nil
+	}
+	t.Cleanup(func() { detectAgentVersion = origDetect })
+
+	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
+	t.Setenv("SHELL", filepath.Join(root, "fish"))
+
+	d := newSelfHealTestDaemon()
+	d.setAgentVersion("codex", "0.161.0")
+	staleFlatPath := filepath.Join(root, "old-ChatGPT.app", "Contents", "Resources", "codex")
+	entry := AgentEntry{Path: staleFlatPath, Command: "codex"}
+
+	got, version := d.resolveAgentEntry(context.Background(), "codex", entry)
+	if got.Path != nestedCodex {
+		t.Fatalf("self-heal path = %q, want nested ChatGPT.app CLI %q", got.Path, nestedCodex)
+	}
+	if version != "0.162.0" {
+		t.Fatalf("self-heal version = %q, want 0.162.0", version)
+	}
+}
+
+// An explicit MULTICA_CODEX_PATH is recorded as entry.Command. If that path
+// disappears, fail closed instead of silently switching to ChatGPT.app.
+func TestReresolveAgentCommand_ExplicitCodexPathDoesNotUseDesktopBundle(t *testing.T) {
+	root := t.TempDir()
+	nestedCodex := filepath.Join(root, "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex")
+	writeExecStub(t, nestedCodex)
+
+	oldBundlePaths := codexDesktopAppBundlePaths
+	codexDesktopAppBundlePaths = func() []string { return []string{nestedCodex} }
+	t.Cleanup(func() { codexDesktopAppBundlePaths = oldBundlePaths })
+
+	explicitMissing := filepath.Join(root, "operator-selected", "codex")
+	if got, ok := reresolveAgentCommand("codex", explicitMissing); ok {
+		t.Fatalf("explicit missing path unexpectedly fell back to %q", got)
 	}
 }
 

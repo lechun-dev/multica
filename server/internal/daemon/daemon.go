@@ -942,11 +942,12 @@ type healedAgent struct {
 //     the normal (never-healed) case: a live pinned binary is never
 //     second-guessed even if PATH now points elsewhere.
 //   - Pinned Path gone and no live heal -> re-resolve entry.Command once
-//     (preserving the ~/.multica/hooks exclusion and the login-shell fallback).
-//     Before adopting the re-resolved binary it is version-detected and run
-//     through the same minimum-version gate registration applies. This
-//     reproduces exactly what a daemon restart would resolve, so it is no less
-//     safe than the documented restart workaround — only automatic.
+//     (preserving the ~/.multica/hooks exclusion, login-shell fallback, and
+//     Codex Desktop bundle discovery). Before adopting the re-resolved binary
+//     it is version-detected and run through the same minimum-version gate
+//     registration applies. This reproduces exactly what a daemon restart
+//     would resolve, so it is no less safe than the documented restart
+//     workaround — only automatic.
 //   - Re-resolution fails, the candidate can't be version-detected, or it is
 //     below the minimum supported version -> entry is returned unchanged so the
 //     candidate is never launched and the downstream error still surfaces.
@@ -1131,7 +1132,7 @@ func (d *Daemon) healAgentPath(ctx context.Context, provider, command string) he
 		return healOutcome{adopted: cached}
 	}
 
-	newPath, found := reresolveAgentCommand(command)
+	newPath, found := reresolveAgentCommand(provider, command)
 	if !found {
 		return healOutcome{}
 	}
