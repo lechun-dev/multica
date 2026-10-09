@@ -295,22 +295,25 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     entries: [
       {
         version: "0.5.3",
-        date: "2026-09-21",
-        title: "统一任务权限与审批",
+        date: "2026-10-09",
+        title: "接入官方 DeepSeek Harness，统一任务权限",
         changes: [],
         features: [
           "任务权限统一按「可管理」判定：授权、撤权、审批口径一致，可编辑不再等于可管理。",
           "权限申请会送达该任务的每一位可管理者，只需处理一次，并可从收件箱通知直接打开。",
           "任务授权列表可以收回 @提及 带来的权限；收回后只有再次 @ 该成员才会恢复。",
+          "通过 ACP 接入官方 DeepSeek Harness App，无需自打包 App 或第三方 multica 插件，支持模型选择、带上下文续聊和取消。",
         ],
         improvements: [
           "工作区所有者是否自动拥有全部任务权限，由部署开关 PROJECT_OWNER_BYPASS_ENABLED 控制。",
           "「我的权限」按来源层级列出每条权限的出处：本任务、项目继承、父任务继承或工作区。",
           "项目管理员可以管理项目的授权。",
+          "复用官方 DSH Desktop 配置的 API 地址与密钥引用；实际密钥由官方 DSH 解析，不复制到 MissionOS 配置或日志。",
         ],
         fixes: [
           "定时与 Webhook 自动化恢复运行；删除工作区期间的任务更新不再卡住。",
           "删除带 @提及 的评论会一并收回它带来的权限；授权列表里的删除即时生效，无权限时说明原因而不是给出空弹窗。",
+          "DSH CLI 检测有明确超时，自动选择兼容命令或官方 App 自带启动入口，不修改系统 PATH，也不要求管理员权限。",
         ],
       },
       {

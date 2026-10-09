@@ -295,22 +295,25 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     entries: [
       {
         version: "0.5.3",
-        date: "2026-09-21",
-        title: "Unified task permissions and approvals",
+        date: "2026-10-09",
+        title: "Official DeepSeek Harness and unified task permissions",
         changes: [],
         features: [
           "Task access follows a single manage permission: granting, revoking and approving all agree, and edit never implies manage.",
           "Access requests reach every manager of a task, are decided exactly once, and open straight from the inbox notification.",
           "Access a mention granted can be withdrawn from the task access list; it returns only if the person is mentioned again.",
+          "Use the official DeepSeek Harness App through ACP without a custom App or third-party multica plugin, with model selection, contextual resume and cancellation.",
         ],
         improvements: [
           "The deployment switch PROJECT_OWNER_BYPASS_ENABLED controls whether a workspace owner keeps automatic access to every task.",
           "My access groups each permission by where it comes from: this task, the project, the parent task, or the workspace.",
           "A project manager can manage the project's access.",
+          "Reuse the official DSH Desktop API URL and credential reference; official DSH resolves the key without copying it into MissionOS configuration or logs.",
         ],
         fixes: [
           "Scheduled and webhook automations run again, and task updates no longer stall while a workspace is being deleted.",
           "Deleting a comment withdraws the access its mentions granted, removal in the access list applies immediately, and a missing permission is explained instead of rendering an empty dialog.",
+          "Bound DSH CLI checks and automatically select a compatible command or official bundled launcher without changing system PATH or requiring administrator access.",
         ],
       },
       {
