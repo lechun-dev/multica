@@ -294,6 +294,18 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.7",
+        date: "2026-10-10",
+        title: "Faster task search and unread counts",
+        changes: [],
+        features: [],
+        improvements: [
+          "Reduce repeated permission checks when searching tasks and loading groups by assignee.",
+          "Calculate unread badges more efficiently while preserving notification counts and the latest read state.",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.5.6",
         date: "2026-10-09",
         title: "Improve list and permission query caching",

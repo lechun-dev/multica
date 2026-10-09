@@ -270,6 +270,18 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.7",
+          date: "2026-10-10",
+          title: "タスク検索と未読件数の計算を高速化",
+          changes: [],
+          features: [],
+          improvements: [
+            "タスク検索と担当者別一覧で重複する権限チェックを削減しました。",
+            "通知件数と最新の既読状態のルールを維持しながら、未読バッジの計算を高速化しました。",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.5.6",
           date: "2026-10-09",
           title: "タスク一覧と権限照会のキャッシュを改善",

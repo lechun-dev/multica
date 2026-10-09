@@ -804,8 +804,12 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 		windowParam := nextArg(*creationWindowLimit)
 		issueWhereParts = append(issueWhereParts, issueWindowPredicate("i", wsParam, windowParam))
 	}
+	visibilityCTEs := ""
 	if projectUserParam != "" {
-		issueWhereParts = append(issueWhereParts, issueProjectVisibilityPredicateWithWorkspaceScope("i", wsParam, projectUserParam, includeWorkspaceOwned))
+		// 2026-10-10 coder(lq): Resolve task and direct-parent access once for
+		// the filtered search scope instead of repeating grants per text match.
+		visibilityCTEs = issueVisibilityCandidateCTEDefs(wsParam, projectUserParam, includeWorkspaceOwned, strings.Join(issueWhereParts, " AND ")) + ",\n"
+		issueWhereParts = append(issueWhereParts, "i.id IN (SELECT id FROM issue_auth_visible)")
 	}
 	issueWhere := strings.Join(issueWhereParts, " AND ")
 
@@ -1031,7 +1035,7 @@ func buildSearchQueryWithWorkspaceScope(phrase string, terms []string, queryNum 
 	JOIN issue i ON i.id = pc.issue_id AND i.workspace_id = %s
 	LEFT JOIN comment c ON c.id = pc.snippet_comment_id AND c.workspace_id = %s
 	ORDER BY pc.cancelled_rank, pc.relevance_rank, pc.status_rank, pc.updated_at DESC, pc.issue_id ASC`,
-		issueMatchesCTE,
+		visibilityCTEs+issueMatchesCTE,
 		commentMatchesCTE,
 		rankedCandidatesCTE,
 		pageCandidatesCTE,
@@ -2106,14 +2110,15 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
+	projectUserParam := ""
+	includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
 		userID := requestUserID(r)
 		if userID == "" {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		where = append(where, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", addArg(userID), includeWorkspaceOwned))
+		projectUserParam = addArg(userID)
 	}
 
 	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
@@ -2424,38 +2429,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
-	query := fmt.Sprintf(`
-WITH ranked AS (
-	SELECT
-		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
-		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.archived_at,
-		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
-		ROW_NUMBER() OVER (
-			PARTITION BY i.assignee_type, i.assignee_id
-			ORDER BY %s
-		) AS rn
-	FROM issue i
-	WHERE %s
-)
-SELECT
-	id, workspace_id, title, description, status, priority,
-	assignee_type, assignee_id, creator_type, creator_id,
-	parent_issue_id, position, start_date, due_date, created_at, updated_at, last_activity_at,
-	number, project_id, metadata, stage, properties, revision, archived_at, group_total
-FROM ranked
-WHERE rn > %s AND rn <= %s + %s
-ORDER BY
-	CASE assignee_type
-		WHEN 'member' THEN 0
-		WHEN 'agent' THEN 1
-		WHEN 'squad' THEN 2
-		ELSE 3
-	END,
-	assignee_type NULLS LAST,
-	assignee_id NULLS LAST,
-	rn`, intraGroupOrder, strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
+	query := groupedIssuePageSQL(strings.Join(where, " AND "), intraGroupOrder, offsetRef, limitRef, projectUserParam, includeWorkspaceOwned)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {

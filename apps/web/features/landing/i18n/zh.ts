@@ -294,6 +294,18 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.7",
+        date: "2026-10-10",
+        title: "优化任务搜索与未读统计",
+        changes: [],
+        features: [],
+        improvements: [
+          "减少任务搜索和按负责人分组查询中的重复权限计算。",
+          "加快未读角标统计，保留原有通知计数和最新已读状态规则。",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.5.6",
         date: "2026-10-09",
         title: "优化任务列表与权限查询缓存",

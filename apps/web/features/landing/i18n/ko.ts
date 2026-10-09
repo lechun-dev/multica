@@ -269,6 +269,18 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.7",
+          date: "2026-10-10",
+          title: "작업 검색과 읽지 않은 알림 집계 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "작업 검색과 담당자별 목록에서 반복되는 권한 확인을 줄였습니다.",
+            "알림 개수와 최신 읽음 상태 규칙을 유지하면서 읽지 않은 알림 배지 집계를 개선했습니다.",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.5.6",
           date: "2026-10-09",
           title: "작업 목록 및 권한 조회 캐시 개선",

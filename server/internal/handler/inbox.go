@@ -583,47 +583,15 @@ func (h *Handler) UnreadInboxSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) countUnreadInboxWithinWindow(ctx context.Context, workspaceID, recipientID pgtype.UUID, policy issueWindowPolicy, includeWorkspaceOwned bool) (int64, error) {
-	query := fmt.Sprintf(`SELECT COUNT(*)::bigint
-	FROM inbox_item i
-	WHERE i.workspace_id = $1
-	  AND i.recipient_type = 'member'
-	  AND i.recipient_id = $2
-	  AND i.read = false
-	  AND i.archived = false
-	  AND %s
-	  AND (i.issue_id IS NULL OR %s)`, inboxIssueNotArchivedPredicate("i"), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		query = fmt.Sprintf(`SELECT COUNT(*)::bigint
-		FROM inbox_item i
-		WHERE i.workspace_id = $1
-		  AND i.recipient_type = 'member'
-		  AND i.recipient_id = $2
-		  AND i.read = false
-		  AND i.archived = false
-		  AND %s
-		  AND %s
-		  AND (i.issue_id IS NULL OR %s)`, inboxIssueNotArchivedPredicate("i"), inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned), issueWindowIDPredicate("i.issue_id", "$1", "$3"))
-	}
+	query := unreadInboxCountSQL(true, h.ProjectAuth != nil && h.ProjectAuth.Enabled(), includeWorkspaceOwned)
 	var count int64
 	err := h.DB.QueryRow(ctx, query, workspaceID, recipientID, policy.limit).Scan(&count)
 	return count, err
 }
 
-// 2026-08-27 coder(lq): Keep unread badges consistent with the filtered inbox;
-// system notifications remain visible while issue notifications require the
-// recipient's project View permission.
 func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, workspaceID, recipientID pgtype.UUID, includeWorkspaceOwned bool) (int64, error) {
-	query := fmt.Sprintf(`SELECT COUNT(*)::bigint
-		FROM inbox_item i
-		WHERE i.workspace_id = $1
-		  AND i.recipient_type = 'member'
-		  AND i.recipient_id = $2
-		  AND i.read = false
-		  AND i.archived = false
-		  AND %s
-		  AND %s`, inboxIssueNotArchivedPredicate("i"), inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$2", includeWorkspaceOwned))
 	var count int64
-	err := h.DB.QueryRow(ctx, query, workspaceID, recipientID).Scan(&count)
+	err := h.DB.QueryRow(ctx, unreadInboxCountSQL(false, true, includeWorkspaceOwned), workspaceID, recipientID).Scan(&count)
 	return count, err
 }
 
@@ -632,32 +600,8 @@ func (h *Handler) countUnreadInboxWithinProjectPermissions(ctx context.Context, 
 // database round trip. Observe callers use the result only for telemetry; the
 // legacy response remains untouched.
 func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientID pgtype.UUID, workspaceIDs []pgtype.UUID, limits []int64, includeWorkspaceOwned bool) (map[pgtype.UUID]int64, error) {
-	visibility := ""
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		visibility = fmt.Sprintf(" AND %s", inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "policy.workspace_id", "$3", includeWorkspaceOwned))
-	}
-	query := fmt.Sprintf(`WITH policies AS (
-	SELECT workspace_id, issue_limit
-	FROM unnest($1::uuid[], $2::bigint[]) AS policy(workspace_id, issue_limit)
-)
-	SELECT policy.workspace_id, filtered.count
-	FROM policies policy
-	CROSS JOIN LATERAL (
-		SELECT COUNT(*)::bigint AS count
-		FROM (
-			SELECT DISTINCT ON (COALESCE(i.issue_id, i.id)) i.read
-			FROM inbox_item i
-			JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
-			WHERE i.workspace_id = policy.workspace_id
-			  AND i.recipient_type = 'member'
-			  AND i.recipient_id = $3
-			  AND i.archived = false
-			  AND %s
-			  AND (i.issue_id IS NULL OR %s)%s
-			ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC
-		) newest
-		WHERE newest.read = false
-	) filtered`, inboxIssueNotArchivedPredicate("i"), issueWindowIDPredicate("i.issue_id", "policy.workspace_id", "policy.issue_limit"), visibility)
+	query := unreadInboxWindowSummarySQL(h.ProjectAuth != nil && h.ProjectAuth.Enabled(), includeWorkspaceOwned)
+
 	rows, err := h.DB.Query(ctx, query, workspaceIDs, limits, recipientID)
 	if err != nil {
 		return nil, err
