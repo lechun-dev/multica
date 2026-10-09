@@ -16,7 +16,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/events"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestOrganizationReadCacheIsolationExpiryAndWorkspaceInvalidation(t *testing.T) {
@@ -355,6 +357,7 @@ func TestOrganizationReadCachePreloadTimeoutPreservesTableTransaction(t *testing
 	h.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
 	h.FrequentReadCache = nil
 	h.OrganizationReadCache = NewOrganizationReadCache(nil, t.Name())
+	h.OrganizationReadCache.Metrics = obsmetrics.NewReadCacheMetrics()
 	body := issueTableRowsRequest{Query: issueTableVisibilitySpec(), Group: issueTableGroupSpec{Kind: "none"}, Page: issueTablePageRequest{Limit: 50}}
 	request := issueTableVisibilityRequest(t, fixture.reader, fixture.ws, body)
 	response := runFrequentCache(h.CacheFrequentRead(h.ListIssueTableRows), request)
@@ -367,6 +370,44 @@ func TestOrganizationReadCachePreloadTimeoutPreservesTableTransaction(t *testing
 	}
 	if rows.Total != int64(fixture.expected) || delayed.loads.Load() != 1 {
 		t.Fatalf("total=%d want=%d preload calls=%d", rows.Total, fixture.expected, delayed.loads.Load())
+	}
+	if got := promtest.ToFloat64(h.OrganizationReadCache.Metrics.Fallbacks.WithLabelValues("organization", "table_rows", "load_timeout")); got != 1 {
+		t.Fatalf("preload timeout metric=%v want 1", got)
+	}
+}
+
+func TestOrganizationReadCacheMetricsDescribeHitsLoadsAndInvalidation(t *testing.T) {
+	c := NewOrganizationReadCache(nil, t.Name())
+	c.Metrics = obsmetrics.NewReadCacheMetrics()
+	ctx := context.WithValue(t.Context(), organizationReadScopeKey{}, &organizationReadScope{endpoint: "table_rows"})
+	loader := func(context.Context, string, string) ([]string, error) { return []string{"org"}, nil }
+	for range 2 {
+		if _, err := c.load(ctx, "ws", "reader", loader); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.Observe(events.Event{Type: "organization:updated", WorkspaceID: "ws"})
+	if _, err := c.load(ctx, "ws", "reader", loader); err != nil {
+		t.Fatal(err)
+	}
+	if got := promtest.ToFloat64(c.Metrics.Requests.WithLabelValues("organization", "table_rows", "hit")); got != 1 {
+		t.Fatalf("hit metric=%v want 1", got)
+	}
+	if got := promtest.ToFloat64(c.Metrics.Requests.WithLabelValues("organization", "table_rows", "miss")); got != 2 {
+		t.Fatalf("miss metric=%v want 2", got)
+	}
+	if got := promtest.ToFloat64(c.Metrics.Invalidations.WithLabelValues("organization", "workspace", "organization", "success")); got != 1 {
+		t.Fatalf("invalidation metric=%v want 1", got)
+	}
+	// 2026-10-09 coder(lq): Metadata outages expose the reason for bypassing the cache.
+	store := newFakeAgentMetricsCacheStore()
+	store.getErr = fmt.Errorf("redis unavailable")
+	c.cache.store = store
+	if _, err := c.load(ctx, "ws", "reader", loader); err == nil {
+		t.Fatal("outage did not bypass cache")
+	}
+	if got := promtest.ToFloat64(c.Metrics.Fallbacks.WithLabelValues("organization", "table_rows", "generation_unavailable")); got != 1 {
+		t.Fatalf("bypass reason metric=%v want 1", got)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
@@ -36,6 +37,7 @@ type FrequentReadCache struct {
 	prefix       string
 	loads        singleflight.Group
 	blockedUntil atomic.Int64
+	Metrics      *obsmetrics.ReadCacheMetrics
 }
 
 func NewFrequentReadCache(rdb redis.UniversalClient, namespace string) *FrequentReadCache {
@@ -61,7 +63,7 @@ func (c *FrequentReadCache) save(ctx context.Context, key, value string, ttl tim
 	return c.store.Set(ctx, key, value, ttl)
 }
 
-func (c *FrequentReadCache) generation(ctx context.Context) (string, error) {
+func (c *FrequentReadCache) generation(ctx context.Context, workspace ...string) (string, error) {
 	if time.Now().UnixNano() < c.blockedUntil.Load() {
 		return "", errors.New("read cache invalidation unavailable")
 	}
@@ -69,26 +71,85 @@ func (c *FrequentReadCache) generation(ctx context.Context) (string, error) {
 	if errors.Is(err, redis.Nil) {
 		return "", errors.New("read cache generation unavailable")
 	}
-	return value, err
+	if err != nil || len(workspace) == 0 {
+		return value, err
+	}
+	// 2026-10-09 coder(lq): Every scoped read also observes the global fallback
+	// generation, so unknown-scope mutations and missing metadata fail closed.
+	key := c.scopeGenerationKey(workspace[0])
+	scoped, err := c.read(ctx, key)
+	if errors.Is(err, redis.Nil) {
+		result := c.loads.DoChan(key+":initialize", func() (any, error) {
+			if current, err := c.read(ctx, key); !errors.Is(err, redis.Nil) {
+				return current, err
+			}
+			if err := c.save(ctx, key, uuid.NewString(), time.Minute); err != nil {
+				return "", err
+			}
+			return c.read(ctx, key)
+		})
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case result := <-result:
+			if result.Err != nil {
+				return "", result.Err
+			}
+			scoped = result.Val.(string)
+		}
+	} else if err != nil {
+		return "", err
+	}
+	return value + ":" + scoped, nil
+}
+
+func (c *FrequentReadCache) scopeGenerationKey(workspace string) string {
+	if workspace == "" {
+		return c.prefix + "scope:summary:generation"
+	}
+	return c.prefix + "scope:workspace:" + organizationCacheID(workspace) + ":generation"
 }
 
 func (c *FrequentReadCache) Invalidate() {
+	c.invalidate("", "manual")
+}
+
+// 2026-10-09 coder(lq): A workspace change clears that workspace's responses
+// and the cross-workspace summary. Other workspace reads retain their entries.
+func (c *FrequentReadCache) InvalidateWorkspace(workspace string) {
+	c.invalidate(workspace, "manual")
+}
+
+func (c *FrequentReadCache) invalidate(workspace, reason string) {
 	if c == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), frequentReadStoreTimeout)
-	defer cancel()
-	// A random generation avoids ABA after a Redis restart or counter eviction.
-	if err := c.store.Set(ctx, c.prefix+"generation", uuid.NewString(), 0); err != nil {
-		c.blockedUntil.Store(time.Now().Add(frequentReadTTL).UnixNano())
-		slog.Warn("frequent read cache invalidation failed; bypassing local cache", "error", err)
+	if workspace == "" {
+		c.writeGeneration(c.prefix+"generation", "global", reason, 0)
+		return
 	}
+	c.writeGeneration(c.scopeGenerationKey(workspace), "workspace", reason, time.Minute)
+	c.writeGeneration(c.scopeGenerationKey(""), "summary", reason, time.Minute)
+}
+
+func (c *FrequentReadCache) writeGeneration(key, scope, reason string, ttl time.Duration) {
+	c.writeCacheGeneration(key, scope, reason, ttl, "response")
+}
+
+func (c *FrequentReadCache) writeCacheGeneration(key, scope, reason string, ttl time.Duration, cacheKind string) {
+	result := "success"
+	if err := c.save(context.Background(), key, uuid.NewString(), ttl); err != nil {
+		result = "error"
+		c.blockedUntil.Store(time.Now().Add(frequentReadTTL).UnixNano())
+		slog.Warn("frequent read cache invalidation failed; bypassing local cache", "event", "read_cache_invalidation_failed", "error", err)
+	}
+	c.Metrics.RecordInvalidation(cacheKind, scope, reason, result)
 }
 
 func (c *FrequentReadCache) Observe(e events.Event) {
 	for _, prefix := range []string{"issue:", "project:", "member:", "workspace:", "inbox:", "organization:", "projectauth:", "permission:"} {
 		if strings.HasPrefix(e.Type, prefix) {
-			c.Invalidate()
+			c.invalidate(e.WorkspaceID, strings.TrimSuffix(prefix, ":"))
 			return
 		}
 	}
@@ -98,6 +159,22 @@ func (c *FrequentReadCache) Observe(e events.Event) {
 // and organization administration that may not publish domain events. The
 // POST list twins are reads and must not evict their own entries.
 func (c *FrequentReadCache) MutationMiddleware(next http.Handler) http.Handler {
+	return c.mutationMiddleware(next, func(r *http.Request) string {
+		if r.Header.Get("X-Workspace-Slug") != "" || r.URL.Query().Get("workspace_slug") != "" {
+			return ""
+		}
+		if workspace := r.Header.Get("X-Workspace-ID"); workspace != "" {
+			return workspace
+		}
+		return r.URL.Query().Get("workspace_id")
+	})
+}
+
+func (h *Handler) FrequentReadMutationMiddleware(next http.Handler) http.Handler {
+	return h.FrequentReadCache.mutationMiddleware(next, h.resolveWorkspaceID)
+}
+
+func (c *FrequentReadCache) mutationMiddleware(next http.Handler, resolve func(*http.Request) string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		relevant := false
@@ -106,18 +183,39 @@ func (c *FrequentReadCache) MutationMiddleware(next http.Handler) http.Handler {
 		}
 		readPost := r.Method == http.MethodPost && (strings.HasPrefix(path, "/api/issues/table/") || path == "/api/issues/query")
 		if relevant && !readPost && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			c.Invalidate()
-			defer c.Invalidate()
+			workspace := ""
+			parts := strings.Split(strings.Trim(path, "/"), "/")
+			if strings.HasPrefix(path, "/api/workspaces") {
+				// 2026-10-09 coder(lq): URL workspace wins over the selected workspace header.
+				if len(parts) >= 3 {
+					if id, err := uuid.Parse(parts[2]); err == nil {
+						workspace = id.String()
+					}
+				}
+			} else {
+				workspace = resolve(r)
+			}
+			c.invalidate(workspace, "mutation")
+			defer c.invalidate(workspace, "mutation")
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
 type frequentReadResponse struct {
-	Status  int         `json:"status"`
-	Body    []byte      `json:"body"`
-	Headers http.Header `json:"headers"`
+	Status    int         `json:"status"`
+	Body      []byte      `json:"body"`
+	Headers   http.Header `json:"headers"`
+	ExpiresAt time.Time   `json:"expires_at,omitempty"`
 }
+
+type readCacheMetricScopeKey struct{}
+type readCacheMetricScope struct {
+	metrics        *obsmetrics.ReadCacheMetrics
+	kind, endpoint string
+}
+
+type readGenerationFactory func(*http.Request, string) (func(context.Context) (string, error), error)
 
 type frequentReadWriter struct {
 	header http.Header
@@ -145,27 +243,81 @@ func writeFrequentRead(w http.ResponseWriter, response frequentReadResponse) {
 	_, _ = w.Write(response.Body)
 }
 
+func readCacheEndpoint(path string) string {
+	switch strings.TrimSuffix(path, "/") {
+	case "/api/issues":
+		return "issues"
+	case "/api/issues/query":
+		return "query"
+	case "/api/issues/table/rows":
+		return "table_rows"
+	case "/api/issues/table/groups":
+		return "table_groups"
+	case "/api/issues/table/facets":
+		return "table_facets"
+	case "/api/issues/child-progress":
+		return "child_progress"
+	case "/api/inbox/unread-count":
+		return "unread_count"
+	case "/api/inbox/unread-summary":
+		return "unread_summary"
+	default:
+		return "other"
+	}
+}
+
 func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
+	return h.cacheReadResponse(next, h.FrequentReadCache, "response", nil)
+}
+
+// 2026-10-09 coder(lq): Permission responses reuse the bounded response store,
+// but supply independent resource generations and never opt into organization caching.
+func (h *Handler) cacheReadResponse(next http.HandlerFunc, cache *FrequentReadCache, cacheKind string, prepareGeneration readGenerationFactory) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cache := h.FrequentReadCache
+		endpoint, lookupResult := readCacheEndpoint(r.URL.Path), "bypass"
+		if cacheKind == "permission" {
+			endpoint = permissionCacheEndpoint(r.URL.Path)
+		}
+		var metrics *obsmetrics.ReadCacheMetrics
+		if cache != nil {
+			metrics = cache.Metrics
+		}
+		defer func() { metrics.RecordLookup(cacheKind, endpoint, lookupResult) }()
 		user := requestUserID(r)
 		if user == "" || isMachineCredentialActor(r) || r.Header.Get("X-Agent-ID") != "" {
 			next(w, r)
 			return
 		}
-		if h.OrganizationReadCache != nil {
+		r = r.WithContext(context.WithValue(r.Context(), readCacheMetricScopeKey{}, readCacheMetricScope{metrics: metrics, kind: cacheKind, endpoint: endpoint}))
+		if cacheKind == "response" && h.OrganizationReadCache != nil {
 			// 2026-10-09 coder(lq): Preload through the original DB pool. A
 			// timeout inside a table snapshot transaction would abort that transaction.
 			repo := &projectAuthRepository{db: h.DB}
-			scope := &organizationReadScope{cache: h.OrganizationReadCache, userID: user, loader: repo.listUserOrganizations}
+			scope := &organizationReadScope{cache: h.OrganizationReadCache, userID: user, loader: repo.listUserOrganizations, endpoint: endpoint}
 			r = r.WithContext(context.WithValue(r.Context(), organizationReadScopeKey{}, scope))
 		}
 		if cache == nil {
 			next(w, r)
 			return
 		}
-		generation, err := cache.generation(r.Context())
+		workspace := organizationCacheID(h.resolveWorkspaceID(r))
+		cacheWorkspace := workspace
+		if r.URL.Path == "/api/inbox/unread-summary" {
+			cacheWorkspace = ""
+		}
+		readGeneration := func(ctx context.Context) (string, error) { return cache.generation(ctx, cacheWorkspace) }
+		if prepareGeneration != nil {
+			prepared, err := prepareGeneration(r, workspace)
+			if err != nil {
+				metrics.RecordFallback(cacheKind, endpoint, "generation_unavailable")
+				next(w, r)
+				return
+			}
+			readGeneration = prepared
+		}
+		generation, err := readGeneration(r.Context())
 		if err != nil {
+			metrics.RecordFallback(cacheKind, endpoint, "generation_unavailable")
 			next(w, r)
 			return
 		}
@@ -174,11 +326,11 @@ func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
 			body, err = io.ReadAll(io.LimitReader(r.Body, 2*1024*1024+1))
 			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 			if err != nil || len(body) > 2*1024*1024 {
+				metrics.RecordFallback(cacheKind, endpoint, "body_limit")
 				next(w, r)
 				return
 			}
 		}
-		workspace := h.resolveWorkspaceID(r)
 		phase := projectauth.RolloutOff
 		if h.ProjectAuth != nil {
 			phase = h.ProjectAuth.RolloutPhase()
@@ -188,42 +340,57 @@ func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
 		serveHit := func() bool {
 			payload, err := cache.read(r.Context(), key)
 			if err != nil {
+				if !errors.Is(err, redis.Nil) {
+					metrics.RecordFallback(cacheKind, endpoint, "store_error")
+				}
 				return false
 			}
 			var response frequentReadResponse
 			if json.Unmarshal([]byte(payload), &response) != nil || response.Status != http.StatusOK || !json.Valid(response.Body) {
+				metrics.RecordFallback(cacheKind, endpoint, "invalid_payload")
 				return false
 			}
-			current, err := cache.generation(r.Context())
-			if err != nil || current != generation {
+			if cacheKind == "permission" && (response.ExpiresAt.IsZero() || !time.Now().Before(response.ExpiresAt)) {
+				return false
+			}
+			current, err := readGeneration(r.Context())
+			if err != nil || current != generation || (cacheKind == "permission" && !time.Now().Before(response.ExpiresAt)) {
 				return false
 			}
 			writeFrequentRead(w, response)
 			return true
 		}
 		if serveHit() {
+			lookupResult = "hit"
 			return
 		}
+		lookupResult = "miss"
 		result := cache.loads.DoChan(key, func() (any, error) {
 			// 2026-10-09 coder(lq): Another fill can finish between the outer miss
 			// and singleflight entry; recheck before starting another database read.
 			if payload, err := cache.read(r.Context(), key); err == nil {
 				var response frequentReadResponse
-				if json.Unmarshal([]byte(payload), &response) == nil && response.Status == http.StatusOK && json.Valid(response.Body) {
+				if json.Unmarshal([]byte(payload), &response) == nil && response.Status == http.StatusOK && json.Valid(response.Body) && (cacheKind != "permission" || (!response.ExpiresAt.IsZero() && time.Now().Before(response.ExpiresAt))) {
 					return response, nil
 				}
 			}
 			started := time.Now()
+			loadResult := "error"
+			defer func() { metrics.ObserveLoad(cacheKind, endpoint, loadResult, time.Since(started)) }()
 			capture := &frequentReadWriter{header: make(http.Header)}
 			loadRequest := r.Clone(r.Context())
 			loadRequest.Body = io.NopCloser(bytes.NewReader(body))
 			next(capture, loadRequest)
 			if err := r.Context().Err(); err != nil {
+				loadResult = "canceled"
 				return nil, err
 			}
 			response := frequentReadResponse{Status: capture.status, Body: capture.body.Bytes(), Headers: capture.header.Clone()}
 			if response.Status == 0 {
 				response.Status = http.StatusOK
+			}
+			if response.Status == http.StatusOK {
+				loadResult = "success"
 			}
 			if response.Status != http.StatusOK || capture.header.Get("Set-Cookie") != "" {
 				return response, nil
@@ -232,11 +399,18 @@ func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
 			if r.URL.Path == "/api/inbox/unread-summary" {
 				expiryWorkspace = ""
 			}
+			expiryCheckedAt := time.Now()
 			ttl := h.frequentReadExpiry(r.Context(), expiryWorkspace, user, started)
-			current, err := cache.generation(r.Context())
+			if cacheKind == "permission" && ttl != 0 {
+				response.ExpiresAt = expiryCheckedAt.Add(ttl)
+				ttl = time.Until(response.ExpiresAt)
+			}
+			current, err := readGeneration(r.Context())
 			if err == nil && current == generation && ttl > 0 && len(response.Body) <= frequentReadMaxPayload && r.Context().Err() == nil {
 				if encoded, err := json.Marshal(response); err == nil {
-					_ = cache.save(r.Context(), key, string(encoded), ttl)
+					if err := cache.save(r.Context(), key, string(encoded), ttl); err != nil {
+						metrics.RecordFallback(cacheKind, endpoint, "store_error")
+					}
 				}
 			}
 			return response, nil
@@ -245,9 +419,19 @@ func (h *Handler) CacheFrequentRead(next http.HandlerFunc) http.HandlerFunc {
 		case <-r.Context().Done():
 			return
 		case loaded := <-result:
-			current, err := cache.generation(r.Context())
+			current, err := readGeneration(r.Context())
 			response, ok := loaded.Val.(frequentReadResponse)
-			if err != nil || current != generation || loaded.Err != nil || !ok {
+			expired := cacheKind == "permission" && !response.ExpiresAt.IsZero() && !time.Now().Before(response.ExpiresAt)
+			if err != nil || current != generation || loaded.Err != nil || !ok || expired {
+				reason := "generation_changed"
+				if err != nil {
+					reason = "generation_unavailable"
+				} else if loaded.Err != nil || !ok {
+					reason = "load_error"
+				} else if expired {
+					reason = "expired"
+				}
+				metrics.RecordFallback(cacheKind, endpoint, reason)
 				next(w, r)
 				return
 			}
@@ -268,7 +452,14 @@ func (h *Handler) frequentReadExpiry(ctx context.Context, workspace, user string
 			ttl = min(ttl, time.Until(time.Unix(0, expiry)))
 		}
 	}
-	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
+	// 2026-10-09 coder(lq): Independent permission reads evaluate timed
+	// grants even in off/shadow rollout; their expiry must not follow the
+	// list-overlay switch. Synthetic handlers without a DB have no grants.
+	permissionRead := false
+	if scope, ok := ctx.Value(readCacheMetricScopeKey{}).(readCacheMetricScope); ok {
+		permissionRead = scope.kind == "permission" && h.DB != nil
+	}
+	if !permissionRead && (h.ProjectAuth == nil || !h.ProjectAuth.Enabled()) {
 		return ttl
 	}
 	ctx, cancel := context.WithTimeout(ctx, frequentReadStoreTimeout)
@@ -282,6 +473,15 @@ func (h *Handler) frequentReadExpiry(ctx context.Context, workspace, user string
    JOIN member m ON m.workspace_id=g.workspace_id WHERE m.user_id=$1::uuid AND g.expires_at>$2`, user, started).Scan(&expiry)
 	}
 	if err != nil {
+		if scope, ok := ctx.Value(readCacheMetricScopeKey{}).(readCacheMetricScope); ok {
+			scope.metrics.RecordFallback(scope.kind, scope.endpoint, "expiry_lookup")
+		} else if h.FrequentReadCache != nil {
+			endpoint := "other"
+			if scope, ok := ctx.Value(organizationReadScopeKey{}).(*organizationReadScope); ok {
+				endpoint = scope.endpoint
+			}
+			h.FrequentReadCache.Metrics.RecordFallback("response", endpoint, "expiry_lookup")
+		}
 		return 0
 	}
 	if expiry.Valid {

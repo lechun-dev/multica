@@ -294,6 +294,20 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.6",
+        date: "2026-10-09",
+        title: "Improve list and permission query caching",
+        changes: [],
+        features: [],
+        improvements: [
+          "Keep list caches in other workspaces when one workspace changes, and refresh permission caches for the affected task or project.",
+          "Reuse recent permission query results for each user while keeping task details and write authorization live.",
+        ],
+        fixes: [
+          "Expired grants stop contributing cached access in off, shadow, and active permission modes.",
+        ],
+      },
+      {
         version: "0.5.5",
         date: "2026-10-09",
         title: "More reliable Codex selection and model catalogs",

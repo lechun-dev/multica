@@ -257,6 +257,7 @@ type Handler struct {
 	AgentMetricsCache            *AgentMetricsCache
 	FrequentReadCache            *FrequentReadCache
 	OrganizationReadCache        *OrganizationReadCache
+	PermissionReadCache          *PermissionReadCache
 	WebhookRateLimiter           WebhookRateLimiter
 	WebhookIPRateLimiter         WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter

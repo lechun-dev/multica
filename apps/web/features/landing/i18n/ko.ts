@@ -269,6 +269,20 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.6",
+          date: "2026-10-09",
+          title: "작업 목록 및 권한 조회 캐시 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "워크스페이스 변경 시 다른 워크스페이스의 목록 캐시를 유지하고, 관련 작업이나 프로젝트의 권한 캐시를 갱신합니다.",
+            "사용자별로 최근 권한 조회 결과를 재사용하며, 작업 상세 내용과 쓰기 권한은 계속 실시간으로 확인합니다.",
+          ],
+          fixes: [
+            "권한 설정이 꺼짐, 섀도 및 활성 모드일 때 캐시가 만료된 권한을 반환할 수 있는 문제를 수정했습니다.",
+          ],
+        },
+        {
           version: "0.5.5",
           date: "2026-10-09",
           title: "Codex 자동 선택 및 모델 목록 개선",

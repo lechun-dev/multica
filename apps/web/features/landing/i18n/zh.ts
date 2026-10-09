@@ -294,6 +294,20 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.6",
+        date: "2026-10-09",
+        title: "优化任务列表与权限查询缓存",
+        changes: [],
+        features: [],
+        improvements: [
+          "工作区内的变更保留其他工作区的列表缓存，权限变更按相关任务或项目刷新缓存。",
+          "按用户复用近期权限查询结果，任务详情内容和写操作权限校验仍实时读取。",
+        ],
+        fixes: [
+          "修复权限开关关闭、影子和启用模式下，缓存可能返回已过期授权的问题。",
+        ],
+      },
+      {
         version: "0.5.5",
         date: "2026-10-09",
         title: "改进 Codex 自动选择与模型列表",

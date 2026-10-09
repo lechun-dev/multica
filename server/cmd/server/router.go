@@ -217,6 +217,7 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 type RouterOptions struct {
 	HTTPMetrics         *obsmetrics.HTTPMetrics
 	BusinessMetrics     *obsmetrics.BusinessMetrics
+	ReadCacheMetrics    *obsmetrics.ReadCacheMetrics
 	ChannelLeaseMetrics *obsmetrics.ChannelLeaseMetrics
 	// ChannelLeaseRedis is a dedicated non-blocking Redis client/pool. It is
 	// required only when CHANNEL_WS_LEASE_BACKEND=redis.
@@ -1350,9 +1351,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 	h.AgentMetricsCache = handler.NewAgentMetricsCache(rdb)
 	h.FrequentReadCache = handler.NewFrequentReadCache(rdb, signupConfig.PublicURL)
+	h.FrequentReadCache.Metrics = opts.ReadCacheMetrics
 	bus.SubscribeAll(h.FrequentReadCache.Observe)
 	h.OrganizationReadCache = handler.NewOrganizationReadCache(rdb, signupConfig.PublicURL)
+	h.OrganizationReadCache.Metrics = opts.ReadCacheMetrics
 	bus.SubscribeAll(h.OrganizationReadCache.Observe)
+	h.PermissionReadCache = handler.NewPermissionReadCache(rdb, signupConfig.PublicURL)
+	h.PermissionReadCache.SetMetrics(opts.ReadCacheMetrics)
+	bus.SubscribeAll(h.PermissionReadCache.Observe)
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
 	// Fleet. Returns nil when no Cloud URL is configured — the Auth /
@@ -1631,7 +1637,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier, cfSigner))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
-		r.Use(h.FrequentReadCache.MutationMiddleware)
+		r.Use(h.FrequentReadMutationMiddleware)
+		r.Use(h.PermissionReadMutationMiddleware)
 
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
@@ -2004,14 +2011,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Use(middleware.RequireWorkspaceMember(queries))
 			r.Get("/api/project-permissions/report", h.ListPermissionReport)
 			r.Route("/api/project-permission-roles", func(r chi.Router) {
-				r.Get("/", h.ListProjectPermissionRoles)
+				r.Get("/", h.CachePermissionRead(h.ListProjectPermissionRoles))
 				r.Post("/", h.CreateProjectPermissionRole)
 				r.Route("/{key}", func(r chi.Router) {
 					r.Patch("/", h.UpdateProjectPermissionRole)
 					r.Delete("/", h.DeleteProjectPermissionRole)
 				})
 			})
-			r.Get("/api/task-permission-roles", h.ListTaskPermissionRoles)
+			r.Get("/api/task-permission-roles", h.CachePermissionRead(h.ListTaskPermissionRoles))
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
@@ -2038,16 +2045,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/batch-delete", h.BatchDeleteIssues)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetIssue)
-					r.Get("/effective-access", h.GetIssueEffectiveAccess)
+					r.Get("/effective-access", h.CachePermissionRead(h.GetIssueEffectiveAccess))
 					r.Post("/access-requests", h.CreateIssueAccessRequest)
 					r.Get("/access-requests", h.ListIssueAccessRequests)
 					r.Post("/access-requests/{requestID}/review", h.ReviewIssueAccessRequest)
 					r.Post("/access-requests/{requestID}/cancel", h.CancelIssueAccessRequest)
-					r.Get("/access-control", h.GetIssueAccessControl)
+					r.Get("/access-control", h.CachePermissionRead(h.GetIssueAccessControl))
 					r.Post("/access-control/preview", h.PreviewIssueAccessControl)
 					r.Patch("/access-control", h.PatchIssueAccessControl)
 					r.Post("/access-control/revoke-mention", h.RevokeIssueMentionAccess)
-					r.Get("/access-grants", h.ListIssueAccessGrants)
+					r.Get("/access-grants", h.CachePermissionRead(h.ListIssueAccessGrants))
 					r.Post("/access-grants", h.CreateIssueAccessGrant)
 					r.Delete("/access-grants", h.RevokeIssueAccessGrant)
 					r.Put("/", h.UpdateIssue)
@@ -2148,7 +2155,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/", h.CreateProject)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetProject)
-					r.Get("/access-grants", h.ListProjectAccessGrants)
+					r.Get("/access-grants", h.CachePermissionRead(h.ListProjectAccessGrants))
 					r.Post("/access-grants", h.CreateProjectAccessGrant)
 					r.Delete("/access-grants", h.RevokeProjectAccessGrant)
 					r.Put("/", h.UpdateProject)

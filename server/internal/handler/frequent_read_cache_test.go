@@ -2,21 +2,26 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func frequentCacheRequest(user, workspace, query, body string) *http.Request {
@@ -61,7 +66,7 @@ func TestFrequentReadCacheIsolationTTLAndInvalidation(t *testing.T) {
 	store := cache.store.(*memoryFrequentReadStore)
 	store.mu.Lock()
 	for key, entry := range store.values {
-		if entry.expires.IsZero() {
+		if entry.expires.IsZero() || strings.HasSuffix(key, "generation") {
 			continue
 		}
 		remaining := time.Until(entry.expires)
@@ -220,8 +225,8 @@ func TestFrequentReadCacheCapsTTLAtGrantExpiry(t *testing.T) {
 	}
 	store := cache.store.(*memoryFrequentReadStore)
 	store.mu.Lock()
-	for _, entry := range store.values {
-		if !entry.expires.IsZero() && time.Until(entry.expires) > 3*time.Second {
+	for key, entry := range store.values {
+		if !entry.expires.IsZero() && !strings.HasSuffix(key, "generation") && time.Until(entry.expires) > 3*time.Second {
 			t.Fatal("cached beyond grant expiry")
 		}
 	}
@@ -312,5 +317,168 @@ func TestFrequentReadCacheDatabaseExpiryIncludesOtherWorkspaces(t *testing.T) {
 	ttl := h.frequentReadExpiry(t.Context(), "", reader, time.Now())
 	if ttl <= 0 || ttl > 3*time.Second {
 		t.Fatalf("summary grant expiry TTL=%v want (0,3s]", ttl)
+	}
+}
+
+// 2026-10-09 coder(lq): A mutation on another API node must clear the affected
+// workspace and account summary while retaining unrelated workspace responses.
+func TestFrequentReadCacheWorkspaceIsolationAndSummary(t *testing.T) {
+	a, b := NewFrequentReadCache(nil, t.Name()), NewFrequentReadCache(nil, t.Name())
+	b.store = a.store
+	b.Metrics = obsmetrics.NewReadCacheMetrics()
+	h := &Handler{FrequentReadCache: b}
+	calls := map[string]int{}
+	cached := h.CacheFrequentRead(func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Path + organizationCacheID(r.Header.Get("X-Workspace-ID"))
+		calls[key]++
+		fmt.Fprintf(w, `{"load":%d}`, calls[key])
+	})
+	workspace := uuid.NewString()
+	read := func(path, ws string) string {
+		t.Helper()
+		req := frequentCacheRequest("reader", ws, "", `{}`)
+		req.URL.Path = path
+		return runFrequentCache(cached, req).Body.String()
+	}
+	for range 2 {
+		read("/api/issues/table/rows", workspace)
+		read("/api/issues/table/rows", "other-workspace")
+		read("/api/inbox/unread-summary", "other-workspace")
+	}
+	a.Observe(events.Event{Type: "issue:updated", WorkspaceID: workspace})
+	if got := read("/api/issues/table/rows", strings.ToUpper(workspace)); got != `{"load":2}` {
+		t.Fatalf("uppercase workspace returned old response: %s", got)
+	}
+	if got := read("/api/issues/table/rows", workspace); got != `{"load":2}` {
+		t.Fatalf("canonical UUID did not reuse fresh uppercase response: %s", got)
+	}
+	if got := read("/api/issues/table/rows", "other-workspace"); got != `{"load":1}` {
+		t.Fatalf("other workspace was evicted: %s", got)
+	}
+	if got := read("/api/inbox/unread-summary", "other-workspace"); got != `{"load":2}` {
+		t.Fatalf("cross-workspace summary survived mutation: %s", got)
+	}
+	a.Observe(events.Event{Type: "permission:updated"})
+	if got := read("/api/issues/table/rows", "other-workspace"); got != `{"load":2}` {
+		t.Fatalf("unknown-scope permission mutation did not clear all responses: %s", got)
+	}
+	if got := promtest.ToFloat64(b.Metrics.Requests.WithLabelValues("response", "table_rows", "hit")); got != 4 {
+		t.Fatalf("table hit metric=%v want 4", got)
+	}
+}
+
+func TestFrequentReadCacheMutationUsesURLWorkspaceAndReadPosts(t *testing.T) {
+	c := NewFrequentReadCache(nil, t.Name())
+	c.Metrics = obsmetrics.NewReadCacheMetrics()
+	workspace, selected := uuid.NewString(), uuid.NewString()
+	version := func(ws string) string {
+		t.Helper()
+		v, err := c.generation(t.Context(), ws)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before, other, summary := version(workspace), version(selected), version("")
+	during := ""
+	mutate := c.MutationMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { during = version(workspace) }))
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspace+"/projectauth/organizations/import", nil)
+	req.Header.Set("X-Workspace-ID", selected)
+	mutate.ServeHTTP(httptest.NewRecorder(), req)
+	if during == before || version(workspace) == during || version(selected) != other || version("") == summary {
+		t.Fatal("mutation scope or before/after invalidation incorrect")
+	}
+	if got := promtest.ToFloat64(c.Metrics.Invalidations.WithLabelValues("response", "workspace", "mutation", "success")); got != 2 {
+		t.Fatalf("workspace invalidation metric=%v want 2", got)
+	}
+	before = version(workspace)
+	for _, path := range []string{"/api/issues/query", "/api/issues/table/rows", "/api/issues/table/groups", "/api/issues/table/facets"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("X-Workspace-ID", workspace)
+		mutate.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if version(workspace) != before {
+		t.Fatal("read POST invalidated cache")
+	}
+	// 2026-10-09 coder(lq): Unresolved URL scopes require global invalidation.
+	mutate.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPatch, "/api/workspaces/unknown", nil))
+	if version(selected) == other {
+		t.Fatal("unknown URL scope did not trigger global invalidation")
+	}
+}
+
+func TestFrequentReadCacheScopedGenerationEvictionAndLateFill(t *testing.T) {
+	c := NewFrequentReadCache(nil, t.Name())
+	h := &Handler{FrequentReadCache: c}
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	cached := h.CacheFrequentRead(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			close(started)
+			<-release
+		}
+		fmt.Fprintf(w, `{"load":%d}`, n)
+	})
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- runFrequentCache(cached, frequentCacheRequest("reader", "ws", "", `{}`)) }()
+	<-started
+	c.InvalidateWorkspace("ws")
+	close(release)
+	if got := (<-done).Body.String(); got != `{"load":2}` {
+		t.Fatalf("accepted stale scoped fill: %s", got)
+	}
+	request := func() { runFrequentCache(cached, frequentCacheRequest("reader", "ws", "", `{}`)) }
+	request()
+	request()
+	store := c.store.(*memoryFrequentReadStore)
+	store.mu.Lock()
+	delete(store.values, c.scopeGenerationKey("ws"))
+	store.mu.Unlock()
+	request()
+	if calls.Load() != 4 {
+		t.Fatalf("evicted generation revived stale response: calls=%d", calls.Load())
+	}
+}
+
+// 2026-10-09 coder(lq): Revoking real organization access must refresh both
+// cache layers and match the uncached permission-filtered table response.
+func TestFrequentReadCacheDatabaseOrganizationRevocation(t *testing.T) {
+	fixture := newIssueTableVisibilityFixture(t)
+	h := *testHandler
+	h.ProjectAuth = projectauth.New(newProjectAuthRepository(testPool), true)
+	h.FrequentReadCache = NewFrequentReadCache(nil, t.Name())
+	h.OrganizationReadCache = NewOrganizationReadCache(nil, t.Name())
+	body := issueTableRowsRequest{Query: issueTableVisibilitySpec(), Group: issueTableGroupSpec{Kind: "none"}, Page: issueTablePageRequest{Limit: 50}}
+	read := func(cached bool) issueTableRowsResponse {
+		t.Helper()
+		handler := h.ListIssueTableRows
+		if cached {
+			handler = h.CacheFrequentRead(handler)
+		}
+		response := runFrequentCache(handler, issueTableVisibilityRequest(t, fixture.reader, fixture.ws, body))
+		if response.Code != http.StatusOK {
+			t.Fatalf("rows status=%d body=%s", response.Code, response.Body.String())
+		}
+		var rows issueTableRowsResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	before := read(true)
+	if before.Total != int64(fixture.expected) {
+		t.Fatalf("warm total=%d want %d", before.Total, fixture.expected)
+	}
+	fixture.fx.Exec(t, "UPDATE projectauth_organizations SET status='disabled' WHERE workspace_id=$1", fixture.ws)
+	if cached := read(true); !reflect.DeepEqual(cached, before) {
+		t.Fatal("warm cache fixture did not reuse response")
+	}
+	event := events.Event{Type: "organization:updated", WorkspaceID: fixture.ws}
+	h.FrequentReadCache.Observe(event)
+	h.OrganizationReadCache.Observe(event)
+	actual, live := read(true), read(false)
+	if actual.Total >= before.Total || !reflect.DeepEqual(actual, live) {
+		t.Fatalf("revocation drift: before=%d cached=%d live=%d", before.Total, actual.Total, live.Total)
 	}
 }
