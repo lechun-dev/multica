@@ -294,6 +294,20 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.5",
+        date: "2026-10-09",
+        title: "More reliable Codex selection and model catalogs",
+        changes: [],
+        features: [],
+        improvements: [
+          "Prefer the Codex CLI bundled with ChatGPT.app during automatic discovery while preserving former app paths and PATH installations.",
+          "Try other available installations when an automatically discovered bundle fails its version probe or minimum-version check; explicit paths remain authoritative.",
+        ],
+        fixes: [
+          "Use workspace configuration or cached catalogs when opening model pickers, without waiting for live discovery; configured models remain selectable.",
+        ],
+      },
+      {
         version: "0.5.4",
         date: "2026-10-09",
         title: "Faster task lists and more reliable Codex discovery",

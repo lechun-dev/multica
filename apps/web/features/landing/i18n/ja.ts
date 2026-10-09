@@ -270,6 +270,20 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.5",
+          date: "2026-10-09",
+          title: "Codex の自動選択とモデル一覧の改善",
+          changes: [],
+          features: [],
+          improvements: [
+            "Codex の自動検出では ChatGPT.app 内蔵 CLI を優先し、旧アプリのパスと PATH 上のインストールにも引き続き対応します。",
+            "自動検出した内蔵 CLI のバージョン確認に失敗した場合や最低バージョンを満たさない場合は、ほかのインストールを試します。明示的に指定したパスは引き続き優先されます。",
+          ],
+          fixes: [
+            "モデル選択時はリアルタイムの検出を待たずにワークスペース設定やキャッシュ済み一覧を利用でき、設定済みモデルを選択できます。",
+          ],
+        },
+        {
           version: "0.5.4",
           date: "2026-10-09",
           title: "タスク一覧の高速化と Codex 検出の改善",

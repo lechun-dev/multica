@@ -294,6 +294,20 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.5",
+        date: "2026-10-09",
+        title: "改进 Codex 自动选择与模型列表",
+        changes: [],
+        features: [],
+        improvements: [
+          "自动检测 Codex 时优先使用 ChatGPT.app 内置 CLI，并继续兼容旧应用路径和 PATH 安装。",
+          "自动发现的内置 CLI 运行失败、版本无法识别或低于最低要求时，尝试其他可用安装；手动指定的路径保持优先。",
+        ],
+        fixes: [
+          "打开模型选择器时可先使用工作区配置或缓存目录，避免等待实时模型发现；已配置模型保持可选。",
+        ],
+      },
+      {
         version: "0.5.4",
         date: "2026-10-09",
         title: "优化任务列表性能与 Codex 检测",

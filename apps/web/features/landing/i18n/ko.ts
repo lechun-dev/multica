@@ -269,6 +269,20 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.5",
+          date: "2026-10-09",
+          title: "Codex 자동 선택 및 모델 목록 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "Codex 자동 검색 시 ChatGPT.app에 포함된 CLI를 우선하며, 이전 앱 경로와 PATH 설치도 계속 지원합니다.",
+            "자동으로 찾은 내장 CLI의 버전 확인에 실패하거나 최소 버전을 충족하지 못하면 다른 설치를 시도합니다. 직접 지정한 경로는 계속 우선합니다.",
+          ],
+          fixes: [
+            "모델 선택기를 열 때 실시간 검색을 기다리지 않고 워크스페이스 설정이나 캐시된 목록을 사용할 수 있으며, 설정된 모델은 계속 선택할 수 있습니다.",
+          ],
+        },
+        {
           version: "0.5.4",
           date: "2026-10-09",
           title: "태스크 목록 성능과 Codex 감지 개선",
