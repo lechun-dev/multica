@@ -294,6 +294,21 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.4",
+        date: "2026-10-09",
+        title: "优化任务列表性能与 Codex 检测",
+        changes: [],
+        features: [],
+        improvements: [
+          "减少任务列表、表格统计和子任务进度查询中的重复权限计算。",
+          "用户列表和未读统计结果最多缓存 15 秒；相关接口更新会使结果缓存失效，组织变更会使组织成员关系缓存失效。",
+          "任务领取和写操作仍实时校验权限，结果缓存不会超过组织缓存和限时授权的到期时间。",
+        ],
+        fixes: [
+          "识别桌面应用升级后迁移的内置 Codex 路径，让运行时检测能够恢复。",
+        ],
+      },
+      {
         version: "0.5.3",
         date: "2026-10-09",
         title: "接入官方 DeepSeek Harness，统一任务权限",
