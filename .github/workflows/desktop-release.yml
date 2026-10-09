@@ -1,4 +1,5 @@
 name: Desktop release
+run-name: Desktop release ${{ inputs.tag }}
 
 # 2026-09-21 coder(lq): Publish desktop installers only after an explicit
 # manual selection of an existing release tag.
@@ -93,8 +94,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: server/go.mod
+          # 2026-10-09 coder(lq): Rebuild tagged sources with patched Go, not the module's minimum patch.
+          go-version: "1.26.x"
+          check-latest: true
           cache-dependency-path: server/go.sum
+
+      - name: Scan Go vulnerabilities
+        working-directory: server
+        run: go tool govulncheck ./...
 
       - name: Install rpmbuild
         if: matrix.platform == 'linux'

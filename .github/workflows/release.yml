@@ -1,6 +1,13 @@
 name: Release
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable tag to publish or rebuild (keep Use workflow from on main)
+        required: true
+        type: string
   push:
     tags:
       # GitHub Actions uses glob patterns here, not regex. Match versioned
@@ -12,23 +19,41 @@ permissions:
   contents: write
   packages: write
 
+# 2026-10-09 coder(lq): Recover a missed push event without rewriting an immutable release tag.
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     outputs:
       tag_name: ${{ steps.release_meta.outputs.tag_name }}
       is_stable: ${{ steps.release_meta.outputs.is_stable }}
+      commit_sha: ${{ steps.release_meta.outputs.commit_sha }}
+      short_sha: ${{ steps.release_meta.outputs.short_sha }}
     steps:
-      - name: Checkout
+      - name: Check out release policy
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
 
       - name: Validate tag name
         id: release_meta
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" && "$GITHUB_REF_TYPE" != "tag" ]]; then
+            echo "::error::Automatic releases require a tag push."
+            exit 1
+          fi
           echo "Triggered by tag: $tag"
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Release tags must look like vX.Y.Z or vX.Y.Z-suffix; got '$tag'."
@@ -38,6 +63,17 @@ jobs:
             echo "::error::Refusing to release from dirty tag '$tag'."
             exit 1
           fi
+          if ! git show-ref --verify --quiet "refs/tags/$tag"; then
+            echo "::error::Release recovery requires an existing tag."
+            exit 1
+          fi
+          commit_sha=$(git rev-parse --verify "refs/tags/$tag^{commit}")
+          if [[ "$tag" != *-* ]] && ! git merge-base --is-ancestor "$commit_sha" "refs/remotes/origin/$DEFAULT_BRANCH"; then
+            echo "::error::Stable releases must originate from the default branch."
+            exit 1
+          fi
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${commit_sha:0:7}" >> "$GITHUB_OUTPUT"
           echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
           if [[ "$tag" == *-* ]]; then
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
@@ -46,7 +82,13 @@ jobs:
           fi
 
       - name: Require matching changelog entry
-        run: node scripts/check-release-changelog.mjs "$GITHUB_REF_NAME"
+        run: node scripts/check-release-changelog.mjs "$RELEASE_TAG" --allow-existing-prerelease
+
+      - name: Check out verified release commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.release_meta.outputs.commit_sha }}
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -69,13 +111,13 @@ jobs:
       - name: Scan Go vulnerabilities
         # Fail closed unless an administrator scopes the documented emergency
         # override to this exact tag. See .github/RELEASING.md.
-        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG != github.ref_name }}
+        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG != env.RELEASE_TAG }}
         working-directory: server
         run: go tool govulncheck ./...
 
       - name: Record emergency vulnerability-scan bypass
-        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG == github.ref_name }}
-        run: echo "::warning::govulncheck was explicitly skipped for ${GITHUB_REF_NAME}; see .github/RELEASING.md"
+        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG == env.RELEASE_TAG }}
+        run: echo "::warning::govulncheck was explicitly skipped for ${RELEASE_TAG}; see .github/RELEASING.md"
 
   release:
     needs: verify
@@ -90,6 +132,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
           fetch-depth: 0
 
       - name: Setup Go
@@ -122,13 +165,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node scripts/generate-release-notes.mjs "$GITHUB_REF_NAME" "$RUNNER_TEMP/release-notes.md"
+          node scripts/generate-release-notes.mjs "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"
           # 2026-09-14 coder(lq): GoReleaser may create the Release before the
           # desktop workflow. Normalize the final body from the same complete
           # stable range used by the desktop publisher.
-          gh release edit "$GITHUB_REF_NAME" \
+          gh release edit "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "MissionOS Lechun $GITHUB_REF_NAME" \
+            --title "MissionOS Lechun $RELEASE_TAG" \
             --notes-file "$RUNNER_TEMP/release-notes.md" \
             --latest
 
@@ -155,6 +198,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
 
       - name: Compute backend image labels
         id: meta
@@ -162,6 +207,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/multica-backend
           labels: |
+            org.opencontainers.image.revision=${{ needs.verify.outputs.commit_sha }}
             org.opencontainers.image.title=Multica Backend
             org.opencontainers.image.description=Multica self-hosted backend
 
@@ -188,7 +234,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=release-backend-${{ env.PLATFORM_PAIR }}
           build-args: |
             VERSION=${{ needs.verify.outputs.tag_name }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.verify.outputs.commit_sha }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/multica-backend,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -209,7 +255,7 @@ jobs:
     needs: [verify, docker-backend-build]
     runs-on: ubuntu-latest
     concurrency:
-      group: release-docker-backend-${{ github.ref }}
+      group: release-docker-backend-${{ needs.verify.outputs.tag_name }}
       cancel-in-progress: true
     steps:
       - name: Download digests
@@ -232,7 +278,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ needs.verify.outputs.is_stable == 'true' }}
             type=raw,value=${{ needs.verify.outputs.tag_name }}
-            type=sha,prefix=sha-
+            type=raw,value=sha-${{ needs.verify.outputs.short_sha }}
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -272,6 +318,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
 
       - name: Compute web image labels
         id: meta
@@ -279,6 +327,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/multica-web
           labels: |
+            org.opencontainers.image.revision=${{ needs.verify.outputs.commit_sha }}
             org.opencontainers.image.title=Multica Web
             org.opencontainers.image.description=Multica self-hosted web frontend
 
@@ -327,7 +376,7 @@ jobs:
     needs: [verify, docker-web-build]
     runs-on: ubuntu-latest
     concurrency:
-      group: release-docker-web-${{ github.ref }}
+      group: release-docker-web-${{ needs.verify.outputs.tag_name }}
       cancel-in-progress: true
     steps:
       - name: Download digests
@@ -350,7 +399,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ needs.verify.outputs.is_stable == 'true' }}
             type=raw,value=${{ needs.verify.outputs.tag_name }}
-            type=sha,prefix=sha-
+            type=raw,value=sha-${{ needs.verify.outputs.short_sha }}
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -376,7 +425,7 @@ jobs:
     if: github.repository_owner == 'multica-ai'
     runs-on: ubuntu-latest
     concurrency:
-      group: release-helm-chart-${{ github.ref }}
+      group: release-helm-chart-${{ needs.verify.outputs.tag_name }}
       cancel-in-progress: true
     env:
       CHART_DIR: deploy/helm/multica
@@ -384,6 +433,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
@@ -418,7 +469,7 @@ jobs:
   # can be signed + notarized with Apple Developer credentials that are
   # not (yet) wired into CI.
   desktop:
-    needs: release
+    needs: [verify, release]
     strategy:
       fail-fast: false
       matrix:
@@ -432,6 +483,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
           fetch-depth: 0
 
       - name: Install rpmbuild (Linux)

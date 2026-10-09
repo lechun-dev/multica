@@ -3,9 +3,21 @@
 ## Normal release
 
 Release from a reviewed commit on `main` by creating and pushing a new semantic
-version tag such as `v0.18.4`. The Release workflow intentionally has no manual
-trigger: a tag push is the only event that can publish binaries, Homebrew
-formulae, and container images.
+version tag such as `v0.18.4`. A tag push normally starts the Release workflow
+that publishes binaries, Homebrew formulae, and container images. If the push
+event was missed, run **Release** from `main` and enter the existing tag in
+`tag`; do not delete, move, or recreate the tag. Recovery uses the current
+release policy, resolves the exact tagged commit, and runs the same tests and
+vulnerability gate before any publishing. A stable tag must be contained in
+the default branch. All builds, version metadata, and image labels use the
+verified tag and commit, not the workflow's `main` ref.
+
+Private macOS/Windows installers use the separate **Desktop release** workflow.
+Run it from `main` with the same existing tag; pushing a tag does not start it.
+It scans the tagged source with the latest Go 1.26 patch before packaging and
+preserves signing/notarization checks. Starting a workflow is not confirmation
+that its assets or images are available; wait for the publishing jobs before
+running a deployment.
 
 Before creating the tag, add the same base version to the changelog in all four
 locale files under `apps/web/features/landing/i18n/`. For example, the stable
