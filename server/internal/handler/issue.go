@@ -1538,6 +1538,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 
 	// Build dynamic SQL — same approach as ListGroupedIssues.
 	visibilityCTEs := ""
+	visibilityUserRef := ""
 	where := []string{"i.workspace_id = $1"}
 	where = appendIssueArchivePredicate(where, archiveState, "i")
 	args := []any{wsUUID}
@@ -1551,18 +1552,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return
 		}
-		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
-		visibilityCTEs = issueVisibilityCTEs("$1", addArg(userID), includeWorkspaceOwned)
-		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
-	}
-	if sortByStatus {
-		var err error
-		sortCol, err = h.issueStatusSortExpression(r.Context(), wsUUID, addArg)
-		if err != nil {
-			slog.Warn("resolve status sort failed", append(logger.RequestAttrs(r), "error", err)...)
-			writeError(w, http.StatusInternalServerError, "failed to resolve sort")
-			return
-		}
+		visibilityUserRef = addArg(userID)
 	}
 
 	if len(statusCategoriesFilter) > 0 {
@@ -1731,7 +1721,13 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
 	}
 
+	if visibilityUserRef != "" {
+		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
+		visibilityCTEs = "WITH " + issueVisibilityCandidateCTEDefs("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "))
+		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
+	}
 	whereSql := strings.Join(where, " AND ")
+	filterArgCount := len(args)
 
 	// Build ORDER BY clause.
 	// Count queries use only filter parameters. Sort-only CASE parameters must
@@ -1767,14 +1763,21 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 
+	// 2026-10-09 coder(lq): Count the authorized filtered set in the same
+	// statement as the page; an offset beyond the result keeps the exact fallback.
+	totalExpr := "0::bigint"
+	if includeTotal {
+		totalExpr = "COUNT(*) OVER()"
+	}
+	var total int64
 	query := visibilityCTEs + fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision, i.archived_at
+       i.revision, i.archived_at, %s AS list_total
 FROM issue i
 WHERE %s
 ORDER BY %s
-LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
+LIMIT %s OFFSET %s`, totalExpr, whereSql, orderBy, limitRef, offsetRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1812,6 +1815,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 			&row.Properties,
 			&row.Revision,
 			&row.ArchivedAt,
+			&total,
 		); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
@@ -1825,30 +1829,20 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		return
 	}
 
-	var total int64
-	if includeTotal {
-		// 2026-09-07 coder(lq): A short first page is itself an exact total,
-		// so avoid repeating the permission predicate in a COUNT query for
-		// empty and small result sets. Full pages still use the historical
-		// COUNT path, preserving pagination totals for callers that may have
-		// more rows beyond the current page.
-		if offset == 0 && len(issues) < limit {
-			total = int64(len(issues))
-		} else {
-			// Get the true total count for pagination awareness. Count query uses
-			// the same args minus the OFFSET and LIMIT params (last two added).
-			countQuery := visibilityCTEs + fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
-			countArgs := args[:len(args)-2]
-			if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-				// 2026-09-20 coder(lq): Surface the failure instead of degrading to
-				// len(issues). A swallowed count error answered HTTP 200 with a total
-				// that described the page rather than the result set, so pagination
-				// silently lied and callers could not tell a broken count from a
-				// genuinely short page.
-				slog.Warn("ListIssues count failed", "error", err)
-				writeError(w, http.StatusInternalServerError, "failed to count issues")
-				return
-			}
+	if includeTotal && len(issues) == 0 && offset > 0 {
+		// Get the true total count for pagination awareness. Count query uses
+		// the same args minus the OFFSET and LIMIT params (last two added).
+		countQuery := visibilityCTEs + fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
+		countArgs := args[:filterArgCount]
+		if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+			// 2026-09-20 coder(lq): Surface the failure instead of degrading to
+			// len(issues). A swallowed count error answered HTTP 200 with a total
+			// that described the page rather than the result set, so pagination
+			// silently lied and callers could not tell a broken count from a
+			// genuinely short page.
+			slog.Warn("ListIssues count failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to count issues")
+			return
 		}
 	}
 

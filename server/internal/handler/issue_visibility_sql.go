@@ -15,20 +15,49 @@ type issueVisibilitySQL struct {
 // Keep this as the single source of the visibility set and let issueVisibilityCTEs
 // wrap it for the callers that own the whole statement.
 func issueVisibilityCTEDefs(workspaceRef, userRef string, includeWorkspaceOwned bool) string {
+	return issueVisibilityCandidateCTEDefs(workspaceRef, userRef, includeWorkspaceOwned, "TRUE")
+}
+
+// 2026-10-09 coder(lq): Filter candidates before ACL evaluation, then include
+// their direct parents without the list filters. Cross-project and archived
+// parents still contribute Base, but grandparent inheritance never propagates.
+func issueVisibilityCandidateCTEDefs(workspaceRef, userRef string, includeWorkspaceOwned bool, candidateWhere string) string {
 	principals := issueVisibilitySQL{materialized: true}
 	issues := issueVisibilitySQL{materialized: true, projectsMaterialized: true}
+	ownerClause := "FALSE"
+	if includeWorkspaceOwned {
+		ownerClause = fmt.Sprintf("(%s AND EXISTS (SELECT 1 FROM member m WHERE m.workspace_id = %s AND m.user_id = %s::uuid AND m.role = 'owner'))", workspaceOwnerBypassPredicate(workspaceRef), workspaceRef, userRef)
+	}
+	baseCandidateWhere := "visible_issue.id IN (SELECT id FROM issue_auth_base_candidates)"
+	projectCandidateWhere := "visible_project.id IN (SELECT bi.project_id FROM issue bi WHERE bi.id IN (SELECT id FROM issue_auth_base_candidates))"
+	if candidateWhere == "TRUE" {
+		baseCandidateWhere = "TRUE"
+		projectCandidateWhere = "TRUE"
+	}
 	return fmt.Sprintf(`issue_auth_organizations(organization_id) AS MATERIALIZED (
 		%s
+	), issue_auth_candidates AS MATERIALIZED (
+		SELECT i.id, i.parent_issue_id FROM issue i WHERE i.workspace_id = %s AND (%s)
+	), issue_auth_base_candidates AS MATERIALIZED (
+		SELECT id FROM issue_auth_candidates
+		UNION
+		SELECT p.id FROM issue p JOIN issue_auth_candidates c ON c.parent_issue_id = p.id
+		WHERE p.workspace_id = %s
 	), issue_auth_projects AS MATERIALIZED (
 		SELECT visible_project.id FROM project visible_project
-		WHERE visible_project.workspace_id = %s AND %s
-	), issue_auth_visible AS MATERIALIZED (
+		WHERE visible_project.workspace_id = %s
+		  AND (%s) AND %s
+	), issue_auth_base AS MATERIALIZED (
 		SELECT visible_issue.id FROM issue visible_issue
-		WHERE visible_issue.workspace_id = %s AND %s
+		WHERE visible_issue.workspace_id = %s AND (%s) AND %s
+	), issue_auth_visible AS MATERIALIZED (
+		SELECT c.id FROM issue_auth_candidates c
+		WHERE %s OR c.id IN (SELECT id FROM issue_auth_base)
+		  OR c.parent_issue_id IN (SELECT id FROM issue_auth_base)
 	)
-	`, userOrganizationIDsSQL(workspaceRef, userRef), workspaceRef,
-		principals.projectAccess("visible_project.id", workspaceRef, userRef), workspaceRef,
-		issues.predicate("visible_issue", workspaceRef, userRef, includeWorkspaceOwned))
+	`, userOrganizationIDsSQL(workspaceRef, userRef), workspaceRef, candidateWhere,
+		workspaceRef, workspaceRef, projectCandidateWhere, principals.projectAccess("visible_project.id", workspaceRef, userRef),
+		workspaceRef, baseCandidateWhere, issues.base("visible_issue", workspaceRef, userRef), ownerClause)
 }
 
 func issueVisibilityCTEs(workspaceRef, userRef string, includeWorkspaceOwned bool) string {
@@ -46,7 +75,10 @@ func terminalIssueStatusSetSQL(workspaceRef string) string {
 }
 
 func childIssueProgressAuthorizedSQL(includeWorkspaceOwned bool) string {
-	return issueVisibilityCTEs("$1", "$2", includeWorkspaceOwned) + fmt.Sprintf(`
+	// 2026-10-09 coder(lq): Standalone tasks cannot contribute progress; keep
+	// only hierarchy participants while retaining the parents' own ACL sources.
+	candidateWhere := "i.parent_issue_id IS NOT NULL OR i.id IN (SELECT child.parent_issue_id FROM issue child WHERE child.workspace_id = $1 AND child.parent_issue_id IS NOT NULL)"
+	return "WITH " + issueVisibilityCandidateCTEDefs("$1", "$2", includeWorkspaceOwned, candidateWhere) + fmt.Sprintf(`
 	SELECT i.parent_issue_id,
 		COUNT(*)::bigint AS total,
 		COUNT(*) FILTER (WHERE i.status IN (%s))::bigint AS done

@@ -679,21 +679,27 @@ func (h *Handler) unreadInboxCountsWithinWindows(ctx context.Context, recipientI
 // project scope as the active-workspace inbox, otherwise the workspace switcher
 // can reveal hidden-project activity through its badge.
 func (h *Handler) unreadInboxCountsWithinProjectPermissions(ctx context.Context, recipientID pgtype.UUID, includeWorkspaceOwned bool) (map[pgtype.UUID]int64, error) {
-	query := fmt.Sprintf(`SELECT newest.workspace_id, count(*)::bigint AS count
-		FROM (
-			SELECT DISTINCT ON (i.workspace_id, COALESCE(i.issue_id, i.id))
-				i.workspace_id, i.read
-			FROM inbox_item i
-			JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
-			WHERE i.recipient_type = 'member'
-			  AND i.recipient_id = $1
-			  AND i.archived = false
-			  AND %s
-			  AND %s
-			ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
-		) newest
-		WHERE newest.read = false
-		GROUP BY newest.workspace_id`, inboxIssueNotArchivedPredicate("i"), inboxIssueProjectVisibilityPredicateWithWorkspaceScope("i", "i.workspace_id", "$1", includeWorkspaceOwned))
+	// 2026-10-09 coder(lq): Deduplicate recipient notifications before ACL
+	// evaluation, then authorize only unread task IDs once per workspace.
+	visibilityCTEs := issueVisibilityCandidateCTEDefs("policy.workspace_id", "$1", includeWorkspaceOwned,
+		"i.id IN (SELECT n.issue_id FROM newest n WHERE n.workspace_id = policy.workspace_id AND n.read = false)")
+	query := fmt.Sprintf(`WITH newest AS MATERIALIZED (
+		SELECT DISTINCT ON (i.workspace_id, COALESCE(i.issue_id, i.id))
+			i.workspace_id, i.issue_id, i.read
+		FROM inbox_item i
+		JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
+		WHERE i.recipient_type = 'member' AND i.recipient_id = $1
+		  AND i.archived = false AND %s
+		ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
+	), visible AS MATERIALIZED (
+		SELECT policy.workspace_id, permitted.id
+		FROM (SELECT DISTINCT workspace_id FROM newest WHERE read = false AND issue_id IS NOT NULL) policy
+		CROSS JOIN LATERAL (WITH %s SELECT id FROM issue_auth_visible) permitted
+	)
+	SELECT n.workspace_id, count(*)::bigint AS count FROM newest n
+	WHERE n.read = false AND (n.issue_id IS NULL OR EXISTS (
+		SELECT 1 FROM visible v WHERE v.workspace_id = n.workspace_id AND v.id = n.issue_id
+	)) GROUP BY n.workspace_id`, inboxIssueNotArchivedPredicate("i"), visibilityCTEs)
 	rows, err := h.DB.Query(ctx, query, recipientID)
 	if err != nil {
 		return nil, err

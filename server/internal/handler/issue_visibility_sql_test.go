@@ -95,11 +95,13 @@ func TestIssueVisibilityCTEsMatchStandalonePolicy(t *testing.T) {
 	fx.QueryRow(t, issueVisibilityCTEs("$1", "$2", true)+`SELECT count(*) FROM issue i
 		WHERE i.id IN (SELECT id FROM issue_auth_visible) AND i.archived_at IS NULL`, ws, user).Scan(&expected)
 	for _, offset := range []int{0, 1, expected + 10} {
-		req := newRequestAs(user, http.MethodGet, fmt.Sprintf("/api/issues?limit=1&offset=%d", offset), nil)
-		req.Header.Set("X-Workspace-ID", ws)
-		response := testutil.Call(t, testHandler.ListIssues, req).Want(http.StatusOK).Map()
-		if response["total"] != float64(expected) {
-			t.Fatalf("offset=%d total=%v want %d", offset, response["total"], expected)
+		for _, sort := range []string{"position", "status"} {
+			req := newRequestAs(user, http.MethodGet, fmt.Sprintf("/api/issues?limit=1&offset=%d&sort=%s", offset, sort), nil)
+			req.Header.Set("X-Workspace-ID", ws)
+			response := testutil.Call(t, testHandler.ListIssues, req).Want(http.StatusOK).Map()
+			if response["total"] != float64(expected) {
+				t.Fatalf("sort=%s offset=%d total=%v want %d", sort, offset, response["total"], expected)
+			}
 		}
 	}
 	check(t, user, true)
@@ -114,6 +116,51 @@ func TestIssueVisibilityCTEsMatchStandalonePolicy(t *testing.T) {
 	check(t, user, true)
 	fx.Exec(t, "DELETE FROM member WHERE workspace_id = $1 AND user_id = $2", ws, user)
 	check(t, user, true)
+}
+
+// 2026-10-09 coder(lq): Narrow lists must retain archived/cross-project parents,
+// exclude grandparent-only access, and reflect expiry/revocation immediately.
+func TestIssueVisibilityCandidatesPreserveDirectParentBase(t *testing.T) {
+	t.Setenv("PROJECT_OWNER_BYPASS_ENABLED", "false")
+	ws := dbfx.Workspace(t, "Scoped visibility", "scoped-visibility")
+	reader := dbfx.User(t, "Scoped reader", "scoped-reader@example.test")
+	fx := testutil.New(testPool, ws, testUserID)
+	fx.Member(t, ws, reader, "member")
+	shared := fx.Project(t, "Parent project")
+	private := fx.Project(t, "Child project")
+	parent := fx.Issue(t, "Archived parent", testutil.Cols{"project_id": shared, "archived_at": testutil.Raw("now()")})
+	child := fx.Issue(t, "Restricted cross-project child", testutil.Cols{"project_id": private, "parent_issue_id": parent})
+	grandchild := fx.Issue(t, "Grandchild", testutil.Cols{"project_id": private, "parent_issue_id": child})
+	fx.InsertNoID(t, "projectauth_issue_policies", testutil.Cols{"workspace_id": ws, "issue_id": child, "project_access_mode": "restricted"}, "workspace_id=$1 AND issue_id=$2", ws, child)
+	grant := fx.Insert(t, "projectauth_access_grants", testutil.Cols{"workspace_id": ws, "project_id": shared, "issue_id": parent, "subject_type": "user", "subject_id": reader, "role_key": "viewer"})
+	candidateWhere := "i.archived_at IS NULL AND i.project_id = $3::uuid"
+	check := func(want int) {
+		t.Helper()
+		ctes := "WITH " + issueVisibilityCandidateCTEDefs("$1", "$2", true, candidateWhere)
+		standalone := "SELECT i.id FROM issue i WHERE i.workspace_id=$1 AND " + candidateWhere + " AND " + issueProjectVisibilityPredicate("i", "$1", "$2")
+		if diff := fx.Count(t, ctes+`SELECT count(*) FROM (
+			((SELECT id FROM issue_auth_visible) EXCEPT ALL (`+standalone+`))
+			UNION ALL ((`+standalone+`) EXCEPT ALL (SELECT id FROM issue_auth_visible))
+		) delta`, ws, reader, private); diff != 0 {
+			t.Fatalf("scoped and standalone policies differ by %d rows", diff)
+		}
+		if got := fx.Count(t, ctes+"SELECT count(*) FROM issue_auth_visible", ws, reader, private); got != want {
+			t.Fatalf("visible count=%d want=%d", got, want)
+		}
+		if got := fx.Count(t, ctes+"SELECT count(*) FROM issue_auth_visible WHERE id = $4", ws, reader, private, grandchild); got != 0 {
+			t.Fatal("grandparent-only access propagated to grandchild")
+		}
+		if got := fx.Count(t, ctes+"SELECT count(*) FROM issue_auth_candidates", ws, reader, private); got != 2 {
+			t.Fatalf("candidate scope contains %d tasks, want 2", got)
+		}
+	}
+	check(1)
+	fx.InsertNoID(t, "projectauth_grant_constraints", testutil.Cols{"workspace_id": ws, "grant_id": grant, "expires_at": testutil.Raw("now() - interval '1 minute'")}, "workspace_id=$1 AND grant_id=$2", ws, grant)
+	check(0)
+	fx.Exec(t, "DELETE FROM projectauth_grant_constraints WHERE grant_id=$1", grant)
+	check(1)
+	fx.Exec(t, "DELETE FROM projectauth_access_grants WHERE id=$1", grant)
+	check(0)
 }
 
 func TestTerminalIssueStatusSetMatchesEffectiveStatus(t *testing.T) {
@@ -174,17 +221,30 @@ func benchmarkIssueVisibilitySQL(b *testing.B, projectCount int) {
 		FROM issue i JOIN issue p ON p.id = i.parent_issue_id AND p.workspace_id = i.workspace_id
 		WHERE i.workspace_id = $1 AND %s AND %s GROUP BY i.parent_issue_id`, predicate,
 		issueProjectVisibilityPredicateWithWorkspaceScope("p", "$1", "$2", true))
+	// 2026-10-09 coder(lq): Retain the released full-workspace CTE plan as a
+	// benchmark baseline, separate from the older inline-policy reference.
+	legacyCTEs := fmt.Sprintf(`WITH issue_auth_organizations(organization_id) AS MATERIALIZED (%s),
+		issue_auth_projects AS MATERIALIZED (
+		 SELECT visible_project.id FROM project visible_project WHERE visible_project.workspace_id=$1 AND %s
+		), issue_auth_visible AS MATERIALIZED (
+		 SELECT visible_issue.id FROM issue visible_issue WHERE visible_issue.workspace_id=$1 AND %s
+		) `, userOrganizationIDsSQL("$1", "$2"),
+		(issueVisibilitySQL{materialized: true}).projectAccess("visible_project.id", "$1", "$2"),
+		(issueVisibilitySQL{materialized: true, projectsMaterialized: true}).predicate("visible_issue", "$1", "$2", true))
+
 	for _, scenario := range []struct{ name, sql string }{
+		{"count_released", legacyCTEs + "SELECT count(*) FROM issue_auth_visible"},
+		{"selective_released", legacyCTEs + "SELECT count(*) FROM issue_auth_visible WHERE id=$3"},
 		{"count_before", "SELECT count(*) FROM issue i WHERE i.workspace_id = $1 AND " + predicate},
 		{"count_after", issueVisibilityCTEs("$1", "$2", true) + "SELECT count(*) FROM issue i WHERE i.workspace_id = $1 AND i.id IN (SELECT id FROM issue_auth_visible)"},
 		{"progress_before", "SELECT COALESCE(sum(total) + sum(done), 0)::bigint FROM (" + oldProgress + ") progress"},
 		{"progress_after", "SELECT COALESCE(sum(total) + sum(done), 0)::bigint FROM (" + childIssueProgressAuthorizedSQL(true) + ") progress"},
 		{"selective_before", "SELECT count(*) FROM issue i WHERE i.workspace_id = $1 AND i.id = $3 AND " + predicate},
-		{"selective_after", issueVisibilityCTEs("$1", "$2", true) + "SELECT count(*) FROM issue i WHERE i.workspace_id = $1 AND i.id = $3 AND i.id IN (SELECT id FROM issue_auth_visible)"},
+		{"selective_after", "WITH " + issueVisibilityCandidateCTEDefs("$1", "$2", true, "i.id = $3") + "SELECT count(*) FROM issue i WHERE i.workspace_id = $1 AND i.id = $3 AND i.id IN (SELECT id FROM issue_auth_visible)"},
 	} {
 		b.Run(scenario.name, func(b *testing.B) {
 			args := []any{ws, user}
-			if scenario.name == "selective_before" || scenario.name == "selective_after" {
+			if scenario.name == "selective_before" || scenario.name == "selective_after" || scenario.name == "selective_released" {
 				args = append(args, parent)
 			}
 			// 2026-09-14 coder(lq): Warm both plans past pgx/Postgres preparation

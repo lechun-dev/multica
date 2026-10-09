@@ -731,8 +731,8 @@ func TestIssueTableRowsCommitsBeforeBestEffortEnrichment(t *testing.T) {
 	if response.Total != 1 || response.BranchTotal != 1 {
 		t.Fatalf("unexpected root counts: total=%d branch_total=%d", response.Total, response.BranchTotal)
 	}
-	if tableQueryCalls != 2 {
-		t.Fatalf("ungrouped root head executed %d table queries, want 2", tableQueryCalls)
+	if tableQueryCalls != 1 {
+		t.Fatalf("ungrouped root head executed %d table queries, want 1", tableQueryCalls)
 	}
 	if !strings.Contains(rowQuerySQL, "WITH page AS MATERIALIZED") ||
 		strings.Contains(rowQuerySQL, "membership AS") ||
@@ -923,8 +923,8 @@ func TestIssueTableStatusGroupingOverOneThousandRows(t *testing.T) {
 	if ungroupedRows.Total != 1001 || ungroupedRows.BranchTotal != 50 || len(ungroupedRows.Rows) != 50 || ungroupedRows.NextCursor == nil {
 		t.Fatalf("unexpected ungrouped root head: total=%d branch_total=%d rows=%d cursor=%v", ungroupedRows.Total, ungroupedRows.BranchTotal, len(ungroupedRows.Rows), ungroupedRows.NextCursor)
 	}
-	if tableQueryCalls != 4 {
-		t.Fatalf("ungrouped root head executed %d cumulative table queries, want 4", tableQueryCalls)
+	if tableQueryCalls != 3 {
+		t.Fatalf("ungrouped root head executed %d cumulative table queries, want 3", tableQueryCalls)
 	}
 
 	ungroupedNextRecorder := httptest.NewRecorder()
@@ -944,8 +944,8 @@ func TestIssueTableStatusGroupingOverOneThousandRows(t *testing.T) {
 	if ungroupedNext.Total != 0 || ungroupedNext.BranchTotal != 50 || len(ungroupedNext.Rows) != 50 {
 		t.Fatalf("unexpected ungrouped continuation: total=%d branch_total=%d rows=%d", ungroupedNext.Total, ungroupedNext.BranchTotal, len(ungroupedNext.Rows))
 	}
-	if tableQueryCalls != 5 {
-		t.Fatalf("ungrouped continuation executed %d cumulative table queries, want 5", tableQueryCalls)
+	if tableQueryCalls != 4 {
+		t.Fatalf("ungrouped continuation executed %d cumulative table queries, want 4", tableQueryCalls)
 	}
 
 	for _, sortCase := range []issueTableSortRequest{

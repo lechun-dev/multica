@@ -388,15 +388,24 @@ func (h *Handler) ListIssueTableRows(w http.ResponseWriter, r *http.Request) {
 		childCountExpr = "(SELECT COUNT(*)::bigint FROM membership child WHERE child.parent_issue_id = i.id)"
 	}
 
+	// 2026-10-09 coder(lq): The root head shares its ACL CTE with the total
+	// through one statement. Empty hierarchy pages retain the exact-count fallback.
+	needsTotal := cursor == nil && request.Group.Kind == "none" && request.ParentID == nil
+	totalExpr := "0::bigint"
+	if needsTotal {
+		totalExpr = fmt.Sprintf("(SELECT COUNT(*)::bigint FROM issue i WHERE %s)", compiled.where)
+	}
+	var total int64
+
 	query := fmt.Sprintf(`%s
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 	       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at,
 	       i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
 	       i.revision, i.archived_at,
-	       %s AS direct_child_count, i.table_sort_key
+	       %s AS direct_child_count, i.table_sort_key, %s AS table_total
 	FROM page i
-	ORDER BY %s`, cte, childCountExpr, resolvedSort.orderBy())
+	ORDER BY %s`, cte, childCountExpr, totalExpr, resolvedSort.orderBy())
 
 	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
@@ -441,6 +450,7 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 			&row.issue.ArchivedAt,
 			&row.childCount,
 			&row.sortKey,
+			&total,
 		); err != nil {
 			writeIssueTableQueryFailure(w, r, "failed to list table rows")
 			return
@@ -456,8 +466,7 @@ SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 	// Only the ungrouped root head consumes a query-wide total. Group headers
 	// get their exact totals from /groups; child branches and continuation pages
 	// must not pay for a full-membership COUNT.
-	var total int64
-	if cursor == nil && request.Group.Kind == "none" && request.ParentID == nil {
+	if needsTotal && len(scanned) == 0 {
 		countQuery := compiled.visibilityWithClause() + fmt.Sprintf("SELECT COUNT(*)::bigint FROM issue i WHERE %s", compiled.where)
 		if err := h.DB.QueryRow(r.Context(), countQuery, compiled.args...).Scan(&total); err != nil {
 			slog.Warn("ListIssueTableRows total count failed", append(logger.RequestAttrs(r), "error", err)...)

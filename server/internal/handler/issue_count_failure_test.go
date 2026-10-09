@@ -14,7 +14,18 @@ import (
 
 type issueCountFailureDB struct {
 	dbExecutor
-	failures int
+	failures      int
+	failPageCount bool
+}
+
+// 2026-10-09 coder(lq): Counts on nonempty pages share the row statement;
+// inject at that boundary while preserving the empty-page fallback coverage.
+func (db *issueCountFailureDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if db.failPageCount && strings.Contains(sql, "COUNT(*) OVER()") {
+		db.failures++
+		return nil, errors.New("injected COUNT failure: private SQL details")
+	}
+	return db.dbExecutor.Query(ctx, sql, args...)
 }
 
 func (db *issueCountFailureDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
@@ -50,13 +61,17 @@ func TestListIssuesCountFailureDoesNotReturnPartialSuccess(t *testing.T) {
 			}
 
 			h := *testHandler
-			failingDB := &issueCountFailureDB{dbExecutor: h.DB}
+			failingDB := &issueCountFailureDB{dbExecutor: h.DB, failPageCount: offset < 3}
 			h.DB = failingDB
 			body := testutil.Call(t, h.ListIssues, newRequest("GET", path, nil)).Want(http.StatusInternalServerError).Map()
 			if failingDB.failures != 1 {
 				t.Fatalf("injected %d count failures, want 1", failingDB.failures)
 			}
-			if len(body) != 1 || body["error"] != "failed to count issues" {
+			wantError := "failed to count issues"
+			if offset < 3 {
+				wantError = "failed to list issues"
+			}
+			if len(body) != 1 || body["error"] != wantError {
 				t.Fatalf("failure must expose only a public error, not issues, total, or SQL: %v", body)
 			}
 		})

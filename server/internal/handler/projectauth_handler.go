@@ -1311,10 +1311,10 @@ func (h *Handler) visibleIssueIDsByProjectPermissionWithWorkspaceScope(ctx conte
 	if len(issueIDs) == 0 || h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return visible, nil
 	}
-	query := fmt.Sprintf(`SELECT requested.id
-		FROM unnest($2::uuid[]) requested(id)
-		JOIN issue i ON i.id = requested.id AND i.workspace_id = $1
-		WHERE %s`, issueProjectVisibilityPredicateWithWorkspaceScope("i", "$1", "$3", includeWorkspaceOwned))
+	// 2026-10-09 coder(lq): ANY deduplicates requested IDs; the scoped set
+	// shares organization, project and direct-parent Base checks in one statement.
+	query := "WITH " + issueVisibilityCandidateCTEDefs("$1", "$3", includeWorkspaceOwned, "i.id = ANY($2::uuid[])") +
+		"SELECT id FROM issue_auth_visible"
 	rows, err := h.DB.Query(ctx, query, workspaceID, issueIDs, userID)
 	if err != nil {
 		return nil, err

@@ -521,6 +521,7 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 	where := []string{"i.workspace_id = $1"}
 	args := []any{workspaceUUID}
 	visibilityCTEs := ""
+	visibilityUserRef := ""
 	archiveState, ok := parseIssueArchiveState(w, spec.Filters.ArchiveState)
 	if !ok {
 		return issueTableSQL{}, false
@@ -549,9 +550,7 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
 			return issueTableSQL{}, false
 		}
-		includeWorkspaceOwned := spec.Filters.IncludeWorkspaceOwned == nil || *spec.Filters.IncludeWorkspaceOwned
-		visibilityCTEs = issueVisibilityCTEDefs("$1", addArg(userUUID), includeWorkspaceOwned)
-		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
+		visibilityUserRef = addArg(userUUID)
 	}
 
 	// Any non-empty status KEY, not just the 7 built-ins. A status filter names
@@ -806,6 +805,12 @@ func (h *Handler) compileIssueTableQuery(w http.ResponseWriter, r *http.Request,
 		}
 	} else if windowEnabled {
 		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
+	}
+
+	if visibilityUserRef != "" {
+		includeWorkspaceOwned := spec.Filters.IncludeWorkspaceOwned == nil || *spec.Filters.IncludeWorkspaceOwned
+		visibilityCTEs = issueVisibilityCandidateCTEDefs("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "))
+		where = append(where, "i.id IN (SELECT id FROM issue_auth_visible)")
 	}
 
 	return issueTableSQL{
