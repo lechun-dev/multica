@@ -75,3 +75,31 @@ Runs use independent local PostgreSQL databases and the repository CLI guard. No
 - `git diff --check` passed. No production deployment or release packaging smoke was run.
 
 The original main checkout remains untouched. Private main advanced during this synchronization; its `1550bd456` delta was integrated and verified in this worktree, with its ancestry recorded in the completed branch history.
+
+## Second private-feature preservation audit
+
+Compared the integrated tree with private main `1550bd456` and official upstream `10a7e519d`, using their common ancestor `af62622e50e5d0cb5d3dfc8d0701311e14c21dca`. Private development changed 1,698 files and added 638 files; all 638 added files remain present. This file inventory is supporting evidence, not proof of behavioral equivalence. Thirteen paths that now matched official upstream or were replaced by new upstream screens received additional review.
+
+| Area | Preservation result |
+| --- | --- |
+| Organization, frequent response and permission read caches | Private 15-second cache implementations remain unchanged from the private baseline. |
+| DSH credentials/transport/cleanup, CLI bridge and Codex discovery | Private modules and new/legacy bundle fallback remain preserved. Real installed-provider execution was not performed. |
+| Runtime model catalogs, owner-only writes, task roles and organizations | Private implementation and settings entry remain present; existing-language private copy is retained. |
+| Desktop product identity, Preview updater, signing and release/deploy workflows | Private configuration remains unchanged from the private baseline. Release packaging and production deployment were not performed. |
+| Settings and integrations replacements | Shared install URLs still target `lechun-dev/multica`; Channels/Connected Apps retain private icons, descriptions, OAuth compatibility and switches. Workspace authorization deletion moved to the new workspace-delete query. |
+| OpenClaw setup | Adopted upstream live-config handling and managed MCP reset-stage behavior, retaining strict managed MCP replacement without snapshotting the entire user config. Existing execenv tests passed. |
+| Run-history replacement | Found missing `queue_reason` propagation. Restored capacity-full versus ordinary-queued labels in rows, chart hover and sparkline summaries; added regression coverage. |
+| Workspace wakeup reads | Found newly added list/summary/paused endpoints lacked private task ACL filtering. Added candidate-scoped live filtering before pagination/count/search/facets, live system Manage, archive guards and delegated source AgentUse checks. Ordinary author/admin mutation policy remains unchanged. |
+
+The two omissions above were repaired on this integration branch. The original main checkout remains untouched; no main update, push, tag or deployment was performed.
+
+Final verification after both repairs:
+
+- Complete `internal/handler` suite passed against a local PostgreSQL database with the installed-agent CLI guard enabled (`/tmp/missionos-preservation-handler-final.log`).
+- Protected private feature contract script passed against a separate PostgreSQL database; database contracts executed rather than skipping (`/tmp/missionos-preservation-contracts-final.log`).
+- Workspace typecheck passed all 10 tasks (`/tmp/missionos-preservation-typecheck-final.log`).
+- Runs dialog and execution-log regression suites passed 43 tests across 2 files (`/tmp/missionos-preservation-queue-tests.log`).
+- Focused private wakeup ACL, existing inventory, IssueWakeup and SystemWakeup tests passed (`/tmp/missionos-wakeup-private-acl.log`).
+- Published migration byte comparison and migration collision guard passed again; `git diff --check` passed.
+
+These checks cover the merged code and local database behavior. They do not establish production load capacity or real-provider/release-package behavior.

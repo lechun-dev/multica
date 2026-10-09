@@ -90,10 +90,21 @@ func (h *Handler) ListWorkspaceWakeups(w http.ResponseWriter, r *http.Request) {
 			isAdmin = roleAllowed(manager.Role, "owner", "admin")
 		}
 	}
+	visibleIssues, filterIssues, err := h.wakeupReadIssueScope(r, workspaceID)
+	if err != nil {
+		wakeupError(w, err)
+		return
+	}
 	result, err := h.Queries.ListWorkspaceWakeups(r.Context(), db.ListWorkspaceWakeupsParams{
 		WorkspaceID: parseUUID(workspaceID), AgentIds: ids, MemberID: managerID, IsAdmin: isAdmin,
+		VisibleIssueIds: visibleIssues, FilterIssueAccess: filterIssues,
 		Scope: scope, Kind: kind, Source: source, AgentID: agentID, Search: search, PageLimit: int32(limit), PageOffset: int32(page),
 	})
+	if err != nil {
+		wakeupError(w, err)
+		return
+	}
+	result, err = h.wakeupPageManagement(r, result)
 	if err != nil {
 		wakeupError(w, err)
 		return
@@ -172,7 +183,12 @@ func (h *Handler) ListWorkspaceWakeupSummaries(w http.ResponseWriter, r *http.Re
 	for id := range allowed {
 		ids = append(ids, parseUUID(id))
 	}
-	rows, err := h.Queries.ListWorkspaceWakeupSummaryRows(r.Context(), db.ListWorkspaceWakeupSummaryRowsParams{WorkspaceID: parseUUID(workspaceID), AgentIds: ids})
+	visibleIssues, filterIssues, err := h.wakeupReadIssueScope(r, workspaceID)
+	if err != nil {
+		wakeupError(w, err)
+		return
+	}
+	rows, err := h.Queries.ListWorkspaceWakeupSummaryRows(r.Context(), db.ListWorkspaceWakeupSummaryRowsParams{WorkspaceID: parseUUID(workspaceID), AgentIds: ids, VisibleIssueIds: visibleIssues, FilterIssueAccess: filterIssues})
 	if err != nil {
 		wakeupError(w, err)
 		return
@@ -472,7 +488,12 @@ func (h *Handler) ListPausedWakeups(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
 	}
-	rows, err := h.Queries.ListPausedWakeupIssues(r.Context(), parseUUID(workspaceID))
+	visibleIssues, filterIssues, err := h.wakeupReadIssueScope(r, workspaceID)
+	if err != nil {
+		wakeupError(w, err)
+		return
+	}
+	rows, err := h.Queries.ListPausedWakeupIssues(r.Context(), db.ListPausedWakeupIssuesParams{WorkspaceID: parseUUID(workspaceID), VisibleIssueIds: visibleIssues, FilterIssueAccess: filterIssues})
 	if err != nil {
 		wakeupError(w, err)
 		return

@@ -410,7 +410,7 @@ function RunSpendSparkline({ timeline, onOpen }: { timeline: RunTimeline; onOpen
 function SparklineRunSummary({ run }: { run: TimelineRun }) {
   const { t } = useT("issues");
   const trigger = useTriggerText(run.task);
-  const status = useStatusLabel(run.task.status);
+  const status = useStatusLabel(run.task.status, run.task.queue_reason);
   const cost = run.usage?.cost;
   return (
     <>

@@ -26,6 +26,12 @@ LEFT JOIN agent source ON source.id=w.filter_agent_id AND source.workspace_id=w.
 LEFT JOIN agent_task_queue t ON t.id=w.last_task_id AND t.issue_id=w.issue_id AND t.agent_id=w.agent_id
 WHERE w.workspace_id= @workspace_id AND w.issue_id= @issue_id ORDER BY w.created_at,w.id;
 
+-- name: ListWorkspaceWakeupIssueIDs :many
+-- 2026-10-10 coder(lq): Restrict the private ACL candidate set to wakeup tasks.
+SELECT DISTINCT w.issue_id FROM issue_wakeup w
+JOIN issue i ON i.id=w.issue_id AND i.workspace_id=w.workspace_id
+WHERE w.workspace_id= @workspace_id AND i.archived_at IS NULL;
+
 -- name: ListWorkspaceWakeupSummaryRows :many
 -- No prompts/history; at most three previews per issue plus exact counts.
 WITH ranked AS (
@@ -46,6 +52,8 @@ LEFT JOIN member actor_member ON w.filter_actor_type='member' AND actor_member.u
 LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
 LEFT JOIN agent source ON source.id=w.filter_agent_id AND source.workspace_id=w.workspace_id AND source.id=ANY(@agent_ids::uuid[])
  WHERE w.workspace_id= @workspace_id AND w.enabled
+  AND i.archived_at IS NULL
+  AND (NOT @filter_issue_access::boolean OR w.issue_id=ANY(@visible_issue_ids::uuid[]))
   AND i.status NOT IN ('done','cancelled')
   AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=i.workspace_id AND s.key=i.status AND s.category IN ('done','closed'))
 )
@@ -224,7 +232,9 @@ DELETE FROM issue_wakeup WHERE id= @id AND issue_id= @issue_id;
 -- workspace banner. Access follows shared issue visibility.
 SELECT w.issue_id,w.id,w.agent_id,w.paused_reason
 FROM issue_wakeup w JOIN issue i ON i.id=w.issue_id AND i.workspace_id=w.workspace_id
-WHERE w.workspace_id= @workspace_id AND NOT w.enabled AND w.paused_reason IN ('loop','rate','max_fires')
+WHERE w.workspace_id= @workspace_id AND i.archived_at IS NULL
+ AND (NOT @filter_issue_access::boolean OR w.issue_id=ANY(@visible_issue_ids::uuid[]))
+ AND NOT w.enabled AND w.paused_reason IN ('loop','rate','max_fires')
  AND i.status NOT IN ('done','cancelled')
  AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=i.workspace_id AND s.key=i.status AND s.category IN ('done','closed'))
 ORDER BY w.updated_at DESC LIMIT 200;

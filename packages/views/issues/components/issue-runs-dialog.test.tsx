@@ -162,6 +162,23 @@ describe("IssueRunsDialog", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
+  it("preserves capacity queue reasons in the run list and timeline hover", () => {
+    // 2026-10-10 coder(lq): The replacement for the private usage dialog must retain why a run is queued.
+    open([
+      makeTask({ id: "capacity", status: "queued", queue_reason: "agent_capacity_full", started_at: null, completed_at: null }),
+      makeTask({ id: "ordinary", agent_id: "agent-2", status: "queued", queue_reason: "awaiting_claim", started_at: null, completed_at: null }),
+    ]);
+
+    expect(screen.getByText("Agent execution capacity is full.")).toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+
+    const plot = screen.getByRole("img").children[1] as HTMLElement;
+    const x = layOut(plot, "2026-09-27T08:59:00", "2026-09-27T18:00:00");
+    const lane = plot.querySelector('[data-lane="agent-1"]') as HTMLElement;
+    fireEvent.pointerMove(lane, { clientX: x("2026-09-27T10:00:00") });
+    expect(within(hoverCard(plot)!).getByText(/Agent execution capacity is full\./)).toBeInTheDocument();
+  });
+
   it("flags models with no price on file", () => {
     open([makeTask({ usage: [usage({ provider: "acme", model: "made-up-model" })] })]);
 

@@ -36,7 +36,8 @@ LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
   WHERE t.context->>'wakeup_id'=w.id::text AND t.issue_id=w.issue_id AND t.agent_id=w.agent_id
    AND t.status IN ('queued','deferred','dispatched','running','waiting_local_directory')
  ) r ON true
- WHERE w.workspace_id= @workspace_id AND w.system_rule IS NULL
+ WHERE w.workspace_id= @workspace_id AND w.system_rule IS NULL AND i.archived_at IS NULL
+  AND (NOT @filter_issue_access::boolean OR w.issue_id=ANY(@visible_issue_ids::uuid[]))
  UNION ALL
  -- The child-done system rule of each open parent that still waits for a
  -- sub-issue: every child when unstaged, else its lowest unfinished stage.
@@ -50,7 +51,7 @@ LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
   w.condition,w.max_fires,w.fire_count,w.paused_reason,
   false,NULL::text,
   NULL::uuid,NULL::text,
-  false,true,COALESCE(sr.active_runs,0)::int,
+  false,false,COALESCE(sr.active_runs,0)::int,
   'system',w.system_rule,ch.stage,p.assignee_type,ch.remaining
  FROM issue_wakeup w
  JOIN issue p ON p.id=w.issue_id AND p.workspace_id=w.workspace_id
@@ -62,11 +63,11 @@ LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
   SELECT bool_or(ci.stage IS NOT NULL) AS staged,
    min(ci.stage) FILTER(WHERE ci.stage IS NOT NULL AND NOT (ci.status IN ('done','cancelled') OR EXISTS(SELECT 1 FROM issue_status cs WHERE cs.workspace_id=ci.workspace_id AND cs.key=ci.status AND cs.category IN ('done','closed')))) AS stage,
    count(*) FILTER(WHERE NOT (ci.status IN ('done','cancelled') OR EXISTS(SELECT 1 FROM issue_status cs WHERE cs.workspace_id=ci.workspace_id AND cs.key=ci.status AND cs.category IN ('done','closed')))) AS open_count
-  FROM issue ci WHERE ci.parent_issue_id=p.id AND ci.workspace_id=p.workspace_id
+  FROM issue ci WHERE ci.parent_issue_id=p.id AND ci.workspace_id=p.workspace_id AND ci.archived_at IS NULL
  ) agg
  CROSS JOIN LATERAL (
   SELECT (CASE WHEN agg.staged THEN agg.stage END)::int AS stage,
-   (CASE WHEN agg.staged AND agg.stage IS NOT NULL THEN (SELECT count(*) FROM issue ci WHERE ci.parent_issue_id=p.id AND ci.workspace_id=p.workspace_id
+   (CASE WHEN agg.staged AND agg.stage IS NOT NULL THEN (SELECT count(*) FROM issue ci WHERE ci.parent_issue_id=p.id AND ci.workspace_id=p.workspace_id AND ci.archived_at IS NULL
      AND ci.stage=agg.stage AND NOT (ci.status IN ('done','cancelled') OR EXISTS(SELECT 1 FROM issue_status cs WHERE cs.workspace_id=ci.workspace_id AND cs.key=ci.status AND cs.category IN ('done','closed')))) ELSE agg.open_count END)::int AS remaining
  ) ch
  LEFT JOIN LATERAL (
@@ -74,7 +75,8 @@ LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
   WHERE t.context->>'wakeup_id'=w.id::text AND t.issue_id=w.issue_id
    AND t.status IN ('queued','deferred','dispatched','running','waiting_local_directory')
  ) sr ON true
- WHERE w.workspace_id= @workspace_id AND w.system_rule IS NOT NULL AND agg.open_count>0
+ WHERE w.workspace_id= @workspace_id AND w.system_rule IS NOT NULL AND agg.open_count>0 AND p.archived_at IS NULL
+  AND (NOT @filter_issue_access::boolean OR w.issue_id=ANY(@visible_issue_ids::uuid[]))
   AND p.status NOT IN ('done','cancelled')
   AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=p.workspace_id AND s.key=p.status AND s.category IN ('done','closed'))
 ), classified AS (

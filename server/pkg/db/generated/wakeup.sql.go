@@ -893,11 +893,19 @@ func (q *Queries) ListIssueWakeups(ctx context.Context, arg ListIssueWakeupsPara
 const listPausedWakeupIssues = `-- name: ListPausedWakeupIssues :many
 SELECT w.issue_id,w.id,w.agent_id,w.paused_reason
 FROM issue_wakeup w JOIN issue i ON i.id=w.issue_id AND i.workspace_id=w.workspace_id
-WHERE w.workspace_id= $1 AND NOT w.enabled AND w.paused_reason IN ('loop','rate','max_fires')
+WHERE w.workspace_id= $1 AND i.archived_at IS NULL
+ AND (NOT $2::boolean OR w.issue_id=ANY($3::uuid[]))
+ AND NOT w.enabled AND w.paused_reason IN ('loop','rate','max_fires')
  AND i.status NOT IN ('done','cancelled')
  AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=i.workspace_id AND s.key=i.status AND s.category IN ('done','closed'))
 ORDER BY w.updated_at DESC LIMIT 200
 `
+
+type ListPausedWakeupIssuesParams struct {
+	WorkspaceID       pgtype.UUID   `json:"workspace_id"`
+	FilterIssueAccess bool          `json:"filter_issue_access"`
+	VisibleIssueIds   []pgtype.UUID `json:"visible_issue_ids"`
+}
 
 type ListPausedWakeupIssuesRow struct {
 	IssueID      pgtype.UUID `json:"issue_id"`
@@ -908,8 +916,8 @@ type ListPausedWakeupIssuesRow struct {
 
 // Rules the platform paused on open issues, for board cues and the
 // workspace banner. Access follows shared issue visibility.
-func (q *Queries) ListPausedWakeupIssues(ctx context.Context, workspaceID pgtype.UUID) ([]ListPausedWakeupIssuesRow, error) {
-	rows, err := q.db.Query(ctx, listPausedWakeupIssues, workspaceID)
+func (q *Queries) ListPausedWakeupIssues(ctx context.Context, arg ListPausedWakeupIssuesParams) ([]ListPausedWakeupIssuesRow, error) {
+	rows, err := q.db.Query(ctx, listPausedWakeupIssues, arg.WorkspaceID, arg.FilterIssueAccess, arg.VisibleIssueIds)
 	if err != nil {
 		return nil, err
 	}
@@ -1171,6 +1179,33 @@ func (q *Queries) ListWakeupRuns(ctx context.Context, arg ListWakeupRunsParams) 
 	return items, nil
 }
 
+const listWorkspaceWakeupIssueIDs = `-- name: ListWorkspaceWakeupIssueIDs :many
+SELECT DISTINCT w.issue_id FROM issue_wakeup w
+JOIN issue i ON i.id=w.issue_id AND i.workspace_id=w.workspace_id
+WHERE w.workspace_id= $1 AND i.archived_at IS NULL
+`
+
+// 2026-10-10 coder(lq): Restrict the private ACL candidate set to wakeup tasks.
+func (q *Queries) ListWorkspaceWakeupIssueIDs(ctx context.Context, workspaceID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceWakeupIssueIDs, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var issue_id pgtype.UUID
+		if err := rows.Scan(&issue_id); err != nil {
+			return nil, err
+		}
+		items = append(items, issue_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspaceWakeupSummaryRows = `-- name: ListWorkspaceWakeupSummaryRows :many
 WITH ranked AS (
  SELECT w.issue_id,w.id,w.agent_id,a.name AS agent_name,w.kind,w.mode,w.event_types,w.filter_actor_type,
@@ -1190,6 +1225,8 @@ LEFT JOIN member actor_member ON w.filter_actor_type='member' AND actor_member.u
 LEFT JOIN "user" actor_user ON actor_user.id=actor_member.user_id
 LEFT JOIN agent source ON source.id=w.filter_agent_id AND source.workspace_id=w.workspace_id AND source.id=ANY($1::uuid[])
  WHERE w.workspace_id= $2 AND w.enabled
+  AND i.archived_at IS NULL
+  AND (NOT $3::boolean OR w.issue_id=ANY($4::uuid[]))
   AND i.status NOT IN ('done','cancelled')
   AND NOT EXISTS(SELECT 1 FROM issue_status s WHERE s.workspace_id=i.workspace_id AND s.key=i.status AND s.category IN ('done','closed'))
 )
@@ -1198,8 +1235,10 @@ FROM ranked WHERE rank<=3 ORDER BY issue_id,rank
 `
 
 type ListWorkspaceWakeupSummaryRowsParams struct {
-	AgentIds    []pgtype.UUID `json:"agent_ids"`
-	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	AgentIds          []pgtype.UUID `json:"agent_ids"`
+	WorkspaceID       pgtype.UUID   `json:"workspace_id"`
+	FilterIssueAccess bool          `json:"filter_issue_access"`
+	VisibleIssueIds   []pgtype.UUID `json:"visible_issue_ids"`
 }
 
 type ListWorkspaceWakeupSummaryRowsRow struct {
@@ -1226,7 +1265,12 @@ type ListWorkspaceWakeupSummaryRowsRow struct {
 
 // No prompts/history; at most three previews per issue plus exact counts.
 func (q *Queries) ListWorkspaceWakeupSummaryRows(ctx context.Context, arg ListWorkspaceWakeupSummaryRowsParams) ([]ListWorkspaceWakeupSummaryRowsRow, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceWakeupSummaryRows, arg.AgentIds, arg.WorkspaceID)
+	rows, err := q.db.Query(ctx, listWorkspaceWakeupSummaryRows,
+		arg.AgentIds,
+		arg.WorkspaceID,
+		arg.FilterIssueAccess,
+		arg.VisibleIssueIds,
+	)
 	if err != nil {
 		return nil, err
 	}

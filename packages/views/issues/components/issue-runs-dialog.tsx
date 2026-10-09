@@ -612,7 +612,7 @@ function RunHoverCard({ run }: { run: TimelineRun }) {
   const { t } = useT("issues");
   const { getActorName } = useActorName();
   const trigger = useTriggerText(run.task);
-  const status = useStatusLabel(run.task.status);
+  const status = useStatusLabel(run.task.status, run.task.queue_reason);
   const locale = useLocale();
   const when = new Intl.DateTimeFormat(locale, {
     month: "short",
@@ -771,7 +771,7 @@ function RunListRow({
   const locale = useLocale();
   const { getActorName } = useActorName();
   const trigger = useTriggerText(run.task);
-  const statusLabel = useStatusLabel(run.task.status);
+  const statusLabel = useStatusLabel(run.task.status, run.task.queue_reason);
   const task = run.task;
   const time = new Intl.DateTimeFormat(locale, {
     hour: "2-digit",
