@@ -71,7 +71,10 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 vi.mock("./inbox-detail-label", () => ({ InboxDetailLabel: () => null }));
-vi.mock("../../i18n", () => ({ useT: () => ({ t: () => "label" }) }));
+vi.mock("../../i18n", async () => {
+  const strings = (await import("../../locales/en/inbox.json")).default;
+  return { useT: (namespace: string) => ({ t: namespace === "inbox" ? (select: (value: typeof strings) => string) => select(strings) : () => "label" }) };
+});
 
 function item(overrides: Partial<InboxItem> = {}): InboxItem {
   return {
@@ -115,6 +118,7 @@ function renderRow(props: {
   view: "inbox" | "archived";
   adapter?: NavigationAdapter;
   onClick?: () => void;
+  onAction?: () => void;
 }) {
   return render(
     <WorkspaceSlugProvider slug="acme">
@@ -124,7 +128,7 @@ function renderRow(props: {
           view={props.view}
           isSelected={false}
           onClick={props.onClick ?? vi.fn()}
-          onAction={vi.fn()}
+          onAction={props.onAction ?? vi.fn()}
         />
       </NavigationProvider>
     </WorkspaceSlugProvider>,
@@ -239,6 +243,20 @@ describe("InboxListItem keyboard semantics", () => {
 
     fireEvent.keyDown(container.querySelector("button")!, { key: "Enter" });
 
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["inbox", "Archive notification", "Only archives your notifications. Does not archive the task or affect other people."],
+    ["archived", "Restore to inbox", "Restores your notifications to the inbox. Does not change the task."],
+  ] as const)("clarifies the %s action without changing its callback", (view, name, hint) => {
+    const onAction = vi.fn();
+    const onClick = vi.fn();
+    renderRow({ item: item({ archived: view === "archived" }), view, onAction, onClick });
+    const action = screen.getByRole("button", { name });
+    expect(action).toHaveAttribute("title", hint);
+    fireEvent.click(action);
+    expect(onAction).toHaveBeenCalledOnce();
     expect(onClick).not.toHaveBeenCalled();
   });
 

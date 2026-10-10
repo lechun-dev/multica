@@ -5,9 +5,9 @@
   },
   "menu": {
     "mark_all_read": "모두 읽음으로 표시",
-    "archive_all": "모두 보관",
-    "archive_all_read": "읽은 항목 모두 보관",
-    "archive_completed": "완료된 항목 보관"
+    "archive_all": "모든 알림 보관",
+    "archive_all_read": "읽은 알림 모두 보관",
+    "archive_completed": "완료된 태스크의 알림 보관"
   },
   "filters": {
     "tooltip": "인박스 필터",
@@ -23,24 +23,24 @@
   "context_menu": {
     "mark_read": "읽음으로 표시",
     "mark_unread": "읽지 않음으로 표시",
-    "archive": "보관",
-    "unarchive": "보관 해제",
+    "archive": "알림 보관",
+    "unarchive": "받은 편지함으로 복원",
     "open_in_new_tab": "새 탭에서 열기"
   },
   "list": {
     "loading_selection": "알림을 불러오는 중…",
     "empty": "알림이 없습니다",
     "mark_done_tooltip": "완료로 표시",
-    "archive_tooltip": "보관",
+    "archive_tooltip": "내 알림만 보관합니다. 태스크를 보관하거나 다른 사람에게 영향을 주지 않습니다.",
     "time": {
       "just_now": "방금 전",
       "minutes": "{{count}}분",
       "hours": "{{count}}시간",
       "days": "{{count}}일"
     },
-    "archived_title": "보관됨",
+    "archived_title": "보관된 알림",
     "archived_empty": "보관된 알림이 없습니다",
-    "unarchive_tooltip": "보관 해제",
+    "unarchive_tooltip": "내 알림을 받은 편지함으로 복원합니다. 태스크는 변경하지 않습니다.",
     "actions_aria": "알림 작업",
     "load_more": "더 불러오기",
     "loading_more": "불러오는 중…",
@@ -52,8 +52,8 @@
     "original_input": "원본 입력",
     "retry_with_context": "컨텍스트를 유지하여 재시도",
     "edit_advanced": "고급 양식으로 수정",
-    "archive": "보관",
-    "unarchive": "보관 해제"
+    "archive": "알림 보관",
+    "unarchive": "받은 편지함으로 복원"
   },
   "types": {
     "issue_assigned": "할당됨",

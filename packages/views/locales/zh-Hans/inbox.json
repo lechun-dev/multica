@@ -5,9 +5,9 @@
   },
   "menu": {
     "mark_all_read": "全部标为已读",
-    "archive_all": "归档全部",
-    "archive_all_read": "归档全部已读",
-    "archive_completed": "归档已完成"
+    "archive_all": "归档全部通知",
+    "archive_all_read": "归档全部已读通知",
+    "archive_completed": "归档已完成任务的通知"
   },
   "filters": {
     "tooltip": "筛选收件箱",
@@ -23,24 +23,24 @@
   "context_menu": {
     "mark_read": "标为已读",
     "mark_unread": "标为未读",
-    "archive": "归档",
-    "unarchive": "取消归档",
+    "archive": "归档通知",
+    "unarchive": "恢复到收件箱",
     "open_in_new_tab": "在新标签页打开"
   },
   "list": {
     "loading_selection": "正在加载通知…",
     "empty": "暂无通知",
     "mark_done_tooltip": "标为已完成",
-    "archive_tooltip": "归档",
+    "archive_tooltip": "仅归档你自己的通知，不会归档任务或影响其他人。",
     "time": {
       "just_now": "刚刚",
       "minutes": "{{count}} 分钟",
       "hours": "{{count}} 小时",
       "days": "{{count}} 天"
     },
-    "archived_title": "已归档",
+    "archived_title": "已归档通知",
     "archived_empty": "暂无已归档通知",
-    "unarchive_tooltip": "取消归档",
+    "unarchive_tooltip": "将你的通知恢复到收件箱，不会改变任务。",
     "actions_aria": "通知操作",
     "load_more": "加载更多",
     "loading_more": "加载中...",
@@ -52,8 +52,8 @@
     "original_input": "原始输入",
     "retry_with_context": "保留上下文重试",
     "edit_advanced": "在完整表单中编辑",
-    "archive": "归档",
-    "unarchive": "取消归档"
+    "archive": "归档通知",
+    "unarchive": "恢复到收件箱"
   },
   "types": {
     "issue_assigned": "已分配",

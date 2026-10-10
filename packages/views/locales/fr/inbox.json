@@ -5,9 +5,9 @@
   },
   "menu": {
     "mark_all_read": "Tout marquer comme lu",
-    "archive_all": "Tout archiver",
-    "archive_all_read": "Archiver tout ce qui est lu",
-    "archive_completed": "Archiver les éléments terminés"
+    "archive_all": "Archiver toutes les notifications",
+    "archive_all_read": "Archiver toutes les notifications lues",
+    "archive_completed": "Archiver les notifications des tâches terminées"
   },
   "filters": {
     "tooltip": "Filtrer la boîte de réception",
@@ -25,24 +25,24 @@
   "context_menu": {
     "mark_read": "Marquer comme lu",
     "mark_unread": "Marquer comme non lu",
-    "archive": "Archiver",
-    "unarchive": "Désarchiver",
+    "archive": "Archiver la notification",
+    "unarchive": "Restaurer dans la boîte de réception",
     "open_in_new_tab": "Ouvrir dans un nouvel onglet"
   },
   "list": {
     "loading_selection": "Chargement de la notification…",
     "empty": "Aucune notification",
     "mark_done_tooltip": "Marquer comme traité",
-    "archive_tooltip": "Archiver",
+    "archive_tooltip": "Archive uniquement vos notifications, sans archiver la tâche ni affecter les autres personnes.",
     "time": {
       "just_now": "à l'instant",
       "minutes": "{{count}} min",
       "hours": "{{count}} h",
       "days": "{{count}} j"
     },
-    "archived_title": "Archivées",
+    "archived_title": "Notifications archivées",
     "archived_empty": "Aucune notification archivée",
-    "unarchive_tooltip": "Désarchiver",
+    "unarchive_tooltip": "Restaure vos notifications dans la boîte de réception, sans modifier la tâche.",
     "actions_aria": "Actions de notification",
     "load_more": "Charger plus",
     "loading_more": "Chargement…",
@@ -56,8 +56,8 @@
     "edit_advanced": "Modifier en mode avancé",
     "autopilot_quota_exceeded_body": "Cet espace de travail a atteint sa limite de {{limit}} exécutions d'automatisation pour la période actuelle. Les prochaines exécutions d'automatisation ne démarreront qu'après la réinitialisation du quota {{resetAt}}.",
     "autopilot_quota_upgrade": "Voir les options de mise à niveau",
-    "archive": "Archiver",
-    "unarchive": "Désarchiver"
+    "archive": "Archiver la notification",
+    "unarchive": "Restaurer dans la boîte de réception"
   },
   "types": {
     "issue_assigned": "Assigné",

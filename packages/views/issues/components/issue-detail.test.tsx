@@ -679,6 +679,25 @@ function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
 // ---------------------------------------------------------------------------
 
 describe("IssueDetail (shared)", () => {
+  it("names inbox dismissal explicitly and only calls the host action", async () => {
+    mockApiObj.getIssue.mockResolvedValue({ ...mockIssue, status: "done" });
+    const onDone = vi.fn();
+    const qc = createTestQueryClient();
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <IssueDetail issueId="issue-1" onDone={onDone}
+            doneActionLabel="Archive notification"
+            doneActionHint="Only archives your notifications. Does not archive the task or affect other people." />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Archive notification" }));
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(mockApiObj.updateIssue).not.toHaveBeenCalled();
+    qc.clear();
+  });
+
   it("replaces cached task content with the host fallback after denial, without firing deletion", async () => {
     const qc = createTestQueryClient();
     qc.setQueryData(["issues", "ws-1", "detail", "issue-1"], mockIssue);

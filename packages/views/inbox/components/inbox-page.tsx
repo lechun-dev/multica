@@ -568,15 +568,15 @@ export function InboxPage() {
             {t(($) => $.menu.mark_all_read)}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={handleArchiveAll}>
+          <DropdownMenuItem title={t(($) => $.list.archive_tooltip)} onClick={handleArchiveAll}>
             <Archive className="h-4 w-4" />
             {t(($) => $.menu.archive_all)}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleArchiveAllRead}>
+          <DropdownMenuItem title={t(($) => $.list.archive_tooltip)} onClick={handleArchiveAllRead}>
             <BookCheck className="h-4 w-4" />
             {t(($) => $.menu.archive_all_read)}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleArchiveCompleted}>
+          <DropdownMenuItem title={t(($) => $.list.archive_tooltip)} onClick={handleArchiveCompleted}>
             <ListChecks className="h-4 w-4" />
             {t(($) => $.menu.archive_completed)}
           </DropdownMenuItem>
@@ -728,6 +728,8 @@ export function InboxPage() {
         key={detailItem.issue_id}
         issueId={detailItem.issue_id}
         defaultSidebarOpen={false}
+        doneActionLabel={t(($) => $.detail.archive)}
+        doneActionHint={t(($) => $.list.archive_tooltip)}
         layoutId="multica_inbox_issue_detail_layout"
         highlightCommentId={detailItem.details?.comment_id ?? undefined}
         highlightRequestToken={highlightRequestToken}
@@ -753,7 +755,7 @@ export function InboxPage() {
               showBackLink={false}
               leading={compactBackAction}
               actions={!isArchivedView ? (
-                <Button variant="outline" size="sm" disabled={archiveMutation.isPending} onClick={() => handleArchive(detailItem.id)}>
+                <Button variant="outline" size="sm" title={t(($) => $.list.archive_tooltip)} disabled={archiveMutation.isPending} onClick={() => handleArchive(detailItem.id)}>
                   {t(($) => $.detail.archive)}
                 </Button>
               ) : undefined}
@@ -854,6 +856,7 @@ export function InboxPage() {
           <Button
             variant="outline"
             size="sm"
+            title={t(($) => $.list.unarchive_tooltip)}
             onClick={() => handleUnarchive(detailItem.id)}
           >
             <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" />
@@ -863,6 +866,7 @@ export function InboxPage() {
           <Button
             variant="outline"
             size="sm"
+            title={t(($) => $.list.archive_tooltip)}
             onClick={() => handleArchive(detailItem.id)}
           >
             <Archive className="mr-1.5 h-3.5 w-3.5" />

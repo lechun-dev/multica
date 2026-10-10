@@ -1003,6 +1003,10 @@ interface IssueDetailProps {
   onDelete?: () => void;
   /** Called after the issue is marked as done via the toolbar button. */
   onDone?: () => void;
+  // 2026-10-10 coder(lq): Hosts name their own completion action; inbox
+  // dismissal must not be presented as archiving the referenced task.
+  doneActionLabel?: string;
+  doneActionHint?: string;
   defaultSidebarOpen?: boolean;
   layoutId?: string;
   /** When set, the issue detail will auto-scroll to this comment and briefly highlight it. */
@@ -1166,7 +1170,7 @@ export function IssueDetailSkeleton({ leading }: { leading?: ReactNode } = {}) {
 // IssueDetail
 // ---------------------------------------------------------------------------
 
-export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, accessRequestId, accessRequestToken, notFoundFallback, leadingAction }: IssueDetailProps) {
+export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneActionHint, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, accessRequestId, accessRequestToken, notFoundFallback, leadingAction }: IssueDetailProps) {
   const { t } = useT("issues");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
@@ -2941,13 +2945,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       variant="ghost"
                       size="icon-sm"
                       className="text-muted-foreground"
+                      aria-label={doneActionLabel ?? t(($) => $.detail.archive_tooltip)}
                       onClick={() => { onDone(); }}
                     >
                       <Archive />
                     </Button>
                   }
                 />
-                <TooltipContent side="bottom">{t(($) => $.detail.archive_tooltip)}</TooltipContent>
+                <TooltipContent side="bottom">{doneActionHint ?? t(($) => $.detail.archive_tooltip)}</TooltipContent>
               </Tooltip>
             )}
             <Tooltip>

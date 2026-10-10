@@ -142,7 +142,7 @@ describe("inbox row context menu", () => {
     const { row } = renderRow({ entry: item({ id: "inbox-3" }), actions: { onAction } });
 
     fireEvent.contextMenu(row);
-    fireEvent.click(await screen.findByText("Archive"));
+    fireEvent.click(await screen.findByText("Archive notification"));
 
     expect(onAction).toHaveBeenCalledWith("inbox-3");
   });
@@ -157,7 +157,7 @@ describe("inbox row context menu", () => {
 
     fireEvent.contextMenu(row);
 
-    expect(await screen.findByText("Unarchive")).toBeInTheDocument();
+    expect(await screen.findByText("Restore to inbox")).toBeInTheDocument();
     expect(screen.queryByText("Mark as unread")).toBeNull();
     expect(screen.queryByText("Mark as read")).toBeNull();
   });
@@ -188,7 +188,7 @@ describe("inbox row context menu", () => {
     const { row } = renderRow({ entry: item({ issue_id: null }) });
 
     fireEvent.contextMenu(row);
-    await screen.findByText("Archive");
+    await screen.findByText("Archive notification");
 
     expect(screen.queryByText("Open in new tab")).toBeNull();
   });
@@ -205,7 +205,7 @@ describe("inbox row compact menu", () => {
     renderRow({ entry: item({ id: "inbox-3" }), actions: { onAction } });
 
     openMenu();
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Archive" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Archive notification" }));
 
     expect(onAction).toHaveBeenCalledWith("inbox-3");
   });
@@ -225,7 +225,7 @@ describe("inbox row compact menu", () => {
 
     openMenu();
 
-    expect(await screen.findByRole("menuitem", { name: "Unarchive" })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: "Restore to inbox" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Mark as unread" })).toBeNull();
   });
 

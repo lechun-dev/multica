@@ -5,9 +5,9 @@
   },
   "menu": {
     "mark_all_read": "Mark all as read",
-    "archive_all": "Archive all",
-    "archive_all_read": "Archive all read",
-    "archive_completed": "Archive completed"
+    "archive_all": "Archive all notifications",
+    "archive_all_read": "Archive all read notifications",
+    "archive_completed": "Archive notifications for completed tasks"
   },
   "filters": {
     "tooltip": "Filter inbox",
@@ -25,24 +25,24 @@
   "context_menu": {
     "mark_read": "Mark as read",
     "mark_unread": "Mark as unread",
-    "archive": "Archive",
-    "unarchive": "Unarchive",
+    "archive": "Archive notification",
+    "unarchive": "Restore to inbox",
     "open_in_new_tab": "Open in new tab"
   },
   "list": {
     "loading_selection": "Loading notification…",
     "empty": "No notifications",
     "mark_done_tooltip": "Mark as done",
-    "archive_tooltip": "Archive",
+    "archive_tooltip": "Only archives your notifications. Does not archive the task or affect other people.",
     "time": {
       "just_now": "just now",
       "minutes": "{{count}}m",
       "hours": "{{count}}h",
       "days": "{{count}}d"
     },
-    "archived_title": "Archived",
+    "archived_title": "Archived notifications",
     "archived_empty": "No archived notifications",
-    "unarchive_tooltip": "Unarchive",
+    "unarchive_tooltip": "Restores your notifications to the inbox. Does not change the task.",
     "actions_aria": "Notification actions",
     "load_more": "Load more",
     "loading_more": "Loading…",
@@ -54,8 +54,8 @@
     "original_input": "Original input",
     "retry_with_context": "Retry with context",
     "edit_advanced": "Edit as advanced form",
-    "archive": "Archive",
-    "unarchive": "Unarchive"
+    "archive": "Archive notification",
+    "unarchive": "Restore to inbox"
   },
   "types": {
     "issue_assigned": "Assigned",

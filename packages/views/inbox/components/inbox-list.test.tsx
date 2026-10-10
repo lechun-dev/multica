@@ -206,7 +206,7 @@ describe("InboxList archive pagination", () => {
   it("keeps a count-free archive entry available with an empty inbox", () => {
     const onOpenArchived = vi.fn();
     render(<InboxList items={[]} view="inbox" selectedKey="" onSelect={vi.fn()} onAction={vi.fn()} onOpenArchived={onOpenArchived} />);
-    fireEvent.click(screen.getByRole("button", { name: "Archived" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archived notifications" }));
     expect(onOpenArchived).toHaveBeenCalledOnce();
   });
 

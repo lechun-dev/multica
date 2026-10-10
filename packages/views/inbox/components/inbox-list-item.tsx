@@ -76,6 +76,11 @@ export function InboxListItem({
   const showUnread = item.read !== true && !isArchivedView;
   const ActionIcon = isArchivedView ? ArchiveRestore : Archive;
   const actionLabel = isArchivedView
+    ? t(($) => $.context_menu.unarchive)
+    : t(($) => $.context_menu.archive);
+  // 2026-10-10 coder(lq): Keep the action name concise and explain that
+  // inbox archival affects personal notifications, never the referenced task.
+  const actionHint = isArchivedView
     ? t(($) => $.list.unarchive_tooltip)
     : t(($) => $.list.archive_tooltip);
   const actorType = item.actor_type ?? item.recipient_type;
@@ -150,7 +155,7 @@ export function InboxListItem({
                 the compact menu below carries the same action. */}
             <button
               type="button"
-              title={actionLabel}
+              title={actionHint}
               aria-label={actionLabel}
               onClick={(e) => {
                 e.stopPropagation();

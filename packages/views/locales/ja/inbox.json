@@ -5,9 +5,9 @@
   },
   "menu": {
     "mark_all_read": "すべて既読にする",
-    "archive_all": "すべてアーカイブ",
-    "archive_all_read": "既読の項目をすべてアーカイブ",
-    "archive_completed": "完了した項目をアーカイブ"
+    "archive_all": "すべての通知をアーカイブ",
+    "archive_all_read": "既読の通知をすべてアーカイブ",
+    "archive_completed": "完了したタスクの通知をアーカイブ"
   },
   "filters": {
     "tooltip": "インボックスを絞り込む",
@@ -23,24 +23,24 @@
   "context_menu": {
     "mark_read": "既読にする",
     "mark_unread": "未読にする",
-    "archive": "アーカイブ",
-    "unarchive": "アーカイブ解除",
+    "archive": "通知をアーカイブ",
+    "unarchive": "受信トレイに戻す",
     "open_in_new_tab": "新しいタブで開く"
   },
   "list": {
     "loading_selection": "通知を読み込み中…",
     "empty": "通知はありません",
     "mark_done_tooltip": "完了にする",
-    "archive_tooltip": "アーカイブ",
+    "archive_tooltip": "自分の通知のみをアーカイブします。タスクや他の人の通知には影響しません。",
     "time": {
       "just_now": "たった今",
       "minutes": "{{count}}分",
       "hours": "{{count}}時間",
       "days": "{{count}}日"
     },
-    "archived_title": "アーカイブ済み",
+    "archived_title": "アーカイブ済み通知",
     "archived_empty": "アーカイブされた通知はありません",
-    "unarchive_tooltip": "アーカイブ解除",
+    "unarchive_tooltip": "自分の通知を受信トレイに戻します。タスクは変更されません。",
     "actions_aria": "通知の操作",
     "load_more": "さらに読み込む",
     "loading_more": "読み込み中…",
@@ -52,8 +52,8 @@
     "original_input": "元の入力",
     "retry_with_context": "コンテキストを保持して再試行",
     "edit_advanced": "詳細フォームで編集",
-    "archive": "アーカイブ",
-    "unarchive": "アーカイブ解除"
+    "archive": "通知をアーカイブ",
+    "unarchive": "受信トレイに戻す"
   },
   "types": {
     "issue_assigned": "割り当て済み",
