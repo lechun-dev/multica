@@ -105,6 +105,66 @@ func permissionsOf(access EffectiveIssueAccess) []Permission {
 	return result
 }
 
+// 2026-10-10 coder(lq): Inherited project creation permits child creation,
+// without granting project administration or bypassing restricted task ACLs.
+func TestEffectiveAccessInheritsProjectCreateAsChildCreate(t *testing.T) {
+	cases := []struct {
+		name        string
+		role        ProjectRole
+		subjectType SubjectType
+		mode        ProjectAccessMode
+		assignee    bool
+		want        bool
+	}{
+		{"owner", ProjectOwner, SubjectUser, ProjectAccessInherit, false, true},
+		{"manager", ProjectManager, SubjectUser, ProjectAccessInherit, false, true},
+		{"member", ProjectMember, SubjectUser, ProjectAccessInherit, false, true},
+		{"viewer", ProjectViewer, SubjectUser, ProjectAccessInherit, false, false},
+		{"organization member", ProjectMember, SubjectOrganization, ProjectAccessInherit, false, true},
+		{"everyone member", ProjectMember, SubjectEveryone, ProjectAccessInherit, false, true},
+		{"restricted owner", ProjectOwner, SubjectUser, ProjectAccessRestricted, false, false},
+		{"restricted assignee", ProjectViewer, SubjectUser, ProjectAccessRestricted, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := effectiveFixture()
+			repo.projectRoles = make(map[ProjectRole][]Permission)
+			for _, role := range SystemRoleDefinitions() {
+				repo.projectRoles[role.Key] = role.Permissions
+			}
+			resource := repo.resources["task"]
+			resource.ProjectAccessMode = tc.mode
+			if tc.assignee {
+				resource.AssigneeUserID = "user"
+			}
+			repo.resources["task"] = resource
+			subjectID := "user"
+			if tc.subjectType == SubjectOrganization {
+				subjectID = "department"
+				repo.organizations = []string{"department"}
+			}
+			if tc.subjectType == SubjectEveryone {
+				subjectID = "ws"
+			}
+			repo.projectGrants["project"] = []AccessGrant{{ID: "project-role", WorkspaceID: "ws", ProjectID: "project", SubjectType: tc.subjectType, SubjectID: subjectID, Role: RoleKey(tc.role), Scope: RoleScopeProject}}
+			resolver := NewEffectiveAccessResolver(repo)
+			subject := Subject{UserID: "user", WorkspaceID: "ws"}
+			explanation, err := resolver.ExplainIssue(context.Background(), subject, "task", IssueChildCreate)
+			if err != nil || explanation.Allowed != tc.want {
+				t.Fatalf("child-create allowed = %v, error = %v; want %v", explanation.Allowed, err, tc.want)
+			}
+			if err := resolver.CanIssue(context.Background(), subject, "task", IssueChildCreate); (err == nil) != tc.want {
+				t.Fatalf("child-create write check = %v; want allowed=%v", err, tc.want)
+			}
+			for _, permission := range []Permission{IssueCreate, MemberManage, SettingsManage} {
+				if err := resolver.CanIssue(context.Background(), subject, "task", permission); !errors.Is(err, ErrInvalidIssuePermission) {
+					t.Fatalf("project-only permission %s leaked through task: %v", permission, err)
+				}
+			}
+		})
+	}
+}
+
 func TestEffectiveAccessUsesIndependentTaskRoleCatalog(t *testing.T) {
 	repo := effectiveFixture()
 	repo.projectRoles[ProjectMember] = []Permission{View, MemberManage}

@@ -48,7 +48,7 @@ func TestProjectPermissionProjectionIsExplicitAndTaskCapped(t *testing.T) {
 		{IssueArchive, IssueArchive, true},
 		{AgentUse, AgentUse, true},
 		{IssueChildCreate, IssueChildCreate, true},
-		{IssueCreate, "", false},
+		{IssueCreate, IssueChildCreate, true},
 		{MemberManage, "", false},
 		{SettingsManage, "", false},
 	}
@@ -59,7 +59,7 @@ func TestProjectPermissionProjectionIsExplicitAndTaskCapped(t *testing.T) {
 		}
 	}
 
-	if capped, err := TaskPermissionCap([]Permission{Edit, MemberManage}); err != nil {
+	if capped, err := TaskPermissionCap([]Permission{Edit, IssueCreate, MemberManage}); err != nil {
 		t.Fatalf("cap should filter known non-task permissions: %v", err)
 	} else if len(capped) != 2 || capped[0] != Edit || capped[1] != View {
 		t.Fatalf("cap should retain edit, add implicit view, and filter project-only permission: %v", capped)
@@ -68,7 +68,10 @@ func TestProjectPermissionProjectionIsExplicitAndTaskCapped(t *testing.T) {
 		t.Fatal("cap accepted unknown permission")
 	}
 	projected, err := ProjectPermissionsToTask([]Permission{Edit, IssueCreate, MemberManage})
-	if err != nil || len(projected) != 2 || projected[0] != Edit || projected[1] != View {
-		t.Fatalf("central projection = %v, %v; want edit + implicit view", projected, err)
+	if err != nil || len(projected) != 3 || projected[0] != Edit || projected[1] != IssueChildCreate || projected[2] != View {
+		t.Fatalf("central projection = %v, %v; want edit + child creation + implicit view", projected, err)
+	}
+	if IsTaskPermission(IssueCreate) || !IsTaskPermission(IssueChildCreate) {
+		t.Fatal("project creation must map to child creation without becoming a task permission itself")
 	}
 }

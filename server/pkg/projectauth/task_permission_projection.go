@@ -10,6 +10,9 @@ var knownPermissions = map[Permission]struct{}{
 var projectTaskPermissionProjection = map[Permission]Permission{
 	View: View, Edit: Edit, IssueComment: IssueComment, IssueManage: IssueManage,
 	IssueArchive: IssueArchive, AgentUse: AgentUse, IssueChildCreate: IssueChildCreate,
+	// 2026-10-10 coder(lq): Project creation is inherited as child creation,
+	// not unrestricted project creation through a task-scoped permission check.
+	IssueCreate: IssueChildCreate,
 }
 
 // ProjectPermissionToTask is the sole project-to-task projection. Project
@@ -43,8 +46,10 @@ func IsKnownPermission(permission Permission) bool {
 }
 
 func IsTaskPermission(permission Permission) bool {
-	_, ok := projectTaskPermissionProjection[permission]
-	return ok
+	// 2026-10-10 coder(lq): A projection source is not necessarily a task
+	// permission; keep project-only IssueCreate out of task grants and APIs.
+	projected, ok := projectTaskPermissionProjection[permission]
+	return ok && projected == permission
 }
 
 // TaskPermissionCap filters known project-only permissions and fails closed
