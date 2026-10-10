@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -108,6 +109,9 @@ func TestOmpExecuteDefaultsToOmpBinary(t *testing.T) {
 		t.Fatalf("New(omp): %v", err)
 	}
 	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	session, err := backend.Execute(ctx, "test prompt", ExecOptions{
@@ -199,7 +203,11 @@ func TestOmpExecuteCompletesFromEventStream(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
+	sessionPath := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(sessionPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second, ResumeSessionID: sessionPath})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

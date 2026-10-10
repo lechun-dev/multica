@@ -145,16 +145,21 @@ func TestClaimTask_IssueProjectInForeignWorkspace_CancelsTask(t *testing.T) {
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil,
 		testWorkspaceID, "test-claim-foreign-issue-project")
 	req = withURLParam(req, "runtimeId", runtimeID)
-	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusConflict)
-	if !strings.Contains(w.Text(), "invalid task authorization resource binding") {
-		t.Fatalf("claim error = %q, want invalid authorization binding message", w.Text())
+	w := testutil.Call(t, testHandler.ClaimTaskByRuntime, req).Want(http.StatusOK)
+	// 2026-10-10 coder(lq): Settled claim failures use the upstream empty
+	// success response; their durable failure reason still proves isolation.
+	if !strings.Contains(w.Text(), `"task":null`) {
+		t.Fatalf("claim response = %q, want empty task", w.Text())
 	}
 	assertNoForeignContext(t, w.Text(), foreignProjectID)
 
-	var status string
-	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE issue_id = $1`, issueID).Scan(&status)
+	var status, failureReason, failureError string
+	dbfx.QueryRow(t, `SELECT status,COALESCE(failure_reason,''),COALESCE(error,'') FROM agent_task_queue WHERE issue_id = $1`, issueID).Scan(&status, &failureReason, &failureError)
 	if status != "failed" {
 		t.Fatalf("cross-workspace issue task status = %q, want failed", status)
+	}
+	if failureReason != "invalid_task_identity" || !strings.Contains(failureError, "invalid authorization resource binding") {
+		t.Fatalf("claim failure reason=%q error=%q", failureReason, failureError)
 	}
 }
 

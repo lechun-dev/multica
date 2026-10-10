@@ -200,6 +200,10 @@ func newRequest(method, path string, body any) *http.Request {
 
 func withURLParam(req *http.Request, key, value string) *http.Request {
 	rctx := chi.NewRouteContext()
+	if existing := chi.RouteContext(req.Context()); existing != nil {
+		rctx.URLParams.Keys = append(rctx.URLParams.Keys, existing.URLParams.Keys...)
+		rctx.URLParams.Values = append(rctx.URLParams.Values, existing.URLParams.Values...)
+	}
 	rctx.URLParams.Add(key, value)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }

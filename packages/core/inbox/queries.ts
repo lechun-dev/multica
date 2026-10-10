@@ -159,13 +159,11 @@ export function useInboxUnreadCount(
   ready = true,
 ): number {
   const { data } = useQuery({
-    queryKey: inboxKeys.list(wsId ?? "", includeWorkspaceOwned),
-    queryFn: () => api.listInbox(includeWorkspaceOwned),
+    ...inboxUnreadSummaryOptions(includeWorkspaceOwned),
     enabled: !!wsId && ready,
-    select: (items: InboxItem[]) =>
-      deduplicateInboxItems(items).filter((i) => !i.read).length,
   });
-  return data ?? 0;
+  return unreadCountForWorkspace(data ?? [], wsId);
+
 }
 
 /**

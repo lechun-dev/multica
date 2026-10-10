@@ -5,7 +5,7 @@ import type { Issue, TimelineEntry } from "@multica/core/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "@/data/api";
-import { appConfigOptions } from "@/data/queries/billing";
+import { appConfigOptions } from "@/data/app-config";
 import { issueKeys } from "@/data/queries/issue-keys";
 import { useDeleteComment } from "./issues";
 

@@ -78,7 +78,10 @@
     "reaction_added": "Réaction",
     "quick_create_done": "Créé avec un agent",
     "quick_create_failed": "Échec de la création avec un agent",
+    "task_access_request": "Task access request",
+    "task_access_granted": "Task access granted",
     "quick_create_unconfirmed": "Création avec un agent non confirmée",
+    "children_done": "Sous-tâches terminées",
     "autopilot_paused": "Automatisation en pause",
     "autopilot_quota_exceeded": "Limite d'exécutions d'automatisation atteinte"
   },
@@ -94,6 +97,7 @@
     "reacted_to_comment": "A réagi {{emoji}} à votre commentaire",
     "created_with_agent": "Créé avec un agent : {{identifier}}",
     "failed_with_detail": "Échec : {{detail}}",
+    "children_done_stage": "Sous-tâches de l’étape {{stage}} terminées",
     "autopilot_quota_blocked": "Exécution bloquée car la limite a été atteinte"
   },
   "toasts": {

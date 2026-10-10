@@ -87,7 +87,7 @@ func TestDelegatedFailurePendingIndexRetirement(t *testing.T) {
 	assertIndexValidity(t, pool, schema, "idx_comment_delegated_failure_pending", true)
 	assertIndexValidity(t, pool, schema, "idx_comment_delegated_failure_unsettled", true)
 
-	const version = "450_drop_comment_delegated_failure_pending_index"
+	const version = "491_drop_comment_delegated_failure_pending_index"
 	options.Files = realMigrationFiles(t, []string{version}, "up")
 	if err := runMigrations(ctx, pool, options); err != nil {
 		t.Fatalf("apply delegated-failure index retirement migration: %v", err)

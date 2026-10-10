@@ -45,6 +45,7 @@ export function codexCandidatesForSelection(selectedPath: string): string[] {
         "MacOS",
         "codex",
       ),
+      join(selectedPath, "Contents", "Resources", "codex-cli", "bin", "codex"),
       join(selectedPath, "Contents", "Resources", "codex"),
     ];
   }
@@ -109,6 +110,10 @@ export async function codexDiscoveryCandidates({
               "MacOS",
               "codex",
             ),
+          ),
+          // 2026-10-10 coder(lq): Support the upstream ChatGPT bundle layout alongside CodexCLI.app.
+          ...["/Applications", join(home, "Applications")].map((root) =>
+            join(root, "ChatGPT.app", "Contents", "Resources", "codex-cli", "bin", "codex"),
           ),
           ...["/Applications", join(home, "Applications")].map((root) =>
             join(root, "ChatGPT.app", "Contents", "Resources", "codex"),

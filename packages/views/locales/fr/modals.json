@@ -35,7 +35,9 @@
     "search_placeholder": "Rechercher des tâches...",
     "searching": "Recherche...",
     "no_results": "Aucune tâche trouvée.",
-    "prompt_to_search": "Saisissez du texte pour rechercher des tâches"
+    "prompt_to_search": "Saisissez du texte pour rechercher des tâches",
+    "suggested_similar": "Titres similaires",
+    "suggested_recent": "Consultées récemment"
   },
   "set_parent": {
     "title": "Définir la tâche parente",
@@ -55,6 +57,9 @@
     "assign_batch": "Assigner {{count}} tâches à {{name}}. Le travail démarrera immédiatement si les conditions d'exécution sont réunies.",
     "title_promote": "Commencer le travail maintenant ?",
     "promote_single": "Passer cette tâche à {{status}}. {{name}} commencera immédiatement si les conditions d'exécution sont réunies.",
+    "note_label": "Handoff note (optional)",
+    "note_placeholder": "Tell them what matters — scope, focus, or what to avoid…",
+    "note_unsupported": "Their runtime is too old to receive this handoff note; it may not be read.",
     "confirm_assign": "Confirmer l'assignation",
     "confirm_promote": "Déplacer et démarrer",
     "dont_start": "Ne pas démarrer maintenant",
@@ -114,6 +119,9 @@
     "submitting": "Création...",
     "toast_created": "Projet créé",
     "toast_failed": "Échec de la création du projet",
+    "toast_permission_migration_required": "Project permissions are not initialized. Run the project-permission database migrations, then try again.",
+    "toast_permission_unavailable": "Project permissions are temporarily unavailable. Check the database and backend logs, then try again.",
+    "toast_permission_init_failed": "Project permissions could not be initialized. Check that the project-permission migrations have been applied and review the backend logs.",
     "repos_pill": "Dépôts",
     "repos_pill_count_one": "{{count}} dépôt",
     "repos_pill_count_other": "{{count}} dépôts",
@@ -169,23 +177,11 @@
       "portal_action": "Ouvrir le portail de facturation",
       "billing_action": "Voir la facturation"
     },
-    "autopilot_quota_limit": {
-      "title": "Cet espace de travail a atteint sa limite d'exécutions d'automatisation",
-      "checking_description": "Vérification des actions de facturation disponibles pour cet espace de travail…",
-      "upgrade_description": "Passez à Pro pour rétablir les exécutions d'automatisation.",
-      "portal_description": "Ouvrez le portail de facturation pour gérer l'abonnement de cet espace de travail et rétablir les exécutions d'automatisation.",
-      "contact_description": "Demandez à un propriétaire ou administrateur de l'espace de travail de passer à Pro.",
-      "billing_description": "Ouvrez Facturation pour voir les options de mise à niveau disponibles pour cet espace de travail.",
-      "billing_unavailable_description": "Impossible de charger les actions de facturation. Ouvrez Facturation pour réessayer.",
-      "billing_disabled_description": "Attendez la réinitialisation du quota actuel ou contactez l'administrateur de votre espace de travail.",
-      "upgrade_action": "Passer à Pro",
-      "portal_action": "Ouvrir le portail de facturation",
-      "billing_action": "Voir la facturation"
-    },
     "toast_link_subissues_all_failed": "Échec de la liaison des sous-tâches",
     "toast_link_subissues_partial": "Échec de la liaison de {{failed}} sous-tâches sur {{total}}",
     "toast_link_labels_failed": "Échec du rattachement des étiquettes",
     "toast_set_properties_failed": "Impossible de définir {{count}} valeurs de propriétés personnalisées",
+    "unavailable_property_removed": "Une propriété personnalisée qui n’est plus disponible a été retirée du brouillon. Vérifiez-le avant de le soumettre à nouveau.",
     "switch_to_agent": "Passer en mode agent",
     "switch_to_agent_tooltip": "Passer à la création avec un agent — décrivez en une ligne et laissez l'agent rédiger la tâche",
     "switch_to_manual": "Passer en mode manuel",
@@ -244,6 +240,15 @@
       "error_daemon_version": "Le CLI du daemon de cet agent ({{current}}) est inférieur au minimum requis {{min}}. Mettez le daemon à jour pour utiliser la création avec un agent.",
       "error_unknown": "Échec de l'envoi. Réessayez.",
       "sub_issue_of": "Sous-tâche de {{identifier}}"
-    }
+    },
+    "no_project_collaboration_hint": "Tasks without a project cannot be collaborated on."
+  },
+  "mark_duplicate": {
+    "title": "Marquer comme doublon",
+    "description": "Recherchez la tâche d'origine. Cette tâche sera annulée et liée à celle-ci.",
+    "toast_success": "Marquée comme doublon de {{identifier}}",
+    "toast_failed": "Échec du marquage comme doublon",
+    "error_target_is_duplicate": "{{identifier}} est elle-même un doublon. Choisissez plutôt sa tâche d'origine.",
+    "error_has_duplicates": "D'autres tâches sont marquées comme doublons de celle-ci. Retirez d'abord ces marques."
   }
 }

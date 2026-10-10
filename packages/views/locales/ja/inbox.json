@@ -76,7 +76,10 @@
     "quick_create_failed": "エージェントでの作成に失敗",
     "task_access_request": "タスク権限の申請",
     "task_access_granted": "タスク権限が付与されました",
-    "quick_create_unconfirmed": "エージェントでの作成結果は未確認"
+    "quick_create_unconfirmed": "エージェントでの作成結果は未確認",
+    "children_done": "サブタスクがすべて終わりました",
+    "autopilot_paused": "Autopilot paused",
+    "autopilot_quota_exceeded": "Autopilot quota exceeded"
   },
   "labels": {
     "set_status_to": "ステータスを変更:",
@@ -89,7 +92,9 @@
     "removed_due_date": "期限を削除",
     "reacted_to_comment": "あなたのコメントに {{emoji}} のリアクションをしました",
     "created_with_agent": "エージェントで作成: {{identifier}}",
-    "failed_with_detail": "失敗: {{detail}}"
+    "failed_with_detail": "失敗: {{detail}}",
+    "children_done_stage": "ステージ {{stage}} のサブタスクがすべて終わりました",
+    "autopilot_quota_blocked": "Run blocked by quota limit"
   },
   "toasts": {
     "source_context_retry_started": "元のコンテキストで再試行を開始しました",

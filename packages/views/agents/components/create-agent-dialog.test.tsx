@@ -312,7 +312,7 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     const { onCreate } = renderDialog([mine]);
 
     // Legacy copy is rendered — matches VISIBILITY_DESCRIPTION.
-    expect(screen.getByText(/All members can assign/i)).toBeInTheDocument();
+    expect(screen.getByText(/All members can see and run/i)).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
       target: { value: "Legacy Agent" },
@@ -334,7 +334,7 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     const { onCreate } = renderDialog([mine]);
 
     // New copy replaces the old one.
-    expect(screen.getByText("Only you can run this agent")).toBeInTheDocument();
+    expect(screen.getByText("You and workspace administrators can see and run this agent")).toBeInTheDocument();
     expect(screen.getByText("Entire workspace")).toBeInTheDocument();
     expect(screen.getByText("Specific people")).toBeInTheDocument();
 
@@ -364,7 +364,7 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     });
     // Click the Private card. The Private description doubles as a stable
     // click target inside the button.
-    fireEvent.click(screen.getByText("Only you can run this agent"));
+    fireEvent.click(screen.getByText("You and workspace administrators can see and run this agent"));
     fireEvent.click(screen.getByText("Create"));
     await new Promise((r) => setTimeout(r, 0));
 

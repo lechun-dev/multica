@@ -54,7 +54,7 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 		return fixture.Count(t, `SELECT count(*) FROM dingtalk_personal_message WHERE comment_id = $1`, commentID)
 	}
 	wakeup := &personalMentionWakeupRecorder{}
-	runtime := &dingtalkNotifyRuntime{pool: testPool, personalWakeup: wakeup}
+	runtime := &dingtalkNotifyRuntime{pool: testPool, personalWakeup: wakeup, agentOwner: dingtalkAgentOwnerResolver(testPool)}
 	emit := func(commentID, authorType, authorID, content string) {
 		runtime.handleComment(events.Event{
 			Type:        "comment:created",
@@ -124,8 +124,8 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 	if senderDingID != actorDingID || recipientDingID != targetDingID {
 		t.Fatalf("owned Agent did not route through its owner: sender=%q recipient=%q", senderDingID, recipientDingID)
 	}
-	if !strings.Contains(markdown, "你的 Agent") {
-		t.Fatalf("owned Agent personal message did not disclose Agent authorship: %q", markdown)
+	if markdown != "**在任务评论中提到了你**" {
+		t.Fatalf("owned Agent personal message did not preserve the compact mention body: %q", markdown)
 	}
 	if len(wakeup.users) != 3 || wakeup.users[2] != actorID {
 		t.Fatalf("owned Agent did not wake its owner's queue: %#v", wakeup.users)

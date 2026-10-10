@@ -13,10 +13,14 @@ vi.mock("../platform/local-directory", () => ({
   isDesktopShell: vi.fn(() => false),
 }));
 
+// The UI language the mocked i18n instance reports; drives locale-aware links.
+const i18nState = vi.hoisted(() => ({ language: "en" }));
+
 // react-i18next isn't initialised in the views test env, so resolve the
 // selector against the real en/layout.json to assert on actual copy.
 vi.mock("../i18n", () => ({
   useT: () => ({
+    i18n: i18nState,
     t: (
       sel: (r: typeof enLayout) => string,
       vars?: Record<string, string>,
@@ -75,6 +79,7 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", async () => {
 
 beforeEach(() => {
   vi.mocked(isDesktopShell).mockReturnValue(false);
+  i18nState.language = "en";
 });
 
 afterEach(() => {
@@ -124,6 +129,15 @@ describe("HelpLauncher", () => {
       "href",
       "/changelog",
     );
+  });
+
+  // 2026-10-10 coder(lq): Private deployments keep upstream support links
+  // hidden regardless of the newly available French UI locale.
+  it.each(["en", "zh-Hans", "fr"])("keeps private help links for %s", (language) => {
+    i18nState.language = language;
+    render(<HelpLauncher />);
+    expect(screen.queryByRole("link", { name: /Docs/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Change log/ })).toHaveAttribute("href", "/changelog");
   });
 
   // AppSidebar is shared: apps/desktop renders the same component tree. Without

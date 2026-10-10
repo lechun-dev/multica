@@ -93,9 +93,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # releases follow the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.26.
+          go-version: "~1.26.9"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -138,9 +138,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # releases follow the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.26.
+          go-version: "~1.26.9"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -493,9 +493,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # releases follow the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.26.
+          go-version: "~1.26.9"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -521,6 +521,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # electron-builder's GitHub publisher reads this:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Same-tag reruns must also replace Desktop assets after the
+          # publisher's default two-hour safety window has elapsed.
+          EP_GH_IGNORE_TIME: "true"
           # Disable code signing on Linux/Windows for now — the public
           # release is unsigned for these platforms, the CLI carries the
           # trust boundary. Set CSC_LINK in repo secrets to enable

@@ -25,6 +25,12 @@ deleted_task_messages AS (
 deleted_task_tokens AS (
     DELETE FROM task_token WHERE task_id IN (SELECT id FROM batch)
 ),
+deleted_task_supplements AS (
+    DELETE FROM task_supplement WHERE task_id IN (SELECT id FROM batch)
+),
+deleted_task_supplement_capabilities AS (
+    DELETE FROM task_supplement_capability WHERE task_id IN (SELECT id FROM batch)
+),
 deleted_channel_outbound_cards AS (
     DELETE FROM channel_outbound_card_message WHERE task_id IN (SELECT id FROM batch)
 ),
@@ -217,52 +223,6 @@ func (q *Queries) DeleteWorkspaceCommunicationRoots(ctx context.Context, workspa
 	return err
 }
 
-const deleteWorkspaceProjectAuthorization = `-- name: DeleteWorkspaceProjectAuthorization :exec
-WITH
-deleted_request_notifications AS (
-    DELETE FROM projectauth_access_request_notifications WHERE workspace_id = $1
-),
-deleted_access_requests AS (
-    DELETE FROM projectauth_access_requests WHERE workspace_id = $1
-),
-deleted_grant_constraints AS (
-    DELETE FROM projectauth_grant_constraints WHERE workspace_id = $1
-),
-deleted_issue_access_grants AS (
-    DELETE FROM projectauth_issue_access_grants WHERE workspace_id = $1
-),
-deleted_access_grants AS (
-    DELETE FROM projectauth_access_grants WHERE workspace_id = $1
-),
-deleted_issue_policies AS (
-    DELETE FROM projectauth_issue_policies WHERE workspace_id = $1
-),
-workspace_task_roles AS MATERIALIZED (
-    SELECT id FROM projectauth_task_roles WHERE workspace_id = $1
-),
-deleted_task_role_permissions AS (
-    DELETE FROM projectauth_task_role_permissions
-    WHERE role_id IN (SELECT id FROM workspace_task_roles)
-),
-deleted_task_roles AS (
-    DELETE FROM projectauth_task_roles WHERE workspace_id = $1
-),
-deleted_organization_members AS (
-    DELETE FROM projectauth_organization_members WHERE workspace_id = $1
-),
--- 2026-09-21 coder(lq): Withdrawal watermarks for mention access. No foreign key
--- reaches workspace, so the teardown has to sweep them explicitly.
-deleted_mention_revocations AS (
-    DELETE FROM projectauth_issue_mention_revocations WHERE workspace_id = $1
-)
-DELETE FROM projectauth_organizations WHERE workspace_id = $1
-`
-
-func (q *Queries) DeleteWorkspaceProjectAuthorization(ctx context.Context, workspaceID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteWorkspaceProjectAuthorization, workspaceID)
-	return err
-}
-
 const deleteWorkspaceConnections = `-- name: DeleteWorkspaceConnections :exec
 WITH deleted_github_installations AS (
     DELETE FROM github_installation
@@ -281,6 +241,9 @@ WITH deleted_wakeup_receipts AS (
  DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE workspace_id=$1)
 ), deleted_wakeups AS (
  DELETE FROM issue_wakeup WHERE workspace_id=$1
+),
+deleted_child_events AS (
+ DELETE FROM issue_child_event WHERE workspace_id=$1
 ),
 deleted_issues AS (
     DELETE FROM issue WHERE issue.workspace_id = $1
@@ -347,6 +310,12 @@ ws_lark_installations AS MATERIALIZED (
 deleted_task_tokens AS (
     DELETE FROM task_token
     WHERE workspace_id = $1
+),
+deleted_orphan_task_supplements AS (
+    DELETE FROM task_supplement WHERE workspace_id = $1
+),
+deleted_orphan_task_supplement_capabilities AS (
+    DELETE FROM task_supplement_capability WHERE workspace_id = $1
 ),
 deleted_hourly_dirty AS (
     DELETE FROM task_usage_hourly_dirty WHERE workspace_id = $1
@@ -417,6 +386,12 @@ deleted_issue_vcs_links AS (
     DELETE FROM issue_vcs_pull_request
     WHERE issue_id IN (SELECT id FROM ws_issues)
        OR pull_request_id IN (SELECT id FROM ws_vcs_prs)
+),
+deleted_issue_pr_automation AS (
+    DELETE FROM issue_pr_automation WHERE workspace_id = $1
+),
+deleted_issue_pr_exclusions AS (
+    DELETE FROM issue_pull_request_exclusion WHERE workspace_id = $1
 ),
 deleted_agent_invocation_targets AS (
     DELETE FROM agent_invocation_target
@@ -611,6 +586,56 @@ DELETE FROM plugin_installation WHERE id IN (SELECT id FROM installations)
 // stored bundles as the largest orphan the plugin surface can produce.
 func (q *Queries) DeleteWorkspacePluginData(ctx context.Context, workspaceID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWorkspacePluginData, workspaceID)
+	return err
+}
+
+const deleteWorkspaceProjectAuthorization = `-- name: DeleteWorkspaceProjectAuthorization :exec
+WITH
+deleted_request_notifications AS (
+    DELETE FROM projectauth_access_request_notifications WHERE workspace_id = $1
+),
+deleted_access_requests AS (
+    DELETE FROM projectauth_access_requests WHERE workspace_id = $1
+),
+deleted_grant_constraints AS (
+    DELETE FROM projectauth_grant_constraints WHERE workspace_id = $1
+),
+deleted_issue_access_grants AS (
+    DELETE FROM projectauth_issue_access_grants WHERE workspace_id = $1
+),
+deleted_access_grants AS (
+    DELETE FROM projectauth_access_grants WHERE workspace_id = $1
+),
+deleted_issue_policies AS (
+    DELETE FROM projectauth_issue_policies WHERE workspace_id = $1
+),
+workspace_task_roles AS MATERIALIZED (
+    SELECT id FROM projectauth_task_roles WHERE workspace_id = $1
+),
+deleted_task_role_permissions AS (
+    DELETE FROM projectauth_task_role_permissions
+    WHERE role_id IN (SELECT id FROM workspace_task_roles)
+),
+deleted_task_roles AS (
+    DELETE FROM projectauth_task_roles WHERE workspace_id = $1
+),
+deleted_organization_members AS (
+    DELETE FROM projectauth_organization_members WHERE workspace_id = $1
+),
+deleted_mention_revocations AS (
+    DELETE FROM projectauth_issue_mention_revocations WHERE workspace_id = $1
+)
+DELETE FROM projectauth_organizations AS org WHERE org.workspace_id = $1
+`
+
+// Private authorization tables intentionally avoid foreign keys into upstream
+// project/issue tables. Sweep their leaves before issue and project roots so a
+// workspace deletion cannot leave ACL, request, or role-directory orphans.
+// 2026-09-21 coder(lq): Withdrawal watermarks for mention access. No foreign key
+// reaches workspace, so the teardown has to sweep them explicitly.
+// 2026-10-10 coder(lq): Qualify the final target after the permission teardown CTEs for sqlc.
+func (q *Queries) DeleteWorkspaceProjectAuthorization(ctx context.Context, workspaceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkspaceProjectAuthorization, workspaceID)
 	return err
 }
 

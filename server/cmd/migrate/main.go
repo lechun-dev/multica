@@ -169,6 +169,26 @@ var concurrentIndexCleanups = map[string]string{
 	"553_maintenance_job_id_index":                              "idx_maintenance_job_id",
 	"554_maintenance_job_idempotency_index":                     "idx_maintenance_job_idempotency",
 	"555_maintenance_job_active_index":                          "idx_maintenance_job_active",
+	"630_search_index_change_changed_at_index":                  "idx_search_index_change_changed_at",
+	"629_search_index_change_workspace_index":                   "idx_search_index_change_workspace_xid",
+	"619_agent_task_history_page_index":                         "idx_agent_task_queue_history_page",
+	"602_github_pr_address_index":                               "idx_github_pull_request_pr_owner_repo",
+	"606_task_supplement_request_index":                         "task_supplement_task_request_uidx",
+	"607_task_supplement_capability_index":                      "task_supplement_capability_task_uidx",
+	"608_task_supplement_comment_index":                         "task_supplement_comment_uidx",
+	"613_issue_pr_automation_workspace_index":                   "idx_issue_pr_automation_workspace",
+	"614_issue_pull_request_exclusion_workspace_index":          "idx_issue_pull_request_exclusion_workspace",
+	"615_task_supplement_comment_task_index":                    "task_supplement_comment_task_uidx",
+	"621_wakeup_expiry_index":                                   "issue_wakeup_expiry_idx",
+	"623_wakeup_system_rule_index":                              "issue_wakeup_system_rule_idx",
+	"626_issue_child_event_id":                                  "issue_child_event_id_idx",
+	"627_issue_child_event_pending":                             "issue_child_event_pending_idx",
+	"633_channel_typing_reaction_id_idx":                        "channel_typing_reaction_id_idx",
+	"634_channel_typing_reaction_retry_idx":                     "channel_typing_reaction_retry_idx",
+	"635_channel_typing_reaction_gc_idx":                        "channel_typing_reaction_gc_idx",
+	"637_channel_typing_quota_idx":                              "channel_typing_reaction_quota_idx",
+	"638_channel_typing_expiry_idx":                             "channel_typing_reaction_expiry_idx",
+	"639_channel_typing_abandoned_idx":                          "channel_typing_reaction_abandoned_idx",
 	"035_task_queue_issue_id_index":                             "idx_agent_task_queue_issue_id",
 	"067_task_queue_claim_candidate_index":                      "idx_agent_task_queue_claim_candidates",
 	"074_task_usage_updated_at_index":                           "idx_task_usage_updated_at",
@@ -364,6 +384,7 @@ var concurrentIndexCleanups = map[string]string{
 	"525_projectauth_access_request_notifications_unique":    "projectauth_access_request_notifications_delivery_uidx",
 	"526_projectauth_access_requests_pending_unique":         "projectauth_access_requests_pending_subject_role_uidx",
 	"529_projectauth_issue_mention_revocations_unique":       "projectauth_issue_mention_revocations_subject_uidx",
+	"604_issue_duplicate_of_index":                           "idx_issue_duplicate_of",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -395,6 +416,7 @@ var concurrentDownIndexCleanups = map[string]string{
 	"496_drop_comment_content_trgm_index":              "idx_comment_content_trgm",
 	"504_drop_issue_description_bigm_index":            "idx_issue_description_bigm",
 	"505_drop_issue_description_trgm_index":            "idx_issue_description_trgm",
+	"615_task_supplement_comment_task_index":           "task_supplement_comment_uidx",
 }
 
 var preMigrationHooks = func() map[string]preMigrationHook {

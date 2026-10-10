@@ -454,6 +454,15 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid settings")
 			return
 		}
+		var stored, merged map[string]any
+		_ = json.Unmarshal(existingSettings, &stored)
+		_ = json.Unmarshal(s, &merged)
+		reconcilePRMergeSettings(stored, merged)
+		s, err = json.Marshal(merged)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid settings")
+			return
+		}
 		params.Settings = s
 	}
 	if req.Repos != nil {
@@ -1284,6 +1293,12 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		{
 			name: "delete comments",
 			run:  func() error { return qtx.DeleteWorkspaceComments(ctx, requester.WorkspaceID) },
+		},
+		{
+			// Teardown mode keeps the triggers from logging the deletes above
+			// and below; this clears what normal writes logged before.
+			name: "delete search index changes",
+			run:  func() error { return qtx.DeleteWorkspaceSearchIndexChanges(ctx, requester.WorkspaceID) },
 		},
 		// Keep source-context object intents after the workspace row is gone.
 		// They are the durable retry ledger for an upload that began before the

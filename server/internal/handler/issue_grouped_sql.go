@@ -21,7 +21,7 @@ func groupedIssuePageSQL(where, order, offsetRef, limitRef, userRef string, incl
 	SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at,
-		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.archived_at, p.group_total
+		i.number, i.project_id, i.metadata, i.stage, i.properties, i.revision, i.archived_at, i.duplicate_of_issue_id, p.group_total
 	FROM page p JOIN issue i ON i.id=p.id AND i.workspace_id=$1
 	ORDER BY CASE p.assignee_type WHEN 'member' THEN 0 WHEN 'agent' THEN 1 WHEN 'squad' THEN 2 ELSE 3 END,
 	p.assignee_type NULLS LAST, p.assignee_id NULLS LAST, p.rn`, visibility, order, where, offsetRef, offsetRef, limitRef)

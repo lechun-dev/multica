@@ -1643,8 +1643,8 @@ func TestDashboardFailuresByAgentUsesExactWindow(t *testing.T) {
 		"issue_id":       issueID,
 		"runtime_id":     runtimeID,
 		"status":         "failed",
-		"started_at":     testutil.Raw("((CURRENT_DATE - 1)::timestamp + interval '11 hours') AT TIME ZONE 'UTC'"),
-		"completed_at":   testutil.Raw("((CURRENT_DATE - 1)::timestamp + interval '12 hours') AT TIME ZONE 'UTC'"),
+		"started_at":     testutil.Raw("(((now() AT TIME ZONE 'UTC')::date - 1)::timestamp + interval '11 hours') AT TIME ZONE 'UTC'"),
+		"completed_at":   testutil.Raw("(((now() AT TIME ZONE 'UTC')::date - 1)::timestamp + interval '12 hours') AT TIME ZONE 'UTC'"),
 		"failure_reason": "timeout",
 		"created_at":     testutil.Raw("now()"),
 	})
@@ -1739,7 +1739,7 @@ func TestDashboardPerAgentRollupsUseExactWindow(t *testing.T) {
 			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, event_count
 		)
 		VALUES (
-			((CURRENT_DATE - 1)::timestamp + interval '12 hours') AT TIME ZONE 'UTC',
+			(((now() AT TIME ZONE 'UTC')::date - 1)::timestamp + interval '12 hours') AT TIME ZONE 'UTC',
 			$1, $2, $3, NULL, $4, $5,
 			7777, 0, 0, 0, 1
 		)
@@ -1754,8 +1754,8 @@ func TestDashboardPerAgentRollupsUseExactWindow(t *testing.T) {
 		"issue_id":     issueID,
 		"runtime_id":   runtimeID,
 		"status":       "completed",
-		"started_at":   testutil.Raw("((CURRENT_DATE - 1)::timestamp + interval '11 hours 45 minutes') AT TIME ZONE 'UTC'"),
-		"completed_at": testutil.Raw("((CURRENT_DATE - 1)::timestamp + interval '12 hours') AT TIME ZONE 'UTC'"),
+		"started_at":   testutil.Raw("(((now() AT TIME ZONE 'UTC')::date - 1)::timestamp + interval '11 hours 45 minutes') AT TIME ZONE 'UTC'"),
+		"completed_at": testutil.Raw("(((now() AT TIME ZONE 'UTC')::date - 1)::timestamp + interval '12 hours') AT TIME ZONE 'UTC'"),
 		"created_at":   testutil.Raw("now()"),
 	})
 

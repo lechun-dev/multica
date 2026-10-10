@@ -37,6 +37,9 @@ export function useTypeLabels(): Record<InboxItemType, string> {
     task_access_request: t(($) => $.types.task_access_request),
     task_access_granted: t(($) => $.types.task_access_granted),
     quick_create_unconfirmed: t(($) => $.types.quick_create_unconfirmed),
+    autopilot_paused: t(($) => $.types.autopilot_paused),
+    autopilot_quota_exceeded: t(($) => $.types.autopilot_quota_exceeded),
+    children_done: t(($) => $.types.children_done),
   };
 }
 
@@ -142,6 +145,14 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
       // so the detail is shown as-is with no "Failed:" framing.
       const detail = getQuickCreateOutcomeDetail(item);
       if (detail) return <span>{detail}</span>;
+      return <span>{typeLabels[item.type]}</span>;
+    }
+    case "autopilot_quota_exceeded":
+      return <span>{t(($) => $.labels.autopilot_quota_blocked)}</span>;
+    case "children_done": {
+      // The stage arrives as a JSON number; details are typed as strings.
+      const stage = details.stage != null ? String(details.stage) : "";
+      if (stage) return <span>{t(($) => $.labels.children_done_stage, { stage })}</span>;
       return <span>{typeLabels[item.type]}</span>;
     }
     default:

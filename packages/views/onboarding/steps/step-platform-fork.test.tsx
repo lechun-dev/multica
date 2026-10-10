@@ -7,6 +7,9 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enOnboarding from "../../locales/en/onboarding.json";
 
+// 2026-10-10 coder(lq): Runtime model selectors now require workspace identity.
+vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
+
 const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };
 
 const mocks = vi.hoisted(() => ({

@@ -54,6 +54,10 @@ func TestAutopilotWritesIgnoreForgedAgentIdentity(t *testing.T) {
 	email := fmt.Sprintf("autopilot-forger-%d@multica.test", time.Now().UnixNano())
 	outsider := fx.User(t, "Autopilot Forger", email)
 	fx.Member(t, testWorkspaceID, outsider, "member")
+	// 2026-10-10 coder(lq): A private executor can view the autopilot without
+	// write access. Keep the forgery test inside that intended audience.
+	readerAgent := fx.Agent(t, "Forged actor read executor", "", testutil.Cols{"owner_id": outsider, "kind": "user"})
+	fx.Exec(t, `UPDATE autopilot SET assignee_id=$1 WHERE id=$2`, readerAgent, autopilotID)
 	outsiderJWT, err := generateTestJWT(outsider, email, "Autopilot Forger")
 	if err != nil {
 		t.Fatalf("outsider jwt: %v", err)

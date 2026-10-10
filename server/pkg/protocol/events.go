@@ -150,6 +150,7 @@ const (
 	EventDaemonRuntimeProfilesChanged           = "daemon:runtime_profiles_changed"
 	EventDaemonWorkspacesChanged                = "daemon:workspaces_changed"
 	EventDaemonDingTalkPersonalMessageAvailable = "daemon:dingtalk_personal_message_available"
+	EventDaemonTaskSupplementAvailable          = "daemon:task_supplement_available"
 	// EventDaemonPendingWork is a runtime-scoped hint that a heartbeat-carried
 	// request (model discovery, capability discovery, or local-skill import) is
 	// queued for that runtime. Without it the daemon only learns about the

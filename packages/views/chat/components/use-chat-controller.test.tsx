@@ -84,6 +84,9 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/platform", () => ({
+  getCurrentWsId: () => "ws-1",
+}));
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (sel: (s: { user: { id: string } }) => unknown) =>
     sel({ user: { id: "user-1" } }),
@@ -154,7 +157,8 @@ vi.mock("@multica/core/chat", () => ({
 vi.mock("@multica/core/realtime", () => ({
   removeChatMessageFromCaches: h.removeFromCaches,
 }));
-vi.mock("@multica/core/logger", () => ({
+vi.mock("@multica/core/logger", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@multica/core/logger")>(),
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 vi.mock("../../i18n", () => ({ useT: () => ({ t: () => "x" }) }));

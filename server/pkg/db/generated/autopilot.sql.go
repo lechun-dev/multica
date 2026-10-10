@@ -427,7 +427,8 @@ INSERT INTO autopilot_trigger (
     $6, $7, $8,
     COALESCE($9::text, 'generic'),
     $10,
-    $11, $12, $13, $14
+    $11, $12,
+    $13, $14
 ) RETURNING id, autopilot_id, kind, enabled, cron_expression, timezone, next_run_at, webhook_token, label, last_fired_at, created_at, updated_at, provider, signing_secret, event_filters, published_by_type, published_by_id, created_by_type, created_by_id
 `
 
@@ -448,6 +449,11 @@ type CreateAutopilotTriggerParams struct {
 	CreatedByID     pgtype.UUID        `json:"created_by_id"`
 }
 
+// 2026-09-20 coder(lq): Stamp the immutable creator too. Migration 490 added
+// created_by_* as the AUTHORIZATION principal every schedule/webhook firing acts
+// as (MUL-6951) and documented it as "written once at creation", but this INSERT
+// never wrote it, so every trigger created since carried a NULL principal and
+// its runs had to fail closed (MUL-4302).
 func (q *Queries) CreateAutopilotTrigger(ctx context.Context, arg CreateAutopilotTriggerParams) (AutopilotTrigger, error) {
 	row := q.db.QueryRow(ctx, createAutopilotTrigger,
 		arg.AutopilotID,

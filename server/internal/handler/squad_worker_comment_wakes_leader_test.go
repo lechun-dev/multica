@@ -79,8 +79,13 @@ func TestCreateComment_GuestSquadWorkerRouting_GH8301(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mode := tc.mode
 			var outsiderID string
+			originatorID := testUserID
 			if mode == "permission_denied" {
 				outsiderID = dbfx.User(t, "GH-8301 outsider", "gh-8301-outsider-"+uuid.NewString()+"@multica.test")
+				// 2026-10-10 coder(lq): Owners/admins may invoke private agents in
+				// MissionOS. A denial fixture must carry a regular member's authority.
+				originatorID = dbfx.User(t, "GH-8301 member", "gh-8301-member-"+uuid.NewString()+"@multica.test")
+				dbfx.Member(t, testWorkspaceID, originatorID, "member")
 			}
 			assignedLeaderID := dbfx.Agent(t, "GH-8301 assigned leader "+mode, testRuntimeID)
 			guestLeaderID := dbfx.Agent(t, "GH-8301 exact guest leader "+mode, testRuntimeID)
@@ -98,8 +103,8 @@ func TestCreateComment_GuestSquadWorkerRouting_GH8301(t *testing.T) {
 				"status":              "completed",
 				"is_leader_task":      true,
 				"squad_id":            guestSquadID,
-				"originator_user_id":  testUserID,
-				"accountable_user_id": testUserID,
+				"originator_user_id":  originatorID,
+				"accountable_user_id": originatorID,
 			})
 			delegationID := dbfx.Comment(t, issueID, "delegate to guest worker", testutil.Cols{
 				"author_type":    "agent",
@@ -113,8 +118,8 @@ func TestCreateComment_GuestSquadWorkerRouting_GH8301(t *testing.T) {
 				"trigger_comment_id":     delegationID,
 				"squad_id":               guestSquadID,
 				"delegated_from_task_id": guestLeaderTaskID,
-				"originator_user_id":     testUserID,
-				"accountable_user_id":    testUserID,
+				"originator_user_id":     originatorID,
+				"accountable_user_id":    originatorID,
 			})
 			dbfx.Cleanup(t, `DELETE FROM comment WHERE issue_id = $1`, issueID)
 			dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)

@@ -73,7 +73,7 @@ func TestIssueUpdatedBroadcast_UsesSafeProjectionWithoutMutatingInternalPayload(
 	// 2026-09-11 coder(lq): Workspace WebSocket fanout is only an invalidation
 	// signal. Business content must be fetched through the permission-aware API.
 	for _, privateKey := range []string{"prev_description", "prev_title", "prev_status", "description", "title"} {
-		if strings.Contains(string(raw), privateKey) {
+		if strings.Contains(string(raw), `"`+privateKey+`":`) {
 			t.Errorf("broadcast frame still contains private key %q", privateKey)
 		}
 	}

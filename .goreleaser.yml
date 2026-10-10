@@ -8,6 +8,8 @@ project_name: multica
 # to resolve only stable versions.
 release:
   prerelease: auto
+  # 2026-10-10 coder(lq): Preserve unrelated desktop artifacts on CLI release retries.
+  replace_existing_artifacts: true
 
 builds:
   - id: multica

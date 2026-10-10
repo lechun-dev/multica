@@ -60,6 +60,12 @@ import type {
   Workspace,
 } from "@multica/core/types";
 import {
+  AppConfigSchema,
+  EMPTY_APP_CONFIG,
+  type AppConfigResponse,
+  type RefreshSessionResponse,
+  RefreshSessionResponseSchema,
+  EMPTY_REFRESH_SESSION_RESPONSE,
   EMPTY_LIST_ISSUE_STATUSES_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_TIMELINE_ENTRIES,
@@ -133,8 +139,8 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 if (!API_URL) {
   throw new Error(
-    "EXPO_PUBLIC_API_URL is not set. Add it to apps/mobile/.env.development.local " +
-      "(see apps/mobile/.env.staging for an example).",
+    "EXPO_PUBLIC_API_URL is not set. Add it to the apps/mobile env file for " +
+      "the variant you are running (see apps/mobile/README.md).",
   );
 }
 
@@ -395,6 +401,10 @@ class ApiClient {
    * window (MUL-7436). The server owns that decision — the app never reads
    * `exp`, so a device with a skewed clock behaves exactly like one without.
    */
+  async getAppConfig(): Promise<AppConfigResponse> {
+    return this.fetchValidated("/api/config", AppConfigSchema, EMPTY_APP_CONFIG);
+  }
+
   async refreshSession(): Promise<RefreshSessionResponse> {
     return this.fetchValidatedWith(
       "/api/auth/refresh",
