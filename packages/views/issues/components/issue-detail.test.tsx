@@ -6,6 +6,7 @@ import type { AgentTask, Issue, IssueStatusEntry, Label, TimelineEntry } from "@
 import { issueStatusKeys } from "@multica/core/issue-statuses";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { toast } from "sonner";
+import { ApiError } from "@multica/core/api";
 import { useResolvedExpandStore } from "@multica/core/issues/stores/resolved-expand-store";
 import {
   DEFAULT_SUB_ISSUE_ROW_PROPERTIES,
@@ -333,7 +334,8 @@ const mockApiObj = vi.hoisted(() => ({
   listProjects: vi.fn().mockResolvedValue({ projects: [] }),
 }));
 
-vi.mock("@multica/core/api", () => ({
+vi.mock("@multica/core/api", async (importOriginal) => ({
+  ApiError: (await importOriginal<typeof import("@multica/core/api")>()).ApiError,
   api: mockApiObj,
   getApi: () => mockApiObj,
   setApiInstance: vi.fn(),
@@ -677,6 +679,23 @@ function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
 // ---------------------------------------------------------------------------
 
 describe("IssueDetail (shared)", () => {
+  it("replaces cached task content with the host fallback after denial, without firing deletion", async () => {
+    const qc = createTestQueryClient();
+    qc.setQueryData(["issues", "ws-1", "detail", "issue-1"], mockIssue);
+    mockApiObj.getIssue.mockRejectedValue(new ApiError("denied", 403, "Forbidden"));
+    const onDelete = vi.fn();
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <IssueDetail issueId="issue-1" onDelete={onDelete} notFoundFallback={<p>Request task access</p>} />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("Request task access")).toBeInTheDocument();
+    expect(onDelete).not.toHaveBeenCalled();
+    qc.clear();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     contentEditorMounts.count = 0;

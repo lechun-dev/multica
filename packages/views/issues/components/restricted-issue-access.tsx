@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -181,6 +181,7 @@ export function RestrictedIssueAccessFallback({
   loading = null,
   notFound,
   leading,
+  onNotFound,
 }: {
   /** UUID or human identifier of the task the reader was denied. */
   targetId: string;
@@ -188,6 +189,8 @@ export function RestrictedIssueAccessFallback({
   loading?: ReactNode;
   /** Shown only when the task itself is gone (404); never for a denial. */
   notFound: ReactNode;
+  /** Called once only after a confirmed 404, never for a denied or failed read. */
+  onNotFound?: () => void;
   /** Host-supplied way back, forwarded to the restricted page. */
   leading?: ReactNode;
 }) {
@@ -196,15 +199,26 @@ export function RestrictedIssueAccessFallback({
   const target = useQuery({
     queryKey: ["issue-access-request-target", workspaceId, targetId],
     queryFn: () => api.getIssueAccessRequestTarget(targetId),
+    enabled: !!workspaceId,
+    // 2026-10-10 coder(lq): A cached reference can outlive a deleted task.
+    refetchOnMount: "always",
     // Retries are off on purpose: the host keeps rendering this while the task
     // stays unresolved, so a retry policy here turns one denial into a loop.
     retry: false,
   });
 
-  if (target.isLoading) return <>{loading}</>;
-  if (target.data) {
-    return <RestrictedIssueAccess issueId={target.data.id} identifier={target.data.identifier} leading={leading} />;
-  }
+  const notifiedMissing = useRef<string | null>(null);
+  useEffect(() => {
+    // 2026-10-10 coder(lq): A missed deletion event can strand inbox rows.
+    // Let the host dismiss its own notification once, only on confirmed absence.
+    const key = `${workspaceId}:${targetId}`;
+    if (onNotFound && target.isError && target.error instanceof ApiError && target.error.status === 404 && notifiedMissing.current !== key) {
+      notifiedMissing.current = key;
+      onNotFound();
+    }
+  }, [workspaceId, targetId, target.isError, target.error, onNotFound]);
+
+  if (!workspaceId || target.isLoading) return <>{loading}</>;
   // Only a 404 means the task is really gone. Any other failure is an
   // infrastructure problem, and saying "deleted" there would be a lie.
   if (target.isError && (!(target.error instanceof ApiError) || target.error.status !== 404)) {
@@ -216,6 +230,9 @@ export function RestrictedIssueAccessFallback({
         </Button>
       </div>
     );
+  }
+  if (!target.isError && target.data) {
+    return <RestrictedIssueAccess issueId={target.data.id} identifier={target.data.identifier} leading={leading} />;
   }
   return <>{notFound}</>;
 }

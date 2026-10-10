@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { ApiError } from "@multica/core/api";
+import { isValidElement } from "react";
 import type { InboxItem } from "@multica/core/types";
 import { useInboxFilterStore } from "@multica/core/inbox/filter-store";
 import { InboxPage } from "./inbox-page";
@@ -717,6 +718,28 @@ describe("InboxPage", () => {
     await act(async () => undefined);
     expect(showIssueLimitUpgradePrompt).toHaveBeenCalledTimes(1);
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it.each(["mentioned", "new_comment", "task_access_request"] as const)("offers access-request and cleanup fallbacks for %s notifications", (type) => {
+    reset();
+    listData.active = [item({ type })];
+    render(<InboxPage />);
+    fireEvent.click(screen.getByTestId("row"));
+    expect(issueDetailProps.at(-1)?.notFoundFallback).toBeTruthy();
+  });
+
+  it("silently dismisses a confirmed deleted-task notification without mutating the task", () => {
+    reset();
+    listData.active = [item()];
+    render(<InboxPage />);
+    fireEvent.click(screen.getByTestId("row"));
+    const fallback = issueDetailProps.at(-1)?.notFoundFallback;
+    expect(isValidElement<{ onNotFound?: () => void }>(fallback)).toBe(true);
+    if (!isValidElement<{ onNotFound?: () => void }>(fallback)) throw new Error("missing fallback");
+    act(() => fallback.props.onNotFound?.());
+    expect(archiveMutate).toHaveBeenCalledWith("inbox-1");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("marks the opened notification read", () => {

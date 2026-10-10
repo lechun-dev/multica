@@ -117,6 +117,30 @@ describe("RestrictedIssueAccessFallback", () => {
     );
   });
 
+  it.each([404, 403, 500])("only clears a stale notification once after status %s", (status) => {
+    mocks.useQuery.mockReturnValue({
+      isLoading: false, isError: true,
+      error: new ApiError("unavailable", status, "Error"),
+    });
+    const onNotFound = vi.fn();
+    const { rerender } = render(<RestrictedIssueAccessFallback targetId="issue-1" notFound={<p>Task deleted</p>} onNotFound={onNotFound} />);
+    rerender(<RestrictedIssueAccessFallback targetId="issue-1" notFound={<p>Task deleted</p>} onNotFound={onNotFound} />);
+    expect(onNotFound).toHaveBeenCalledTimes(status === 404 ? 1 : 0);
+  });
+
+  it.each([404, 500])("does not let a cached reference hide a fresh status %s", (status) => {
+    mocks.useQuery.mockReturnValue({
+      isLoading: false, isError: true, data: { id: "issue-1", identifier: "LC-797" },
+      error: new ApiError("unavailable", status, "Error"),
+    });
+    render(<RestrictedIssueAccessFallback targetId="issue-1" notFound={<p>Task deleted</p>} />);
+    expect(screen.queryByText("LC-797")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request access" })).not.toBeInTheDocument();
+    if (status === 404) expect(screen.getByText("Task deleted")).toBeInTheDocument();
+    else expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(mocks.useQuery).toHaveBeenCalledWith(expect.objectContaining({ refetchOnMount: "always", retry: false }));
+  });
+
   it("reports the task as gone only when the probe answers 404", () => {
     mocks.useQuery.mockReturnValue({
       isLoading: false,

@@ -1256,22 +1256,27 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 		writeError(w, http.StatusNotFound, "inbox item not found")
 		return db.InboxItem{}, false
 	}
-	// 2026-08-27 coder(lq): A notification is an alternate issue lookup path;
-	// enforce the same project View boundary before allowing read/archive state
-	// changes, otherwise a hidden task could still be mutated by its inbox id.
-	if item.IssueID.Valid && h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+	// 2026-10-10 coder(lq): Read/archive only mutate this recipient's
+	// notification, never its task. Broadcasts and revoked task access must
+	// remain dismissible; active workspace membership is still required.
+	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
+		writeError(w, http.StatusForbidden, "workspace membership is required")
+		return db.InboxItem{}, false
+	}
+	// 2026-10-10 coder(lq): Keep delegated agents on their existing task
+	// boundary; the personal-notification relaxation applies to human readers.
+	if actorType, _ := h.resolveActor(r, userID, workspaceID); actorType == "agent" && item.IssueID.Valid {
 		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 			ID: item.IssueID, WorkspaceID: item.WorkspaceID,
 		})
-		if err != nil || !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
-			if err != nil {
-				writeError(w, http.StatusNotFound, "inbox item not found")
-			}
+		if err != nil {
+			writeError(w, http.StatusNotFound, "inbox item not found")
 			return db.InboxItem{}, false
 		}
-	}
-	if item.IssueID.Valid && !h.authorizeIssueWindow(w, r, item.IssueID, item.WorkspaceID, "inbox") {
-		return db.InboxItem{}, false
+		if !h.requireIssueProjectPermission(w, r, issue, projectauth.View) ||
+			!h.authorizeIssueWindow(w, r, item.IssueID, item.WorkspaceID, "inbox") {
+			return db.InboxItem{}, false
+		}
 	}
 	return item, true
 }

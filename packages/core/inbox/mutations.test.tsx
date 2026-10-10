@@ -6,10 +6,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { setApiInstance } from "../api";
+import { setApiInstance, ApiError } from "../api";
 import type { ApiClient } from "../api/client";
 import type { InboxItem, InboxWorkspaceUnread } from "../types";
-import { useMarkInboxRead, useMarkInboxUnread, useUnarchiveInbox } from "./mutations";
+import { useMarkInboxRead, useMarkInboxUnread, useUnarchiveInbox, useArchiveInbox } from "./mutations";
 import { inboxKeys, useInboxUnreadCount } from "./queries";
 import { onInboxSummaryInvalidate } from "./ws-updaters";
 import { createQueryClient } from "../query-client";
@@ -363,4 +363,26 @@ describe("unread summary is server-owned", () => {
       }
     },
   );
+});
+
+
+// 2026-10-10 coder(lq): Dismissing a stale deleted-task row is idempotent,
+// while genuine authorization/server failures must keep rollback intact.
+describe("useArchiveInbox stale notifications", () => {
+  it.each([404, 403, 500])("handles archive status %s without a retry loop", async (status) => {
+    const qc = createQueryClient();
+    const original = [item({ archived: false })];
+    qc.setQueryData(inboxKeys.list(WORKSPACE_ID), original);
+    const archiveInbox = vi.fn().mockRejectedValue(new ApiError("archive failed", status, "Error"));
+    setApiInstance({ archiveInbox } as unknown as ApiClient);
+    const { result, unmount } = renderHook(() => useArchiveInbox(), { wrapper: createWrapper(qc) });
+
+    act(() => result.current.mutate("inbox-1"));
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(archiveInbox).toHaveBeenCalledTimes(1);
+    expect(result.current.isSuccess).toBe(status === 404);
+    expect(listCache(qc)[0]?.archived).toBe(status === 404);
+    unmount();
+    qc.clear();
+  });
 });

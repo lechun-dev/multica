@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/projectauth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -141,12 +142,24 @@ func archivedInboxRowToResponse(r db.ListArchivedInboxItemsRow) InboxItemRespons
 	return inboxRowToResponse(db.ListInboxItemsRow(r))
 }
 
-func (h *Handler) enrichInboxResponse(ctx context.Context, resp InboxItemResponse, issueID pgtype.UUID) InboxItemResponse {
+func (h *Handler) enrichInboxResponse(r *http.Request, resp InboxItemResponse, issueID pgtype.UUID) InboxItemResponse {
 	if !issueID.Valid {
 		return resp
 	}
-	issue, err := h.Queries.GetIssue(ctx, issueID)
+	issue, err := h.Queries.GetIssue(r.Context(), issueID)
 	if err == nil {
+		// 2026-10-10 coder(lq): Owning a notification does not expose fresh
+		// task metadata when its recipient cannot view the referenced task.
+		if allowed, _ := h.issueProjectAllowed(r, issue, projectauth.View); !allowed {
+			return resp
+		}
+		policy, windowEnabled := h.issueWindowPolicy(r.Context(), issue.WorkspaceID)
+		if windowEnabled && policy.action == entitlement.ActionEnforce {
+			visible, err := h.visibleIssueIDSet(r.Context(), issue.WorkspaceID, policy, []pgtype.UUID{issue.ID})
+			if _, ok := visible[issue.ID]; err != nil || !ok {
+				return resp
+			}
+		}
 		s := issue.Status
 		resp.IssueStatus = &s
 		p := issue.Priority
@@ -343,7 +356,7 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 		"recipient_id": uuidToString(item.RecipientID),
 	})
 
-	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
+	resp := h.enrichInboxResponse(r, inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -372,7 +385,7 @@ func (h *Handler) MarkInboxUnread(w http.ResponseWriter, r *http.Request) {
 		"recipient_id": uuidToString(item.RecipientID),
 	})
 
-	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
+	resp := h.enrichInboxResponse(r, inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -406,7 +419,7 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		"recipient_id": uuidToString(item.RecipientID),
 	})
 
-	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
+	resp := h.enrichInboxResponse(r, inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -448,7 +461,7 @@ func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		"recipient_id": uuidToString(item.RecipientID),
 	})
 
-	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
+	resp := h.enrichInboxResponse(r, inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
 }
 

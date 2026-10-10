@@ -314,7 +314,9 @@ export function InboxPage() {
   // it stays selected: moving the selection elsewhere releases the guard, so
   // re-opening the row later marks it read again like any other open.
   const manualUnreadIdRef = useRef<string | null>(null);
-  const autoReadAttemptedIdRef = useRef<string | null>(null);
+  // 2026-10-10 coder(lq): A refresh gap is not a new selection; keep a
+  // failed passive read parked until the user moves to a different row.
+  const autoReadAttemptedIdRef = useRef<{ key: string; id: string } | null>(null);
 
   // Auto-mark-read whenever a selected item is unread — covers both click-
   // to-select and URL-param-select (e.g. OS notification click on desktop).
@@ -327,10 +329,10 @@ export function InboxPage() {
   useEffect(() => {
     if (!selectedId || selectedRead) return;
     if (manualUnreadIdRef.current === selectedId) return;
-    if (autoReadAttemptedIdRef.current === selectedId) return;
-    autoReadAttemptedIdRef.current = selectedId;
+    if (autoReadAttemptedIdRef.current?.key === selectedKey && autoReadAttemptedIdRef.current.id === selectedId) return;
+    autoReadAttemptedIdRef.current = { key: selectedKey, id: selectedId };
     markReadMutate(selectedId);
-  }, [selectedId, selectedRead, markReadMutate]);
+  }, [selectedId, selectedRead, selectedKey, markReadMutate]);
 
   // Release the guard as soon as the selection moves off the parked row.
   useEffect(() => {
@@ -339,11 +341,11 @@ export function InboxPage() {
     }
     if (
       autoReadAttemptedIdRef.current &&
-      autoReadAttemptedIdRef.current !== selectedId
+      autoReadAttemptedIdRef.current.key !== selectedKey
     ) {
       autoReadAttemptedIdRef.current = null;
     }
-  }, [selectedId]);
+  }, [selectedId, selectedKey]);
 
   const writeViewState = useViewStateWriter();
   // Bumped when the already-open notification row is re-clicked; threaded to
@@ -734,14 +736,30 @@ export function InboxPage() {
         // A denied reader lands here holding a task they may not view. Saying
         // "task deleted" would be wrong, so resolve what the task reference
         // actually is and offer the access request instead.
-        notFoundFallback={detailItem.type === "task_access_request" ? (
+        // 2026-10-10 coder(lq): This also applies to @all and comment notices,
+        // not only access-request notifications; deleted tasks remain dismissible.
+        notFoundFallback={(
           <RestrictedIssueAccessFallback
             targetId={detailItem.issue_id}
+            onNotFound={!isArchivedView ? () => {
+              // 2026-10-10 coder(lq): Clear only this recipient's stale row.
+              // An already cascade-deleted notification is a successful dismissal.
+              archiveMutation.mutate(detailItem.id);
+              setSelectedKey("");
+            } : undefined}
             leading={compactBackAction}
             loading={<IssueDetailSkeleton leading={compactBackAction} />}
-            notFound={<IssueNotFound showBackLink={false} leading={compactBackAction} />}
+            notFound={<IssueNotFound
+              showBackLink={false}
+              leading={compactBackAction}
+              actions={!isArchivedView ? (
+                <Button variant="outline" size="sm" disabled={archiveMutation.isPending} onClick={() => handleArchive(detailItem.id)}>
+                  {t(($) => $.detail.archive)}
+                </Button>
+              ) : undefined}
+            />}
           />
-        ) : undefined}
+        )}
         // The split layout already has a nav trigger in the list header.
         // Explicit false suppresses the detail header's fallback trigger.
         leadingAction={compactBackAction ?? false}

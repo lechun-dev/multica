@@ -207,6 +207,12 @@ func (h *Handler) GetIssueAccessRequestTarget(w http.ResponseWriter, r *http.Req
 		WHERE issue.workspace_id=$1 AND (issue.id::text=$3 OR lower(issue.identifier)=lower($3))
 		LIMIT 1`, workspaceID, userID, chi.URLParam(r, "id")).Scan(&id, &identifier)
 	if err != nil {
+		// 2026-10-10 coder(lq): Storage failures are not evidence of deletion.
+		// The inbox fallback must retain the notification and offer retry.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to resolve task")
+			return
+		}
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}

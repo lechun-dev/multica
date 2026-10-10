@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { inboxKeys, mapArchivedInboxCache, patchArchivedInboxCaches, type ArchivedInboxCache } from "./queries";
 import { onInboxInvalidate, onInboxSummaryInvalidate } from "./ws-updaters";
 import { useWorkspaceId } from "../hooks";
@@ -121,7 +121,17 @@ export function useArchiveInbox() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (id: string) => api.archiveInbox(id),
+    mutationFn: async (id: string) => {
+      try {
+        return await api.archiveInbox(id);
+      } catch (error) {
+        // 2026-10-10 coder(lq): A task deletion can remove this notification
+        // before dismissal. Treat an absent row as already cleared; retain
+        // rollback for permission, transport, and server failures.
+        if (error instanceof ApiError && error.status === 404) return;
+        throw error;
+      }
+    },
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: inboxKeys.list(wsId) });
       const prev = qc.getQueryData<InboxItem[]>(inboxKeys.list(wsId));

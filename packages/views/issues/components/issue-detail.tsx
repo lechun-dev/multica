@@ -67,7 +67,8 @@ import { commentLandingTarget } from "@multica/core/issues/comment-deletion";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
-import { errorCode } from "@multica/core/api";
+import { ApiError, errorCode } from "@multica/core/api";
+import { RestrictedIssueAccessFallback } from "./restricted-issue-access";
 import { StatusIcon } from "./status-icon";
 import { PriorityIcon } from "./priority-icon";
 import { StatusPicker } from "./pickers/status-picker";
@@ -1056,8 +1057,10 @@ interface IssueDetailProps {
 export function IssueNotFound({
   showBackLink = true,
   leading,
+  actions,
 }: {
   showBackLink?: boolean;
+  actions?: ReactNode;
   /**
    * Host-supplied way back, mirrored from `IssueDetailProps.leadingAction`. A
    * host that hands its whole screen to this component (the inbox, on a phone)
@@ -1077,6 +1080,7 @@ export function IssueNotFound({
       )}
       <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3 text-body text-muted-foreground">
         <p>{t(($) => $.detail.not_found)}</p>
+        {actions}
         {showBackLink && (
           <Button variant="outline" size="sm" onClick={() => backOrReplace(paths.issues())}>
             <ChevronLeft className="mr-1 h-3.5 w-3.5" />
@@ -1386,7 +1390,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Issue data from TQ — uses detail query, seeded from list cache if available.
   // Only seed when description is present; the list API omits it, so a partial
   // list row must not masquerade as a hydrated issue detail.
-  const { data: issue = null, isLoading: issueLoading, refetch: refetchIssue } = useQuery({
+  const { data: loadedIssue = null, error: issueError, isLoading: issueLoading, refetch: refetchIssue } = useQuery({
     ...issueDetailOptions(wsId, id, includeWorkspaceOwned),
     enabled: visibilityReady,
     // List rows and issue-created realtime payloads intentionally omit the
@@ -1400,6 +1404,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       return cached?.description != null ? cached : undefined;
     },
   });
+  // 2026-10-10 coder(lq): A denied/deleted refetch must supersede cached
+  // detail data, without interpreting an authorization failure as a deletion.
+  const issue = issueError instanceof ApiError && (issueError.status === 403 || issueError.status === 404)
+    ? null : loadedIssue;
   const descriptionSourceId = `description:${id}`;
   const descriptionAnnotations = useCommentAnnotations({
     draftKey: `new:${id}`,
@@ -1456,6 +1464,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     }
     if (
       hadIssueRef.current &&
+      !issueError &&
       !issueLoading &&
       !firedDeleteCallbackRef.current &&
       onDelete
@@ -1463,7 +1472,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       firedDeleteCallbackRef.current = true;
       onDelete();
     }
-  }, [issue, issueLoading, onDelete]);
+  }, [issue, issueError, issueLoading, onDelete]);
 
   // Custom hooks — encapsulate timeline, reactions, subscribers
   const {
@@ -2282,7 +2291,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }
 
   if (!issue) {
-    return notFoundFallback ?? <IssueNotFound showBackLink={!onDelete} leading={leadingAction} />;
+    return notFoundFallback ?? (issueError instanceof ApiError && issueError.status === 403 ? (
+      <RestrictedIssueAccessFallback
+        targetId={id}
+        loading={<IssueDetailSkeleton leading={leadingAction} />}
+        leading={leadingAction}
+        notFound={<IssueNotFound showBackLink={!onDelete} leading={leadingAction} />}
+      />
+    ) : <IssueNotFound showBackLink={!onDelete} leading={leadingAction} />);
   }
 
   const isArchived = Boolean(issue.archived_at);
