@@ -294,6 +294,21 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.8",
+        date: "2026-10-10",
+        title: "Task permissions and a clearer inbox",
+        changes: [],
+        features: [],
+        improvements: [
+          "Distinguish notification archival from task archival, with explicit restore labels and hover hints.",
+        ],
+        fixes: [
+          "Inherit project task-creation permission as child-task creation permission for inherited tasks, while retaining restricted-task and target-project checks.",
+          "Allow recipients to read or archive their own notifications without granting access to the referenced task.",
+          "Offer access requests for restricted mentions and clear stale notifications only after confirming the task was deleted.",
+        ],
+      },
+      {
         version: "0.5.7",
         date: "2026-10-10",
         title: "Faster task search and unread counts",
