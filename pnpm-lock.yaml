@@ -640,6 +640,9 @@ importers:
       '@tanstack/react-query':
         specifier: 'catalog:'
         version: 5.96.2(react@19.2.3)
+      core-js:
+        specifier: ^3.49.0
+        version: 3.49.0
       dotenv:
         specifier: ^17.4.1
         version: 17.4.1
