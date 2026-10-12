@@ -595,9 +595,31 @@ func notifyDirect(
 	})
 }
 
+// mentionDetails adds the mention expansion source without dropping existing
+// anchors such as comment_id. Inbox clients already parse details as a
+// string-to-string map, so keep that wire contract here.
+func mentionDetails(details []byte, scope string) []byte {
+	values := map[string]string{}
+	if len(details) > 0 {
+		if err := json.Unmarshal(details, &values); err != nil {
+			slog.Error("failed to decode mention notification details", "error", err)
+			return details
+		}
+	}
+	values["mention_scope"] = scope
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		slog.Error("failed to encode mention notification details", "error", err)
+		return details
+	}
+	return encoded
+}
+
 // notifyMentionedMembers creates inbox items for each @mentioned member,
-// excluding the actor and any IDs in the skip set. When an @all mention is
-// present, all workspace members are notified (excluding agents).
+// excluding the actor and any IDs in the skip set. Every resolved recipient
+// must be able to open the issue before either an inbox row or WebSocket event
+// is created. Direct member mentions already receive their task-level grant in
+// the issue/comment write transaction before this synchronous listener runs.
 func notifyMentionedMembers(
 	bus *events.Bus,
 	queries *db.Queries,
@@ -609,9 +631,11 @@ func notifyMentionedMembers(
 	title string,
 	skip map[string]bool,
 	details []byte,
+	canViewIssue issueViewAuthorizer,
 ) {
-	// Collect the set of member IDs to notify.
-	recipientIDs := map[string]bool{}
+	// Collect the member IDs and how each one was addressed. A direct mention
+	// wins over an expanded scope when the same member appears more than once.
+	recipientScopes := map[string]string{}
 
 	hasAll := false
 	var squadIDs []string
@@ -621,7 +645,7 @@ func notifyMentionedMembers(
 			continue
 		}
 		if m.Type == "member" {
-			recipientIDs[m.ID] = true
+			recipientScopes[m.ID] = "direct"
 		}
 		if m.Type == "squad" {
 			squadIDs = append(squadIDs, m.ID)
@@ -643,7 +667,10 @@ func notifyMentionedMembers(
 		}
 		for _, sm := range members {
 			if sm.MemberType == "member" {
-				recipientIDs[util.UUIDToString(sm.MemberID)] = true
+				id := util.UUIDToString(sm.MemberID)
+				if _, directlyMentioned := recipientScopes[id]; !directlyMentioned {
+					recipientScopes[id] = "squad"
+				}
 			}
 		}
 	}
@@ -655,21 +682,24 @@ func notifyMentionedMembers(
 			slog.Error("failed to list members for @all mention", "workspace_id", e.WorkspaceID, "error", err)
 		} else {
 			for _, m := range members {
-				recipientIDs[util.UUIDToString(m.UserID)] = true
+				id := util.UUIDToString(m.UserID)
+				if _, alreadyAddressed := recipientScopes[id]; !alreadyAddressed {
+					recipientScopes[id] = "all"
+				}
 			}
 		}
 	}
 
 	// Batch-load notification preferences for all mention recipients.
 	var mentionUserIDs []string
-	for id := range recipientIDs {
+	for id := range recipientScopes {
 		if id != e.ActorID && !skip[id] {
 			mentionUserIDs = append(mentionUserIDs, id)
 		}
 	}
 	mentionPrefs := loadUserPrefs(context.Background(), queries, e.WorkspaceID, mentionUserIDs)
 
-	for id := range recipientIDs {
+	for id, scope := range recipientScopes {
 		if id == e.ActorID || skip[id] {
 			continue
 		}
@@ -677,6 +707,9 @@ func notifyMentionedMembers(
 		// different group from `comments`: muting comment volume must not
 		// silence someone asking for you by name.
 		if p, ok := mentionPrefs[id]; ok && isNotifMuted(p, "mentioned") {
+			continue
+		}
+		if !canDeliverIssueNotification(context.Background(), canViewIssue, e.WorkspaceID, id, issueID, "mentioned") {
 			continue
 		}
 		item, err := queries.CreateInboxItem(context.Background(), db.CreateInboxItemParams{
@@ -690,7 +723,7 @@ func notifyMentionedMembers(
 			Title:         title,
 			ActorType:     util.StrToText(e.ActorType),
 			ActorID:       optionalUUID(e.ActorID),
-			Details:       details,
+			Details:       mentionDetails(details, scope),
 		})
 		if err != nil {
 			slog.Error("mention inbox creation failed", "mentioned_id", id, "error", err)
@@ -750,7 +783,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 		if issue.Description != nil && *issue.Description != "" {
 			mentions := parseMentions(*issue.Description)
 			notifyMentionedMembers(bus, queries, e, mentions, issue.ID, issue.Title, issue.Status,
-				issue.Title, skip, emptyDetails)
+				issue.Title, skip, emptyDetails, canViewIssue)
 		}
 	})
 
@@ -941,7 +974,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 				}
 				skip := map[string]bool{e.ActorID: true}
 				notifyMentionedMembers(bus, queries, e, added, issue.ID, issue.Title, issue.Status,
-					issue.Title, skip, emptyDetails)
+					issue.Title, skip, emptyDetails, canViewIssue)
 			}
 		}
 	})
@@ -1004,7 +1037,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 		if len(mentions) > 0 {
 			skip := map[string]bool{e.ActorID: true}
 			notifyMentionedMembers(bus, queries, e, mentions, issueID, issueTitle, issueStatus,
-				issueTitle, skip, commentDetails)
+				issueTitle, skip, commentDetails, canViewIssue)
 		}
 	})
 

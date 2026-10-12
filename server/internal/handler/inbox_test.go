@@ -82,12 +82,22 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		"workspace_id": testWorkspaceID,
 		"project_id":   projectID,
 	})
+	ungrantedMentionIssueID := dbfx.Issue(t, "Unviewable active mention", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"project_id":   projectID,
+	})
+	archivedMentionIssueID := dbfx.Issue(t, "Unviewable archived mention", testutil.Cols{
+		"workspace_id": testWorkspaceID,
+		"project_id":   projectID,
+	})
 	filteredIssueID := dbfx.Issue(t, "Unrelated inbox issue", testutil.Cols{
 		"workspace_id": testWorkspaceID,
 		"project_id":   projectID,
 	})
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = ANY($1::uuid[])`, []string{mentionedIssueID, filteredIssueID})
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = ANY($1::uuid[])`, []string{
+			mentionedIssueID, ungrantedMentionIssueID, archivedMentionIssueID, filteredIssueID,
+		})
 		_, _ = testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
 	})
 	dbfx.Insert(t, "inbox_item", testutil.Cols{
@@ -118,6 +128,25 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		"workspace_id":   testWorkspaceID,
 		"recipient_type": "member",
 		"recipient_id":   recipientID,
+		"type":           "mentioned",
+		"severity":       "info",
+		"issue_id":       ungrantedMentionIssueID,
+		"title":          "Hidden active mention",
+	})
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   recipientID,
+		"type":           "mentioned",
+		"severity":       "info",
+		"issue_id":       archivedMentionIssueID,
+		"title":          "Hidden archived mention",
+		"archived":       true,
+	})
+	dbfx.Insert(t, "inbox_item", testutil.Cols{
+		"workspace_id":   testWorkspaceID,
+		"recipient_type": "member",
+		"recipient_id":   recipientID,
 		"type":           "status_changed",
 		"severity":       "info",
 		"issue_id":       filteredIssueID,
@@ -137,6 +166,16 @@ func TestListInboxShowsDirectMentionOutsideProjectMembership(t *testing.T) {
 		JSON(&items)
 	if len(items) != 1 || items[0].IssueID == nil || *items[0].IssueID != mentionedIssueID {
 		t.Fatalf("recipient inbox = %+v, want only direct mention for %s", items, mentionedIssueID)
+	}
+
+	request = newRequestAs(recipientID, http.MethodGet, "/api/inbox/archived", nil)
+	request.Header.Set("X-Workspace-ID", testWorkspaceID)
+	var archivedItems []InboxItemResponse
+	testutil.Call(t, inboxWorkspaceHandler(testHandler.ListArchivedInbox), request).
+		Want(http.StatusOK).
+		JSON(&archivedItems)
+	if len(archivedItems) != 0 {
+		t.Fatalf("recipient archived inbox = %+v, want inaccessible mention hidden", archivedItems)
 	}
 
 	request = newRequestAs(testUserID, http.MethodGet, "/api/inbox", nil)

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
@@ -507,6 +509,182 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 	}
 	if items := inboxItemsForRecipient(t, queries, targetID); len(items) != 0 {
 		t.Errorf("expected 0 inbox rows for smuggled @mention target, got %d", len(items))
+	}
+}
+
+func TestNotification_MentionsRequireIssueAccess(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+
+	allowedAllEmail := "notif-mention-all-allowed@multica.ai"
+	allowedAllID := createTestUser(t, allowedAllEmail)
+	t.Cleanup(func() { cleanupTestUser(t, allowedAllEmail) })
+	addWorkspaceMember(t, allowedAllID)
+
+	directEmail := "notif-mention-direct-allowed@multica.ai"
+	directID := createTestUser(t, directEmail)
+	t.Cleanup(func() { cleanupTestUser(t, directEmail) })
+	addWorkspaceMember(t, directID)
+
+	deniedEmail := "notif-mention-all-denied@multica.ai"
+	deniedID := createTestUser(t, deniedEmail)
+	t.Cleanup(func() { cleanupTestUser(t, deniedEmail) })
+	addWorkspaceMember(t, deniedID)
+
+	errorEmail := "notif-mention-all-auth-error@multica.ai"
+	errorID := createTestUser(t, errorEmail)
+	t.Cleanup(func() { cleanupTestUser(t, errorEmail) })
+	addWorkspaceMember(t, errorID)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	var inboxEvents []events.Event
+	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
+		inboxEvents = append(inboxEvents, e)
+	})
+
+	authorize := func(_ context.Context, workspaceID, userID, gotIssueID string) (bool, error) {
+		if workspaceID != testWorkspaceID || gotIssueID != issueID {
+			t.Fatalf("unexpected authorization target workspace=%s issue=%s", workspaceID, gotIssueID)
+		}
+		switch userID {
+		case allowedAllID, directID:
+			return true, nil
+		case errorID:
+			return false, errors.New("authorization backend unavailable")
+		default:
+			return false, nil
+		}
+	}
+
+	notifyMentionedMembers(bus, queries, events.Event{
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+	}, []mention{
+		{Type: "all", ID: "all"},
+		{Type: "member", ID: directID},
+	}, issueID, "permission-filtered mentions", "todo", "permission-filtered mentions",
+		map[string]bool{testUserID: true}, emptyDetails, authorize)
+
+	wantScopes := map[string]string{
+		allowedAllID: "all",
+		directID:     "direct",
+	}
+	for userID, wantScope := range wantScopes {
+		items := inboxItemsForRecipient(t, queries, userID)
+		if len(items) != 1 {
+			t.Fatalf("recipient %s inbox items = %d, want 1", userID, len(items))
+		}
+		var details map[string]string
+		if err := json.Unmarshal(items[0].Details, &details); err != nil {
+			t.Fatalf("decode mention details for %s: %v", userID, err)
+		}
+		if got := details["mention_scope"]; got != wantScope {
+			t.Errorf("recipient %s mention_scope = %q, want %q", userID, got, wantScope)
+		}
+	}
+	for _, userID := range []string{deniedID, errorID} {
+		if items := inboxItemsForRecipient(t, queries, userID); len(items) != 0 {
+			t.Errorf("inaccessible recipient %s received %d inbox items, want 0", userID, len(items))
+		}
+	}
+	if len(inboxEvents) != len(wantScopes) {
+		t.Fatalf("inbox:new events = %d, want %d", len(inboxEvents), len(wantScopes))
+	}
+	for _, event := range inboxEvents {
+		payload, ok := event.Payload.(map[string]any)
+		if !ok {
+			t.Fatalf("inbox:new payload type = %T, want map[string]any", event.Payload)
+		}
+		item, ok := payload["item"].(map[string]any)
+		if !ok {
+			t.Fatalf("inbox:new item type = %T, want map[string]any", payload["item"])
+		}
+		recipientID, _ := item["recipient_id"].(string)
+		if _, ok := wantScopes[recipientID]; !ok {
+			t.Errorf("inbox:new delivered to inaccessible recipient %q", recipientID)
+		}
+	}
+}
+
+func TestNotification_SquadMentionRequiresIssueAccess(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+
+	allowedEmail := "notif-squad-mention-allowed@multica.ai"
+	allowedID := createTestUser(t, allowedEmail)
+	t.Cleanup(func() { cleanupTestUser(t, allowedEmail) })
+	addWorkspaceMember(t, allowedID)
+
+	deniedEmail := "notif-squad-mention-denied@multica.ai"
+	deniedID := createTestUser(t, deniedEmail)
+	t.Cleanup(func() { cleanupTestUser(t, deniedEmail) })
+	addWorkspaceMember(t, deniedID)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	agentID, _ := firstFixtureAgent(t)
+	var squadID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO squad (workspace_id, name, leader_id, creator_id)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "notification permission squad "+allowedID, agentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create mention squad: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+	for _, userID := range []string{allowedID, deniedID} {
+		if _, err := queries.AddSquadMember(context.Background(), db.AddSquadMemberParams{
+			SquadID:    util.MustParseUUID(squadID),
+			MemberType: "member",
+			MemberID:   util.MustParseUUID(userID),
+			Role:       "member",
+		}); err != nil {
+			t.Fatalf("add %s to mention squad: %v", userID, err)
+		}
+	}
+
+	var inboxEvents []events.Event
+	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
+		inboxEvents = append(inboxEvents, e)
+	})
+	notifyMentionedMembers(bus, queries, events.Event{
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+	}, []mention{{Type: "squad", ID: squadID}}, issueID, "squad mention", "todo", "squad mention",
+		map[string]bool{testUserID: true}, emptyDetails,
+		func(_ context.Context, _, userID, _ string) (bool, error) {
+			return userID == allowedID, nil
+		})
+
+	allowedItems := inboxItemsForRecipient(t, queries, allowedID)
+	if len(allowedItems) != 1 {
+		t.Fatalf("authorized squad member inbox items = %d, want 1", len(allowedItems))
+	}
+	var details map[string]string
+	if err := json.Unmarshal(allowedItems[0].Details, &details); err != nil {
+		t.Fatalf("decode squad mention details: %v", err)
+	}
+	if got := details["mention_scope"]; got != "squad" {
+		t.Errorf("squad mention_scope = %q, want squad", got)
+	}
+	if items := inboxItemsForRecipient(t, queries, deniedID); len(items) != 0 {
+		t.Errorf("inaccessible squad member received %d inbox items, want 0", len(items))
+	}
+	if len(inboxEvents) != 1 {
+		t.Fatalf("inbox:new events = %d, want 1", len(inboxEvents))
 	}
 }
 
