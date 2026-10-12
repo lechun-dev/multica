@@ -47,6 +47,18 @@ func TestAgentIssueAccessRechecksAgentUseAfterRevocation(t *testing.T) {
 }
 
 func TestRestrictedAgentTaskRequiresExplicitTargetPermissionToPublish(t *testing.T) {
+	t.Run("manual", func(t *testing.T) {
+		testRestrictedAgentTaskPublish(t, false)
+	})
+	t.Run("scheduled", func(t *testing.T) {
+		testRestrictedAgentTaskPublish(t, true)
+	})
+}
+
+// 2026-10-12 coder(lq): Accountable-human fallback must not let a scheduled
+// restricted run publish through a broader inherited project permission.
+func testRestrictedAgentTaskPublish(t *testing.T, scheduled bool) {
+	t.Helper()
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -74,9 +86,14 @@ func TestRestrictedAgentTaskRequiresExplicitTargetPermissionToPublish(t *testing
 
 	var agentID, runtimeID string
 	dbfx.QueryRow(t, `SELECT id, runtime_id FROM agent WHERE workspace_id=$1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID)
-	taskID := dbfx.Task(t, agentID, testutil.Cols{
+	taskCols := testutil.Cols{
 		"runtime_id": runtimeID, "issue_id": childIssueID, "originator_user_id": originatorID, "accountable_user_id": originatorID,
-	})
+	}
+	if scheduled {
+		taskCols["originator_user_id"] = nil
+		taskCols["originator_source"] = "trigger_owner"
+	}
+	taskID := dbfx.Task(t, agentID, taskCols)
 	post := func(content string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		req := newRequestAs(originatorID, http.MethodPost, "/api/issues/"+parentIssueID+"/comments", map[string]any{"content": content})
