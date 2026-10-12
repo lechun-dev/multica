@@ -57,6 +57,30 @@ type AgentCompleted struct {
 	CompletedAt     time.Time
 }
 
+// AssignmentNotificationKind identifies the two human-assignee transitions
+// that are meaningful to a DingTalk recipient.
+type AssignmentNotificationKind string
+
+const (
+	AssignmentAdded   AssignmentNotificationKind = "assignment_added"
+	AssignmentRemoved AssignmentNotificationKind = "assignment_removed"
+)
+
+// AssignmentNotification is intentionally separate from mentions and Agent
+// completion events. Assignee changes always use the Mission robot's P2P
+// channel and never depend on @mention routing.
+type AssignmentNotification struct {
+	EventID         string
+	WorkspaceID     string
+	RecipientID     string
+	Kind            AssignmentNotificationKind
+	IssueIdentifier string
+	IssueTitle      string
+	SourceURL       string
+	IncludeDetails  bool
+	CreatedAt       time.Time
+}
+
 type MemberBinding struct {
 	WorkspaceID string
 	MemberID    string
@@ -260,16 +284,16 @@ func FormatText(event MentionCreated) string {
 	return strings.Join(sections, "\n\n")
 }
 
-// FormatPersonalMentionText creates the compact copy sent by DWS as the
-// signed-in human. The DingTalk conversation already identifies the sender,
-// and the mention tokens only served as routing instructions inside Multica,
-// so neither belongs in the private-message body.
+// FormatPersonalMentionText creates the copy sent by DWS as the signed-in
+// human. Preserve the complete comment, including readable @names, while
+// removing only Multica's internal mention:// targets that DingTalk cannot
+// resolve.
 func FormatPersonalMentionText(event MentionCreated) string {
-	text := truncateMentionPreview(stripMentionLinks(stripStructuredMentions(sanitizeText(event.Text))))
+	text := stripMentionLinks(sanitizeText(event.Text))
 	if text == "" {
 		text = "在任务评论中提到了你"
 	}
-	sections := []string{boldPersonalMentionText(text)}
+	sections := []string{text}
 	footer := ""
 	if sourceURL := strings.TrimSpace(event.SourceURL); sourceURL != "" {
 		footer = "[打开任务并回复](" + sourceURL + ")"
@@ -281,16 +305,6 @@ func FormatPersonalMentionText(event MentionCreated) string {
 		sections = append(sections, "---", footer)
 	}
 	return strings.Join(sections, "\n\n")
-}
-
-func boldPersonalMentionText(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			lines[i] = "**" + line + "**"
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // BuildCompletionMessages resolves each requested human recipient to their
@@ -336,6 +350,70 @@ func BuildCompletionMessages(ctx context.Context, event AgentCompleted, recipien
 
 func failedMentionTarget(eventID, workspaceID string, target MentionTarget, reason string) Delivery {
 	return Delivery{Message: Message{EventID: eventID, WorkspaceID: workspaceID, TargetID: target.ID, TargetKind: target.Kind}, Status: "failed", Error: reason}
+}
+
+// BuildAssignmentMessage resolves one current or former human assignee to an
+// active DingTalk identity. Assignment messages never fall back to a group.
+func BuildAssignmentMessage(ctx context.Context, event AssignmentNotification, resolver Resolver) ([]Message, []Delivery, error) {
+	if strings.TrimSpace(event.EventID) == "" || strings.TrimSpace(event.WorkspaceID) == "" {
+		return nil, nil, errors.New("assignment event_id and workspace_id are required")
+	}
+	if strings.TrimSpace(event.RecipientID) == "" {
+		return nil, nil, errors.New("assignment recipient_id is required")
+	}
+	if event.Kind != AssignmentAdded && event.Kind != AssignmentRemoved {
+		return nil, nil, errors.New("unsupported assignment notification kind")
+	}
+	if resolver == nil {
+		return nil, nil, errors.New("assignment resolver is required")
+	}
+	binding, found, err := resolver.MemberBinding(ctx, event.WorkspaceID, event.RecipientID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve assignment recipient %s: %w", event.RecipientID, err)
+	}
+	target := MentionTarget{ID: event.RecipientID, Kind: "member"}
+	if !found || !binding.Active || strings.TrimSpace(binding.DingUserID) == "" {
+		return nil, []Delivery{failedMentionTarget(event.EventID, event.WorkspaceID, target, "member is not bound to DingTalk")}, nil
+	}
+	return []Message{{
+		EventID: event.EventID, WorkspaceID: event.WorkspaceID,
+		TargetID: event.RecipientID, TargetKind: "member", DingUserID: binding.DingUserID,
+		RobotCode: binding.RobotCode, ChannelType: "p2p", Text: FormatAssignmentText(event),
+	}}, nil, nil
+}
+
+// FormatAssignmentText keeps the assignee notification to the two approved
+// message types. Task identity and its link are optional and omitted when the
+// recipient can no longer view the task.
+func FormatAssignmentText(event AssignmentNotification) string {
+	var heading string
+	switch event.Kind {
+	case AssignmentAdded:
+		heading = "📌 你已成为该任务负责人"
+	case AssignmentRemoved:
+		heading = "↗️ 该任务已转交，你已不再负责"
+	default:
+		return ""
+	}
+	sections := []string{heading}
+	if !event.IncludeDetails {
+		return heading
+	}
+	identifier := strings.TrimSpace(event.IssueIdentifier)
+	title := strings.TrimSpace(event.IssueTitle)
+	label := escapeMarkdown(identifier)
+	if label == "" {
+		label = escapeMarkdown(title)
+	} else if title != "" {
+		label += " · " + escapeMarkdown(title)
+	}
+	if label != "" {
+		sections = append(sections, label)
+	}
+	if source := strings.TrimSpace(event.SourceURL); source != "" {
+		sections = append(sections, "[打开任务]("+source+")")
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 // FormatAgentCompletionText is deliberately not phrased as a mention. Keep

@@ -69,11 +69,12 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 
 	memberCommentID := uuid.NewString()
 	mention := "[@Target](mention://member/" + targetID + ")"
-	emit(memberCommentID, "member", actorID, "请确认 "+mention+"，重复 "+mention)
+	memberContent := "第一行请确认 " + mention + "，重复 " + mention + "，这里补充足够长的内容用于验证私聊正文不再受四十字限制。\n第二行保留原始换行。\n第三行末尾仍然可见。"
+	emit(memberCommentID, "member", actorID, memberContent)
 	if count := countForComment(memberCommentID); count != 1 {
 		t.Fatalf("member comment duplicate mentions created %d rows, want 1", count)
 	}
-	emit(memberCommentID, "member", actorID, "请确认 "+mention+"，重复 "+mention)
+	emit(memberCommentID, "member", actorID, memberContent)
 	if count := countForComment(memberCommentID); count != 1 {
 		t.Fatalf("replayed member comment created %d rows, want 1", count)
 	}
@@ -88,8 +89,11 @@ func TestDingTalkPersonalMentionOutboxCommentPolicy(t *testing.T) {
 	if markdown == "" || markdown == mention {
 		t.Fatalf("personal mention did not use the notification formatter: %q", markdown)
 	}
-	if strings.Contains(markdown, "@Target") || strings.Contains(markdown, "mention://") {
-		t.Fatalf("personal mention exposed routing markup: %q", markdown)
+	if strings.Count(markdown, "@Target") != 2 || strings.Contains(markdown, "mention://") {
+		t.Fatalf("personal mention did not preserve readable mention names: %q", markdown)
+	}
+	if !strings.Contains(markdown, "第三行末尾仍然可见。") {
+		t.Fatalf("personal mention truncated multiline content: %q", markdown)
 	}
 	if len(wakeup.users) != 1 || wakeup.users[0] != actorID {
 		t.Fatalf("unexpected personal-message wakeups: %#v", wakeup.users)

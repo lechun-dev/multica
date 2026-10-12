@@ -97,6 +97,59 @@ func TestBuildCompletionMessagesNotifiesOwnerAndInitiatorOnce(t *testing.T) {
 	}
 }
 
+func TestBuildAssignmentMessageRoutesMemberToP2P(t *testing.T) {
+	event := AssignmentNotification{
+		EventID: "issue-assignment:issue-1:7:assignment_added", WorkspaceID: "workspace-1",
+		RecipientID: "member-1", Kind: AssignmentAdded, IncludeDetails: true,
+		IssueIdentifier: "MUL-123", IssueTitle: "优化手机端登录", SourceURL: "https://multica.test/issues/MUL-123",
+	}
+	messages, failures, err := BuildAssignmentMessage(context.Background(), event, resolverStub{
+		member: MemberBinding{DingUserID: "ding-user-1", RobotCode: "mission-robot", Active: true}, found: true,
+	})
+	if err != nil || len(failures) != 0 || len(messages) != 1 {
+		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+	message := messages[0]
+	if message.TargetID != "member-1" || message.TargetKind != "member" || message.DingUserID != "ding-user-1" || message.ChannelType != "p2p" {
+		t.Fatalf("unexpected assignment routing: %+v", message)
+	}
+	want := "📌 你已成为该任务负责人\n\nMUL-123 · 优化手机端登录\n\n[打开任务](https://multica.test/issues/MUL-123)"
+	if message.Text != want {
+		t.Fatalf("assignment text=%q, want %q", message.Text, want)
+	}
+}
+
+func TestBuildAssignmentMessageReportsUnboundMember(t *testing.T) {
+	event := AssignmentNotification{EventID: "assignment-1", WorkspaceID: "workspace-1", RecipientID: "member-1", Kind: AssignmentRemoved}
+	messages, failures, err := BuildAssignmentMessage(context.Background(), event, resolverStub{})
+	if err != nil || len(messages) != 0 || len(failures) != 1 || failures[0].Status != StatusFailed {
+		t.Fatalf("messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+}
+
+func TestBuildAssignmentMessageRejectsUnsupportedKind(t *testing.T) {
+	event := AssignmentNotification{EventID: "assignment-1", WorkspaceID: "workspace-1", RecipientID: "member-1", Kind: "unknown"}
+	if _, _, err := BuildAssignmentMessage(context.Background(), event, resolverStub{}); err == nil {
+		t.Fatal("unsupported assignment kind should fail")
+	}
+}
+
+func TestFormatAssignmentTextUsesOnlyApprovedMessageTypes(t *testing.T) {
+	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentAdded}); got != "📌 你已成为该任务负责人" {
+		t.Fatalf("assigned text=%q", got)
+	}
+	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentRemoved}); got != "↗️ 该任务已转交，你已不再负责" {
+		t.Fatalf("removed text=%q", got)
+	}
+	got := FormatAssignmentText(AssignmentNotification{
+		Kind: AssignmentRemoved, IncludeDetails: false,
+		IssueIdentifier: "MUL-123", IssueTitle: "不应泄露", SourceURL: "https://multica.test/issues/MUL-123",
+	})
+	if got != "↗️ 该任务已转交，你已不再负责" {
+		t.Fatalf("minimal removed text leaked task details: %q", got)
+	}
+}
+
 func TestFormatAgentCompletionTextIncludesOptionalResultLink(t *testing.T) {
 	got := FormatAgentCompletionText(AgentCompleted{AgentName: "A*gent", ResultText: "已完成通知流程修复。\n请查看执行结果。", WorkspaceName: "乐纯工作区", ProjectName: "钉钉通知", IssueIdentifier: "MUL-67", IssueTitle: "优化成员通知", SourceURL: "https://multica.test/task-1"})
 	want := "✅ **A\\*gent 已完成执行**\n\n已完成通知流程修复。\n请查看执行结果。\n\n---\n\n来源：[MUL-67 · 优化成员通知](https://multica.test/task-1)\n\n[打开任务并回复](https://multica.test/task-1)"
@@ -197,7 +250,7 @@ func TestFormatTextEscapesDisplayContext(t *testing.T) {
 	}
 }
 
-func TestFormatPersonalMentionTextHidesRoutingMentionsAndKeepsSourceAtEnd(t *testing.T) {
+func TestFormatPersonalMentionTextPreservesMentionNamesAndKeepsSourceAtEnd(t *testing.T) {
 	got := FormatPersonalMentionText(MentionCreated{
 		Actor:           Actor{Name: "张畅", Kind: "member"},
 		Text:            "[@张畅](mention://member/member-a) [@李群](mention://member/member-b) 测试私发消息，看看能不能收到",
@@ -206,34 +259,34 @@ func TestFormatPersonalMentionTextHidesRoutingMentionsAndKeepsSourceAtEnd(t *tes
 		IssueTitle:      "连接运行时，和 Mika 开始",
 		SourceURL:       "https://multica.test/issues/LECH-15",
 	})
-	want := "**测试私发消息，看看能不能收到**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：[LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
+	want := "@张畅 @李群 测试私发消息，看看能不能收到\n\n---\n\n[打开任务并回复](https://multica.test/issues/LECH-15)（来源：[LECH-15 · 连接运行时，和 Mika 开始](https://multica.test/issues/LECH-15)）"
 	if got != want {
 		t.Fatalf("formatted personal notification = %q, want %q", got, want)
 	}
-	for _, hidden := range []string{"@张畅", "@李群", "MissionOS 中提到了你"} {
+	for _, hidden := range []string{"mention://", "MissionOS 中提到了你"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("personal notification exposed %q: %q", hidden, got)
 		}
 	}
 }
 
-func TestFormatPersonalMentionTextFallsBackWhenCommentOnlyContainsMentions(t *testing.T) {
+func TestFormatPersonalMentionTextPreservesMentionOnlyComment(t *testing.T) {
 	got := FormatPersonalMentionText(MentionCreated{Text: "[@张畅](mention://member/member-a) [@李群](mention://member/member-b)"})
-	if got != "**在任务评论中提到了你**" {
-		t.Fatalf("personal mention-only fallback = %q", got)
+	if got != "@张畅 @李群" {
+		t.Fatalf("personal mention-only body = %q", got)
 	}
 }
 
 func TestFormatPersonalMentionTextHandlesPartialFooterContext(t *testing.T) {
-	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test", ProjectName: "project"}); got != "**hello**" {
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", WorkspaceName: "lechun-test", ProjectName: "project"}); got != "hello" {
 		t.Fatalf("workspace and project should stay hidden without a task: %q", got)
 	}
-	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", SourceURL: "https://multica.test/task"}); got != "**hello**\n\n---\n\n[打开任务并回复](https://multica.test/task)" {
+	if got := FormatPersonalMentionText(MentionCreated{Text: "hello", SourceURL: "https://multica.test/task"}); got != "hello\n\n---\n\n[打开任务并回复](https://multica.test/task)" {
 		t.Fatalf("link-only personal footer = %q", got)
 	}
 }
 
-func TestFormatPersonalMentionTextUsesSameCompactBodyForAgent(t *testing.T) {
+func TestFormatPersonalMentionTextPreservesCompleteBodyForAgent(t *testing.T) {
 	got := FormatPersonalMentionText(MentionCreated{
 		Actor:           Actor{Name: "Mika", Kind: "agent"},
 		Text:            "[@李群](mention://member/member-b) 请检查结果",
@@ -243,21 +296,22 @@ func TestFormatPersonalMentionTextUsesSameCompactBodyForAgent(t *testing.T) {
 		IssueTitle:      "子任务测试",
 		SourceURL:       "https://multica.test/issues/LC-71",
 	})
-	want := "**请检查结果**\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：[LC-71 · 子任务测试](https://multica.test/issues/LC-71)）"
+	want := "@李群 请检查结果\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：[LC-71 · 子任务测试](https://multica.test/issues/LC-71)）"
 	if got != want {
 		t.Fatalf("formatted Agent personal notification = %q, want %q", got, want)
 	}
-	for _, hidden := range []string{"乐纯", "迁移临时项目", "@李群", "mention://"} {
+	for _, hidden := range []string{"乐纯", "迁移临时项目", "mention://"} {
 		if strings.Contains(got, hidden) {
 			t.Fatalf("Agent personal notification exposed %q: %q", hidden, got)
 		}
 	}
 }
 
-func TestFormatPersonalMentionTextBoldsEachNonEmptyLine(t *testing.T) {
-	got := FormatPersonalMentionText(MentionCreated{Text: "第一段\n第二段"})
-	if got != "**第一段**\n**第二段**" {
-		t.Fatalf("multiline personal notification = %q", got)
+func TestFormatPersonalMentionTextKeepsLongMultilineBody(t *testing.T) {
+	body := "第一段内容超过原先四十字限制，用于确认钉钉私聊消息不会再被截断，并且保留完整正文。\n第二段保持原来的换行。\n第三段也必须完整展示。"
+	got := FormatPersonalMentionText(MentionCreated{Text: body})
+	if got != body {
+		t.Fatalf("long multiline personal notification = %q, want %q", got, body)
 	}
 }
 

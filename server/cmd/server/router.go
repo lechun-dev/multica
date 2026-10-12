@@ -916,10 +916,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
 	}
-	// Member @mentions use the deployment-wide DingTalk login application and
-	// are intentionally independent from the optional per-Agent BYO robot
-	// integration above.
-	dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr := registerDingTalkNotifyRuntime(bus, pool)
+	// Signed-in-user 1V1 messages and Mission robot member notifications use
+	// the deployment-wide DingTalk application. They remain independent from
+	// the optional per-Agent BYO robot integration above.
+	dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr := registerDingTalkNotifyRuntime(bus, pool, h.CanMemberViewIssue)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
