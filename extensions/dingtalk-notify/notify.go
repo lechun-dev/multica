@@ -393,11 +393,11 @@ func FormatAssignmentText(event AssignmentNotification) string {
 	case AssignmentAdded:
 		sections = append(sections, "📌 **你已成为该任务的负责人**")
 	case AssignmentRemoved:
-		heading := "↗️ 该任务已转交"
+		heading := "该任务已转交"
 		if name := strings.TrimSpace(event.NewAssigneeName); name != "" {
 			heading += "给 " + escapeMarkdown(name)
 		}
-		sections = append(sections, "**"+heading+"**")
+		sections = append(sections, "↗️ **"+heading+"**")
 	default:
 		return ""
 	}

@@ -362,7 +362,7 @@ func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 	if texts[newID] != wantNew {
 		t.Fatalf("new assignee Mission message=%q, want %q", texts[newID], wantNew)
 	}
-	wantOld := "**↗️ 该任务已转交给 李群**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	wantOld := "↗️ **该任务已转交给 李群**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
 	if texts[oldID] != wantOld {
 		t.Fatalf("old assignee Mission message=%q, want %q", texts[oldID], wantOld)
 	}

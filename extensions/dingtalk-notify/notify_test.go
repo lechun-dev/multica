@@ -139,7 +139,7 @@ func TestFormatAssignmentTextUsesOnlyApprovedMessageTypes(t *testing.T) {
 	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentAdded}); got != "📌 **你已成为该任务的负责人**" {
 		t.Fatalf("assigned text=%q", got)
 	}
-	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentRemoved, NewAssigneeName: "李群"}); got != "**↗️ 该任务已转交给 李群**" {
+	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentRemoved, NewAssigneeName: "李群"}); got != "↗️ **该任务已转交给 李群**" {
 		t.Fatalf("removed text=%q", got)
 	}
 	got := FormatAssignmentText(AssignmentNotification{
@@ -147,7 +147,7 @@ func TestFormatAssignmentTextUsesOnlyApprovedMessageTypes(t *testing.T) {
 		OccurredAt: time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC), IncludeDetails: false,
 		IssueIdentifier: "MUL-123", IssueTitle: "不应泄露", SourceURL: "https://multica.test/issues/MUL-123",
 	})
-	if got != "**↗️ 该任务已转交给 李群**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30" {
+	if got != "↗️ **该任务已转交给 李群**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30" {
 		t.Fatalf("minimal removed text leaked task details: %q", got)
 	}
 }
