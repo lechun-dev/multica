@@ -231,10 +231,19 @@ func mustActionCardParam(text string) (string, bool) {
 		return "", false
 	}
 	lastLine := strings.TrimSpace(textLines[len(textLines)-1])
-	const buttonPrefix = "[打开任务并回复]("
 	lastLine = strings.TrimPrefix(lastLine, "**")
 	lastLine = strings.TrimSuffix(lastLine, "**")
-	if !strings.HasPrefix(lastLine, buttonPrefix) || !strings.HasSuffix(lastLine, ")") {
+	buttonTitle := ""
+	buttonPrefix := ""
+	for _, title := range []string{"打开任务并回复", "打开任务"} {
+		prefix := "[" + title + "]("
+		if strings.HasPrefix(lastLine, prefix) {
+			buttonTitle = title
+			buttonPrefix = prefix
+			break
+		}
+	}
+	if buttonPrefix == "" || !strings.HasSuffix(lastLine, ")") {
 		return "", false
 	}
 	actionURL := strings.TrimSuffix(strings.TrimPrefix(lastLine, buttonPrefix), ")")
@@ -249,7 +258,7 @@ func mustActionCardParam(text string) (string, bool) {
 	b, err := json.Marshal(map[string]string{
 		"title":       cardTitle,
 		"text":        cardText,
-		"singleTitle": "打开任务并回复",
+		"singleTitle": buttonTitle,
 		"singleURL":   actionURL,
 	})
 	if err != nil {

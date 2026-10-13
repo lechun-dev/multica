@@ -74,11 +74,13 @@ type AssignmentNotification struct {
 	WorkspaceID     string
 	RecipientID     string
 	Kind            AssignmentNotificationKind
+	ActorName       string
+	NewAssigneeName string
 	IssueIdentifier string
 	IssueTitle      string
 	SourceURL       string
 	IncludeDetails  bool
-	CreatedAt       time.Time
+	OccurredAt      time.Time
 }
 
 type MemberBinding struct {
@@ -289,7 +291,7 @@ func FormatText(event MentionCreated) string {
 // removing only Multica's internal mention:// targets that DingTalk cannot
 // resolve.
 func FormatPersonalMentionText(event MentionCreated) string {
-	text := stripMentionLinks(sanitizeText(event.Text))
+	text := formatPersonalMentionLinks(sanitizeText(event.Text))
 	if text == "" {
 		text = "在任务评论中提到了你"
 	}
@@ -386,18 +388,57 @@ func BuildAssignmentMessage(ctx context.Context, event AssignmentNotification, r
 // message types. Task identity and its link are optional and omitted when the
 // recipient can no longer view the task.
 func FormatAssignmentText(event AssignmentNotification) string {
-	var heading string
+	sections := make([]string, 0, 5)
 	switch event.Kind {
 	case AssignmentAdded:
-		heading = "📌 你已成为该任务负责人"
+		sections = append(sections, "📌 你已成为该任务的负责人")
 	case AssignmentRemoved:
-		heading = "↗️ 该任务已转交，你已不再负责"
+		heading := "↗️ 该任务已转交"
+		if name := strings.TrimSpace(event.NewAssigneeName); name != "" {
+			heading += "给 " + escapeMarkdown(name)
+		}
+		sections = append(sections, heading, "你已不再负责")
 	default:
 		return ""
 	}
-	sections := []string{heading}
+	if metadata := formatAssignmentMetadata(event); metadata != "" {
+		sections = append(sections, metadata)
+	}
+	return appendAssignmentTaskDetails(sections, event)
+}
+
+// FormatPersonalAssignmentText creates the copy sent from the human operator
+// to the new assignee. It deliberately omits the Mission robot emoji while
+// preserving the same operation and task context.
+func FormatPersonalAssignmentText(event AssignmentNotification) string {
+	if event.Kind != AssignmentAdded {
+		return ""
+	}
+	sections := []string{"你已成为该任务的负责人"}
+	if metadata := formatAssignmentMetadata(event); metadata != "" {
+		sections = append(sections, metadata)
+	}
+	return appendAssignmentTaskDetails(sections, event)
+}
+
+func formatAssignmentMetadata(event AssignmentNotification) string {
+	lines := make([]string, 0, 2)
+	if actor := strings.TrimSpace(event.ActorName); actor != "" {
+		lines = append(lines, "操作人："+escapeMarkdown(actor))
+	}
+	if !event.OccurredAt.IsZero() {
+		loc, err := time.LoadLocation("Asia/Shanghai")
+		if err != nil {
+			loc = time.FixedZone("CST", 8*60*60)
+		}
+		lines = append(lines, "操作时间："+event.OccurredAt.In(loc).Format("2006-01-02 15:04"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func appendAssignmentTaskDetails(sections []string, event AssignmentNotification) string {
 	if !event.IncludeDetails {
-		return heading
+		return strings.Join(sections, "\n\n")
 	}
 	identifier := strings.TrimSpace(event.IssueIdentifier)
 	title := strings.TrimSpace(event.IssueTitle)
@@ -408,7 +449,7 @@ func FormatAssignmentText(event AssignmentNotification) string {
 		label += " · " + escapeMarkdown(title)
 	}
 	if label != "" {
-		sections = append(sections, label)
+		sections = append(sections, "---", "来源："+label)
 	}
 	if source := strings.TrimSpace(event.SourceURL); source != "" {
 		sections = append(sections, "[打开任务]("+source+")")
@@ -556,6 +597,21 @@ var mentionLinkRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(?:member|agent|s
 var structuredAtMentionRe = regexp.MustCompile(`\[@(.+?)\]\(mention://(?:member|agent|squad|all)/[^)]+\)`)
 var repeatedHorizontalSpaceRe = regexp.MustCompile(`[ \t]+`)
 var spaceBeforePunctuationRe = regexp.MustCompile(`[ \t]+([,，。.!！?？;；:：、])`)
+
+// formatPersonalMentionLinks gives structured @names visual emphasis in the
+// DingTalk 1V1 body. It does not guess from literal @ text, so email addresses,
+// external links, and ordinary prose remain byte-for-byte unchanged. Issue
+// mentions are converted to readable labels without bolding.
+func formatPersonalMentionLinks(text string) string {
+	text = structuredAtMentionRe.ReplaceAllStringFunc(text, func(full string) string {
+		parts := structuredAtMentionRe.FindStringSubmatch(full)
+		if len(parts) != 2 {
+			return full
+		}
+		return "**@" + escapeMarkdown(parts[1]) + "**"
+	})
+	return stripMentionLinks(text)
+}
 
 // stripStructuredMentions removes Multica routing mentions completely. It is
 // intentionally limited to mention:// links: literal @ text and email

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/testutil"
@@ -14,6 +16,78 @@ import (
 
 type personalMentionWakeupRecorder struct {
 	users []string
+}
+
+func TestDingTalkPersonalAssignmentOutboxRoutesOperatorToNewAssignee(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	fixture := testutil.New(testPool, testWorkspaceID, testUserID)
+	stamp := time.Now().UnixNano()
+	actorID := fixture.User(t, "Assignment Actor", fmt.Sprintf("assignment-actor-%d@example.test", stamp))
+	targetID := fixture.User(t, "Assignment Target", fmt.Sprintf("assignment-target-%d@example.test", stamp))
+	fixture.Member(t, testWorkspaceID, actorID, "member")
+	fixture.Member(t, testWorkspaceID, targetID, "member")
+	actorDingID := fmt.Sprintf("assignment-actor-ding-%d", stamp)
+	targetDingID := fmt.Sprintf("assignment-target-ding-%d", stamp)
+	for _, identity := range []struct {
+		userID string
+		dingID string
+	}{
+		{userID: actorID, dingID: actorDingID},
+		{userID: targetID, dingID: targetDingID},
+	} {
+		fixture.InsertNoID(t, "dingtalk_notify_identities", testutil.Cols{
+			"ding_user_id":    identity.dingID,
+			"union_id":        "union-" + identity.dingID,
+			"multica_user_id": identity.userID,
+			"active":          true,
+			"login_only":      false,
+			"updated_at":      testutil.Raw("now()"),
+		}, "multica_user_id = $1", identity.userID)
+	}
+	fixture.Cleanup(t, `DELETE FROM dingtalk_personal_message WHERE sender_user_id = $1`, actorID)
+
+	wakeup := &personalMentionWakeupRecorder{}
+	runtime := &dingtalkNotifyRuntime{pool: testPool, personalWakeup: wakeup}
+	issue := dingtalkAssignmentIssue{
+		id: "44444444-4444-4444-4444-444444444444", workspaceID: testWorkspaceID,
+		identifier: "MUL-888", title: "转交消息测试", revision: 12,
+	}
+	event := notify.AssignmentNotification{
+		WorkspaceID: testWorkspaceID, RecipientID: targetID, Kind: notify.AssignmentAdded,
+		ActorName: "张畅", IssueIdentifier: issue.identifier, IssueTitle: issue.title,
+		IncludeDetails: true, OccurredAt: time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC),
+	}
+	runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event)
+	runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event)
+
+	var senderDingID, recipientDingID, markdown, idempotencyKey string
+	err := testPool.QueryRow(context.Background(), `
+		SELECT sender_ding_user_id, recipient_ding_user_id, markdown, idempotency_key
+		FROM dingtalk_personal_message
+		WHERE sender_user_id = $1 AND recipient_user_id = $2 AND comment_id = $3`,
+		actorID, targetID, issue.id).Scan(&senderDingID, &recipientDingID, &markdown, &idempotencyKey)
+	if err != nil {
+		t.Fatalf("load personal assignment outbox: %v", err)
+	}
+	if senderDingID != actorDingID || recipientDingID != targetDingID {
+		t.Fatalf("personal assignment route sender=%q recipient=%q, want %q/%q", senderDingID, recipientDingID, actorDingID, targetDingID)
+	}
+	wantMarkdown := "你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-888 · 转交消息测试"
+	if markdown != wantMarkdown {
+		t.Fatalf("personal assignment markdown=%q, want %q", markdown, wantMarkdown)
+	}
+	wantKey := "dingtalk-personal-assignment:" + issue.id + ":12:" + targetID
+	if idempotencyKey != wantKey {
+		t.Fatalf("personal assignment idempotency key=%q, want %q", idempotencyKey, wantKey)
+	}
+	if count := fixture.Count(t, `SELECT count(*) FROM dingtalk_personal_message WHERE idempotency_key = $1`, wantKey); count != 1 {
+		t.Fatalf("replayed personal assignment rows=%d, want 1", count)
+	}
+	if len(wakeup.users) != 1 || wakeup.users[0] != actorID {
+		t.Fatalf("personal assignment wakeups=%v, want [%s]", wakeup.users, actorID)
+	}
 }
 
 func (r *personalMentionWakeupRecorder) NotifyDingTalkPersonalMessageAvailable(userID string) {

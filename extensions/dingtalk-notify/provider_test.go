@@ -79,6 +79,24 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 	}
 }
 
+func TestActionCardParamSupportsOpenTaskButton(t *testing.T) {
+	text := "📌 你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)"
+	param, ok := mustActionCardParam(text)
+	if !ok {
+		t.Fatal("expected assignment action card payload")
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(param), &got); err != nil {
+		t.Fatalf("decode action card payload: %v", err)
+	}
+	if got["singleTitle"] != "打开任务" || got["singleURL"] != "https://example.test/task" {
+		t.Fatalf("button=%q url=%q", got["singleTitle"], got["singleURL"])
+	}
+	if strings.Contains(got["text"], "[打开任务]") {
+		t.Fatalf("button markdown leaked into card body: %q", got["text"])
+	}
+}
+
 func TestDingTalkProviderFallsBackToMarkdownWhenActionCardUnsupported(t *testing.T) {
 	var messageKeys []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

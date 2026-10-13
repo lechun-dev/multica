@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -250,7 +251,7 @@ func TestDingTalkNotifyRuntimeNotifiesMemberAssignedOnIssueCreate(t *testing.T) 
 	if len(items) != 1 {
 		t.Fatalf("created assignment messages=%d, want 1: %+v", len(items), items)
 	}
-	if item := items[0]; item.Message.TargetID != memberID || item.Message.ChannelType != "p2p" || !strings.Contains(item.Message.Text, "你已成为该任务负责人") {
+	if item := items[0]; item.Message.TargetID != memberID || item.Message.ChannelType != "p2p" || !strings.Contains(item.Message.Text, "你已成为该任务的负责人") {
 		t.Fatalf("unexpected created assignment message: %+v", item.Message)
 	}
 }
@@ -287,29 +288,58 @@ func TestDingTalkNotifyRuntimeIgnoresNonMemberIssueCreateAssignees(t *testing.T)
 
 func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 	const (
-		oldID = "11111111-1111-1111-1111-111111111111"
-		newID = "22222222-2222-2222-2222-222222222222"
+		oldID   = "11111111-1111-1111-1111-111111111111"
+		newID   = "22222222-2222-2222-2222-222222222222"
+		actorID = "33333333-3333-3333-3333-333333333333"
 	)
 	store := notify.NewMemoryStore()
+	wakeup := &personalMentionWakeupRecorder{}
+	personalKeys := map[string]struct{}{}
+	type personalDelivery struct {
+		senderID    string
+		recipientID string
+		text        string
+	}
+	var personal []personalDelivery
 	runtime := &dingtalkNotifyRuntime{
 		store: store,
 		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
 			oldID: {DingUserID: "ding-old", Active: true},
 			newID: {DingUserID: "ding-new", Active: true},
 		}},
-		canViewIssue: func(_ context.Context, _, memberID, _ string) (bool, error) {
-			return memberID == newID, nil
+		canViewIssue: func(context.Context, string, string, string) (bool, error) {
+			return true, nil
 		},
+		displayName: func(_ context.Context, _, kind, id string) (string, error) {
+			if kind == "member" && id == actorID {
+				return "张畅", nil
+			}
+			if kind == "member" && id == newID {
+				return "李群", nil
+			}
+			return "", nil
+		},
+		personalAssignment: func(_ context.Context, issue dingtalkAssignmentIssue, senderID, recipientID string, event notify.AssignmentNotification) (bool, error) {
+			key := issue.id + ":" + strconv.FormatInt(issue.revision, 10) + ":" + recipientID
+			if _, exists := personalKeys[key]; exists {
+				return false, nil
+			}
+			personalKeys[key] = struct{}{}
+			personal = append(personal, personalDelivery{senderID: senderID, recipientID: recipientID, text: notify.FormatPersonalAssignmentText(event)})
+			return true, nil
+		},
+		personalWakeup: wakeup,
 	}
 	memberType := "member"
 	newAssigneeID := newID
 	oldAssigneeID := oldID
+	updatedAt := "2026-10-13T02:30:00Z"
 	event := events.Event{
-		Type: protocol.EventIssueUpdated, WorkspaceID: "workspace-1", ActorType: "member", ActorID: newID,
+		Type: protocol.EventIssueUpdated, WorkspaceID: "workspace-1", ActorType: "member", ActorID: actorID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
 				ID: "issue-1", WorkspaceID: "workspace-1", Identifier: "MUL-123", Title: "优化手机端登录",
-				AssigneeType: &memberType, AssigneeID: &newAssigneeID, Revision: 7,
+				AssigneeType: &memberType, AssigneeID: &newAssigneeID, Revision: 7, UpdatedAt: updatedAt,
 			},
 			"assignee_changed": true, "prev_assignee_type": &memberType, "prev_assignee_id": &oldAssigneeID,
 		},
@@ -323,15 +353,124 @@ func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 	}
 	texts := map[string]string{}
 	for _, item := range items {
+		if item.Message.ChannelType != "p2p" {
+			t.Fatalf("assignment message channel=%q, want p2p: %+v", item.Message.ChannelType, item.Message)
+		}
 		texts[item.Message.TargetID] = item.Message.Text
 	}
-	if !strings.Contains(texts[newID], "你已成为该任务负责人") || !strings.Contains(texts[newID], "MUL-123 · 优化手机端登录") {
-		t.Fatalf("new assignee message=%q", texts[newID])
+	wantNew := "📌 你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	if texts[newID] != wantNew {
+		t.Fatalf("new assignee Mission message=%q, want %q", texts[newID], wantNew)
 	}
-	if texts[oldID] != "↗️ 该任务已转交，你已不再负责" {
-		t.Fatalf("old assignee without access should receive minimal message, got %q", texts[oldID])
+	wantOld := "↗️ 该任务已转交给 李群\n\n你已不再负责\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	if texts[oldID] != wantOld {
+		t.Fatalf("old assignee Mission message=%q, want %q", texts[oldID], wantOld)
+	}
+	if len(personal) != 1 {
+		t.Fatalf("personal assignment deliveries=%d, want 1: %+v", len(personal), personal)
+	}
+	wantPersonal := "你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	if got := personal[0]; got.senderID != actorID || got.recipientID != newID || got.text != wantPersonal {
+		t.Fatalf("personal assignment delivery=%+v, want sender=%s recipient=%s text=%q", got, actorID, newID, wantPersonal)
+	}
+	if len(wakeup.users) != 1 || wakeup.users[0] != actorID {
+		t.Fatalf("personal assignment wakeups=%v, want [%s]", wakeup.users, actorID)
 	}
 }
+
+func TestDingTalkNotifyRuntimeAssignsPreviouslyUnassignedIssueWithMissionOnly(t *testing.T) {
+	const (
+		newID   = "22222222-2222-2222-2222-222222222222"
+		actorID = "33333333-3333-3333-3333-333333333333"
+	)
+	store := notify.NewMemoryStore()
+	personalCalls := 0
+	runtime := &dingtalkNotifyRuntime{
+		store: store,
+		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
+			newID: {DingUserID: "ding-new", Active: true},
+		}},
+		personalAssignment: func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification) (bool, error) {
+			personalCalls++
+			return true, nil
+		},
+	}
+	memberType := "member"
+	runtime.handleIssueUpdated(events.Event{
+		Type: protocol.EventIssueUpdated, WorkspaceID: "workspace-1", ActorType: "member", ActorID: actorID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID: "issue-3", WorkspaceID: "workspace-1", Identifier: "MUL-125", Title: "补充负责人",
+				AssigneeType: &memberType, AssigneeID: ptrString(newID), Revision: 2, UpdatedAt: "2026-10-13T04:00:00Z",
+			},
+			"assignee_changed": true,
+		},
+	})
+
+	items := store.Snapshot()
+	if len(items) != 1 || items[0].Message.TargetID != newID {
+		t.Fatalf("previously unassigned Mission messages=%d, want one for %s: %+v", len(items), newID, items)
+	}
+	if personalCalls != 0 {
+		t.Fatalf("previously unassigned personal deliveries=%d, want 0", personalCalls)
+	}
+}
+
+func TestDingTalkNotifyRuntimeAgentTransferUsesMissionOnly(t *testing.T) {
+	const (
+		oldID   = "11111111-1111-1111-1111-111111111111"
+		newID   = "22222222-2222-2222-2222-222222222222"
+		agentID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	)
+	store := notify.NewMemoryStore()
+	personalCalls := 0
+	runtime := &dingtalkNotifyRuntime{
+		store: store,
+		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
+			oldID: {DingUserID: "ding-old", Active: true},
+			newID: {DingUserID: "ding-new", Active: true},
+		}},
+		displayName: func(_ context.Context, _, kind, id string) (string, error) {
+			switch {
+			case kind == "agent" && id == agentID:
+				return "任务助手", nil
+			case kind == "member" && id == newID:
+				return "李群", nil
+			default:
+				return "", nil
+			}
+		},
+		personalAssignment: func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification) (bool, error) {
+			personalCalls++
+			return true, nil
+		},
+	}
+	memberType := "member"
+	runtime.handleIssueUpdated(events.Event{
+		Type: protocol.EventIssueUpdated, WorkspaceID: "workspace-1", ActorType: "agent", ActorID: agentID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID: "issue-2", WorkspaceID: "workspace-1", Identifier: "MUL-124", Title: "智能体转交任务",
+				AssigneeType: &memberType, AssigneeID: ptrString(newID), Revision: 9, UpdatedAt: "2026-10-13T03:15:00Z",
+			},
+			"assignee_changed": true, "prev_assignee_type": &memberType, "prev_assignee_id": ptrString(oldID),
+		},
+	})
+	items := store.Snapshot()
+	if len(items) != 2 {
+		t.Fatalf("agent transfer Mission messages=%d, want 2: %+v", len(items), items)
+	}
+	for _, item := range items {
+		if !strings.Contains(item.Message.Text, "操作人：任务助手") || !strings.Contains(item.Message.Text, "操作时间：2026-10-13 11:15") {
+			t.Fatalf("agent transfer message missing operator metadata: %q", item.Message.Text)
+		}
+	}
+	if personalCalls != 0 {
+		t.Fatalf("agent transfer personal deliveries=%d, want 0", personalCalls)
+	}
+}
+
+func ptrString(value string) *string { return &value }
 
 func TestDingTalkNotifyRuntimeHandlesResolvedMapIssuePayload(t *testing.T) {
 	const memberID = "11111111-1111-1111-1111-111111111111"
