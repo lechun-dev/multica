@@ -397,7 +397,7 @@ func FormatAssignmentText(event AssignmentNotification) string {
 		if name := strings.TrimSpace(event.NewAssigneeName); name != "" {
 			heading += "给 " + escapeMarkdown(name)
 		}
-		sections = append(sections, "**"+heading+"**", "你已不再负责")
+		sections = append(sections, "**"+heading+"**")
 	default:
 		return ""
 	}

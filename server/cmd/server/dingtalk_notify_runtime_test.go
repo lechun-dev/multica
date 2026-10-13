@@ -362,7 +362,7 @@ func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 	if texts[newID] != wantNew {
 		t.Fatalf("new assignee Mission message=%q, want %q", texts[newID], wantNew)
 	}
-	wantOld := "**↗️ 该任务已转交给 李群**\n\n你已不再负责\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	wantOld := "**↗️ 该任务已转交给 李群**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
 	if texts[oldID] != wantOld {
 		t.Fatalf("old assignee Mission message=%q, want %q", texts[oldID], wantOld)
 	}
@@ -518,7 +518,7 @@ func TestDingTalkNotifyRuntimeNotifiesRemovedMemberWithoutReplacement(t *testing
 		"assignee_changed": true, "prev_assignee_type": &memberType, "prev_assignee_id": &oldAssigneeID,
 	}})
 	items := store.Snapshot()
-	if len(items) != 1 || items[0].Message.TargetID != oldID || !strings.Contains(items[0].Message.Text, "你已不再负责") {
+	if len(items) != 1 || items[0].Message.TargetID != oldID || !strings.Contains(items[0].Message.Text, "该任务已转交") {
 		t.Fatalf("removed assignment message mismatch: %+v", items)
 	}
 }
