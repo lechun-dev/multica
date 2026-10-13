@@ -74,7 +74,7 @@ func TestDingTalkPersonalAssignmentOutboxRoutesOperatorToNewAssignee(t *testing.
 	if senderDingID != actorDingID || recipientDingID != targetDingID {
 		t.Fatalf("personal assignment route sender=%q recipient=%q, want %q/%q", senderDingID, recipientDingID, actorDingID, targetDingID)
 	}
-	wantMarkdown := "你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-888 · 转交消息测试"
+	wantMarkdown := "你已成为该任务的负责人\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-888 · 转交消息测试"
 	if markdown != wantMarkdown {
 		t.Fatalf("personal assignment markdown=%q, want %q", markdown, wantMarkdown)
 	}

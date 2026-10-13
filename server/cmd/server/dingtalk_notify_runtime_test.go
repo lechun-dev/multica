@@ -358,18 +358,18 @@ func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 		}
 		texts[item.Message.TargetID] = item.Message.Text
 	}
-	wantNew := "📌 你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	wantNew := "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
 	if texts[newID] != wantNew {
 		t.Fatalf("new assignee Mission message=%q, want %q", texts[newID], wantNew)
 	}
-	wantOld := "↗️ 该任务已转交给 李群\n\n你已不再负责\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	wantOld := "**↗️ 该任务已转交给 李群**\n\n你已不再负责\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
 	if texts[oldID] != wantOld {
 		t.Fatalf("old assignee Mission message=%q, want %q", texts[oldID], wantOld)
 	}
 	if len(personal) != 1 {
 		t.Fatalf("personal assignment deliveries=%d, want 1: %+v", len(personal), personal)
 	}
-	wantPersonal := "你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
+	wantPersonal := "你已成为该任务的负责人\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录"
 	if got := personal[0]; got.senderID != actorID || got.recipientID != newID || got.text != wantPersonal {
 		t.Fatalf("personal assignment delivery=%+v, want sender=%s recipient=%s text=%q", got, actorID, newID, wantPersonal)
 	}

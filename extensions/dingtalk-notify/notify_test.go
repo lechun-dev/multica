@@ -114,7 +114,7 @@ func TestBuildAssignmentMessageRoutesMemberToP2P(t *testing.T) {
 	if message.TargetID != "member-1" || message.TargetKind != "member" || message.DingUserID != "ding-user-1" || message.ChannelType != "p2p" {
 		t.Fatalf("unexpected assignment routing: %+v", message)
 	}
-	want := "📌 你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录\n\n[打开任务](https://multica.test/issues/MUL-123)"
+	want := "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-123 · 优化手机端登录\n\n[打开任务](https://multica.test/issues/MUL-123)"
 	if message.Text != want {
 		t.Fatalf("assignment text=%q, want %q", message.Text, want)
 	}
@@ -136,10 +136,10 @@ func TestBuildAssignmentMessageRejectsUnsupportedKind(t *testing.T) {
 }
 
 func TestFormatAssignmentTextUsesOnlyApprovedMessageTypes(t *testing.T) {
-	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentAdded}); got != "📌 你已成为该任务的负责人" {
+	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentAdded}); got != "📌 **你已成为该任务的负责人**" {
 		t.Fatalf("assigned text=%q", got)
 	}
-	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentRemoved, NewAssigneeName: "李群"}); got != "↗️ 该任务已转交给 李群\n\n你已不再负责" {
+	if got := FormatAssignmentText(AssignmentNotification{Kind: AssignmentRemoved, NewAssigneeName: "李群"}); got != "**↗️ 该任务已转交给 李群**\n\n你已不再负责" {
 		t.Fatalf("removed text=%q", got)
 	}
 	got := FormatAssignmentText(AssignmentNotification{
@@ -147,7 +147,7 @@ func TestFormatAssignmentTextUsesOnlyApprovedMessageTypes(t *testing.T) {
 		OccurredAt: time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC), IncludeDetails: false,
 		IssueIdentifier: "MUL-123", IssueTitle: "不应泄露", SourceURL: "https://multica.test/issues/MUL-123",
 	})
-	if got != "↗️ 该任务已转交给 李群\n\n你已不再负责\n\n操作人：张畅\n操作时间：2026-10-13 10:30" {
+	if got != "**↗️ 该任务已转交给 李群**\n\n你已不再负责\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30" {
 		t.Fatalf("minimal removed text leaked task details: %q", got)
 	}
 }
@@ -158,7 +158,7 @@ func TestFormatPersonalAssignmentTextMatchesTransferCopy(t *testing.T) {
 		OccurredAt: time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC), IncludeDetails: true,
 		IssueIdentifier: "LC-71", IssueTitle: "子任务测试", SourceURL: "https://multica.test/issues/LC-71",
 	})
-	want := "你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://multica.test/issues/LC-71)"
+	want := "你已成为该任务的负责人\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://multica.test/issues/LC-71)"
 	if got != want {
 		t.Fatalf("personal assignment text=%q, want %q", got, want)
 	}

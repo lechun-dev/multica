@@ -80,7 +80,7 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 }
 
 func TestActionCardParamSupportsOpenTaskButton(t *testing.T) {
-	text := "📌 你已成为该任务的负责人\n\n操作人：张畅\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)"
+	text := "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)"
 	param, ok := mustActionCardParam(text)
 	if !ok {
 		t.Fatal("expected assignment action card payload")
@@ -94,6 +94,45 @@ func TestActionCardParamSupportsOpenTaskButton(t *testing.T) {
 	}
 	if strings.Contains(got["text"], "[打开任务]") {
 		t.Fatalf("button markdown leaked into card body: %q", got["text"])
+	}
+}
+
+func TestDingTalkProviderSendsAssignmentAsActionCard(t *testing.T) {
+	var messageKey string
+	var messageParam map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "accessToken") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "token", "expireIn": 7200})
+			return
+		}
+		var body struct {
+			MsgKey   string `json:"msgKey"`
+			MsgParam string `json:"msgParam"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		messageKey = body.MsgKey
+		if err := json.Unmarshal([]byte(body.MsgParam), &messageParam); err != nil {
+			t.Fatalf("decode message param: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
+	err := p.Send(context.Background(), Message{
+		ChannelType: "p2p", DingUserID: "user",
+		Text: "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageKey != msgKeyActionCard {
+		t.Fatalf("message key=%q, want %q", messageKey, msgKeyActionCard)
+	}
+	if messageParam["singleTitle"] != "打开任务" || messageParam["singleURL"] != "https://example.test/task" {
+		t.Fatalf("action card param=%v", messageParam)
 	}
 }
 

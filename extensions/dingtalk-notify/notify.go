@@ -391,13 +391,13 @@ func FormatAssignmentText(event AssignmentNotification) string {
 	sections := make([]string, 0, 5)
 	switch event.Kind {
 	case AssignmentAdded:
-		sections = append(sections, "📌 你已成为该任务的负责人")
+		sections = append(sections, "📌 **你已成为该任务的负责人**")
 	case AssignmentRemoved:
 		heading := "↗️ 该任务已转交"
 		if name := strings.TrimSpace(event.NewAssigneeName); name != "" {
 			heading += "给 " + escapeMarkdown(name)
 		}
-		sections = append(sections, heading, "你已不再负责")
+		sections = append(sections, "**"+heading+"**", "你已不再负责")
 	default:
 		return ""
 	}
@@ -433,7 +433,10 @@ func formatAssignmentMetadata(event AssignmentNotification) string {
 		}
 		lines = append(lines, "操作时间："+event.OccurredAt.In(loc).Format("2006-01-02 15:04"))
 	}
-	return strings.Join(lines, "\n")
+	// DingTalk's Markdown renderer collapses a single newline inside one
+	// paragraph. Separate the fields as paragraphs so they stay on distinct
+	// lines in both Markdown messages and ActionCard bodies.
+	return strings.Join(lines, "\n\n")
 }
 
 func appendAssignmentTaskDetails(sections []string, event AssignmentNotification) string {
