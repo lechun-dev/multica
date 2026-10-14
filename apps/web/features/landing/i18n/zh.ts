@@ -294,6 +294,20 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.10",
+        date: "2026-10-14",
+        title: "修复评论提及授权与任务权限申请",
+        changes: [],
+        features: [],
+        improvements: [
+          "评论变化后仅刷新受影响任务的权限面板，保留其他任务的缓存。",
+        ],
+        fixes: [
+          "新建评论提及具体人员时同步授予任务访问权限，评论与授权在同一事务内完成。",
+          "修复任务引用查询错误，并在任务详情因无权限被拒绝时显示权限申请入口。",
+        ],
+      },
+      {
         version: "0.5.9",
         date: "2026-10-14",
         title: "新增钉钉负责人通知并兼容旧版手机浏览器",

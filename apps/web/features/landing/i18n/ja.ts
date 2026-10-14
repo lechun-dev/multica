@@ -270,6 +270,20 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.10",
+          date: "2026-10-14",
+          title: "コメントのメンション権限とアクセス申請を修正",
+          changes: [],
+          features: [],
+          improvements: [
+            "コメント変更後は対象タスクの権限パネルのみ更新し、他のキャッシュを保持します。",
+          ],
+          fixes: [
+            "新しいコメントでメンションされたユーザーへのタスクアクセス権を、コメントと同一トランザクションで付与します。",
+            "タスク参照の検索エラーを修正し、権限不足で詳細を開けない場合のアクセス申請を復元しました。",
+          ],
+        },
+        {
           version: "0.5.9",
           date: "2026-10-14",
           title: "DingTalk 担当者通知とモバイル互換性を改善",

@@ -269,6 +269,20 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.10",
+          date: "2026-10-14",
+          title: "댓글 멘션 권한 및 작업 접근 요청 수정",
+          changes: [],
+          features: [],
+          improvements: [
+            "댓글 변경 후 해당 작업의 권한 패널만 갱신하고 다른 작업의 캐시를 유지합니다.",
+          ],
+          fixes: [
+            "새 댓글에서 멘션된 사용자에게 댓글과 동일한 트랜잭션으로 작업 접근 권한을 부여합니다.",
+            "작업 참조 조회 오류를 수정하고 권한 부족으로 상세 화면에 접근하지 못할 때 접근 요청을 표시합니다.",
+          ],
+        },
+        {
           version: "0.5.9",
           date: "2026-10-14",
           title: "DingTalk 담당자 알림 및 모바일 호환성 개선",

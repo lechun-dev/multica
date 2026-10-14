@@ -294,6 +294,20 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.10",
+        date: "2026-10-14",
+        title: "Comment mention permissions and task access requests",
+        changes: [],
+        features: [],
+        improvements: [
+          "Refresh only the affected task permission panels after comment changes.",
+        ],
+        fixes: [
+          "Grant task access to people mentioned in new comments in the same transaction as the comment.",
+          "Fix task-reference lookup errors and restore access requests when task details return a permission-denied response.",
+        ],
+      },
+      {
         version: "0.5.9",
         date: "2026-10-14",
         title: "DingTalk assignment notifications and mobile compatibility",
