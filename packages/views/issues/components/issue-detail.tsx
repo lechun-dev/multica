@@ -2295,7 +2295,9 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
   }
 
   if (!issue) {
-    return notFoundFallback ?? (issueError instanceof ApiError && issueError.status === 403 ? (
+    // 2026-10-14 coder(lq): Hidden-task reads may use 404. Resolve the
+    // scoped reference before treating a denial as an actual deletion.
+    return notFoundFallback ?? (issueError instanceof ApiError && (issueError.status === 403 || issueError.status === 404) ? (
       <RestrictedIssueAccessFallback
         targetId={id}
         loading={<IssueDetailSkeleton leading={leadingAction} />}

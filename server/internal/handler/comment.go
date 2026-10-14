@@ -1908,7 +1908,10 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var created db.CreateCommentRow
 	var err error
-	if len(attachmentIDs) > 0 {
+	// 2026-10-14 coder(lq): A mention and its task grant must commit together
+	// before notifications are emitted, even when the comment has no attachments.
+	promoteMentionAccess := h.ProjectAuth != nil && h.ProjectAuth.Enabled()
+	if len(attachmentIDs) > 0 || promoteMentionAccess {
 		// A comment and the attachments it was posted with are one visible
 		// change, and one database outcome. Committing the comment first leaves
 		// a window in which it can gain a reply and be deleted into a
@@ -1936,7 +1939,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		defer tx.Rollback(r.Context())
 		qtx := h.Queries.WithTx(tx)
 		created, err = qtx.CreateComment(r.Context(), createParams)
-		if err == nil {
+		if err == nil && len(attachmentIDs) > 0 {
 			var missing pgtype.UUID
 			missing, err = lockCommentAttachments(r.Context(), qtx, issue.WorkspaceID, issue.ID, attachmentIDs)
 			if err == nil && missing.Valid {
@@ -1944,7 +1947,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if err == nil {
+		if err == nil && len(attachmentIDs) > 0 {
 			err = qtx.LinkAttachmentsToComment(r.Context(), db.LinkAttachmentsToCommentParams{
 				CommentID:     created.ID,
 				IssueID:       issue.ID,
@@ -1953,6 +1956,15 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 				UploaderID:    parseUUID(authorID),
 				AttachmentIds: attachmentIDs,
 			})
+		}
+		if err == nil && promoteMentionAccess {
+			// 2026-10-14 coder(lq): CreateComment holds the issue row lock;
+			// reload its current description before reconciling every mention.
+			var currentIssue db.Issue
+			currentIssue, err = qtx.GetIssue(r.Context(), issue.ID)
+			if err == nil {
+				err = syncPrivateCommentMentionAccess(r.Context(), tx, currentIssue)
+			}
 		}
 		if err == nil {
 			err = tx.Commit(r.Context())
