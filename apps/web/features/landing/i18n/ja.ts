@@ -270,6 +270,22 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.9",
+          date: "2026-10-14",
+          title: "DingTalk 担当者通知とモバイル互換性を改善",
+          changes: [],
+          features: [
+            "タスクの担当者になった場合やタスクが引き継がれた場合に、Mission アシスタントのカードとダイレクトメッセージで DingTalk 通知を送信します。",
+          ],
+          improvements: [
+            "DingTalk のダイレクトメッセージに原文全体を保持し、メンションされた名前を強調表示しました。ActionCard が Markdown にフォールバックした場合の機密情報を含まない診断ログも追加しました。",
+          ],
+          fixes: [
+            "最新の配列非破壊ソート API を備えていない古いモバイル内蔵ブラウザに対応しました。",
+            "タスクのアクセス権に基づいてメンション通知を絞り込み、担当するユーザーの権限でエージェントのスケジュール実行を検証します。",
+          ],
+        },
+        {
           version: "0.5.8",
           date: "2026-10-10",
           title: "タスク権限の修正と受信トレイの明確化",

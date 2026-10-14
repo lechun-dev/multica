@@ -294,6 +294,22 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.9",
+        date: "2026-10-14",
+        title: "新增钉钉负责人通知并兼容旧版手机浏览器",
+        changes: [],
+        features: [
+          "新增任务负责人和任务转交钉钉通知，通过 Mission 小助理卡片和个人私信及时通知相关人员。",
+        ],
+        improvements: [
+          "钉钉个人消息保留完整原文并突出显示被提及人；ActionCard 降级为 Markdown 时增加脱敏诊断日志。",
+        ],
+        fixes: [
+          "兼容缺少现代数组不可变排序 API 的旧版手机内置浏览器。",
+          "按任务访问权限过滤提及通知，并以责任人身份校验智能体的定时任务操作。",
+        ],
+      },
+      {
         version: "0.5.8",
         date: "2026-10-10",
         title: "修复子任务权限，明确通知归档",

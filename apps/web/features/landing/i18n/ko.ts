@@ -269,6 +269,22 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.9",
+          date: "2026-10-14",
+          title: "DingTalk 담당자 알림 및 모바일 호환성 개선",
+          changes: [],
+          features: [
+            "작업 담당자가 되거나 작업이 이관될 때 Mission 도우미 카드와 개인 메시지로 DingTalk 알림을 전송합니다.",
+          ],
+          improvements: [
+            "DingTalk 개인 메시지에 전체 원문을 유지하고 멘션된 이름을 강조하며, ActionCard가 Markdown으로 대체될 때 민감 정보를 제외한 진단 로그를 추가했습니다.",
+          ],
+          fixes: [
+            "최신 배열 불변 정렬 API를 제공하지 않는 이전 모바일 내장 브라우저를 지원합니다.",
+            "작업 접근 권한에 따라 멘션 알림을 필터링하고 담당 사용자의 권한으로 에이전트 예약 작업을 검증합니다.",
+          ],
+        },
+        {
           version: "0.5.8",
           date: "2026-10-10",
           title: "작업 권한 수정 및 받은 편지함 개선",
