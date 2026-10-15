@@ -164,13 +164,17 @@ func parseSignedToken(tokenString string, opts ...jwt.ParserOption) (jwt.MapClai
 
 // ParseSessionToken verifies a raw token string as one of our UI session
 // JWTs and returns its claims. Anything that is not a validly signed,
-// unexpired HS256 JWT — including every opaque token prefix — comes back as
-// ErrNotSessionToken.
+// unexpired session JWT — including opaque token prefixes and restricted
+// Mission read tokens — comes back as ErrNotSessionToken.
 //
 // This is the AUTHENTICATION parser: use it wherever the answer decides
 // whether the caller is logged in or whether a session may be extended.
 func ParseSessionToken(tokenString string) (jwt.MapClaims, error) {
-	return parseSignedToken(tokenString)
+	claims, err := parseSignedToken(tokenString)
+	if err != nil || claims["source"] == MissionReadSource {
+		return nil, ErrNotSessionToken
+	}
+	return claims, nil
 }
 
 // SessionIDFromToken returns the `sid` claim of a token we signed, or "" for
@@ -211,6 +215,9 @@ func SessionIDFromToken(tokenString string) string {
 // once per legacy session, on a safe-method request; clients retry a CSRF
 // rejection once (packages/core/api/client.ts).
 func RenewSessionToken(claims jwt.MapClaims) (string, time.Time, error) {
+	if claims["source"] == MissionReadSource {
+		return "", time.Time{}, ErrNotSessionToken
+	}
 	sub, _ := claims["sub"].(string)
 	if sub == "" {
 		return "", time.Time{}, ErrNotSessionToken

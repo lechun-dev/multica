@@ -1504,6 +1504,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authRL).Get("/auth/dingtalk/start", dingtalkLogin.ServeHTTP)
 	r.With(authRL).Post("/auth/dingtalk", dingtalkLogin.ServeHTTP)
 	r.Post("/auth/logout", h.Logout)
+	r.With(middleware.MissionExchangeAuth(strings.TrimSpace(os.Getenv("MISSION_EXCHANGE_SECRET")), rdb)).Post("/internal/auth/dingtalk/exchange", h.ExchangeDingTalkReadToken)
 
 	// Public API
 	r.Get("/api/config", h.GetConfig)

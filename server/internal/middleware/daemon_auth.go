@@ -261,6 +261,10 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				writeError(w, http.StatusUnauthorized, "invalid claims")
 				return
 			}
+			if source, _ := claims["source"].(string); source == auth.MissionReadSource {
+				writeError(w, http.StatusForbidden, "mission token cannot access daemon routes")
+				return
+			}
 			sub, ok := claims["sub"].(string)
 			if !ok || strings.TrimSpace(sub) == "" {
 				writeError(w, http.StatusUnauthorized, "invalid claims")

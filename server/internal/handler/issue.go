@@ -82,7 +82,10 @@ type IssueResponse struct {
 	DueDate   *string `json:"due_date"`
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
-	Revision  int64   `json:"revision"`
+	// Opt-in read projection: nil outer pointer means absent, inner nil means
+	// no known completion. Writes/events must not overwrite a known projection.
+	CompletedAt **string `json:"completed_at,omitempty"`
+	Revision    int64    `json:"revision"`
 	// 2026-09-02 coder(lq): Expose archive state without changing task status.
 	ArchivedAt *string `json:"archived_at,omitempty"`
 	// LastActivityAt is the latest semantic issue activity. It stays nullable
@@ -1321,6 +1324,14 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	timeRanges, ok := parseIssueTimeRanges(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	if r.URL.Query().Get("open_only") == "true" && (len(timeRanges) > 0 || r.URL.Query().Get("include_completed_at") == "true" || r.URL.Query().Get("sort") == "completed_at") {
+		writeError(w, http.StatusBadRequest, "time range/completion projection requires paginated list")
+		return
+	}
 
 	// open_only=true returns all non-done/cancelled issues (no limit).
 	if r.URL.Query().Get("open_only") == "true" {
@@ -1490,6 +1501,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			sortCol = s
 		case "last_activity":
 			sortCol = "last_activity_at"
+		case "completed_at":
+			sortCol = issueCompletedAtSQL("i")
+			sortIsExpr = true
 		case "status":
 			sortCol = "status"
 			sortIsExpr = true
@@ -1676,7 +1690,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("top_level_only") == "true" {
 		where = append(where, "i.parent_issue_id IS NULL")
 	}
-	where = appendIssueTableSearchFilter(where, addArg, r.URL.Query().Get("q"))
+	where = appendIssueTableSearchFilter(where, addArg, r.URL.Query().Get("q"), r.URL.Query().Get("search_description") == "true")
 	if scheduledFilter.Valid {
 		where = append(where, "(i.start_date IS NOT NULL OR i.due_date IS NOT NULL)")
 	}
@@ -1687,6 +1701,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		where = append(where, propertiesFilterPredicate(propertiesFilter, addArg))
 	}
 	where = appendIssueDateFilter(where, addArg, dateFilter)
+	where = appendIssueTimeRanges(where, addArg, timeRanges)
 	if involvesUserFilter.Valid {
 		ref := addArg(involvesUserFilter)
 		where = append(where, fmt.Sprintf(`(
@@ -1751,7 +1766,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		orderBy = "i." + sortCol
 	}
 	orderBy += " " + sortDir
-	if sortCol == "start_date" || sortCol == "due_date" || sortCol == "last_activity_at" || sortIsProperty {
+	if sortCol == "start_date" || sortCol == "due_date" || sortCol == "last_activity_at" || sortIsProperty || r.URL.Query().Get("sort") == "completed_at" {
 		// Property values are sparse: issues without one sort last in both
 		// directions (mirrors the client comparator).
 		orderBy += " NULLS LAST"
@@ -1870,6 +1885,12 @@ LIMIT %s OFFSET %s`, totalExpr, whereSql, orderBy, limitRef, offsetRef)
 		resp[i].Labels = &labels
 	}
 	h.fillStatusCategories(ctx, wsUUID, resp)
+	if r.URL.Query().Get("include_completed_at") == "true" {
+		if err := h.fillIssueCompletion(ctx, wsUUID, resp); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read completion history")
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
@@ -1977,7 +1998,7 @@ func appendIssueDateFilter(where []string, addArg func(any) string, filter *issu
 // preserves the table's active filters, explicit sort, total, and pagination.
 // Every word must appear in the title; a complete identifier (or bare issue
 // number) also matches the immutable numeric issue number.
-func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw string) []string {
+func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw string, searchDescription ...bool) []string {
 	query := strings.TrimSpace(raw)
 	if query == "" {
 		return where
@@ -1989,7 +2010,12 @@ func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw s
 		titleMatches := make([]string, 0, len(words))
 		for _, word := range words {
 			pattern := "%" + escapeLike(word) + "%"
-			titleMatches = append(titleMatches, fmt.Sprintf("LOWER(i.title) LIKE %s", addArg(pattern)))
+			ref := addArg(pattern)
+			match := fmt.Sprintf("LOWER(i.title) LIKE %s", ref)
+			if len(searchDescription) > 0 && searchDescription[0] {
+				match = "(" + match + " OR LOWER(COALESCE(i.description, '')) LIKE " + ref + ")"
+			}
+			titleMatches = append(titleMatches, match)
 		}
 		ors = append(ors, "("+strings.Join(titleMatches, " AND ")+")")
 	}
@@ -2532,6 +2558,14 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	if r.URL.Query().Get("include_completed_at") == "true" {
+		responses := []IssueResponse{resp}
+		if err := h.fillIssueCompletion(r.Context(), issue.WorkspaceID, responses); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read completion history")
+			return
+		}
+		resp = responses[0]
+	}
 	if issue.ProjectID.Valid {
 		// The issue permission check above is intentionally independent from the
 		// project permission check. This lookup stays workspace-scoped and only

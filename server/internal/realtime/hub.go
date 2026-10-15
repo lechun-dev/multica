@@ -705,6 +705,9 @@ func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (st
 	if !ok {
 		return "", `{"error":"invalid claims"}`
 	}
+	if claims["source"] == auth.MissionReadSource {
+		return "", `{"error":"token scope forbidden"}`
+	}
 
 	uid, ok := claims["sub"].(string)
 	if !ok || strings.TrimSpace(uid) == "" {

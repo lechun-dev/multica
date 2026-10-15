@@ -268,6 +268,12 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				http.Error(w, `{"error":"invalid claims"}`, http.StatusUnauthorized)
 				return
 			}
+			if source, _ := claims["source"].(string); source == auth.MissionReadSource {
+				if !auth.ValidateMissionReadScope(r, token, claims, fromCookie) {
+					writeError(w, http.StatusForbidden, "mission token is limited to workspace task reads")
+					return
+				}
+			}
 
 			sub, ok := claims["sub"].(string)
 			if !ok || strings.TrimSpace(sub) == "" {
@@ -288,7 +294,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			// cookie, instead of being logged out on the anniversary of its
 			// login. No-op until the session drops below half its TTL
 			// (MUL-7436).
-			r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
+			if source, _ := claims["source"].(string); source != auth.MissionReadSource {
+				r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
+			}
 
 			next.ServeHTTP(w, r)
 		})
