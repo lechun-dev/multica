@@ -11,6 +11,7 @@ import { getRequestLocale } from "@/lib/request-locale";
 import { HTML_LANG } from "@/lib/html-lang";
 import { SITE_TITLE, TITLE_TEMPLATE } from "@/platform/document-title";
 import { PRODUCT_NAME } from "@/config/product-brand";
+import { LEGACY_CSS_BOOTSTRAP } from "@/lib/legacy-css";
 import {
   resolveBrowserApiBaseUrl,
   resolveBrowserWsUrl,
@@ -140,6 +141,11 @@ export default async function RootLayout({
       suppressHydrationWarning
       className={cn("antialiased font-sans h-full", inter.variable, geistMono.variable, sourceSerif.variable)}
     >
+      <head>
+        {process.env.WEB_LEGACY_CSS !== "false" && (
+          <script dangerouslySetInnerHTML={{ __html: LEGACY_CSS_BOOTSTRAP }} />
+        )}
+      </head>
       <body className="h-full overflow-hidden">
         {/*
           react-grab: dev-only element inspector. Hold ⌘C (Mac) / Ctrl+C and click

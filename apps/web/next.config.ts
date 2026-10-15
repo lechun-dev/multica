@@ -48,6 +48,12 @@ const nextConfig: NextConfig = {
     formats: ["image/avif", "image/webp"],
     qualities: [75, 80, 85],
   },
+  async headers() {
+    return [{
+      source: "/compat/legacy.css",
+      headers: [{ key: "Cache-Control", value: "no-store" }],
+    }];
+  },
   async rewrites() {
     return {
       // Run before file-system routes so /docs isn't shadowed by the
