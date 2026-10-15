@@ -142,6 +142,13 @@ export function runtimeRewriteDestination(
   if (pathname === "/health") {
     return appendPath(remoteApiUrl, "/health");
   }
+  // The MissionOS service-to-service DingTalk identity exchange is not a
+  // browser page. Keep the exact endpoint on the backend origin so the
+  // MissionOS Go handler receives the signed POST instead of Next.js
+  // rendering a page-level 404.
+  if (pathname === "/internal/auth/dingtalk/exchange") {
+    return appendPath(remoteApiUrl, pathname);
+  }
   if (isBackendAuthPath(pathname)) {
     return appendPath(remoteApiUrl, pathname);
   }

@@ -89,6 +89,10 @@ const nextConfig: NextConfig = {
               destination: `${remoteApiUrl}/health`,
             },
             {
+              source: "/internal/auth/dingtalk/exchange",
+              destination: `${remoteApiUrl}/internal/auth/dingtalk/exchange`,
+            },
+            {
               source: "/auth/:path*",
               destination: `${remoteApiUrl}/auth/:path*`,
             },

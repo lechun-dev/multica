@@ -129,6 +129,7 @@ export const config = {
     "/uploads/:path*",
     "/docs/:path*",
     "/ws",
+    "/internal/auth/dingtalk/exchange",
     "/((?!api|v1|_next/static|_next/image|favicon.ico|.*\\.).*)",
   ],
 };

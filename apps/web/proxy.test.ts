@@ -201,6 +201,21 @@ describe("proxy runtime upstream rewrites", () => {
     }
   });
 
+  it("rewrites MissionOS identity exchange requests to the runtime API origin", () => {
+    const previous = process.env.REMOTE_API_URL;
+    process.env.REMOTE_API_URL = "http://backend:8080";
+    try {
+      const res = proxy(makeRequest("/internal/auth/dingtalk/exchange"));
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-middleware-rewrite")).toBe(
+        "http://backend:8080/internal/auth/dingtalk/exchange",
+      );
+    } finally {
+      restoreEnv("REMOTE_API_URL", previous);
+    }
+  });
+
   it("rewrites Plugin API requests to the runtime API origin", () => {
     const previous = process.env.REMOTE_API_URL;
     process.env.REMOTE_API_URL = "http://backend:8080";
