@@ -32,17 +32,18 @@ func TestMissionIdentityExchangeUsesExistingBindings(t *testing.T) {
 	for _, tc := range []struct {
 		name, ding string
 		status     int
+		scope      string
 	}{
-		{"active workspace member", active, http.StatusOK},
-		{"workspace owner", bind(t, testUserID, true), http.StatusOK},
-		{"inactive mapping", bind(t, member, false), http.StatusForbidden},
-		{"nonmember", bind(t, outsider, true), http.StatusForbidden},
-		{"unbound", "mission-test-not-bound", http.StatusForbidden},
-		{"invalid mapping", bind(t, "not-a-uuid", true), http.StatusConflict},
+		{"active workspace member", active, http.StatusOK, auth.MissionTaskReadScope},
+		{"workspace owner", bind(t, testUserID, true), http.StatusOK, auth.MissionOwnerReadScope},
+		{"inactive mapping", bind(t, member, false), http.StatusForbidden, ""},
+		{"nonmember", bind(t, outsider, true), http.StatusForbidden, ""},
+		{"unbound", "mission-test-not-bound", http.StatusForbidden, ""},
+		{"invalid mapping", bind(t, "not-a-uuid", true), http.StatusConflict, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := testutil.JSONRequest(http.MethodPost, "/internal/auth/dingtalk/exchange", map[string]string{
-				"ding_user_id": tc.ding, "workspace_id": testWorkspaceID,
+				"ding_user_id": tc.ding, "workspace_id": testWorkspaceID, "purpose": "agent_task_read",
 			})
 			response := testutil.Call(t, testHandler.ExchangeDingTalkReadToken, req).Want(tc.status)
 			if tc.status != http.StatusOK {
@@ -60,6 +61,9 @@ func TestMissionIdentityExchangeUsesExistingBindings(t *testing.T) {
 			if claims["source"] != auth.MissionReadSource || claims["workspace_id"] != testWorkspaceID || claims["sid"] != nil {
 				t.Fatalf("unscoped or browser-session claims: %v", claims)
 			}
+			if claims["scope"] != tc.scope || out["scope"] != tc.scope {
+				t.Fatalf("wrong exchange scope: %v", out)
+			}
 			if tc.ding == active && (claims["sub"] != member || out["role"] != "member") {
 				t.Fatalf("wrong bound identity/role: %v", out)
 			}
@@ -69,6 +73,7 @@ func TestMissionIdentityExchangeUsesExistingBindings(t *testing.T) {
 		`{"ding_user_id":"test","workspace_id":"invalid"}`,
 		`{"ding_user_id":"test","workspace_id":"` + testWorkspaceID + `","user_id":"forged"}`,
 		`{"ding_user_id":"test","workspace_id":"` + testWorkspaceID + `"} {}`,
+		`{"ding_user_id":"test","workspace_id":"` + testWorkspaceID + `","purpose":"agent_admin"}`,
 	} {
 		testutil.Call(t, testHandler.ExchangeDingTalkReadToken, testutil.JSONRequest(http.MethodPost, "/internal/auth/dingtalk/exchange", body)).Want(http.StatusBadRequest)
 	}

@@ -1050,7 +1050,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
 	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
-		if !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+		if !missionAgentOwnerRead(r) && !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
 			return db.Issue{}, false
 		}
 		if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "direct") {
@@ -1082,7 +1082,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	if !h.authorizeIssueWindow(w, r, issue.ID, issue.WorkspaceID, "direct") {
 		return db.Issue{}, false
 	}
-	if !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
+	if !missionAgentOwnerRead(r) && !h.requireIssueProjectPermission(w, r, issue, projectauth.View) {
 		return db.Issue{}, false
 	}
 	return issue, true

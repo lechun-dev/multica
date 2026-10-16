@@ -21,6 +21,7 @@ func (h *Handler) ExchangeDingTalkReadToken(w http.ResponseWriter, r *http.Reque
 	var input struct {
 		DingUserID  string `json:"ding_user_id"`
 		WorkspaceID string `json:"workspace_id"`
+		Purpose     string `json:"purpose"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -30,6 +31,10 @@ func (h *Handler) ExchangeDingTalkReadToken(w http.ResponseWriter, r *http.Reque
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid identity exchange request")
+		return
+	}
+	if purpose := strings.TrimSpace(input.Purpose); purpose != "" && purpose != "agent_task_read" {
+		writeError(w, http.StatusBadRequest, "invalid identity exchange purpose")
 		return
 	}
 	ws, ok := parseUUIDOrBadRequest(w, input.WorkspaceID, "workspace_id")
@@ -94,12 +99,16 @@ AND multica_user_id <> '' LIMIT 2`, input.DingUserID)
 		writeError(w, http.StatusServiceUnavailable, "membership unavailable")
 		return
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, auth.MissionReadClaims(uuidToString(user.ID), user.Email, uuidToString(ws), time.Now()))
+	scope := auth.MissionTaskReadScope
+	if member.Role == "owner" {
+		scope = auth.MissionOwnerReadScope
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, auth.MissionReadClaimsWithScope(uuidToString(user.ID), user.Email, uuidToString(ws), scope, time.Now()))
 	signed, err := token.SignedString(auth.JWTSecret())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token exchange failed")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"access_token": signed, "expires_in": int(auth.MissionReadTTL.Seconds()), "workspace_id": uuidToString(ws), "user_id": uuidToString(user.ID), "role": member.Role})
+	writeJSON(w, http.StatusOK, map[string]any{"access_token": signed, "expires_in": int(auth.MissionReadTTL.Seconds()), "workspace_id": uuidToString(ws), "user_id": uuidToString(user.ID), "role": member.Role, "scope": scope})
 }

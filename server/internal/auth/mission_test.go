@@ -21,3 +21,15 @@ func TestMissionReadClaimsCannotRenewSession(t *testing.T) {
 		t.Fatal("restricted read claims must not mint an unrestricted session")
 	}
 }
+
+func TestMissionReadClaimsScopes(t *testing.T) {
+	now := time.Now()
+	ordinary := MissionReadClaims("user-1", "user-1@multica.ai", "7db83b86-61ad-4e24-82bd-c9db7ea5bfaa", now)
+	if got := ordinary["scope"]; got != MissionTaskReadScope {
+		t.Fatalf("ordinary mission read scope = %v, want %q", got, MissionTaskReadScope)
+	}
+	owner := MissionReadClaimsWithScope("user-1", "user-1@multica.ai", "7db83b86-61ad-4e24-82bd-c9db7ea5bfaa", MissionOwnerReadScope, now)
+	if got := owner["scope"]; got != MissionOwnerReadScope {
+		t.Fatalf("owner mission read scope = %v, want %q", got, MissionOwnerReadScope)
+	}
+}

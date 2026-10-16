@@ -1641,6 +1641,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(h.FrequentReadMutationMiddleware)
 		r.Use(h.PermissionReadMutationMiddleware)
 
+		// Purpose-specific read-only surface for newDingSDK. These routes stay
+		// outside the ordinary /api/issues tree so an owner-scoped Mission JWT
+		// can widen only these two reads; browser pages and normal APIs retain
+		// PROJECT_OWNER_BYPASS_ENABLED=false semantics.
+		r.Route("/internal/agent", func(r chi.Router) {
+			r.Get("/issues", h.ListAgentReadIssues)
+			r.Get("/issues/{id}", h.GetAgentReadIssue)
+		})
+
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
 		// bridge — the iframe holds no credential and never reaches these

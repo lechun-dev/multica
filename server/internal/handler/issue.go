@@ -1368,7 +1368,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		for i, issue := range issues {
 			openIDs[i] = issue.ID
 		}
-		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && !missionAgentOwnerRead(r) {
 			userID := requestUserID(r)
 			if userID == "" {
 				writeError(w, http.StatusUnauthorized, "user not authenticated")
@@ -1564,7 +1564,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && !missionAgentOwnerRead(r) {
 		userID := requestUserID(r)
 		if userID == "" {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
@@ -1740,7 +1740,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
 	}
 
-	if visibilityUserRef != "" {
+	if visibilityUserRef != "" && !missionAgentOwnerRead(r) {
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 		organizationSQL := h.organizationReadSQL(r, "$1", visibilityUserRef, addArg)
 		visibilityCTEs = "WITH " + issueVisibilityCandidateCTEDefsWithOrganizations("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "), organizationSQL)

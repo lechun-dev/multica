@@ -273,6 +273,11 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					writeError(w, http.StatusForbidden, "mission token is limited to workspace task reads")
 					return
 				}
+				scope, _ := claims["scope"].(string)
+				if scope == "" {
+					scope = auth.MissionTaskReadScope
+				}
+				r = r.WithContext(auth.WithMissionReadScopeForRequest(r.Context(), scope))
 			}
 
 			sub, ok := claims["sub"].(string)
