@@ -1383,5 +1383,14 @@
   },
   "runtime_models": {
     "model_id_edit_hint": "La modification de cet ID ne met à jour que le catalogue. Les choix enregistrés des agents et les exécutions existantes restent inchangés."
+  },
+  "project_authorization_organizations": {
+    "sync_dingtalk_description": "Synchronisez les services et les membres. Lorsqu’un propriétaire lance la synchronisation, les comptes dont le départ est confirmé par DingTalk sont aussi désactivés. Les tâches, projets et historiques sont conservés ; aucun compte n’est réactivé automatiquement.",
+    "sync_accounts_disabled": "Comptes de personnes parties désactivés : {{count}}",
+    "sync_accounts_already_disabled": "Comptes déjà désactivés : {{count}}",
+    "sync_departures_skipped": "Départs ignorés : {{count}} (actifs, non associés ou protégés)",
+    "sync_departures_incomplete": "Annuaire synchronisé, mais la vérification des départs a échoué. Aucun compte n’a été désactivé par cette vérification. Vérifiez les autorisations de l’application DingTalk et les journaux du serveur.",
+    "sync_departures_owner_only": "Seul l’annuaire a été synchronisé. La désactivation automatique nécessite un propriétaire de l’espace. Les protections de votre compte, des propriétaires et des autres espaces restent appliquées.",
+    "sync_departures_not_checked": "Le serveur n’a pas vérifié les départs. Aucun compte n’a été désactivé automatiquement."
   }
 }

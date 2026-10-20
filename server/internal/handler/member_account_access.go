@@ -122,35 +122,13 @@ func (h *Handler) SetMemberAccountAccess(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "account is blocked by the instance security policy")
 		return
 	}
-	var revokedHashes []string
-	if user.AccountDisabledAt.Valid != *input.Disabled {
-		state, err := qtx.SetUserAccountAccess(r.Context(), db.SetUserAccountAccessParams{ID: target.UserID, Disabled: *input.Disabled})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update account access")
-			return
-		}
-		user.AccountDisabledAt, user.SessionVersion = state.AccountDisabledAt, state.SessionVersion
-		if *input.Disabled {
-			tokens, err := tx.Query(r.Context(), `UPDATE personal_access_token SET revoked=true WHERE user_id=$1 AND NOT revoked RETURNING token_hash`, target.UserID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to revoke account tokens")
-				return
-			}
-			for tokens.Next() {
-				var hash string
-				if err = tokens.Scan(&hash); err != nil {
-					break
-				}
-				revokedHashes = append(revokedHashes, hash)
-			}
-			scanErr := tokens.Err()
-			tokens.Close()
-			if err != nil || scanErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to revoke account tokens")
-				return
-			}
-		}
+	change, err := auth.ChangeAccountAccess(r.Context(), tx, target.UserID, *input.Disabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update account access")
+		return
 	}
+	user.AccountDisabledAt, user.SessionVersion = change.State.AccountDisabledAt, change.State.SessionVersion
+
 	var loggedIn bool
 	if err := tx.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM projectauth_user_logins WHERE user_id=$1)`, target.UserID).Scan(&loggedIn); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load member status")
@@ -160,7 +138,7 @@ func (h *Handler) SetMemberAccountAccess(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to update account access")
 		return
 	}
-	for _, hash := range revokedHashes {
+	for _, hash := range change.RevokedHashes {
 		h.PATCache.Invalidate(r.Context(), hash)
 	}
 	response := h.memberWithUserResponse(target, user)

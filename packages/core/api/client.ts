@@ -4182,6 +4182,10 @@ export class ApiClient {
       users_matched: 0,
       workspace_members_created: 0,
       unmatched: [],
+      departure_sync_status: "not_checked",
+      accounts_disabled: 0,
+      accounts_already_disabled: 0,
+      departures_skipped: 0,
     }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/sync" });
   }
 

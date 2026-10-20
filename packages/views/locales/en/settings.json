@@ -1467,7 +1467,7 @@
     "file_import_description": "Download a template and upload a CSV file to import departments or people.",
     "sync_dingtalk_button": "Sync DingTalk",
     "sync_dingtalk_title": "Sync organization directory from DingTalk",
-    "sync_dingtalk_description": "Sync departments and people from the configured DingTalk organization. Updates apply to project authorization immediately.",
+    "sync_dingtalk_description": "Sync departments and people. When run by an owner, also disable accounts with confirmed DingTalk departure records. Tasks, projects and history are preserved; accounts are never automatically re-enabled.",
     "close": "Close",
     "all_people": "All people",
     "search_people": "Search name or email",
@@ -1511,7 +1511,13 @@
     "sync_removed": "{{count}} member links removed",
     "sync_users_created": "{{count}} users created",
     "sync_users_matched": "{{count}} existing users matched",
-    "sync_workspace_members": "{{count}} workspace members added"
+    "sync_workspace_members": "{{count}} workspace members added",
+    "sync_accounts_disabled": "Departed accounts disabled: {{count}}",
+    "sync_accounts_already_disabled": "Accounts already disabled: {{count}}",
+    "sync_departures_skipped": "Departure records skipped: {{count}} (active, unmatched or protected)",
+    "sync_departures_incomplete": "Directory synced, but departure verification failed. No accounts were disabled from this check. Check the DingTalk application’s departure-record permissions and server logs.",
+    "sync_departures_owner_only": "Only the directory was synced. Automatic account suspension requires a workspace owner. Self, owner and cross-workspace protections still apply.",
+    "sync_departures_not_checked": "The server did not verify departures. No accounts were automatically disabled."
   },
   "members": {
     "search_placeholder": "Search by name or email",

@@ -3795,6 +3795,10 @@ export const ProjectAuthorizationDingTalkSyncResultSchema = z.object({
   users_matched: z.number().default(0),
   workspace_members_created: z.number().default(0),
   unmatched: z.array(z.string()).default([]),
+  departure_sync_status: z.enum(["complete", "unavailable", "owner_required", "not_checked"]).catch("unavailable").default("not_checked"),
+  accounts_disabled: z.number().int().nonnegative().default(0),
+  accounts_already_disabled: z.number().int().nonnegative().default(0),
+  departures_skipped: z.number().int().nonnegative().default(0),
 }).loose();
 export type ProjectAuthorizationDingTalkSyncResult = z.infer<typeof ProjectAuthorizationDingTalkSyncResultSchema>;
 

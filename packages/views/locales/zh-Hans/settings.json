@@ -1460,7 +1460,7 @@
     "file_import_description": "下载模板并上传 CSV 文件，导入部门或人员数据。",
     "sync_dingtalk_button": "钉钉同步",
     "sync_dingtalk_title": "从钉钉同步组织目录",
-    "sync_dingtalk_description": "从已配置的钉钉组织架构同步部门和人员，更新后会立即用于项目授权。",
+    "sync_dingtalk_description": "同步部门和人员，并在所有者执行时禁用钉钉明确记录已离职的账号。不会删除任务、项目或历史记录，也不会自动启用账号。",
     "close": "关闭",
     "all_people": "全部人员",
     "search_people": "搜索姓名或邮箱",
@@ -1504,7 +1504,13 @@
     "sync_removed": "移除成员关系 {{count}} 条",
     "sync_users_created": "新建用户 {{count}} 个",
     "sync_users_matched": "匹配已有用户 {{count}} 个",
-    "sync_workspace_members": "加入工作区成员 {{count}} 个"
+    "sync_workspace_members": "加入工作区成员 {{count}} 个",
+    "sync_accounts_disabled": "禁用离职账号 {{count}} 个",
+    "sync_accounts_already_disabled": "已禁用账号 {{count}} 个",
+    "sync_departures_skipped": "跳过离职记录 {{count}} 条（在职、未匹配或权限保护）",
+    "sync_departures_incomplete": "组织目录已同步，但离职核验未完成，未据此禁用任何账号。请检查钉钉应用的离职记录读取权限及服务端日志。",
+    "sync_departures_owner_only": "本次仅同步组织目录。离职账号自动禁用需要由工作区所有者执行；其他工作区所有者、本人及跨工作区账号仍受权限保护。",
+    "sync_departures_not_checked": "服务端未执行离职核验，未自动禁用账号。"
   },
   "members": {
     "search_placeholder": "搜索姓名或邮箱",
