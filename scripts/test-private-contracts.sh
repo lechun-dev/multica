@@ -14,7 +14,7 @@ echo "==> Checking project authorization policy"
 )
 
 echo "==> Checking task access, inbox, chat, and personal-message contracts"
-handler_contracts='^(TestMemberAccountSuspensionPreservesBusinessRecords|TestMemberAccountSuspensionAuthority|TestMemberAccountSuspensionRejectsCachedPAT|TestMemberAccountSuspensionInvalidInputAndOwnerPromotion|TestCreateIssuePromotesAssigneeAndMentionedMember|TestCreateCommentMentionGrantIsAtomic|TestIssueAccessRequestTargetResolvesDeniedTaskReference|TestCreateCommentPromotesMentionedMember|TestCreateCommentPromotesMentionedMemberForProjectlessIssue|TestUpdateCommentPromotesMentionedMember|TestUpdateCommentPromotesMentionedMemberForProjectlessIssue|TestProjectlessIssueCreateAndTriggerPreviewAllowedWhenPermissionsEnabled|TestListInboxShowsDirectMentionOutsideProjectMembership|TestInboxListsShipCommentPreviewNotFullComment|TestCompleteTask_ChatNonEmptyOutputWritesMessage|TestCompleteTask_ChatCallbackIdempotent|TestDirectChat_ClaimKeepsQueuedTurnsPairedWithReplies|TestDingTalkPersonalMessageClaimLeaseAndWaitingState|TestIssueVisibilityCTEsMatchStandalonePolicy|TestTerminalIssueStatusSetMatchesEffectiveStatus)$'
+handler_contracts='^(TestDingTalkDirectorySyncEventInvalidatesWorkspaceCaches|TestDingTalkDeparturesPreserveBusinessRecordsAndRevokeSessions|TestDingTalkDeparturesRespectAccountAuthorityAndCurrentEmployment|TestDingTalkDepartureSyncRequiresHumanOwner|TestMemberAccountSuspensionPreservesBusinessRecords|TestMemberAccountSuspensionAuthority|TestMemberAccountSuspensionRejectsCachedPAT|TestMemberAccountSuspensionInvalidInputAndOwnerPromotion|TestCreateIssuePromotesAssigneeAndMentionedMember|TestCreateCommentMentionGrantIsAtomic|TestIssueAccessRequestTargetResolvesDeniedTaskReference|TestCreateCommentPromotesMentionedMember|TestCreateCommentPromotesMentionedMemberForProjectlessIssue|TestUpdateCommentPromotesMentionedMember|TestUpdateCommentPromotesMentionedMemberForProjectlessIssue|TestProjectlessIssueCreateAndTriggerPreviewAllowedWhenPermissionsEnabled|TestListInboxShowsDirectMentionOutsideProjectMembership|TestInboxListsShipCommentPreviewNotFullComment|TestCompleteTask_ChatNonEmptyOutputWritesMessage|TestCompleteTask_ChatCallbackIdempotent|TestDirectChat_ClaimKeepsQueuedTurnsPairedWithReplies|TestDingTalkPersonalMessageClaimLeaseAndWaitingState|TestIssueVisibilityCTEsMatchStandalonePolicy|TestTerminalIssueStatusSetMatchesEffectiveStatus)$'
 handler_output="$(mktemp "${TMPDIR:-/tmp}/multica-handler-contracts.XXXXXX")"
 trap 'rm -f "$handler_output"' EXIT
 (
@@ -27,6 +27,12 @@ if grep -q '^Skipping tests:.*database' "$handler_output"; then
   exit 1
 fi
 
+echo "==> Checking application-authenticated DingTalk departure sync"
+(
+  cd server
+  go test ./cmd/server -run '^(TestDingTalkDepartureOrganizationSync|TestDingTalkDirectoryDaily.*)$' -count=1
+)
+
 echo "==> Checking isolated DingTalk delivery extension"
 (
   cd extensions/dingtalk-notify
@@ -35,10 +41,12 @@ echo "==> Checking isolated DingTalk delivery extension"
 
 echo "==> Checking persisted chat rendering"
 pnpm --filter @multica/core exec vitest run \
+  api/dingtalk-departures.test.ts \
   issues/ws-updaters.test.ts \
   chat/message-cache.test.ts \
   chat/use-task-messages.test.tsx
 pnpm --filter @multica/views exec vitest run \
+  settings/components/project-authorization-organizations-tab.test.tsx \
   chat/components/chat-message-list.test.tsx \
   chat/components/use-chat-controller.test.ts \
   chat/components/use-chat-controller.test.tsx

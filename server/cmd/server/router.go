@@ -37,6 +37,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -215,6 +216,9 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 }
 
 type RouterOptions struct {
+	// 2026-10-20 coder(lq): Register the router-owned DingTalk adapter without
+	// starting background work in router construction or creating a second adapter.
+	DirectoryScheduler  *scheduler.Manager
 	HTTPMetrics         *obsmetrics.HTTPMetrics
 	BusinessMetrics     *obsmetrics.BusinessMetrics
 	ReadCacheMetrics    *obsmetrics.ReadCacheMetrics
@@ -1501,6 +1505,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		dingtalkRedirectURI = strings.TrimRight(signupConfig.AppURL, "/") + "/auth/dingtalk/callback"
 	}
 	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI, dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr)
+	if opts.DirectoryScheduler != nil && envBool("DINGTALK_DIRECTORY_SYNC_ENABLED", true) {
+		if err := opts.DirectoryScheduler.Register(dingtalkLogin.directorySyncJob()); err != nil {
+			slog.Error("scheduler: register DingTalk daily directory sync", "error", err)
+		}
+	}
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
