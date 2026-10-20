@@ -5,6 +5,18 @@ export type DingTalkOAuthClient =
   | "desktop-lechun"
   | "desktop-lechun-preview";
 
+/**
+ * Detect DingTalk's embedded browser without affecting regular browsers.
+ * DingTalk adds its product name to both Android and iOS WebView user agents;
+ * callers should use this only for presentation/navigation decisions, never as
+ * an authentication signal.
+ */
+export function isDingTalkWebView(userAgent?: string): boolean {
+  const value =
+    userAgent ?? (typeof navigator !== "undefined" ? navigator.userAgent : "");
+  return /DingTalk/i.test(value);
+}
+
 export function buildDingTalkLoginURL(
   apiBaseURL: string,
   client: DingTalkOAuthClient,

@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   buildDingTalkLoginURL,
+  isDingTalkWebView,
   sanitizeNextUrl,
   useAuthStore,
 } from "@multica/core/auth";
@@ -42,6 +43,7 @@ import { useT } from "@multica/views/i18n";
 // LoginPage still supports Google for other consumers and can be restored here
 // later without changing any authentication code.
 const ENABLE_GOOGLE_LOGIN = false;
+const DINGTALK_AUTO_LOGIN_KEY = "multica.dingtalk.auto-login-started";
 
 /**
  * Pick where a logged-in user with no explicit `?next=` should land.
@@ -97,6 +99,42 @@ function LoginPageContent() {
   // Any `user` that appears afterwards came from the login form in this
   // session — not from an existing session found on arrival.
   const settledLoggedOutRef = useRef(false);
+
+  // DingTalk opens this page in an embedded browser where the email form can
+  // be difficult to use. Start the existing OAuth flow automatically there,
+  // but latch it per tab so a cancelled/failed OAuth round-trip never loops.
+  // Other browsers and desktop handoff URLs retain the existing UI unchanged.
+  useEffect(() => {
+    if (
+      isLoading ||
+      user ||
+      cliCallbackRaw ||
+      isDesktopHandoff ||
+      platform === "desktop" ||
+      !isDingTalkWebView()
+    ) {
+      return;
+    }
+
+    try {
+      if (window.sessionStorage.getItem(DINGTALK_AUTO_LOGIN_KEY) === "1") {
+        return;
+      }
+      window.sessionStorage.setItem(DINGTALK_AUTO_LOGIN_KEY, "1");
+    } catch {
+      // Storage can be unavailable in a restricted WebView. The redirect is
+      // still safe because the OAuth state is validated server-side.
+    }
+
+    window.location.assign(
+      buildDingTalkLoginURL(
+        api.getBaseUrl(),
+        "web",
+        window.location.origin,
+        nextUrl,
+      ),
+    );
+  }, [isLoading, user, cliCallbackRaw, isDesktopHandoff, platform, nextUrl]);
 
   // Already authenticated ON ARRIVAL — honor ?next= or fall back to first
   // workspace (or /onboarding if the user has none). Skip this entire path

@@ -6,6 +6,7 @@ export {
   dingtalkNextFromState,
   dingtalkCallbackProtocol,
   isDesktopDingTalkState,
+  isDingTalkWebView,
 } from "./dingtalk-oauth";
 export type { DingTalkOAuthClient } from "./dingtalk-oauth";
 

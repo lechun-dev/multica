@@ -79,8 +79,9 @@ vi.mock("@multica/core/api", () => ({
     listMyInvitations: mockListMyInvitations,
     verifyCode: vi.fn(),
     setToken: vi.fn(),
-    getMe: vi.fn(),
+    getMe: vi.fn().mockRejectedValue(new Error("unauthorized")),
     issueCliToken: mockIssueCliToken,
+    getBaseUrl: () => "https://mission-staging.example.test",
   },
 }));
 
@@ -107,6 +108,45 @@ describe("LoginPage", () => {
     expect(screen.getByRole("button", { name: "Continue with DingTalk" })).toBeInTheDocument();
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+  });
+
+  it.each([
+    { query: "next=%2Facme%2Fissues", redirects: true },
+    { query: "platform=desktop", redirects: false },
+    { query: "cli_callback=http%3A%2F%2F127.0.0.1%3A8089%2Fcallback", redirects: false },
+  ])("handles DingTalk embedded login for $query", ({ query, redirects }) => {
+    const userAgent = vi.spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 DingTalk/7.6.20");
+    const originalLocation = window.location;
+    const assign = vi.fn();
+    sessionStorage.clear();
+    searchParamsState.params = new URLSearchParams(query);
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, assign },
+    });
+
+    try {
+      const { unmount } = render(<LoginPage />, { wrapper: createWrapper() });
+      if (redirects) {
+        expect(assign).toHaveBeenCalledTimes(1);
+        const url = new URL(assign.mock.calls[0]?.[0] ?? "");
+        expect(url.pathname).toBe("/auth/dingtalk/start");
+        expect(url.searchParams.get("next")).toBe("/acme/issues");
+        unmount();
+        render(<LoginPage />, { wrapper: createWrapper() });
+        expect(assign).toHaveBeenCalledTimes(1);
+      } else {
+        expect(assign).not.toHaveBeenCalled();
+      }
+    } finally {
+      userAgent.mockRestore();
+      sessionStorage.clear();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: originalLocation,
+      });
+    }
   });
 
   // Regression: MUL-1080 — if the user is already authenticated on the web
