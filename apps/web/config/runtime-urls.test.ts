@@ -300,6 +300,18 @@ describe("runtimeRewriteDestination", () => {
   it("maps only the MissionOS agent issue reads to the runtime API origin", () => {
     const env = { REMOTE_API_URL: "http://backend:8080" };
 
+    expect(runtimeRewriteDestination("/internal/agent/members", env)).toBe(
+      "http://backend:8080/internal/agent/members",
+    );
+    expect(runtimeRewriteDestination("/internal/agent/members/other", env)).toBeUndefined();
+    expect(runtimeRewriteDestination("/internal/agent/members-export", env)).toBeUndefined();
+
+    expect(runtimeRewriteDestination("/internal/agent/projects", env)).toBe(
+      "http://backend:8080/internal/agent/projects",
+    );
+    expect(runtimeRewriteDestination("/internal/agent/projects/other", env)).toBeUndefined();
+    expect(runtimeRewriteDestination("/internal/agent/projects-export", env)).toBeUndefined();
+
     expect(runtimeRewriteDestination("/internal/agent/issues", env)).toBe(
       "http://backend:8080/internal/agent/issues",
     );

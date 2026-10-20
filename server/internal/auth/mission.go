@@ -95,6 +95,9 @@ func ValidateMissionReadScope(r *http.Request, token *jwt.Token, claims jwt.MapC
 		return false
 	}
 	path := strings.TrimSuffix(r.URL.Path, "/")
+	if path == "/internal/agent/members" || path == "/internal/agent/projects" {
+		return true
+	}
 	isIssuePath := path == "/api/issues" || strings.HasPrefix(path, "/api/issues/")
 	isAgentPath := path == "/internal/agent/issues" || strings.HasPrefix(path, "/internal/agent/issues/")
 	if !isIssuePath && !isAgentPath {

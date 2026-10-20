@@ -151,8 +151,10 @@ export function runtimeRewriteDestination(
   }
   // Purpose-specific MissionOS reads used by newDingSDK. Keep this match
   // narrow: other /internal routes must not become reachable through the web
-  // origin merely because these two agent-facing endpoints are proxied.
+  // origin merely because these agent-facing endpoints are proxied.
   if (
+    pathname === "/internal/agent/members" ||
+    pathname === "/internal/agent/projects" ||
     pathname === "/internal/agent/issues" ||
     pathname.startsWith("/internal/agent/issues/")
   ) {

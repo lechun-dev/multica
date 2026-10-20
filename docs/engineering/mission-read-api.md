@@ -1,6 +1,6 @@
 # newDingSDK workspace task reads
 
-This integration exposes no new public MissionOS task ACL. newDingSDK accepts an existing user API key, resolves its trusted DingTalk identity, and calls the signed exchange below. It then uses the existing `GET /api/issues` and `GET /api/issues/{id}` handlers with a five-minute workspace-bound read JWT.
+newDingSDK accepts an existing user API key, resolves its trusted DingTalk identity, and calls the signed exchange below. It uses `/internal/agent/issues` and `/internal/agent/issues/{id}`, which delegate to the existing task handlers with a five-minute workspace-bound read JWT. `/internal/agent/members` resolves member names to assignee user UUIDs; `/internal/agent/projects` resolves project titles to project UUIDs.
 
 ## Configuration and identity
 
@@ -19,7 +19,7 @@ X-Mission-Timestamp: <UTC Unix seconds>
 X-Mission-Nonce: <16 random bytes, hex>
 X-Mission-Signature: <HMAC-SHA256 hex>
 
-{"ding_user_id":"trusted-id","workspace_id":"workspace-uuid"}
+{"ding_user_id":"trusted-id","workspace_id":"workspace-uuid","purpose":"agent_task_read"}
 ```
 
 Signature input is the exact method, request URI, timestamp header, nonce header, and raw body separated by newline:
@@ -30,15 +30,35 @@ POST\n/internal/auth/dingtalk/exchange\nTIMESTAMP\nNONCE\nRAW_BODY
 
 The body limit is 4096 bytes. Timestamp tolerance is ±60 seconds; Redis `SETNX` retains nonce keys for two minutes. Unknown JSON fields and trailing JSON are rejected. Only server-resolved identities may be sent; never forward an agent-supplied DingTalk ID.
 
-Response includes `access_token`, `expires_in: 300`, `workspace_id`, `user_id`, and current workspace `role`, with `Cache-Control: no-store`. Tokens have `source=lechun_mission_read`, issuer `missionos`, audience `newDingSDK`, and no browser session ID. They are non-renewable, bearer-only, and accepted only for GET task list/detail in the exact workspace selected by `X-Workspace-ID`. A mismatching workspace query, slug selector, Cookie token, write, nested/static task route, or daemon route is rejected. Session parsing/renewal and the independent WebSocket authentication entry point also reject these tokens.
+Response includes `access_token`, `expires_in: 300`, `workspace_id`, `user_id`, and current workspace `role`, with `Cache-Control: no-store`. Tokens have `source=lechun_mission_read`, issuer `missionos`, audience `newDingSDK`, and no browser session ID. Purpose-specific tokens have task-read or owner-read scope. They are non-renewable, bearer-only, and accepted only for GET internal task list/detail and the exact internal members/projects endpoints in the workspace selected by `X-Workspace-ID`. A mismatching workspace query, slug selector, Cookie token, write, nested/static task route, ordinary member-management route, or daemon route is rejected. Session parsing/renewal and the independent WebSocket authentication entry point also reject these tokens.
 
 newDingSDK must not persist, expose, or log these tokens. It exchanges on each request and uses independent cursor signing; neither secret is a new user API key.
 
 ## Existing permissions
 
-`ListIssues` and `GetIssue` remain authoritative. Workspace owner scope uses the existing `PROJECT_OWNER_BYPASS_ENABLED` behavior (default enabled). When disabled, this integration must not restore owner bypass. Other workspace roles follow existing effective task/project permissions. Cloud issue-window restrictions still apply. Unauthorized detail keeps existing 403/404 behavior without task content.
+`ListIssues` and `GetIssue` remain authoritative. Internal agent handlers re-read workspace membership on each request. Only a current workspace owner with owner-read scope bypasses project/task ACLs on the internal task and project read routes, independently of `PROJECT_OWNER_BYPASS_ENABLED=false`. Normal browser reads and `/api/issues` continue to follow the existing switch. Other workspace roles follow existing effective task/project permissions. Cloud issue-window restrictions still apply. Unauthorized detail keeps existing 403/404 behavior without task content.
 
 No copied ACL is maintained in newDingSDK; future changes to these handlers' permission decisions are inherited. Changes to middleware or external status contracts still require integration tests.
+
+## Member-name lookup and assignee enrichment
+
+`GET /internal/agent/members?workspace_id=UUID&q=NAME&limit=50&offset=0` uses the same purpose-specific authorization and current workspace membership check. `q` is optional, trimmed, case-insensitive name substring search (1–100 Unicode characters when supplied). `limit` is 1–100; `offset` is a nonnegative int32. Results are sorted by user UUID and return only `members: [{user_id, name}]` and filtered `total`. Duplicate names are retained. Email, role, DingTalk ID and member-record ID are not exposed.
+
+This directory is workspace-membership scoped, not derived from visible tasks. Retained member relationships may include users who have not logged in or whose accounts are disabled; listing a name does not grant that user login or task access. The returned `user_id` is the member-type task `assignee_id`, not `member.id`.
+
+Internal task pages/details additionally project optional `assignee_name` using one workspace directory query per page. Normal API, write and event projections are unchanged. newDingSDK returns this as `assignee.name`, or null for missing/departed members and agent/squad assignees. No new schema or stored name copy is introduced.
+
+The SDK public lookup is `GET /lechun-ding/chats/mission/members`, accepting `workspace_id`, `q`, `limit` and a signed `cursor`. Member and task cursors are resource-separated and not interchangeable. Agents must page all name matches, disambiguate duplicate names, then call the task list with `assignee_type=member&assignee_id=USER_UUID`; task authorization still uses the caller's identity.
+
+## Project-title lookup
+
+`GET /internal/agent/projects?workspace_id=UUID&q=TITLE&limit=50&offset=0` accepts the same directory parameters as members. It returns only `projects: [{id, title}]` and the authorized project `total`. It rechecks current workspace membership, uses the existing `ProjectAuth.ScopeWithWorkspaceOwned` visibility service for nonowners, and bypasses project ACLs only for a currently validated owner with owner-read scope. The normal browser/API owner switch remains unchanged. Project visibility is not inferred from task results; a task-only grant need not grant project-directory visibility.
+
+Visibility is filtered before title search, count and pagination. Search is a trimmed case-insensitive literal substring, UUID ordering is stable, duplicates are retained, and empty/completed visible projects are included. No project content, task counts or permission-management fields are returned. No new schema or environment configuration is required.
+
+The SDK exposes `GET /lechun-ding/chats/mission/projects` with `workspace_id`, `q`, `limit` and signed `cursor`. Project, member and task cursors are independently bound and cannot be reused across resources/users/filters. Agents must read all candidate pages, prefer a unique exact name match, use a sole fuzzy candidate only when unambiguous, and ask the user on duplicates. Use the confirmed project `id` as task `project_id`, optionally together with resolved `assignee_id` and `assignee_type=member`. Never substitute task keyword search for project or assignee filtering.
+
+This change adds no independent statistics endpoint or task-total projection. To answer a task-count question, page the authorized task list and deduplicate UUIDs; specify `archive_state=all` if archived tasks are intended. Counts remain best-effort under concurrent changes.
 
 ## Optional task read projections
 
@@ -66,3 +86,5 @@ go vet ./internal/auth ./internal/middleware ./internal/realtime ./internal/hand
 The handler suite skips when its database is unreachable. The exchange fixture additionally skips when the optional identity table is absent; skipped tests are not evidence of successful identity/ACL integration. Core schema tests are in `packages/core/api/schemas.test.ts`.
 
 Before rollout, verify owner/member/revoked/cross-workspace reads, completion history and range boundaries, paging, malformed identities, replay/Redis outage and JWT route/write refusal in an authorized non-production environment. Deploy MissionOS support before enabling the SDK integration. Configuration changes, deployment, production checks and push require separate authorization. The public SDK contract and examples live in `newDingSDK/docs/mission-tasks.md` in the sibling project.
+
+The two mapping lookups need no new environment variable. Deployment must include Go routing and exact web proxies `/internal/agent/members` and `/internal/agent/projects`; do not proxy their subpaths or all `/internal` routes. The external gateway must separately grant GET permission for `lechun-node/lechun-ding/chats/mission/members` and `lechun-node/lechun-ding/chats/mission/projects` to intended API keys. The existing SDK detail route remains `/lechun-ding/chats/mission/tasks/detail?taskId=TASK_UUID_OR_IDENTIFIER`.

@@ -2,7 +2,7 @@
 
 > 文档用途：说明技术实现、系统边界、部署要求和上线风险。
 >
-> 适用范围：`newDingSDK` 对外提供的 MissionOS 任务列表和任务详情接口，以及
+> 适用范围：`newDingSDK` 对外提供的 MissionOS 任务列表、任务详情、成员姓名及项目名称映射接口，以及
 > MissionOS（`multica`）内部身份交换和原有权限链路。
 >
 > 安全说明：本文只描述变量名、协议和处理流程，不包含任何真实 `lechunapikey`、签名密钥、JWT 或用户数据。
@@ -11,11 +11,13 @@
 
 本功能不是在 `newDingSDK` 中重新实现一套 MissionOS 权限，而是建立一条“用户 API Key → 可信钉钉身份 → MissionOS 短时只读令牌 → MissionOS 原有任务权限”的服务间调用链。
 
-两个公开接口均由 `newDingSDK` 暴露：
+两个任务接口及两个名称映射接口均由 `newDingSDK` 暴露：
 
 ```http
 GET /lechun-ding/chats/mission/tasks
-GET /lechun-ding/chats/mission/tasks/{taskId}
+GET /lechun-ding/chats/mission/tasks/detail?taskId=任务UUID或编号
+GET /lechun-ding/chats/mission/members?q=姓名
+GET /lechun-ding/chats/mission/projects?q=项目名称
 X-Caller-Key: <用户现有的 lechunapikey>
 ```
 
@@ -26,10 +28,10 @@ X-Caller-Key: <用户现有的 lechunapikey>
 3. MissionOS 根据钉钉身份和工作区成员关系签发约 5 分钟的只读 access token。
 4. access token 只存在于当前请求内，不返回给智能体、不落库、不写缓存、不创建浏览器会话。
 5. 任务列表和详情仍调用 MissionOS 原有 `ListIssues` / `GetIssue` 权限逻辑。
-6. 工作区 owner 按 MissionOS 现有 owner 规则查看全部可见任务；普通成员只看到当前 MissionOS 权限允许看到的任务。
+6. 当前工作区 owner 仅通过内部智能体任务读接口跳过项目/任务 ACL；普通成员只看到当前 MissionOS 权限允许看到的任务。正常 Mission 页面和 `/api/issues` 仍遵循 `PROJECT_OWNER_BYPASS_ENABLED=false`。
 7. MissionOS 后续调整项目、任务、继承或 Cloud 可见性规则时，接口会自动继承新规则。
 
-当前已知的联调阻塞不是 API Key 或权限判断，而是正式/预发布域名尚未把 `/internal/auth/dingtalk/exchange` 转发到 Go 后端；详见第 16 节。
+本文描述代码契约，不代表最新线上部署状态。内部路径的转发与部署检查见第 14 节。
 
 ## 2. 系统组成与职责
 
@@ -79,8 +81,8 @@ MissionOS /internal/auth/dingtalk/exchange
   │ 6. DingTalk ID → MissionOS 用户 → 工作区成员/角色
   │ 7. 签发 5 分钟只读 access_token
   ▼
-MissionOS /api/issues 或 /api/issues/{id}
-  │ 8. 沿用 MissionOS 原有权限过滤
+MissionOS /internal/agent/issues 或 /internal/agent/issues/{id}
+  │ 8. 重新核验成员身份，委托原有任务 handler；仅当前 owner 的内部请求跳过项目/任务 ACL
   ▼
 newDingSDK
   │ 9. 白名单投影、分页游标签名、统一错误格式
@@ -136,7 +138,7 @@ X-Mission-Timestamp: <UTC Unix seconds>
 X-Mission-Nonce: <随机 nonce>
 X-Mission-Signature: <HMAC-SHA256>
 
-{"ding_user_id":"trusted-id","workspace_id":"workspace-uuid"}
+{"ding_user_id":"trusted-id","workspace_id":"workspace-uuid","purpose":"agent_task_read"}
 ```
 
 签名输入由以下内容按换行拼接：
@@ -174,7 +176,7 @@ nonce 由 Redis `SETNX` 保留约两分钟，防止同一签名请求被重放�
 
 - 约 300 秒过期；
 - audience、issuer 和来源标识用于区分浏览器会话；
-- 仅允许精确工作区内的任务列表和任务详情 GET；
+- 按专用 scope 仅允许精确工作区内的内部任务列表、详情和精确成员/项目查询路径 GET；
 - 不能用于写操作、WebSocket、会话续期、其他静态/嵌套路由；
 - `Cache-Control: no-store`；
 - 不返回给智能体，不写数据库，不写 Redis token 缓存，不创建浏览器登录 Cookie。
@@ -201,10 +203,11 @@ nonce 由 Redis `SETNX` 保留约两分钟，防止同一签名请求被重放�
 
 ### 5.2 owner
 
-工作区 owner 继续沿用 MissionOS 的现有 owner 规则。当前 owner 全量范围由 MissionOS 已有的 `PROJECT_OWNER_BYPASS_ENABLED` 行为控制：
+内部智能体任务请求使用独立、受限的 owner 读授权：
 
-- 开启时，owner 可看到 MissionOS 允许的全部任务；
-- 关闭时，本接口不会自行恢复 owner bypass，仍以 MissionOS 实际判断为准。
+- 交换令牌必须带 owner-read scope，且每次读取时数据库中的当前工作区角色仍为 `owner`；仅令牌里曾经是 owner 不足以放行；
+- 满足条件时，内部任务列表/详情跳过项目和任务 ACL，不受 `PROJECT_OWNER_BYPASS_ENABLED=false` 限制；仍保留工作区、查询条件及 Cloud 可见窗口等约束；
+- 正常页面和 `/api/issues` 不设置内部 owner 标记，继续使用现有参数，不扩大页面权限。
 
 ### 5.3 普通成员
 
@@ -249,7 +252,7 @@ X-Caller-Key: <用户现有的 lechunapikey>
 | `status` | 无 | MissionOS 状态 key，可按既有逗号规则传递 |
 | `category` | 无 | `unstarted`、`started`、`done`、`closed` |
 | `project_id` | 无 | 项目 UUID |
-| `assignee_id` / `assignee_type` | 无 | 负责人 UUID；类型为 `member`、`agent`、`squad` |
+| `assignee_id` / `assignee_type` | 无 | 类型为 `member` 时传 Mission 用户 UUID（不是 member 记录 ID 或钉钉 ID）；其他类型为 `agent`、`squad` |
 | `sort` | `created_at` | `created_at`、`updated_at`、`completed_at` |
 | `direction` | `desc` | `desc` 或 `asc`，完成时间的 null 始终排最后 |
 | `fields` | `summary` | `summary` 或 `full`；`full` 增加描述 |
@@ -276,7 +279,7 @@ X-Caller-Key: <用户现有的 lechunapikey>
       },
       "priority": 2,
       "project": { "id": "project-uuid", "title": "项目名称" },
-      "assignee": { "id": "user-uuid", "type": "member" },
+      "assignee": { "id": "user-uuid", "type": "member", "name": "李群" },
       "creator": { "id": "user-uuid", "type": "member" },
       "created_at": "2026-10-12T08:00:00Z",
       "updated_at": "2026-10-13T09:00:00Z",
@@ -302,7 +305,7 @@ X-Caller-Key: <用户现有的 lechunapikey>
 ## 7. 对外接口二：任务详情
 
 ```http
-GET https://scmapi.lechun.cc/lechun-node/lechun-ding/chats/mission/tasks/{taskId}
+GET https://scmapi.lechun.cc/lechun-node/lechun-ding/chats/mission/tasks/detail?taskId=MUL-123
 X-Caller-Key: <用户现有的 lechunapikey>
 ```
 
@@ -314,6 +317,50 @@ X-Caller-Key: <用户现有的 lechunapikey>
 长期存储、去重和后续引用优先使用 UUID，因为编号前缀可能被修改。详情可选 `workspace_id`，不传时使用 `MISSION_WORKSPACE_ID`。
 
 详情返回完整任务正文和允许的关联字段，但仍然遵守 MissionOS 当前权限过滤和字段白名单。无权限任务不会通过详情接口被绕过读取。
+
+### 7.1 辅助接口：成员姓名与负责人 ID
+
+```http
+GET https://scmapi.lechun.cc/lechun-node/lechun-ding/chats/mission/members?q=李群&limit=50
+X-Caller-Key: <用户现有的 lechunapikey>
+```
+
+参数为 `workspace_id`、`q`、`limit`、`cursor`。`q` 可省略，提供时为去空格后 1–100 字符的姓名包含匹配，不区分大小写。默认每页 50，最多 100；同名用户不合并，按用户 UUID 稳定排序。
+
+```json
+{
+  "items": [{ "user_id": "mission-user-uuid", "name": "李群" }],
+  "page": { "limit": 50, "has_more": false, "next_cursor": null },
+  "snapshot_consistency": "best_effort",
+  "request_id": "request-uuid"
+}
+```
+
+Mission 内部路径为精确的 `/internal/agent/members`。接口复用专用令牌和当前工作区成员校验，目录范围是当前工作区成员，不从可见任务反推人员。仅返回用户 UUID 和姓名，不返回邮箱、角色、钉钉 ID 或成员记录 ID。成员关系仍保留但未登录/账号停用的用户可能仍在目录中；目录结果不是登录资格证明。
+
+任务列表和详情的 `assignee.name` 来自当前工作区目录，一页批量查询一次，不逐任务查询，不复制存储姓名。成员已离开或无法解析时为 `null`；agent/squad 类型本次也为 `null`。正常页面 API、任务写入和事件响应不新增姓名投影。
+
+### 7.2 辅助接口：项目名称与项目 ID
+
+```http
+GET https://scmapi.lechun.cc/lechun-node/lechun-ding/chats/mission/projects?q=技术开发&limit=50
+X-Caller-Key: <用户现有的 lechunapikey>
+```
+
+参数与成员接口相同：`workspace_id`、`q`、`limit`、`cursor`。`q` 匹配项目 `title`，不传则查询权限内项目，结果按项目 UUID 排序，保留重名。
+
+```json
+{
+  "items": [{ "id": "project-uuid", "title": "技术开发" }],
+  "page": { "limit": 50, "has_more": false, "next_cursor": null },
+  "snapshot_consistency": "best_effort",
+  "request_id": "request-uuid"
+}
+```
+
+内部路径为精确的 `/internal/agent/projects`。每次重新检查当前工作区成员身份；只有当前 owner 且持 owner-read scope 才跳过项目 ACL。其他角色调用 Mission 现有 `ScopeWithWorkspaceOwned` 项目可见性服务，不在 SDK 复制 ACL，也不改正常页面及普通 API 的 `PROJECT_OWNER_BYPASS_ENABLED=false` 行为。先筛选可见性，再匹配名称、计数和分页，隐藏项目不暴露名称或 ID。
+
+只返回 `id`、`title`，包含可见空项目及已完成项目，不返回任务统计、项目正文或权限配置。项目目录不从任务反推；单独获得任务权限不一定具有项目目录权限。内部 `total` 是过滤后的项目数量，不是任务数量；SDK 对外仍使用游标分页格式。
 
 ## 8. `completed_at` 的业务定义
 
@@ -359,6 +406,22 @@ curl --get "$SDK_BASE_URL/lechun-ding/chats/mission/tasks" \
 如果“本周”指本周创建的任务，按北京时间传创建区间；未完成分类通常需要分别查询 `unstarted` 和 `started`，再按 UUID 合并去重。若要查所有历史未完成任务，则不要传 `created_from/created_to`，只按未完成分类查询。
 
 注意：当前接口没有按 `due_date` 过滤的参数，截止日期筛选需要另行评估。
+
+### 9.4 “查询李群作为负责人的所有任务”
+
+1. 调用成员接口 `members?q=李群`，保持条件不变读取全部游标页。
+2. 无匹配则提示未找到当前工作区成员；多个候选时让用户确认，不能默认选第一个，也不能用任务标题搜索替代人员匹配。
+3. 用选定 `user_id` 查询任务列表：`assignee_type=member&assignee_id=USER_UUID&archive_state=all&limit=100`。
+4. 保持任务条件读取全部游标页，按任务 UUID 去重。成员 cursor 与任务 cursor 不能混用。
+5. 始终使用提问者的 API Key，不以被筛选负责人身份查询。结果为空只代表“调用者权限内没有匹配任务”，不代表对方完全没有任务。
+
+### 9.5 “查询技术开发项目的任务”及组合条件
+
+先调用 `projects?q=技术开发` 并翻完全部候选页；成员姓名和项目名称都优先选择唯一完全匹配，无完全匹配时仅唯一模糊候选可直接使用，仍有重名或歧义就请用户确认。项目确认后用返回 `id` 调用 `tasks?project_id=<项目UUID>`，不能用任务 `q` 替代项目筛选。
+
+如同时指定“李群负责”，另行通过成员接口解析用户 UUID，组合 `project_id`、`assignee_type=member` 和 `assignee_id`。始终使用调用者的 key，不切换到被查询人的身份。任务、成员、项目游标分别绑定资源和条件，不可混用。
+
+本次不新增独立统计接口，也不改任务列表对外总数字段。要回答“一共有多少任务”，需读取所有任务分页，按 UUID 去重计数；默认仅未归档，包含归档需 `archive_state=all`。并发数据或权限变化时只能给尽力一致的结果，不能承诺固定快照。
 
 ## 10. 错误处理
 
@@ -408,7 +471,7 @@ curl --get "$SDK_BASE_URL/lechun-ding/chats/mission/tasks" \
 | `JWT_SECRET` | MissionOS 现有 JWT 签名 | 沿用已有安全值，不与 exchange secret 混用 |
 | `REDIS_URL` | nonce 重放保护及现有会话依赖 | 所有副本共享、可用；不能使用进程内替代 |
 | `dingtalk_notify_identities` | DingTalk ID 到 MissionOS 用户绑定 | 必须已有有效绑定；不自动创建或授权 |
-| `PROJECT_OWNER_BYPASS_ENABLED` | MissionOS 既有 owner 行为 | 由 MissionOS 当前配置决定，本接口不额外覆盖 |
+| `PROJECT_OWNER_BYPASS_ENABLED` | 正常页面及普通 API 的既有 owner 行为 | 保持现值；内部智能体 owner 读使用专用授权，不依赖此开关 |
 
 密钥应配置在部署平台的 secret variable 中。`deploy-inventory` 仅提交变量名/非敏感配置或由部署系统注入密钥；不要把真实值提交到 Git。
 
@@ -422,13 +485,13 @@ curl --get "$SDK_BASE_URL/lechun-ding/chats/mission/tasks" \
 
 上线顺序：
 
-1. 先部署包含身份交换和任务读 handler 的 MissionOS 版本。
-2. 确认 MissionOS 的 `/internal/auth/dingtalk/exchange` 能从 `MISSION_API_BASE_URL` 到达 Go 后端。
-3. 在 `newDingSDK` 配置 URL、工作区和两个 secret；确认两边 `MISSION_EXCHANGE_SECRET` 完全一致。
-4. 再部署/启用 `newDingSDK` 任务路由。
+1. 先部署包含身份交换、内部任务、成员和项目读 handler 及对应前端代理的 MissionOS 版本。
+2. 确认身份交换、内部任务及精确成员、项目路径能从 `MISSION_API_BASE_URL` 到达 Go 后端。
+3. 在 `newDingSDK` 配置 URL、工作区和两个 secret；确认两边 `MISSION_EXCHANGE_SECRET` 完全一致。两个映射接口沿用这些变量，不需要新增配置。
+4. 再部署/启用 `newDingSDK` 路由，并为调用者在网关分别登记 GET `lechun-node/lechun-ding/chats/mission/members` 和 `lechun-node/lechun-ding/chats/mission/projects` 权限。
 5. 先用 owner、普通成员、无权限成员分别做受控联调，再考虑正式环境。
 
-当前预发布 MissionOS 已包含任务读接口代码；正式 MissionOS 是否已部署对应 commit 需单独确认，不能仅凭域名可访问判断。
+两个映射查询均不需要新增环境变量或数据库迁移。正式、预发布是否已部署对应 commit 需单独确认，不能仅凭域名可访问判断；本文更新不代表已发布。
 
 ## 13. 测试矩阵
 
@@ -445,7 +508,7 @@ curl --get "$SDK_BASE_URL/lechun-ding/chats/mission/tasks" \
 
 ### 13.2 权限测试
 
-- owner 能看到 MissionOS 现有规则允许的全部任务；
+- 即使 `PROJECT_OWNER_BYPASS_ENABLED=false`，当前 owner 仍可通过内部接口读取全量项目/任务 ACL 范围；正常页面/API 权限不变；
 - admin/member 只能看到各自项目/任务权限允许的任务；
 - 无权任务不出现在列表中且不计数；
 - 无权详情保持 MissionOS 原有 403/404；
@@ -462,36 +525,28 @@ curl --get "$SDK_BASE_URL/lechun-ding/chats/mission/tasks" \
 - `completed_at` 不错误使用 `due_date` 或 `updated_at`；
 - 搜索、状态、项目、负责人、归档状态组合；
 - 任务被删除/归档/权限变化时的 `best_effort` 行为。
+- 同名人员跨页完整返回、非本工作区人员排除、成员被移除后拒绝；
+- 成员/任务 cursor 不能串用，成员返回字段严格限于 UUID 和姓名；
+- 项目重名跨页、可见空项目/已完成项目、隐藏项目和跨工作区项目排除；
+- owner 仅在智能体入口查看全部项目、普通成员伪造 owner scope 无效、授权撤销后及时生效；
+- 项目 cursor 不能与成员/任务 cursor 混用，项目返回字段严格限于 `id`、`title`；
+- 负责人过滤不改变调用者 ACL，内部任务名称投影不影响普通 API。
 
-## 14. 当前线上联调阻塞
+## 14. 路由与部署检查
 
-已实测：
-
-- `lechunapikey` 有效；
-- API Key → userId 成功；
-- userId → DingTalk ID 成功；
-- `newDingSDK` 新接口代码已部署；
-- 直接访问 `https://mission-staging.lechun.cc/internal/auth/dingtalk/exchange` 和正式域名均返回 Next.js HTML 404；
-- 访问 `/api/internal/auth/dingtalk/exchange` 返回 Go 的 404，也不是可用替代路径；
-- `newDingSDK` 因上游 404 将结果映射为 `TASK_NOT_FOUND`，因此当前错误不能说明任务不存在或用户无权限。
-
-原因：
-
-`multica/apps/web/proxy.ts` / `next.config.ts` 当前只代理 `/api`、`/auth`、`/uploads`、`/ws`、`/health`、`/v1` 等路径，没有代理 `/internal`。请求到达前端域名后被 Next.js 当作页面路由处理，尚未进入 Go 的身份交换 middleware/handler。
-
-### 建议修复方式
-
-方案 A（优先）：在 MissionOS 前端反向代理中加入：
+使用 Mission 前端域名作为 `MISSION_API_BASE_URL` 时，`apps/web/proxy.ts`、运行时 URL 规则及 `next.config.ts` 需要把以下路径原样转发给 Go 后端：
 
 ```text
-/internal/:path*  →  MissionOS Go backend /internal/:path*
+/internal/auth/dingtalk/exchange
+/internal/agent/issues
+/internal/agent/issues/:path*
+/internal/agent/members
+/internal/agent/projects
 ```
 
-重新部署 MissionOS 预发布后，用同一用户和工作区验证交换接口返回 200。
+不要使用 `/internal/:path*` 全量通配，也不代理 `/internal/agent/members/:path*` 或 `/internal/agent/projects/:path*`。代理不是认证放行，Go 仍需验证签名或专用 Bearer token、工作区及成员关系。
 
-方案 B：如果部署平台提供独立 MissionOS backend origin，将 `newDingSDK` 的 `MISSION_API_BASE_URL` 改为该后端 origin，而不是前端域名。
-
-路由打通前，无法可靠判断 owner、普通成员、任务是否存在、任务 ACL 或 secret 是否一致；不要依据当前 `TASK_NOT_FOUND` 做权限结论。
+若收到 Next.js HTML 404，先检查前端版本和转发规则，说明请求可能尚未进入 Go；不要直接解释为任务不存在或用户无权限。只有实际请求通过交换、内部读路由及外部网关，才能确认对应环境部署可用。本文不记录当前线上测试结论。
 
 ## 15. 安全边界和风险
 
@@ -513,12 +568,12 @@ curl --get "$SDK_BASE_URL/lechun-ding/chats/mission/tasks" \
 
 ### 上线前必须完成
 
-1. 修复/确认 `/internal` 到 Go backend 的生产路由；
+1. 确认第 14 节限定路径到 Go backend 的转发，不开放全部内部路由；
 2. 确认正式 MissionOS 已部署兼容的身份交换和任务读版本；
 3. 在两套服务配置完全一致的 `MISSION_EXCHANGE_SECRET`；
 4. 确认 `MISSION_API_BASE_URL` 指向实际 MissionOS backend origin；
 5. 确认 Redis、DingTalk 身份绑定和工作区成员数据可用；
-6. 完成 owner/member/无权限/跨工作区/API Key 撤销/分页/完成时间测试；
+6. 完成 owner/member/无权限/跨工作区/API Key 撤销/分页/完成时间及成员姓名匹配测试；
 7. 在网关和应用日志中检查密钥、token、完整请求体没有泄露；
 8. 对生产部署建立回滚方案，并保存 `request_id` 便于定位。
 

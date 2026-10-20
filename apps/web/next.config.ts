@@ -97,6 +97,14 @@ const nextConfig: NextConfig = {
               destination: `${remoteApiUrl}/internal/agent/issues`,
             },
             {
+              source: "/internal/agent/members",
+              destination: `${remoteApiUrl}/internal/agent/members`,
+            },
+            {
+              source: "/internal/agent/projects",
+              destination: `${remoteApiUrl}/internal/agent/projects`,
+            },
+            {
               source: "/internal/agent/issues/:path*",
               destination: `${remoteApiUrl}/internal/agent/issues/:path*`,
             },

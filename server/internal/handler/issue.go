@@ -60,10 +60,12 @@ type IssueResponse struct {
 	// field at all: with omitempty a built-in fixture hides it from BOTH
 	// renderings, and the drift guard goes green on a payload that has drifted.
 	// (MUL-6749)
-	StatusName    string  `json:"status_name"`
-	Priority      string  `json:"priority"`
-	AssigneeType  *string `json:"assignee_type"`
-	AssigneeID    *string `json:"assignee_id"`
+	StatusName   string  `json:"status_name"`
+	Priority     string  `json:"priority"`
+	AssigneeType *string `json:"assignee_type"`
+	AssigneeID   *string `json:"assignee_id"`
+	// AssigneeName is a member display name projected only by internal agent reads.
+	AssigneeName  *string `json:"assignee_name,omitempty"`
 	CreatorType   string  `json:"creator_type"`
 	CreatorID     string  `json:"creator_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
@@ -1885,6 +1887,10 @@ LIMIT %s OFFSET %s`, totalExpr, whereSql, orderBy, limitRef, offsetRef)
 		resp[i].Labels = &labels
 	}
 	h.fillStatusCategories(ctx, wsUUID, resp)
+	if err := h.fillAgentAssigneeNames(r, wsUUID, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read assignee names")
+		return
+	}
 	if r.URL.Query().Get("include_completed_at") == "true" {
 		if err := h.fillIssueCompletion(ctx, wsUUID, resp); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to read completion history")
@@ -2558,6 +2564,12 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	assigneeResponses := []IssueResponse{resp}
+	if err := h.fillAgentAssigneeNames(r, issue.WorkspaceID, assigneeResponses); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read assignee names")
+		return
+	}
+	resp = assigneeResponses[0]
 	if r.URL.Query().Get("include_completed_at") == "true" {
 		responses := []IssueResponse{resp}
 		if err := h.fillIssueCompletion(r.Context(), issue.WorkspaceID, responses); err != nil {

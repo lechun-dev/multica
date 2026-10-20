@@ -131,6 +131,8 @@ export const config = {
     "/ws",
     "/internal/auth/dingtalk/exchange",
     "/internal/agent/issues",
+    "/internal/agent/members",
+    "/internal/agent/projects",
     "/internal/agent/issues/:path*",
     "/((?!api|v1|_next/static|_next/image|favicon.ico|.*\\.).*)",
   ],
