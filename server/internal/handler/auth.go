@@ -160,7 +160,7 @@ func isSixDigitCode(code string) bool {
 }
 
 func (h *Handler) issueJWT(user db.User) (string, error) {
-	if auth.IsTemporarilyDisabledUser(uuidToString(user.ID), user.Email) {
+	if user.AccountDisabledAt.Valid || auth.IsTemporarilyDisabledUser(uuidToString(user.ID), user.Email) {
 		return "", auth.ErrTemporarilyDisabledUser
 	}
 	// `sid` identifies this login for as long as it lasts: sliding renewal
@@ -173,12 +173,13 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 		return "", err
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   uuidToString(user.ID),
-		"email": user.Email,
-		"name":  user.Name,
-		"sid":   sid,
-		"exp":   time.Now().Add(auth.AuthTokenTTL()).Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":             uuidToString(user.ID),
+		"session_version": user.SessionVersion,
+		"email":           user.Email,
+		"name":            user.Name,
+		"sid":             sid,
+		"exp":             time.Now().Add(auth.AuthTokenTTL()).Unix(),
+		"iat":             time.Now().Unix(),
 	})
 	return token.SignedString(auth.JWTSecret())
 }

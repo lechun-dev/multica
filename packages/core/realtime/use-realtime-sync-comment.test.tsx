@@ -175,6 +175,20 @@ describe("useRealtimeSync — comment activity cache coherence", () => {
     }
   });
 
+  it("ends only the account named in a suspension event", () => {
+    const expired = vi.fn();
+    const stores = createStores();
+    Object.assign(stores.authStore, { getState: () => ({ user: { id: "u1" }, sessionExpired: expired }) });
+    const { ws, handlers } = createRecordingWs();
+    renderHook(() => useRealtimeSync(ws, stores), { wrapper: createWrapper(qc) });
+    handlers["account:disabled"]?.({ user_id: "other-user" });
+    handlers["account:disabled"]?.({});
+    handlers["account:disabled"]?.(null);
+    expect(expired).not.toHaveBeenCalled();
+    handlers["account:disabled"]?.({ user_id: "u1" });
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a comment event with no issue_id", () => {
     qc.setQueryData<ListIssuesCache>(updatedBoardKey, bucketed());
 

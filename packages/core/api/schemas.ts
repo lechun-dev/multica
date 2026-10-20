@@ -3514,7 +3514,11 @@ export const MemberWithUserSchema = z.object({
   email: z.string().optional().default(""),
   avatar_url: z.string().nullable().optional().default(null),
   has_logged_in: z.boolean().optional().default(false),
+  account_disabled: z.boolean().optional().default(false),
+  can_manage_account: z.boolean().optional().default(false),
 }).loose();
+
+export const MembersWithUserSchema = z.array(MemberWithUserSchema);
 
 export const ProjectMemberSchema = z.object({
   project_id: z.string(),

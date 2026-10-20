@@ -1,5 +1,7 @@
 "use client";
 
+import { filterMembers, MemberSearchControls, MemberAccountAccessDialog, type MemberStatusFilter } from "./member-account-access";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Clock,
@@ -158,6 +160,7 @@ function MemberRow({
   busy,
   onRoleChange,
   onRemove,
+  onAccountAccessChange,
 }: {
   member: MemberWithUser;
   canManage: boolean;
@@ -169,6 +172,7 @@ function MemberRow({
   busy: boolean;
   onRoleChange: (role: MemberRole) => void;
   onRemove: () => void;
+  onAccountAccessChange: () => void;
 }) {
   const { t } = useT("settings");
   const displayName = member.name || member.email;
@@ -178,7 +182,8 @@ function MemberRow({
   const canEditRole = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
   const canRemove = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
   const isLastOwner = member.role === "owner" && ownerCount <= 1;
-  const showMenu = canEditRole || canRemove;
+  const canManageAccount = canManageOwners && !isSelf && member.can_manage_account === true;
+  const showMenu = canEditRole || canRemove || canManageAccount;
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -194,7 +199,7 @@ function MemberRow({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button variant="ghost" size="icon-sm" disabled={busy}>
+              <Button variant="ghost" size="icon-sm" disabled={busy} aria-label={t(($) => $.members.member_actions)}>
                 <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
               </Button>
             }
@@ -245,6 +250,11 @@ function MemberRow({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
+            {canManageAccount && (
+              <DropdownMenuItem variant={member.account_disabled ? undefined : "destructive"} onClick={onAccountAccessChange}>
+                {member.account_disabled ? t(($) => $.members.enable_action) : t(($) => $.members.disable_action)}
+              </DropdownMenuItem>
+            )}
             {canEditRole && canRemove && <DropdownMenuSeparator />}
             {canRemove && (
               <DropdownMenuItem variant="destructive" onClick={onRemove}>
@@ -255,6 +265,7 @@ function MemberRow({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      {member.account_disabled && <Badge variant="secondary">{t(($) => $.members.status_disabled)}</Badge>}
       <Badge variant="secondary">
         <RoleIcon className="h-3 w-3" />
         {rc.label}
@@ -379,9 +390,12 @@ export function MembersTab() {
   const navigation = useOptionalNavigation();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberStatus, setMemberStatus] = useState<MemberStatusFilter>("all");
+  const [accountTarget, setAccountTarget] = useState<MemberWithUser | null>(null);
   const sortedMembers = useMemo(
-    () => [...members].sort(compareMemberRegistration),
-    [members],
+    () => filterMembers([...members].sort(compareMemberRegistration), memberSearch, memberStatus),
+    [members, memberSearch, memberStatus],
   );
 
   const [inviteEmail, setInviteEmail] = useState("");
@@ -598,6 +612,9 @@ export function MembersTab() {
   };
 
   useEffect(() => {
+    setAccountTarget(null);
+    setMemberSearch("");
+    setMemberStatus("all");
     setInviteSeatPurchase((current) =>
       current && current.workspaceId !== wsId ? null : current,
     );
@@ -845,6 +862,8 @@ export function MembersTab() {
           </Card>
         )}
 
+        <MemberSearchControls search={memberSearch} status={memberStatus} onSearchChange={setMemberSearch} onStatusChange={setMemberStatus} />
+        <p className="text-caption text-muted-foreground">{t(($) => $.members.search_count, { count: sortedMembers.length, total: members.length })}</p>
         {sortedMembers.length > 0 ? (
           <SettingsCard>
             {sortedMembers.map((m) => (
@@ -858,12 +877,13 @@ export function MembersTab() {
                   busy={memberActionId === m.id}
                   onRoleChange={(role) => handleRoleChange(m.id, role)}
                   onRemove={() => handleRemoveMember(m)}
+                  onAccountAccessChange={() => setAccountTarget(m)}
                 />
               </div>
             ))}
           </SettingsCard>
         ) : (
-          <p className="text-body text-muted-foreground">{t(($) => $.members.no_members)}</p>
+          <p className="text-body text-muted-foreground">{t(($) => $.members.no_matching_members)}</p>
         )}
       </SettingsSection>
 
@@ -1078,6 +1098,8 @@ export function MembersTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {accountTarget && <MemberAccountAccessDialog key={`${wsId}:${accountTarget.id}`} workspaceId={wsId} member={accountTarget} onClose={() => setAccountTarget(null)} />}
 
       <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
         <AlertDialogContent>

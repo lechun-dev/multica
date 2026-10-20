@@ -95,6 +95,9 @@ export interface MemberWithUser {
   avatar_url: string | null;
   /** True after the user has completed at least one interactive login. */
   has_logged_in?: boolean;
+  account_disabled?: boolean;
+  /** Server-computed authority; absent on older servers means no suspension action. */
+  can_manage_account?: boolean;
 }
 
 export interface Invitation {

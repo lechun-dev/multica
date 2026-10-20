@@ -1300,6 +1300,15 @@ export function useRealtimeSync(
       }
     });
 
+    // 2026-10-19 coder(lq): End only this account's local session; task and
+    // project records are not archived, removed or reassigned by suspension.
+    const unsubAccountDisabled = ws.on("account:disabled", (payload) => {
+      if (payload && typeof payload === "object" && "user_id" in payload &&
+          payload.user_id === authStore.getState().user?.id) {
+        authStore.getState().sessionExpired();
+      }
+    });
+
     const unsubMemberRemoved = ws.on("member:removed", (p) => {
       const { user_id } = p as MemberRemovedPayload;
       const myUserId = authStore.getState().user?.id;
@@ -1780,6 +1789,7 @@ export function useRealtimeSync(
       unsubSubscriberRemoved();
       unsubWsUpdated();
       unsubWsDeleted();
+      unsubAccountDisabled();
       unsubMemberRemoved();
       unsubMemberAdded();
       unsubInvitationCreated();

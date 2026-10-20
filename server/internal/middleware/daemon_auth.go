@@ -78,6 +78,7 @@ func WithDaemonContext(ctx context.Context, workspaceID, daemonID string) contex
 // Cache misses fall back to the original DB-backed behavior.
 func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		next = enforceAccountAccess(queries, next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — strip any
 			// client-supplied value before any branch can re-stamp

@@ -86,7 +86,7 @@ AND multica_user_id <> '' LIMIT 2`, input.DingUserID)
 		writeError(w, http.StatusServiceUnavailable, "mission user unavailable")
 		return
 	}
-	if auth.IsTemporarilyDisabledUser(ids[0], user.Email) {
+	if user.AccountDisabledAt.Valid || auth.IsTemporarilyDisabledUser(ids[0], user.Email) {
 		writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
 		return
 	}
@@ -103,7 +103,9 @@ AND multica_user_id <> '' LIMIT 2`, input.DingUserID)
 	if member.Role == "owner" {
 		scope = auth.MissionOwnerReadScope
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, auth.MissionReadClaimsWithScope(uuidToString(user.ID), user.Email, uuidToString(ws), scope, time.Now()))
+	claims := auth.MissionReadClaimsWithScope(uuidToString(user.ID), user.Email, uuidToString(ws), scope, time.Now())
+	claims["session_version"] = user.SessionVersion
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString(auth.JWTSecret())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token exchange failed")

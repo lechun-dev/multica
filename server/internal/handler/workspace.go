@@ -13,9 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -538,15 +540,17 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 type MemberWithUserResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	UserID      string  `json:"user_id"`
-	Role        string  `json:"role"`
-	CreatedAt   string  `json:"created_at"`
-	Name        string  `json:"name"`
-	Email       string  `json:"email"`
-	AvatarURL   *string `json:"avatar_url"`
-	HasLoggedIn bool    `json:"has_logged_in"`
+	ID               string  `json:"id"`
+	WorkspaceID      string  `json:"workspace_id"`
+	UserID           string  `json:"user_id"`
+	Role             string  `json:"role"`
+	CreatedAt        string  `json:"created_at"`
+	Name             string  `json:"name"`
+	Email            string  `json:"email"`
+	AvatarURL        *string `json:"avatar_url"`
+	HasLoggedIn      bool    `json:"has_logged_in"`
+	AccountDisabled  bool    `json:"account_disabled"`
+	CanManageAccount bool    `json:"can_manage_account"`
 }
 
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
@@ -562,18 +566,33 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actorID, validActor := parseUUIDOrBadRequest(w, requestUserID(r), "user id")
+	if !validActor {
+		return
+	}
+	manageable, err := h.Queries.ListManageableAccounts(r.Context(), db.ListManageableAccountsParams{WorkspaceID: wsUUID, ActorID: actorID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load account authority")
+		return
+	}
+	manageableIDs := make(map[string]bool, len(manageable))
+	for _, id := range manageable {
+		manageableIDs[uuidToString(id)] = true
+	}
 	resp := make([]MemberWithUserResponse, len(members))
 	for i, m := range members {
 		resp[i] = MemberWithUserResponse{
-			ID:          uuidToString(m.ID),
-			WorkspaceID: uuidToString(m.WorkspaceID),
-			UserID:      uuidToString(m.UserID),
-			Role:        m.Role,
-			CreatedAt:   timestampToString(m.CreatedAt),
-			Name:        m.UserName,
-			Email:       m.UserEmail,
-			AvatarURL:   h.resolveAvatarURLPtr(textToPtr(m.UserAvatarUrl)),
-			HasLoggedIn: m.HasLoggedIn.Valid && m.HasLoggedIn.Bool,
+			ID:               uuidToString(m.ID),
+			WorkspaceID:      uuidToString(m.WorkspaceID),
+			UserID:           uuidToString(m.UserID),
+			Role:             m.Role,
+			CreatedAt:        timestampToString(m.CreatedAt),
+			Name:             m.UserName,
+			Email:            m.UserEmail,
+			AvatarURL:        h.resolveAvatarURLPtr(textToPtr(m.UserAvatarUrl)),
+			HasLoggedIn:      m.HasLoggedIn.Valid && m.HasLoggedIn.Bool,
+			AccountDisabled:  m.AccountDisabled || auth.IsTemporarilyDisabledUser(uuidToString(m.UserID), m.UserEmail),
+			CanManageAccount: manageableIDs[uuidToString(m.UserID)] && !auth.IsTemporarilyDisabledUser(uuidToString(m.UserID), m.UserEmail),
 		}
 	}
 
@@ -587,15 +606,15 @@ type CreateMemberRequest struct {
 
 func (h *Handler) memberWithUserResponse(member db.Member, user db.User) MemberWithUserResponse {
 	return MemberWithUserResponse{
-		ID:          uuidToString(member.ID),
-		WorkspaceID: uuidToString(member.WorkspaceID),
-		UserID:      uuidToString(member.UserID),
-		Role:        member.Role,
-		CreatedAt:   timestampToString(member.CreatedAt),
-		Name:        user.Name,
-		Email:       user.Email,
-		AvatarURL:   h.resolveAvatarURLPtr(textToPtr(user.AvatarUrl)),
-	}
+		ID:              uuidToString(member.ID),
+		WorkspaceID:     uuidToString(member.WorkspaceID),
+		UserID:          uuidToString(member.UserID),
+		Role:            member.Role,
+		CreatedAt:       timestampToString(member.CreatedAt),
+		Name:            user.Name,
+		Email:           user.Email,
+		AvatarURL:       h.resolveAvatarURLPtr(textToPtr(user.AvatarUrl)),
+		AccountDisabled: user.AccountDisabledAt.Valid || auth.IsTemporarilyDisabledUser(uuidToString(user.ID), user.Email)}
 }
 
 func normalizeMemberRole(role string) (string, bool) {
@@ -667,13 +686,42 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updatedMember, err := h.Queries.UpdateMemberRole(r.Context(), db.UpdateMemberRoleParams{
+	roleQueries := h.Queries
+	var ownerTx pgx.Tx
+	if role == "owner" {
+		// 2026-10-19 coder(lq): Serialize ownership promotion with suspension
+		// on the same user row; a disabled account cannot become the last owner.
+		ownerTx, err = h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update member")
+			return
+		}
+		defer ownerTx.Rollback(r.Context())
+		var disabled bool
+		if err = ownerTx.QueryRow(r.Context(), `SELECT (account_disabled_at IS NOT NULL) FROM "user" WHERE id=$1 FOR UPDATE`, target.UserID).Scan(&disabled); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to verify account access")
+			return
+		}
+		if disabled || auth.IsTemporarilyDisabledUserID(uuidToString(target.UserID)) {
+			writeError(w, http.StatusBadRequest, "a disabled account cannot become an owner")
+			return
+		}
+		roleQueries = h.Queries.WithTx(ownerTx)
+	}
+	updatedMember, err := roleQueries.UpdateMemberRole(r.Context(), db.UpdateMemberRoleParams{
 		ID:   target.ID,
 		Role: role,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update member")
 		return
+	}
+
+	if ownerTx != nil {
+		if err = ownerTx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update member")
+			return
+		}
 	}
 
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(target.UserID), workspaceID)

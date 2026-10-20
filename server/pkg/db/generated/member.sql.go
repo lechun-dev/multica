@@ -121,6 +121,7 @@ func (q *Queries) ListMembers(ctx context.Context, workspaceID pgtype.UUID) ([]M
 const listMembersWithUser = `-- name: ListMembersWithUser :many
 SELECT m.id, m.workspace_id, m.user_id, m.role, m.created_at,
        u.name as user_name, u.email as user_email, u.avatar_url as user_avatar_url,
+       (u.account_disabled_at IS NOT NULL)::boolean AS account_disabled,
        -- 2026-09-06 coder(lq): Owners/admins can only receive their role from
        -- an authenticated workspace action; retain that legacy signal for
        -- accounts created before projectauth_user_logins was introduced.
@@ -133,15 +134,16 @@ ORDER BY m.created_at ASC
 `
 
 type ListMembersWithUserRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	UserID        pgtype.UUID        `json:"user_id"`
-	Role          string             `json:"role"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UserName      string             `json:"user_name"`
-	UserEmail     string             `json:"user_email"`
-	UserAvatarUrl pgtype.Text        `json:"user_avatar_url"`
-	HasLoggedIn   pgtype.Bool        `json:"has_logged_in"`
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Role            string             `json:"role"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UserName        string             `json:"user_name"`
+	UserEmail       string             `json:"user_email"`
+	UserAvatarUrl   pgtype.Text        `json:"user_avatar_url"`
+	AccountDisabled bool               `json:"account_disabled"`
+	HasLoggedIn     pgtype.Bool        `json:"has_logged_in"`
 }
 
 func (q *Queries) ListMembersWithUser(ctx context.Context, workspaceID pgtype.UUID) ([]ListMembersWithUserRow, error) {
@@ -162,6 +164,7 @@ func (q *Queries) ListMembersWithUser(ctx context.Context, workspaceID pgtype.UU
 			&i.UserName,
 			&i.UserEmail,
 			&i.UserAvatarUrl,
+			&i.AccountDisabled,
 			&i.HasLoggedIn,
 		); err != nil {
 			return nil, err

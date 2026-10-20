@@ -18,13 +18,11 @@ import (
 // Renewal turns that into an IDLE bound instead: a token inside its renewal
 // window is re-signed with a fresh `exp` on the next authenticated request.
 //
-// The model is deliberately stateless. Renewal copies the identity claims of
-// a token we ourselves signed and moves `exp`; there is no session row, no
-// refresh token, and no DB read on the hot path. What that buys in
-// simplicity it gives up in revocation — which the JWT path never had
-// anyway (logout clears the cookie; the token itself stays valid until
-// `exp`). Real revocation needs server-side session records and is tracked
-// separately.
+// 2026-10-19 coder(lq): Sessions remain signed JWTs without per-session rows.
+// Authentication now checks the account's persisted disabled state and session
+// version before accepting one. Suspension increments that version, so old
+// sessions stay revoked even after the account is enabled again. Renewal copies
+// the version forward and cannot turn an old session into a current one.
 //
 // The idle bound is approximate, and the approximation is one-sided: a
 // session is renewed only once it drops below half its TTL, so the guarantee
@@ -247,6 +245,12 @@ func RenewSessionToken(claims jwt.MapClaims) (string, time.Time, error) {
 		"iat":          now.Unix(),
 		sessionIDClaim: sid,
 	}
+	// 2026-10-19 coder(lq): Never revive a revoked session by renewing it.
+	version, err := SessionVersion(claims)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	next["session_version"] = version
 	if email != "" {
 		next["email"] = email
 	}

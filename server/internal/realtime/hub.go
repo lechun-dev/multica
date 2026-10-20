@@ -18,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // MembershipChecker verifies a user belongs to a workspace.
@@ -221,11 +222,12 @@ func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 // Client represents a single WebSocket connection with identity and the set
 // of scopes it is currently subscribed to.
 type Client struct {
-	hub         *Hub
-	conn        *websocket.Conn
-	send        chan []byte
-	userID      string
-	workspaceID string
+	accountCheck func(context.Context) error
+	hub          *Hub
+	conn         *websocket.Conn
+	send         chan []byte
+	userID       string
+	workspaceID  string
 
 	// subscriptions is guarded by hub.mu. Tracks the scopes this client is
 	// currently in. Used to clean up rooms on disconnect.
@@ -275,12 +277,13 @@ type SubscriptionCallback func(scopeType, scopeID string)
 
 // Hub manages WebSocket connections organized into scope-based rooms.
 type Hub struct {
-	rooms      map[scopeKey]map[*Client]bool
-	clients    map[*Client]bool // every connected client (used by global Broadcast and snapshots)
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	accountQueries *db.Queries
+	rooms          map[scopeKey]map[*Client]bool
+	clients        map[*Client]bool // every connected client (used by global Broadcast and snapshots)
+	broadcast      chan []byte
+	register       chan *Client
+	unregister     chan *Client
+	mu             sync.RWMutex
 
 	authorizer ScopeAuthorizer
 
@@ -792,11 +795,15 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		return
 	}
 
-	var userID string
+	var userID, accountToken string
 	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
-		uid, errMsg := authenticateToken(cookie.Value, pr, r.Context())
+		accountToken = cookie.Value
+		uid, errMsg := hub.authenticateAccount(cookie.Value, pr, r.Context())
 		if errMsg != "" {
 			status := http.StatusUnauthorized
+			if errMsg == `{"error":"account access unavailable"}` {
+				status = http.StatusServiceUnavailable
+			}
 			if errMsg == `{"error":"account disabled"}` {
 				status = http.StatusForbidden
 			}
@@ -830,7 +837,8 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			writeWSAuthErrorAndClose(conn, []byte(errMsg), "workspace_id", workspaceID)
 			return
 		}
-		uid, errMsg := authenticateToken(tokenStr, pr, r.Context())
+		accountToken = tokenStr
+		uid, errMsg := hub.authenticateAccount(tokenStr, pr, r.Context())
 		if errMsg != "" {
 			writeWSAuthErrorAndClose(conn, []byte(errMsg), "workspace_id", workspaceID)
 			return
@@ -879,6 +887,11 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		send:        make(chan []byte, 256),
 		userID:      userID,
 		workspaceID: workspaceID,
+	}
+	if hub.accountQueries != nil {
+		client.accountCheck = func(ctx context.Context) error {
+			return auth.CheckAccountToken(ctx, hub.accountQueries, userID, accountToken)
+		}
 	}
 	hub.register <- client
 
@@ -1046,6 +1059,8 @@ func (c *Client) sendJSON(v any) {
 }
 
 func (c *Client) writePump() {
+	accountTicker := time.NewTicker(accountAccessCheckInterval)
+	defer accountTicker.Stop()
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -1060,8 +1075,15 @@ func (c *Client) writePump() {
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
+			if !c.accountAccessAllowed() {
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
 				slog.Warn("websocket write error", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+				return
+			}
+		case <-accountTicker.C:
+			if !c.accountAccessAllowed() {
 				return
 			}
 		case <-ticker.C:
