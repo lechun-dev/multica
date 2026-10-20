@@ -294,6 +294,24 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.11",
+        date: "2026-10-20",
+        title: "Agent task queries and DingTalk member management",
+        changes: [],
+        features: [
+          "Add read-only APIs for agents to query issue lists and details and resolve member and project names to IDs.",
+          "Add member search, safe suspension of confirmed departed DingTalk accounts, and scheduled directory and departure refreshes.",
+        ],
+        improvements: [
+          "Allow workspace owners to query all projects and issues through scoped agent APIs without changing normal application permissions.",
+          "Verify deployed image versions and persist the verified release tag for subsequent deployments.",
+        ],
+        fixes: [
+          "Improve DingTalk embedded-browser login, email autofill, and CSS compatibility in older browsers.",
+          "Align issue manager permissions and access-request notification recipients.",
+        ],
+      },
+      {
         version: "0.5.10",
         date: "2026-10-14",
         title: "Comment mention permissions and task access requests",
