@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, statSync, readdirSync, symlinkSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -111,4 +114,101 @@ test("runs database migrations and waits for backend readiness", () => {
   );
   assert.match(sharedWorkflow, /http:\/\/127\.0\.0\.1:8080\/readyz/);
   assert.match(sharedWorkflow, /Backend did not become ready within 180 seconds/);
+});
+
+// 2026-10-20 coder(lq): Execute the exact remote persistence block against fixtures;
+// a successful deployment must not leave maintenance pointing at an old release.
+function persistenceBlock() {
+  const workflow = readWorkflow("deploy.yml");
+  return workflow.split("# BEGIN PERSIST_VERIFIED_DEPLOY_TAG\n")[1]
+    .split("# END PERSIST_VERIFIED_DEPLOY_TAG")[0]
+    .split("\n").map((line) => line.replace(/^ {12}/, "")).join("\n");
+}
+
+test("persists the verified tag while preserving other settings and permissions", () => {
+  for (const original of [
+    "# deployment\nMULTICA_IMAGE_TAG=v0.5.5\nOTHER_SETTING=keep-exactly\n",
+    "OTHER_SETTING=keep-exactly\n",
+    "  export MULTICA_IMAGE_TAG = 'v0.5.5'\nMULTICA_IMAGE_TAG=v0.5.9\nOTHER_SETTING=keep-exactly\n",
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), "missionos-deploy-tag-"));
+    try {
+      writeFileSync(join(dir, ".env"), original, { mode: 0o600 });
+      const result = spawnSync("sh", ["-c", `set -eu\nimage_tag=v0.5.10\n${persistenceBlock()}`], {
+        cwd: dir, encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const saved = readFileSync(join(dir, ".env"), "utf8");
+      assert.equal(saved.match(/^MULTICA_IMAGE_TAG=v0\.5\.10$/gm)?.length, 1);
+      assert.ok(saved.includes("OTHER_SETTING=keep-exactly\n"));
+      assert.equal(saved.includes("v0.5.5"), false);
+      assert.equal(statSync(join(dir, ".env")).mode & 0o777, 0o600);
+      assert.deepEqual(readdirSync(dir), [".env"]);
+      assert.equal(result.stdout, "");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test("verifies running images before persisting and rechecks without temporary export", () => {
+  const workflow = readWorkflow("deploy.yml");
+  assert.match(workflow, /group: deploy-.*inputs\.compose_project/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  const persisted = workflow.indexOf("# BEGIN PERSIST_VERIFIED_DEPLOY_TAG");
+  assert.ok(workflow.indexOf("Backend did not become ready") < persisted);
+  assert.ok(workflow.indexOf("is running a stale image ID") < persisted);
+  assert.ok(workflow.indexOf("PROJECT_OWNER_BYPASS_ENABLED mismatch") < persisted);
+  assert.ok(workflow.indexOf("unset MULTICA_IMAGE_TAG") > persisted);
+  assert.match(workflow, /compose config --images/);
+});
+
+test("never replaces a missing or symlinked environment file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "missionos-deploy-tag-"));
+  try {
+    const result = spawnSync("sh", ["-c", `set -eu\nimage_tag=v0.5.10\n${persistenceBlock()}`], {
+      cwd: dir, encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(readdirSync(dir), []);
+    writeFileSync(join(dir, "original"), "MULTICA_IMAGE_TAG=v0.5.5\n", { mode: 0o600 });
+    symlinkSync("original", join(dir, ".env"));
+    const linked = spawnSync("sh", ["-c", `set -eu\nimage_tag=v0.5.10\n${persistenceBlock()}`], {
+      cwd: dir, encoding: "utf8",
+    });
+    assert.notEqual(linked.status, 0);
+    assert.equal(readFileSync(join(dir, "original"), "utf8"), "MULTICA_IMAGE_TAG=v0.5.5\n");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a wrong tag or stale running image cannot be recorded as deployment success", () => {
+  const workflow = readWorkflow("deploy.yml");
+  const start = workflow.indexOf("            for service in backend frontend; do");
+  const end = workflow.indexOf("            # 2026-10-20 coder(lq): Persist only", start);
+  assert.ok(start >= 0 && end > start);
+  const verification = workflow.slice(start, end);
+  for (const scenario of ["correct", "wrong-tag", "stale-image"]) {
+    const dir = mkdtempSync(join(tmpdir(), "missionos-deploy-images-"));
+    try {
+      writeFileSync(join(dir, ".env"), "MULTICA_IMAGE_TAG=v0.5.5\n", { mode: 0o600 });
+      const result = spawnSync("sh", ["-c", `set -eu
+image_tag=v0.5.10
+scenario=${scenario}
+compose() { printf '%s\\n' "$3"; }
+docker() {
+  if [ "$1" = image ]; then printf '%s\\n' expected-id; return; fi
+  case "$3" in
+    *Config.Image*)
+      if [ "$scenario" = wrong-tag ]; then printf '%s\\n' registry/multica-backend:v0.5.5;
+      else printf '%s\\n' registry/multica-backend:v0.5.10; fi ;;
+    *Image*)
+      if [ "$scenario" = stale-image ]; then printf '%s\\n' old-id;
+      else printf '%s\\n' expected-id; fi ;;
+  esac
+}
+${verification}
+${persistenceBlock()}`], { cwd: dir, encoding: "utf8" });
+      assert.equal(result.status === 0, scenario === "correct", result.stderr);
+      assert.equal(readFileSync(join(dir, ".env"), "utf8"),
+        `MULTICA_IMAGE_TAG=${scenario === "correct" ? "v0.5.10" : "v0.5.5"}\n`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
 });

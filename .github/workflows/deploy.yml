@@ -31,6 +31,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # 2026-10-20 coder(lq): Serialize deployments of one environment; never cancel a live rollout.
+    concurrency:
+      group: deploy-${{ inputs.compose_project || 'multica' }}-${{ inputs.environment_name || 'production' }}
+      cancel-in-progress: false
     environment: ${{ inputs.environment_name || 'production' }}
     steps:
       - name: Check out deployment policy
@@ -149,4 +153,56 @@ jobs:
               echo "PROJECT_OWNER_BYPASS_ENABLED mismatch: expected '$expected_owner_bypass', backend received '$actual_owner_bypass'" >&2
               exit 1
             fi
+            # 2026-10-20 coder(lq): Health alone does not prove the selected release is running.
+            # Compare both the configured reference and immutable image ID before recording success.
+            for service in backend frontend; do
+              container="$(compose ps -q "$service")"
+              actual_image="$(docker inspect -f '{{.Config.Image}}' "$container")"
+              if [ "${actual_image##*:}" != "$image_tag" ]; then
+                echo "$service image tag mismatch: expected $image_tag, received $actual_image" >&2
+                exit 1
+              fi
+              expected_id="$(docker image inspect -f '{{.Id}}' "$actual_image")"
+              actual_id="$(docker inspect -f '{{.Image}}' "$container")"
+              if [ "$actual_id" != "$expected_id" ]; then
+                echo "$service is running a stale image ID." >&2
+                exit 1
+              fi
+            done
+
+            # 2026-10-20 coder(lq): Persist only a verified release so later Compose maintenance
+            # cannot silently recreate containers with the old .env tag. Never print/copy secrets.
+            # BEGIN PERSIST_VERIFIED_DEPLOY_TAG
+            [ -f .env ] && [ ! -L .env ]
+            env_tmp="$(mktemp .env.deploy.XXXXXX)"
+            trap 'rm -f "$env_tmp"' EXIT HUP INT TERM
+            env_mode="$(stat -c '%a' .env 2>/dev/null || stat -f '%Lp' .env)"
+            chmod "$env_mode" "$env_tmp"
+            awk -v tag="$image_tag" '
+              /^[[:space:]]*(export[[:space:]]+)?MULTICA_IMAGE_TAG[[:space:]]*=/ {
+                if (!written) print "MULTICA_IMAGE_TAG=" tag
+                written=1
+                next
+              }
+              { print }
+              END { if (!written) print "MULTICA_IMAGE_TAG=" tag }
+            ' .env > "$env_tmp"
+            mv -f "$env_tmp" .env
+            trap - EXIT HUP INT TERM
+            # END PERSIST_VERIFIED_DEPLOY_TAG
+
+            # 2026-10-20 coder(lq): With the temporary export removed, maintenance must still
+            # resolve both services to the just-verified images from the saved configuration.
+            unset MULTICA_IMAGE_TAG
+            for image in $(compose config --images); do
+              case "$image" in
+                *multica-backend:*|*multica-web:*)
+                  if [ "${image##*:}" != "$image_tag" ]; then
+                    echo "Saved deployment image tag does not match $image_tag." >&2
+                    exit 1
+                  fi
+                  ;;
+              esac
+            done
+            echo "Verified and saved deployment image tag: $image_tag"
             docker image prune -f
