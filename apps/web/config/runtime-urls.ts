@@ -149,6 +149,15 @@ export function runtimeRewriteDestination(
   if (pathname === "/internal/auth/dingtalk/exchange") {
     return appendPath(remoteApiUrl, pathname);
   }
+  // Purpose-specific MissionOS reads used by newDingSDK. Keep this match
+  // narrow: other /internal routes must not become reachable through the web
+  // origin merely because these two agent-facing endpoints are proxied.
+  if (
+    pathname === "/internal/agent/issues" ||
+    pathname.startsWith("/internal/agent/issues/")
+  ) {
+    return appendPath(remoteApiUrl, pathname);
+  }
   if (isBackendAuthPath(pathname)) {
     return appendPath(remoteApiUrl, pathname);
   }

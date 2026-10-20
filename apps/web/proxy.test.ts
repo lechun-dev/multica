@@ -216,6 +216,31 @@ describe("proxy runtime upstream rewrites", () => {
     }
   });
 
+  it.each([
+    [
+      "/internal/agent/issues?workspace_id=workspace-1&limit=50&offset=0",
+      "http://backend:8080/internal/agent/issues?workspace_id=workspace-1&limit=50&offset=0",
+    ],
+    [
+      "/internal/agent/issues/LC-1759?workspace_id=workspace-1",
+      "http://backend:8080/internal/agent/issues/LC-1759?workspace_id=workspace-1",
+    ],
+  ])(
+    "rewrites MissionOS agent issue reads to the runtime API origin",
+    (path, expected) => {
+      const previous = process.env.REMOTE_API_URL;
+      process.env.REMOTE_API_URL = "http://backend:8080";
+      try {
+        const res = proxy(makeRequest(path));
+
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-middleware-rewrite")).toBe(expected);
+      } finally {
+        restoreEnv("REMOTE_API_URL", previous);
+      }
+    },
+  );
+
   it("rewrites Plugin API requests to the runtime API origin", () => {
     const previous = process.env.REMOTE_API_URL;
     process.env.REMOTE_API_URL = "http://backend:8080";
