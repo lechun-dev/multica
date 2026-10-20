@@ -1,5 +1,7 @@
 "use client";
 
+import { inboxItemKey } from "../inbox/grouping";
+
 import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
@@ -608,8 +610,8 @@ export async function handleInboxNew(
       // Fall through with default behavior.
     }
   }
-  // `issueKey` matches the inbox page's URL selector (issue id when the
-  // item is attached to an issue, otherwise the inbox item id). `itemId`
+  // 2026-10-20 coder(lq): `issueKey` matches the inbox group selector,
+  // including independent access-request notices. `itemId`
   // is the inbox row's own id, needed to fire markInboxRead on click.
   // A null slug (workspace list unavailable / item from a workspace this
   // client can't see) still shows the banner — the user should learn about
@@ -618,7 +620,7 @@ export async function handleInboxNew(
   const payload: SystemNotificationPayload = {
     slug: slug ?? "",
     itemId: item.id,
-    issueKey: item.issue_id ?? item.id,
+    issueKey: inboxItemKey(item),
     title: item.title,
     body: item.body ?? "",
   };

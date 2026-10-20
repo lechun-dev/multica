@@ -86,8 +86,15 @@ export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
     includeWorkspaceOwned,
   );
   const highlight = useCommentHighlightHash();
+  const { searchParams } = useNavigation();
+  // 2026-10-20 coder(lq): Review links remain usable after dismissing the
+  // inbox notice. The dialog still loads and checks the current request ACL.
+  const accessRequestId = searchParams?.get("access_request") || undefined;
+  const requestQuery = accessRequestId
+    ? `?${new URLSearchParams({ access_request: accessRequestId })}`
+    : "";
 
-  useCanonicalIssueUrl(routeId, issue?.identifier, highlight.hash);
+  useCanonicalIssueUrl(routeId, issue?.identifier, `${requestQuery}${highlight.hash}`);
 
   if (!visibilityReady || isResolving) return <IssueDetailSkeleton />;
 
@@ -113,6 +120,7 @@ export function IssueDetailRoute({ routeId, onDelete }: IssueDetailRouteProps) {
       issueId={canonicalId}
       onDelete={onDelete}
       highlightCommentId={highlight.commentId}
+      accessRequestId={accessRequestId}
     />
   );
 }

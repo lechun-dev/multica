@@ -53,6 +53,7 @@
     "./issues/stores/view-store-context": "./issues/stores/view-store-context.tsx",
     "./issues/stores/*": "./issues/stores/*.ts",
     "./inbox": "./inbox/index.ts",
+    "./inbox/grouping": "./inbox/grouping.ts",
     "./inbox/queries": "./inbox/queries.ts",
     "./inbox/mutations": "./inbox/mutations.ts",
     "./inbox/filter-store": "./inbox/filter-store.ts",

@@ -27,8 +27,8 @@ type IssueAccessGrantsDialogProps = {
   projectId?: string | null;
   defaultOpen?: boolean;
   /**
-   * Access request the host wants this dialog to land on. Set when a task
-   * access notification is opened from the inbox: the request is centred in
+   * 2026-10-20 coder(lq): Access request targeted by an inbox or DingTalk
+   * review link. The request is centred in
    * the pending list and can no longer be approved/rejected once it left the
    * pending state.
    */
@@ -123,8 +123,8 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     setShareUrl(window.location.href);
   }, [open]);
 
-  // 2026-09-20 coder(lq): 从收件箱点击“任务权限申请”通知时，直接打开本弹窗并定位到该申请，
-  // 不再要求审批人自己在一长串申请里找。首次挂载与 token 变化各触发一次。
+  // 2026-10-20 coder(lq): Inbox selections and direct review links open the
+  // matching application. A changed request/token replays the landing.
   useEffect(() => {
     if (!focusRequestId) return;
     const focusKey = `${focusRequestId}:${focusRequestToken ?? "initial"}`;

@@ -325,7 +325,7 @@
     "task_request_status_rejected": "Rejected",
     "task_request_status_cancelled": "Cancelled",
     "task_request_status_expired": "Expired",
-    "task_request_focus_hint": "Opened from the inbox and focused on this request.",
+    "task_request_focus_hint": "Focused on this access request.",
     "task_diagnostic_permission": "Permission",
     "task_diagnostic_role_scope": "Role scope",
     "task_diagnostic_source_resource": "Source resource",

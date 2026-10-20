@@ -324,7 +324,7 @@
     "task_request_status_rejected": "거절됨",
     "task_request_status_cancelled": "취소됨",
     "task_request_status_expired": "만료됨",
-    "task_request_focus_hint": "받은 편지함에서 열어 이 요청에 초점을 맞췄습니다.",
+    "task_request_focus_hint": "이 권한 요청을 표시하고 있습니다.",
     "task_diagnostic_permission": "권한",
     "task_diagnostic_role_scope": "역할 범위",
     "task_diagnostic_source_resource": "출처 리소스",

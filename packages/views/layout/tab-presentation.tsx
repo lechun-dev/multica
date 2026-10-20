@@ -1,5 +1,7 @@
 "use client";
 
+import { inboxItemKey } from "@multica/core/inbox/grouping";
+
 import { useMemo } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { issueStatusListOptions, buildIssueStatusCatalog } from "@multica/core/issue-statuses/queries";
@@ -100,24 +102,20 @@ function useTabEntityData(subject: TabSubject, wsId: string): TabEntityData {
   const inboxItem =
     subject.kind === "inbox" && subject.selectedKey
       ? (activeInboxList?.find(
-          (i) => (i.issue_id ?? i.id) === subject.selectedKey,
+          (i) => inboxItemKey(i) === subject.selectedKey,
         ) ?? null)
       : null;
 
   // One issue query serves both a direct issue tab and an inbox-selected issue.
   //
-  // An inbox selection resolves straight from `selectedKey`: it IS the key the
-  // inbox groups by (`issue_id ?? id`), so for an issue-backed notification it
-  // already IS the issue id, and the hop through the list row was redundant.
-  // Going direct means a restored tab resolves from the issue cache alone,
-  // instead of silently depending on someone having fetched the whole Inbox
-  // first (MUL-6967). A key that is an issue-less notification's own id simply
-  // matches no issue, and falls through to the item branch below.
+  // 2026-10-20 coder(lq): Ordinary task groups can resolve from the task
+  // cache before the inbox loads. Requests use notice IDs, so resolve their
+  // actual task through the inbox row instead of treating a notice as a task.
   const issueId =
     subject.kind === "issue"
       ? subject.id
       : subject.kind === "inbox"
-        ? (subject.selectedKey ?? "")
+        ? (inboxItem?.issue_id ?? subject.selectedKey ?? "")
         : "";
   // An issue tab's URL segment may be a human-readable identifier (`MUL-123`).
   // The route seeds that entry when it resolves, but only the UUID-keyed entry

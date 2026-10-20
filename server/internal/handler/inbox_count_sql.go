@@ -30,11 +30,11 @@ func unreadInboxWindowSummarySQL(permissions, includeOwned bool) string {
 	SELECT workspace_id, issue_limit FROM unnest($1::uuid[], $2::bigint[]) AS policy(workspace_id, issue_limit)
 	) SELECT policy.workspace_id, filtered.count FROM policies policy CROSS JOIN LATERAL (
 	WITH newest AS MATERIALIZED (
-	SELECT DISTINCT ON (COALESCE(i.issue_id, i.id)) i.issue_id, i.read
+	SELECT DISTINCT ON (CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END) i.issue_id, i.read
 	FROM inbox_item i JOIN member m ON m.workspace_id=i.workspace_id AND m.user_id=i.recipient_id
 	WHERE i.workspace_id=policy.workspace_id AND i.recipient_type='member' AND i.recipient_id=$3 AND i.archived=false
 	AND %s AND (i.issue_id IS NULL OR %s)
-	ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC
+	ORDER BY CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END, i.created_at DESC
 	)%s SELECT count(*)::bigint AS count FROM newest WHERE newest.read=false%s
 	) filtered`, inboxIssueNotArchivedPredicate("i"), issueWindowIDPredicate("i.issue_id", "policy.workspace_id", "policy.issue_limit"), visibility, predicate)
 }

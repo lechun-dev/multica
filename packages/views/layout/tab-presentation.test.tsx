@@ -208,6 +208,23 @@ describe("useTabPresentation — live from cache", () => {
     });
   });
 
+  it("resolves an independent access-request key to the linked task title", () => {
+    const qc = makeClient();
+    seed(qc);
+    qc.setQueryData(inboxListOptions("ws1").queryKey, [{
+      id: "access-notice", issue_id: "i1", type: "task_access_request", title: "Access request",
+      workspace_id: "ws1", recipient_type: "member", recipient_id: "user",
+      actor_type: "member", actor_id: "applicant", severity: "action_required", body: null,
+      issue_status: null, read: false, archived: false, created_at: "2026-10-20T00:00:00Z", details: null,
+    }]);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useTabPresentation("/acme/inbox?issue=access-notice"), { wrapper });
+    expect(result.current.title).toBe("MUL-1: Fix login");
+    qc.clear();
+  });
+
   it("inbox container: selected non-issue shows its display title", () => {
     expect(presentationOf("/acme/inbox?issue=n2")).toEqual({
       visual: { kind: "icon", icon: "Inbox" },

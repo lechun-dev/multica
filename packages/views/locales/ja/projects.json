@@ -324,7 +324,7 @@
     "task_request_status_rejected": "却下済み",
     "task_request_status_cancelled": "キャンセル済み",
     "task_request_status_expired": "期限切れ",
-    "task_request_focus_hint": "受信トレイから開き、この申請にフォーカスしました。",
+    "task_request_focus_hint": "このアクセス申請を表示しています。",
     "task_diagnostic_permission": "権限",
     "task_diagnostic_role_scope": "ロール範囲",
     "task_diagnostic_source_resource": "ソースリソース",

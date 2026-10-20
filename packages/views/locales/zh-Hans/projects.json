@@ -324,7 +324,7 @@
     "task_request_status_rejected": "已拒绝",
     "task_request_status_cancelled": "已取消",
     "task_request_status_expired": "已过期",
-    "task_request_focus_hint": "已从收件箱打开并定位到该申请。",
+    "task_request_focus_hint": "已定位到此权限申请。",
     "task_diagnostic_permission": "权限",
     "task_diagnostic_role_scope": "角色范围",
     "task_diagnostic_source_resource": "来源对象",

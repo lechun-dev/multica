@@ -119,6 +119,20 @@ The host bridge reads `DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS` (default `true`)
 to enable or disable P2P notices when another member explicitly mentions an
 Agent. The Agent owner's own member or Agent comments are suppressed.
 
+## 任务权限申请通知
+
+权限申请和审批结果同时写入 MissionOS 机器人通知队列及个人 1v1 队列。
+机器人沿用上述三项应用配置和现有 Worker，不依赖申请人绑定个人钉钉身份；
+接收人须为未禁用的当前工作区成员，且具有有效的通知身份绑定。
+通知显示申请人姓名、中文权限名称、任务编号及名称，不显示用户 ID。
+申请卡片提供“查看并处理申请”按钮，定位到已有的权限申请处理界面；
+点击链接本身不授予权限。结果卡片提供“打开任务”按钮。
+
+两条队列在权限申请事务内分别隔离失败，随事务一起提交或回滚。
+机器人复用现有队列的去重及重试，不通过收件箱事件额外转发，也不会自动补发历史通知。
+配置不完整或接收人无有效绑定时不入机器人队列，并记录跳过原因。
+测试仅使用本地测试数据库、内存实现或模拟接口，不发送真实钉钉消息。
+
 ## 本机 DWS 个人私信
 
 桌面端登录的成员在评论中使用 `mention://member/<user-id>` 提及另一位成员时，

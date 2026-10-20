@@ -63,6 +63,8 @@ const (
 // delivery and the Mission robot's member notifications. The two paths remain
 // independently gated: DWS sends the former, while the robot outbox sends
 // @mention, Agent-completion, and human-assignee notifications.
+// 2026-10-20 coder(lq): Access-request handlers also stage robot messages in
+// this same durable outbox, atomically with their request transaction.
 func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, canViewIssue func(context.Context, string, string, string) (bool, error)) (*dingtalkpersonal.Service, error) {
 	if bus == nil || pool == nil {
 		slog.Warn("dingtalk notify disabled: event bus or database is unavailable")

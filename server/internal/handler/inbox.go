@@ -385,8 +385,9 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Archive all sibling inbox items for the same issue (issue-level archive)
-	if item.IssueID.Valid {
+	// 2026-10-20 coder(lq): Requests are independent actions; ordinary task
+	// activity still dismisses its siblings together.
+	if item.IssueID.Valid && item.Type != "task_access_request" {
 		h.Queries.ArchiveInboxByIssue(r.Context(), db.ArchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
 			RecipientType: item.RecipientType,
@@ -427,8 +428,8 @@ func (h *Handler) UnarchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Restore all sibling inbox items for the same issue (issue-level restore).
-	if item.IssueID.Valid {
+	// 2026-10-20 coder(lq): Restore only the selected notification group.
+	if item.IssueID.Valid && item.Type != "task_access_request" {
 		h.Queries.UnarchiveInboxByIssue(r.Context(), db.UnarchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
 			RecipientType: item.RecipientType,
@@ -625,13 +626,13 @@ func (h *Handler) unreadInboxCountsWithinProjectPermissions(ctx context.Context,
 	visibilityCTEs := issueVisibilityCandidateCTEDefs("policy.workspace_id", "$1", includeWorkspaceOwned,
 		"i.id IN (SELECT n.issue_id FROM newest n WHERE n.workspace_id = policy.workspace_id AND n.read = false)")
 	query := fmt.Sprintf(`WITH newest AS MATERIALIZED (
-		SELECT DISTINCT ON (i.workspace_id, COALESCE(i.issue_id, i.id))
+		SELECT DISTINCT ON (i.workspace_id, CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END)
 			i.workspace_id, i.issue_id, i.read
 		FROM inbox_item i
 		JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
 		WHERE i.recipient_type = 'member' AND i.recipient_id = $1
 		  AND i.archived = false AND %s
-		ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
+		ORDER BY i.workspace_id, CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END, i.created_at DESC
 	), visible AS MATERIALIZED (
 		SELECT policy.workspace_id, permitted.id
 		FROM (SELECT DISTINCT workspace_id FROM newest WHERE read = false AND issue_id IS NOT NULL) policy

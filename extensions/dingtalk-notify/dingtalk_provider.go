@@ -269,7 +269,9 @@ func mustActionCardParam(text string) (string, bool) {
 	lastLine = strings.TrimSuffix(lastLine, "**")
 	buttonTitle := ""
 	buttonPrefix := ""
-	for _, title := range []string{"打开任务并回复", "打开任务"} {
+	// 2026-10-20 coder(lq): Permission requests retain their dedicated review
+	// action instead of degrading to a plain Markdown-only notification.
+	for _, title := range []string{"打开任务并回复", "打开任务", "查看并处理申请"} {
 		prefix := "[" + title + "]("
 		if strings.HasPrefix(lastLine, prefix) {
 			buttonTitle = title

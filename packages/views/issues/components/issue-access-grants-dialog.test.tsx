@@ -432,7 +432,7 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeInTheDocument();
   });
 
-  // 2026-09-20 coder(lq): 收件箱点开“任务权限申请”通知后，弹窗必须自己打开并落在该申请上。
+  // 2026-10-20 coder(lq): Opening a request focuses review without approving it.
   it("opens on its own and lands on the request the notification pointed at", async () => {
     mocks.listIssueAccessRequests.mockResolvedValue({ items: [pendingRequest] });
 
@@ -445,9 +445,10 @@ describe("IssueAccessGrantsDialog", () => {
       "data-request-id",
       pendingRequest.id,
     );
-    expect(within(dialog).getByText(/Opened from the inbox/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Focused on this access request/)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Approve" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(mocks.reviewIssueAccessRequest).not.toHaveBeenCalled();
   });
 
   it("shows a decided request as handled instead of re-offering the decision", async () => {

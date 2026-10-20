@@ -248,3 +248,18 @@ describe("unreadCountForWorkspace", () => {
     expect(unreadCountForWorkspace([], "ws-1")).toBe(0);
   });
 });
+
+
+describe("access request inbox groups", () => {
+  it("keeps each applicant and reapplication separate from ordinary task updates", () => {
+    const rows = [
+      item({ id: "first-request", type: "task_access_request", details: { access_request_id: "request-1" } }),
+      item({ id: "second-request", type: "task_access_request", details: { access_request_id: "request-2" } }),
+      item({ id: "reapplication", type: "task_access_request", details: { access_request_id: "request-3" } }),
+      item({ id: "comment", details: { comment_id: "comment-1" } }),
+    ];
+    expect(deduplicateInboxItems(rows).map((row) => row.id).sort()).toEqual(rows.map((row) => row.id).sort());
+    expect(deduplicateInboxItems(rows).filter((row) => row.type === "task_access_request").every((row) => !row.details?.comment_id)).toBe(true);
+    expect(deduplicateArchivedInboxItems(rows.map((row) => ({ ...row, archived: true })))).toHaveLength(4);
+  });
+});

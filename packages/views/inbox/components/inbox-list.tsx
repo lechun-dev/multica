@@ -1,5 +1,7 @@
 "use client";
 
+import { inboxItemKey } from "@multica/core/inbox/grouping";
+
 import {
   useCallback,
   useEffect,
@@ -132,7 +134,7 @@ export function InboxList({
     focusList();
 
     const current = items.findIndex(
-      (item) => (item.issue_id ?? item.id) === selectedKey,
+      (item) => inboxItemKey(item) === selectedKey,
     );
     const step = event.key === "ArrowDown" ? 1 : -1;
     // Nothing selected yet: Down enters the list at the top, Up at the bottom.
@@ -223,7 +225,7 @@ export function InboxList({
     <InboxListItem
       item={item}
       view={view}
-      isSelected={(item.issue_id ?? item.id) === selectedKey}
+      isSelected={inboxItemKey(item) === selectedKey}
       onClick={() => selectItem(item)}
       onAction={() => onAction(item.id)}
     />
