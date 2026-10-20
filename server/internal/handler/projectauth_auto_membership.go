@@ -432,6 +432,8 @@ func syncIssueMentionAccessWithExecutor(ctx context.Context, executor dbExecutor
 // write. Assignee and mention grants use the task Member role and are
 // reconciled against current issue/comment content. Manual grants remain
 // untouched because only source=system rows are removed.
+// 2026-10-20 coder(lq): Current-assignee management is resolved dynamically;
+// do not persist Manager grants here and leave management behind on transfer.
 func syncIssueAccessWithExecutor(ctx context.Context, executor dbExecutor, previous *db.Issue, issue db.Issue) error {
 	if previous != nil && previous.ProjectID.Valid && (!issue.ProjectID.Valid || previous.ProjectID != issue.ProjectID) {
 		_, err := executor.Exec(ctx, `DELETE FROM projectauth_access_grants WHERE issue_id=$1 AND source='system'`, uuidToString(issue.ID))

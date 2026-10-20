@@ -385,7 +385,11 @@ func (e *effectiveEvaluation) base(ctx context.Context, resource IssueAccessReso
 		role   TaskRole
 		source AccessSourceKind
 	}{
-		{resource.CreatorUserID, TaskOwner, AccessSourceCreator}, {resource.AssigneeUserID, TaskMember, AccessSourceAssignee}, {resource.OriginatorUserID, TaskMember, AccessSourceOriginator},
+		// 2026-10-20 coder(lq): The current assignee (or their Agent's owner)
+		// manages the task dynamically; reassignment must not persist a Manager grant.
+		{resource.CreatorUserID, TaskOwner, AccessSourceCreator},
+		{resource.AssigneeUserID, TaskManager, AccessSourceAssignee},
+		{resource.OriginatorUserID, TaskMember, AccessSourceOriginator},
 	} {
 		if dynamic.user != e.subject.UserID {
 			continue

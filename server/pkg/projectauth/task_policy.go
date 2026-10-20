@@ -68,6 +68,23 @@ func (s *Service) CheckIssueWithWorkspaceScope(ctx context.Context, subject Subj
 			return nil
 		}
 	}
+	// 2026-10-20 coder(lq): Keep task grant/revoke checks aligned with the
+	// effective resolver: a current human assignee or Agent owner is a Manager.
+	// Reuse its scoped identity snapshot instead of duplicating Agent-owner SQL.
+	if accessRepo, ok := s.repo.(EffectiveAccessRepository); ok {
+		resource, err := accessRepo.IssueAccessResource(ctx, subject.WorkspaceID, issueID)
+		if err != nil {
+			return authorizationStorageError(err)
+		}
+		if resource.WorkspaceID != subject.WorkspaceID || resource.IssueID != issueID ||
+			resource.ProjectID != projectID || resource.ProjectWorkspaceID != subject.WorkspaceID ||
+			(resource.ParentIssueID != "" && resource.ParentWorkspaceID != subject.WorkspaceID) {
+			return ErrNoProjectAccess
+		}
+		if resource.AssigneeUserID == subject.UserID {
+			return nil
+		}
+	}
 	// 2026-09-03 coder(lq): Check inherited project permission first. This also
 	// validates current workspace membership and fails closed on storage or
 	// migration errors. Only an ordinary authorization denial may fall through

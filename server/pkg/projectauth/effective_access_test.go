@@ -105,6 +105,63 @@ func permissionsOf(access EffectiveIssueAccess) []Permission {
 	return result
 }
 
+func TestEffectiveAccessNaturalManagersFollowCurrentTaskIdentity(t *testing.T) {
+	for _, mode := range []ProjectAccessMode{ProjectAccessInherit, ProjectAccessRestricted} {
+		t.Run(string(mode), func(t *testing.T) {
+			repo := effectiveFixture()
+			resource := repo.resources["task"]
+			resource.ProjectAccessMode = mode
+			resource.CreatorUserID = "creator"
+			resource.AssigneeUserID = "assignee"
+			resource.OriginatorUserID = "originator"
+			repo.resources["task"] = resource
+			resolver := NewEffectiveAccessResolver(repo)
+			for _, tc := range []struct {
+				user   string
+				manage bool
+				source AccessSourceKind
+				role   TaskRole
+			}{
+				{"creator", true, AccessSourceCreator, TaskOwner},
+				{"assignee", true, AccessSourceAssignee, TaskManager},
+				{"originator", false, AccessSourceOriginator, TaskMember},
+				{"outsider", false, "", ""},
+			} {
+				subject := Subject{UserID: tc.user, WorkspaceID: "ws"}
+				explanation, err := resolver.ExplainIssue(context.Background(), subject, "task", IssueManage)
+				if err != nil || explanation.Allowed != tc.manage {
+					t.Fatalf("%s manage=%v err=%v; want %v", tc.user, explanation.Allowed, err, tc.manage)
+				}
+				access, err := resolver.ResolveIssue(context.Background(), subject, "task")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.manage {
+					found := false
+					for _, source := range access.Sources {
+						found = found || (source.Permission == IssueManage && source.Source == tc.source && source.Role == RoleKey(tc.role))
+					}
+					if !found {
+						t.Fatalf("%s missing natural management source: %#v", tc.user, access.Sources)
+					}
+				}
+			}
+			resource.AssigneeUserID = "next-assignee"
+			repo.resources["task"] = resource
+			for _, user := range []string{"creator", "assignee", "next-assignee"} {
+				explanation, err := resolver.ExplainIssue(context.Background(), Subject{UserID: user, WorkspaceID: "ws"}, "task", IssueManage)
+				if err != nil || explanation.Allowed != (user != "assignee") {
+					t.Fatalf("after reassignment %s manage=%v err=%v", user, explanation.Allowed, err)
+				}
+			}
+			repo.issueGrants["task"] = []AccessGrant{{ID: "manual-manager", WorkspaceID: "ws", ProjectID: "project", IssueID: "task", SubjectType: SubjectUser, SubjectID: "assignee", Role: RoleKey(TaskManager), Scope: RoleScopeTask, Source: GrantSourceManual}}
+			if err := resolver.CanIssue(context.Background(), Subject{UserID: "assignee", WorkspaceID: "ws"}, "task", IssueManage); err != nil {
+				t.Fatalf("reassignment removed an independent manual Manager grant: %v", err)
+			}
+		})
+	}
+}
+
 // 2026-10-10 coder(lq): Inherited project creation permits child creation,
 // without granting project administration or bypassing restricted task ACLs.
 func TestEffectiveAccessInheritsProjectCreateAsChildCreate(t *testing.T) {

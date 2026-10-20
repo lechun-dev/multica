@@ -14,7 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -117,10 +119,19 @@ func (h *Handler) CreateIssueAccessRequest(w http.ResponseWriter, r *http.Reques
 		h.writeIssueAccessRequestError(w, err)
 		return
 	}
+	var notifications []db.InboxItem
+	if created {
+		notifications, err = loadAccessRequestNotifications(r.Context(), tx, result, "requested")
+		if err != nil {
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeProjectAccessGrantError(w, err)
 		return
 	}
+	h.publishAccessRequestNotifications(actor, notifications)
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
@@ -217,11 +228,50 @@ func (h *Handler) ReviewIssueAccessRequest(w http.ResponseWriter, r *http.Reques
 		h.writeIssueAccessRequestError(w, err)
 		return
 	}
+	notifications, err := loadAccessRequestNotifications(r.Context(), tx, result, result.Status)
+	if err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeProjectAccessGrantError(w, err)
 		return
 	}
+	h.publishAccessRequestNotifications(actor, notifications)
 	writeJSON(w, http.StatusOK, result)
+}
+
+// 2026-10-20 coder(lq): Read the newly created event's inbox rows inside the
+// transaction, but publish only after commit. Retries must not re-publish old rows.
+func loadAccessRequestNotifications(ctx context.Context, tx pgx.Tx, item issueAccessRequestResponse, event string) ([]db.InboxItem, error) {
+	rows, err := tx.Query(ctx, `SELECT i.* FROM inbox_item i
+		JOIN projectauth_access_request_notifications n
+		  ON n.workspace_id=i.workspace_id AND n.inbox_item_id=i.id
+		WHERE n.workspace_id=$1 AND n.request_id=$2 AND n.event=$3`, item.WorkspaceID, item.ID, event)
+	if err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.InboxItem])
+	return items, wrapProjectPermissionRepositoryError(err)
+}
+
+func (h *Handler) publishAccessRequestNotifications(actor projectauth.Subject, items []db.InboxItem) {
+	if h.Bus == nil {
+		return
+	}
+	for _, item := range items {
+		response := inboxToResponse(item)
+		// 2026-10-20 coder(lq): Personal realtime routing requires a nested map
+		// with recipient_id; a response struct would be silently discarded.
+		h.publish(protocol.EventInboxNew, actor.WorkspaceID, "member", actor.UserID, map[string]any{"item": map[string]any{
+			"id": response.ID, "workspace_id": response.WorkspaceID,
+			"recipient_type": response.RecipientType, "recipient_id": response.RecipientID,
+			"type": response.Type, "severity": response.Severity, "issue_id": response.IssueID,
+			"title": response.Title, "body": response.Body, "read": response.Read, "archived": response.Archived,
+			"created_at": response.CreatedAt, "issue_status": response.IssueStatus, "issue_priority": response.IssuePriority,
+			"actor_type": response.ActorType, "actor_id": response.ActorID, "details": response.Details,
+		}})
+	}
 }
 
 func (h *Handler) CancelIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
@@ -518,7 +568,23 @@ func (h *Handler) enqueueAccessRequestNotification(ctx context.Context, tx pgx.T
 	if _, err := tx.Exec(ctx, `SAVEPOINT access_request_dingtalk`); err != nil {
 		return err
 	}
-	_, dingErr := tx.Exec(ctx, `INSERT INTO dingtalk_personal_message (workspace_id,comment_id,sender_user_id,sender_ding_user_id,sender_union_id,sender_corp_id,recipient_user_id,recipient_ding_user_id,markdown,idempotency_key) SELECT $1,$2,$3,sender.ding_user_id,NULLIF(sender.union_id,''),NULL,$4,recipient.ding_user_id,$5,'task-access-request:'||$2::text||':'||$4::text||':'||$6 FROM LATERAL (SELECT COALESCE(ding_user_id,'') ding_user_id,COALESCE(union_id,'') union_id FROM dingtalk_notify_identities WHERE multica_user_id=$3 AND active=true ORDER BY updated_at DESC LIMIT 1) sender CROSS JOIN LATERAL (SELECT ding_user_id FROM dingtalk_notify_identities WHERE multica_user_id=$4 AND active=true AND login_only=false AND COALESCE(ding_user_id,'')<>'' ORDER BY updated_at DESC LIMIT 1) recipient ON CONFLICT (idempotency_key) DO NOTHING`, item.WorkspaceID, item.ID, senderID, recipientID, body, event)
+	// 2026-10-20 coder(lq): Queue IDs are UUIDs, while identity bindings and
+	// idempotency keys are text. Fix each parameter's type before converting it.
+	_, dingErr := tx.Exec(ctx, `INSERT INTO dingtalk_personal_message (
+		workspace_id,comment_id,sender_user_id,sender_ding_user_id,
+		sender_union_id,sender_corp_id,recipient_user_id,recipient_ding_user_id,markdown,idempotency_key)
+		SELECT $1::uuid,$2::uuid,$3::uuid,sender.ding_user_id,NULLIF(sender.union_id,''),NULL,
+		       $4::uuid,recipient.ding_user_id,$5::text,
+		       'task-access-request:'||$2::uuid::text||':'||$4::uuid::text||':'||$6::text
+		FROM LATERAL (
+			SELECT COALESCE(ding_user_id,'') ding_user_id,COALESCE(union_id,'') union_id
+			FROM dingtalk_notify_identities WHERE multica_user_id=$3::uuid::text AND active=true
+			ORDER BY updated_at DESC LIMIT 1
+		) sender CROSS JOIN LATERAL (
+			SELECT ding_user_id FROM dingtalk_notify_identities
+			WHERE multica_user_id=$4::uuid::text AND active=true AND login_only=false AND COALESCE(ding_user_id,'')<>''
+			ORDER BY updated_at DESC LIMIT 1
+		) recipient ON CONFLICT (idempotency_key) DO NOTHING`, item.WorkspaceID, item.ID, senderID, recipientID, body, event)
 	if dingErr != nil {
 		if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT access_request_dingtalk`); rollbackErr != nil {
 			return fmt.Errorf("rollback task access request DingTalk savepoint after %v: %w", dingErr, rollbackErr)
