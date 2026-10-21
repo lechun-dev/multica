@@ -303,15 +303,9 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
       : organizationById.get(grant.subject_id || "")?.name || grant.subject_id || "—";
   const resetPicker = () => { setSelectedUserIds(new Set()); setSelectedOrganizationIds(new Set()); setSelectedEveryone(false); setExpiresAt(""); };
 
-  // 2026-09-20 coder(lq): 定位场景下，已处理的申请也要跟着通知一起出现在列表里，
-  // 否则审批人点开通知只能看到空白或别人的申请，无法确认这条通知的结果。
-  const pendingRequests = (requestsQuery.data?.items ?? []).filter((item) => item.status === "pending");
-  const focusedRequest = focusRequestId
-    ? requestsQuery.data?.items.find((item) => item.id === focusRequestId)
-    : undefined;
-  const visibleRequests = focusedRequest && focusedRequest.status !== "pending"
-    ? [...pendingRequests, focusedRequest]
-    : pendingRequests;
+  // 2026-10-21 coder(lq): Keep the server's full, newest-first request history.
+  // Notification focus highlights a row; it must not hide other handled requests.
+  const visibleRequests = requestsQuery.data?.items ?? [];
 
   const copyShareLink = async () => {
     if (!shareUrl) return;
@@ -481,13 +475,18 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
         {visibleRequests.length ? (
           <section className="space-y-2 border-t pt-4">
             <h3 className="font-medium">
-              {pendingRequests.length
-                ? t(($) => $.permissions.task_pending_requests)
-                : t(($) => $.permissions.task_request_section_title)}
+              {t(($) => $.permissions.task_request_section_title)}
             </h3>
             {visibleRequests.map((request) => {
               const isPending = request.status === "pending";
               const isFocused = request.id === focusRequestId;
+              // 2026-10-21 coder(lq): Reuse the workspace directory for display;
+              // unresolved identities must not expose internal IDs as names.
+              const requester = memberByUser.get(request.requester_user_id);
+              const requesterName = requester?.name?.trim() || requester?.email?.trim()
+                || (membersQuery.isLoading ? t(($) => $.permissions.loading)
+                  : membersQuery.isError ? t(($) => $.permissions.workspace_members_failed)
+                    : t(($) => $.permissions.user));
               return (
                 <div
                   key={request.id}
@@ -498,7 +497,7 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
                     focusedRequestId === request.id && "border-primary ring-1 ring-primary",
                   )}
                 >
-                  <code>{request.requester_user_id}</code>
+                  <span>{requesterName}</span>
                   <span>{t(($) => $.permissions.task_request_role, { role: taskRoleLabel(request.requested_role) })}</span>
                   <span className="flex-1 text-muted-foreground">{request.reason}</span>
                   {isFocused && isPending ? (

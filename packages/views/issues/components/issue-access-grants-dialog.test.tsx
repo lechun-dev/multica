@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
@@ -81,6 +81,18 @@ const pendingRequest = {
   updated_at: "2026-09-16T00:00:00Z",
 };
 
+const workspaceMember = {
+  id: "membership-li",
+  workspace_id: "workspace-1",
+  user_id: "li-4",
+  role: "member",
+  created_at: "2026-09-03T00:00:00Z",
+  name: "李四",
+  email: "li4@example.com",
+  avatar_url: null,
+  has_logged_in: true,
+};
+
 describe("IssueAccessGrantsDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -147,19 +159,7 @@ describe("IssueAccessGrantsDialog", () => {
       total: 1,
       member_total: 0,
     });
-    mocks.listMembers.mockResolvedValue([
-      {
-        id: "membership-li",
-        workspace_id: "workspace-1",
-        user_id: "li-4",
-        role: "member",
-        created_at: "2026-09-03T00:00:00Z",
-        name: "李四",
-        email: "li4@example.com",
-        avatar_url: null,
-        has_logged_in: true,
-      },
-    ]);
+    mocks.listMembers.mockResolvedValue([workspaceMember]);
     mocks.listIssueAccessRequests.mockResolvedValue({ items: [] });
     mocks.updateIssueAccessControl.mockResolvedValue(control);
   });
@@ -248,6 +248,64 @@ describe("IssueAccessGrantsDialog", () => {
     ));
   });
 
+  it("resolves each applicant by user ID rather than request or membership ID", async () => {
+    mocks.listMembers.mockResolvedValue([
+      workspaceMember,
+      { ...workspaceMember, id: "membership-wang", user_id: "wang-5", name: "王五" },
+    ]);
+    mocks.listIssueAccessRequests.mockResolvedValue({ items: [
+      pendingRequest,
+      { ...pendingRequest, id: "request-10", requester_user_id: "wang-5", reason: "Second applicant" },
+    ] });
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    for (const { reason, name, userId } of [
+      { reason: pendingRequest.reason, name: "李四", userId: "li-4" },
+      { reason: "Second applicant", name: "王五", userId: "wang-5" },
+    ]) {
+      const row = (await within(dialog).findByText(reason)).closest("[data-request-id]");
+      await waitFor(() => expect(row).toHaveTextContent(name));
+      expect(row).not.toHaveTextContent(userId);
+    }
+  });
+
+  it.each([
+    { name: "  ", email: "li4@example.com", expected: "li4@example.com" },
+    { name: "", email: "", expected: "User" },
+  ])("uses readable fallback $expected when the applicant has no name", async ({ name, email, expected }) => {
+    mocks.listMembers.mockResolvedValue([{ ...workspaceMember, name, email }]);
+    mocks.listIssueAccessRequests.mockResolvedValue({ items: [pendingRequest] });
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    const row = (await within(dialog).findByText(pendingRequest.reason)).closest("[data-request-id]");
+    await waitFor(() => expect(row).toHaveTextContent(expected));
+    expect(row).not.toHaveTextContent(pendingRequest.requester_user_id);
+  });
+
+  it("never shows an applicant ID while the member directory loads", async () => {
+    let resolveMembers!: (members: typeof workspaceMember[]) => void;
+    mocks.listMembers.mockReturnValue(new Promise<typeof workspaceMember[]>((resolve) => { resolveMembers = resolve; }));
+    mocks.listIssueAccessRequests.mockResolvedValue({ items: [pendingRequest] });
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    const row = (await within(dialog).findByText(pendingRequest.reason)).closest("[data-request-id]");
+    expect(row).toHaveTextContent("Loading…");
+    expect(row).not.toHaveTextContent(pendingRequest.requester_user_id);
+    await act(async () => resolveMembers([workspaceMember]));
+    await waitFor(() => expect(row).toHaveTextContent("李四"));
+  });
+
+  it.each(["missing", "failed"])("does not expose applicant IDs when directory lookup is %s", async (state) => {
+    if (state === "failed") mocks.listMembers.mockRejectedValue(new Error("Directory unavailable"));
+    else mocks.listMembers.mockResolvedValue([]);
+    mocks.listIssueAccessRequests.mockResolvedValue({ items: [pendingRequest] });
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    const row = (await within(dialog).findByText(pendingRequest.reason)).closest("[data-request-id]");
+    await waitFor(() => expect(row).toHaveTextContent(state === "failed" ? "Failed to load workspace members" : "User"));
+    expect(row).not.toHaveTextContent(pendingRequest.requester_user_id);
+  });
+
   it("moves an approved access request into direct grants", async () => {
     const pendingRequest = {
       id: "request-1",
@@ -277,6 +335,10 @@ describe("IssueAccessGrantsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Task access" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    const requestRow = (await within(dialog).findByText("Need task context")).closest("[data-request-id]");
+    expect(requestRow).not.toBeNull();
+    await waitFor(() => expect(requestRow).toHaveTextContent("李四"));
+    expect(requestRow).not.toHaveTextContent("li-4");
     await user.click(await within(dialog).findByRole("button", { name: "Approve" }));
 
     await waitFor(() => expect(mocks.reviewIssueAccessRequest).toHaveBeenCalledWith(
@@ -285,7 +347,9 @@ describe("IssueAccessGrantsDialog", () => {
       { action: "approve" },
     ));
     expect(await within(dialog).findByRole("button", { name: "Already granted 1" })).toBeInTheDocument();
-    await waitFor(() => expect(within(dialog).queryByText("Need task context")).not.toBeInTheDocument());
+    expect(within(dialog).getByText("Need task context")).toBeInTheDocument();
+    expect(await within(dialog).findByText("This request was already handled: Approved.")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: "Already granted 1" }));
     const grantsDialog = await screen.findByRole("dialog", { name: "Direct task access" });
@@ -451,6 +515,56 @@ describe("IssueAccessGrantsDialog", () => {
     expect(mocks.reviewIssueAccessRequest).not.toHaveBeenCalled();
   });
 
+  it.each([null, "request-9", "request-10"])("keeps both handled applications when focused request is %s", async (focusRequestId) => {
+    mocks.listMembers.mockResolvedValue([
+      workspaceMember,
+      { ...workspaceMember, id: "membership-wang", user_id: "wang-5", name: "王五" },
+    ]);
+    mocks.listIssueAccessRequests.mockResolvedValue({ items: [
+      { ...pendingRequest, id: "request-10", requester_user_id: "wang-5", reason: "Second application", status: "rejected" },
+      { ...pendingRequest, status: "approved" },
+    ] });
+    const user = userEvent.setup();
+    renderDialog("project-1", { focusRequestId });
+    if (!focusRequestId) await user.click(screen.getByRole("button", { name: "Task access" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(await within(dialog).findByText("Access requests")).toBeInTheDocument();
+    const approvedRow = (await within(dialog).findByText(pendingRequest.reason)).closest("[data-request-id]");
+    const rejectedRow = (await within(dialog).findByText("Second application")).closest("[data-request-id]");
+    await waitFor(() => expect(approvedRow).toHaveTextContent("李四"));
+    await waitFor(() => expect(rejectedRow).toHaveTextContent("王五"));
+    expect(approvedRow).toHaveTextContent("This request was already handled: Approved.");
+    expect(rejectedRow).toHaveTextContent("This request was already handled: Rejected.");
+    expect(dialog.querySelectorAll("[data-request-id]")).toHaveLength(2);
+    expect(within(dialog).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(mocks.reviewIssueAccessRequest).not.toHaveBeenCalled();
+  });
+
+  it("keeps earlier requests from the same applicant and preserves both records after rejection", async () => {
+    const earlierRequest = { ...pendingRequest, id: "earlier-request", reason: "Earlier application", status: "approved" };
+    const rejectedRequest = { ...pendingRequest, status: "rejected" };
+    mocks.listIssueAccessRequests
+      .mockResolvedValueOnce({ items: [pendingRequest, earlierRequest] })
+      .mockResolvedValue({ items: [rejectedRequest, earlierRequest] });
+    mocks.reviewIssueAccessRequest.mockResolvedValue(rejectedRequest);
+    const user = userEvent.setup();
+    renderDialog("project-1", { focusRequestId: pendingRequest.id });
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    expect(await within(dialog).findByText("Earlier application")).toBeInTheDocument();
+    expect(within(dialog).getByText("Access requests")).toBeInTheDocument();
+    expect(dialog.querySelectorAll("[data-request-id]")).toHaveLength(2);
+    expect(within(dialog).getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(mocks.reviewIssueAccessRequest).toHaveBeenCalledWith("issue-1", pendingRequest.id, { action: "reject" }));
+    expect(await within(dialog).findByText("This request was already handled: Rejected.")).toBeInTheDocument();
+    expect(within(dialog).getByText("This request was already handled: Approved.")).toBeInTheDocument();
+    expect(within(dialog).getByText(pendingRequest.reason)).toBeInTheDocument();
+    expect(within(dialog).getByText("Earlier application")).toBeInTheDocument();
+    expect(dialog.querySelectorAll("[data-request-id]")).toHaveLength(2);
+    expect(within(dialog).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
   it("shows a decided request as handled instead of re-offering the decision", async () => {
     // A notification outlives the decision it announces. Landing on it must
     // answer "what happened?" — and never put Approve/Reject back on screen.
@@ -464,6 +578,9 @@ describe("IssueAccessGrantsDialog", () => {
     expect(
       await within(dialog).findByText("This request was already handled: Approved."),
     ).toBeInTheDocument();
+    const row = within(dialog).getByText(pendingRequest.reason).closest("[data-request-id]");
+    await waitFor(() => expect(row).toHaveTextContent("李四"));
+    expect(row).not.toHaveTextContent(pendingRequest.requester_user_id);
     expect(within(dialog).queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
   });
