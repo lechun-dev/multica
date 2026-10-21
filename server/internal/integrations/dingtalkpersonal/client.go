@@ -116,7 +116,24 @@ func (s *Service) querySendStatus(ctx context.Context, token, openTaskID string)
 		}
 		return messageID, false, nil
 	case "FAILED", "FAIL", "REJECTED":
-		return "", false, &DeliveryError{Code: "dingtalk_delivery_failed", Message: "钉钉报告个人消息投递失败。"}
+		remoteCode := safeOptionalRemoteMessage(recursiveString(data, "errorCode", "errCode", "code"))
+		remoteReason := safeOptionalRemoteMessage(recursiveString(data, "errorMessage", "failReason", "reason", "message"))
+		message := "钉钉报告个人消息投递失败。"
+		if remoteCode != "" && remoteReason != "" {
+			message = "钉钉报告个人消息投递失败：" + remoteCode + "，" + remoteReason
+		} else if remoteCode != "" {
+			message = "钉钉报告个人消息投递失败：" + remoteCode
+		} else if remoteReason != "" {
+			message = "钉钉报告个人消息投递失败：" + remoteReason
+		}
+		return "", false, &DeliveryError{
+			Code:           "dingtalk_delivery_failed",
+			Message:        message,
+			ProviderCode:   remoteCode,
+			ProviderReason: remoteReason,
+			ProviderStatus: status,
+			OpenTaskID:     openTaskID,
+		}
 	default:
 		return "", true, nil
 	}
@@ -267,10 +284,17 @@ func safeRemoteMessage(value string) string {
 	if value == "" {
 		return "未知原因"
 	}
-	if len(value) > 240 {
-		value = value[:240]
+	if runes := []rune(value); len(runes) > 240 {
+		value = string(runes[:240])
 	}
 	return value
+}
+
+func safeOptionalRemoteMessage(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return safeRemoteMessage(value)
 }
 
 func mapSlice(value any) []map[string]any {

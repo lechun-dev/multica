@@ -120,8 +120,8 @@ func TestEncodePersonalMessageContentPreservesContentWithinLimit(t *testing.T) {
 	}{
 		{name: "short markdown", text: "**message**"},
 		{
-			name: "exact serialized byte limit",
-			text: strings.Repeat("a", personalMessageContentByteLimit-len(encodeContent(personalMessageTitle, ""))),
+			name: "exact Unicode character limit",
+			text: strings.Repeat("a", personalMessageTextRuneLimit),
 		},
 	}
 	for _, test := range tests {
@@ -136,6 +136,13 @@ func TestEncodePersonalMessageContentPreservesContentWithinLimit(t *testing.T) {
 			if len(got) > personalMessageContentByteLimit {
 				t.Fatalf("content is %d bytes, limit is %d", len(got), personalMessageContentByteLimit)
 			}
+			var decoded map[string]string
+			if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+				t.Fatalf("decode content: %v", err)
+			}
+			if utf8.RuneCountInString(decoded["text"]) > personalMessageTextRuneLimit {
+				t.Fatalf("text is %d runes, limit is %d", utf8.RuneCountInString(decoded["text"]), personalMessageTextRuneLimit)
+			}
 		})
 	}
 }
@@ -143,11 +150,7 @@ func TestEncodePersonalMessageContentPreservesContentWithinLimit(t *testing.T) {
 func TestEncodePersonalMessageContentTruncatesOversizedTextWithEllipsis(t *testing.T) {
 	t.Parallel()
 
-	textBudget := personalMessageContentByteLimit - len(encodeContent(personalMessageTitle, ""))
-	content := encodePersonalMessageContent(strings.Repeat("a", textBudget+1))
-	if len(content) != personalMessageContentByteLimit {
-		t.Fatalf("content is %d bytes, want %d", len(content), personalMessageContentByteLimit)
-	}
+	content := encodePersonalMessageContent(strings.Repeat("a", personalMessageTextRuneLimit+1))
 
 	var decoded map[string]string
 	if err := json.Unmarshal([]byte(content), &decoded); err != nil {
@@ -162,6 +165,12 @@ func TestEncodePersonalMessageContentTruncatesOversizedTextWithEllipsis(t *testi
 	if strings.Count(decoded["text"], personalMessageTruncationMarker) != 1 {
 		t.Fatalf("text must contain exactly one ellipsis: %q", decoded["text"])
 	}
+	if got := utf8.RuneCountInString(decoded["text"]); got != personalMessageTextRuneLimit {
+		t.Fatalf("text is %d runes, want %d", got, personalMessageTextRuneLimit)
+	}
+	if got, want := strings.TrimSuffix(decoded["text"], personalMessageTruncationMarker), strings.Repeat("a", personalMessageTextRuneLimit-1); got != want {
+		t.Fatalf("truncated prefix length = %d, want %d", utf8.RuneCountInString(got), utf8.RuneCountInString(want))
+	}
 }
 
 func TestEncodePersonalMessageContentKeepsUTF8ValidAndMeasuresJSONEscapes(t *testing.T) {
@@ -172,7 +181,10 @@ func TestEncodePersonalMessageContentKeepsUTF8ValidAndMeasuresJSONEscapes(t *tes
 		text string
 	}{
 		{name: "Chinese and emoji", text: strings.Repeat("中文🙂", 5000)},
-		{name: "JSON escapes", text: strings.Repeat("\"\\\n<>&", 4000)},
+		{
+			name: "JSON escapes",
+			text: strings.Repeat("<", 800) + strings.Repeat("\"\\\n", 66) + "\"",
+		},
 	}
 	for _, test := range tests {
 		test := test
@@ -193,10 +205,45 @@ func TestEncodePersonalMessageContentKeepsUTF8ValidAndMeasuresJSONEscapes(t *tes
 			if !utf8.ValidString(decoded["text"]) {
 				t.Fatal("truncated text is not valid UTF-8")
 			}
+			if got := utf8.RuneCountInString(decoded["text"]); got > personalMessageTextRuneLimit {
+				t.Fatalf("text is %d runes, limit is %d", got, personalMessageTextRuneLimit)
+			}
 			if !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker) {
 				t.Fatalf("text does not end in ellipsis: %q", decoded["text"])
 			}
+			if test.name == "JSON escapes" && utf8.RuneCountInString(decoded["text"]) >= utf8.RuneCountInString(test.text) {
+				t.Fatalf("JSON-expanded text was not truncated: got %d runes from %d", utf8.RuneCountInString(decoded["text"]), utf8.RuneCountInString(test.text))
+			}
 		})
+	}
+}
+
+func TestQuerySendStatusPreservesFailureDetails(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeRPCResult(t, w, map[string]any{
+			"status":       "FAILED",
+			"errorCode":    "invalidParameter",
+			"errorMessage": " content is too long \n please shorten it ",
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{httpClient: server.Client(), imEndpoint: server.URL}
+	messageID, pending, err := service.querySendStatus(context.Background(), "token", "task-failed-1")
+	if messageID != "" || pending {
+		t.Fatalf("messageID = %q, pending = %v", messageID, pending)
+	}
+	var deliveryErr *DeliveryError
+	if !errors.As(err, &deliveryErr) {
+		t.Fatalf("error = %v", err)
+	}
+	if deliveryErr.Code != "dingtalk_delivery_failed" || deliveryErr.ProviderStatus != "FAILED" || deliveryErr.ProviderCode != "invalidParameter" || deliveryErr.ProviderReason != "content is too long please shorten it" || deliveryErr.OpenTaskID != "task-failed-1" {
+		t.Fatalf("delivery error = %#v", deliveryErr)
+	}
+	if !strings.Contains(deliveryErr.Message, "content is too long please shorten it") {
+		t.Fatalf("message = %q", deliveryErr.Message)
 	}
 }
 

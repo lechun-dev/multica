@@ -489,6 +489,7 @@ func (s *Service) settle(ctx context.Context, message queuedMessage, err error) 
 	if !errors.As(err, &deliveryErr) {
 		deliveryErr = &DeliveryError{Code: "delivery_failed", Message: "钉钉个人消息发送失败，将自动重试。", Retryable: true, Cause: err}
 	}
+	s.logFailure(message, deliveryErr)
 	if deliveryErr.AuthRequired {
 		s.markCredentialReauthorization(ctx, message.SenderUserID, deliveryErr.Code, deliveryErr.Message)
 		_, _ = s.pool.Exec(ctx, `
@@ -667,12 +668,16 @@ func (s *Service) recordCredentialError(ctx context.Context, userID, code, messa
 }
 
 type DeliveryError struct {
-	Code         string
-	Message      string
-	Retryable    bool
-	AuthRequired bool
-	Identity     bool
-	Cause        error
+	Code           string
+	Message        string
+	Retryable      bool
+	AuthRequired   bool
+	Identity       bool
+	ProviderCode   string
+	ProviderReason string
+	ProviderStatus string
+	OpenTaskID     string
+	Cause          error
 }
 
 func (e *DeliveryError) Error() string {
@@ -688,27 +693,61 @@ func (e *DeliveryError) Error() string {
 func (e *DeliveryError) Unwrap() error { return e.Cause }
 
 func (s *Service) logFailure(message queuedMessage, err error) {
-	slog.Warn("dingtalk server personal message delivery failed", "message_id", message.ID, "error", err)
+	content := encodePersonalMessageContentDetails(message.Markdown)
+	attrs := []any{
+		"message_id", message.ID,
+		"open_task_id", message.OpenTaskID,
+		"content_bytes", len(content.serialized),
+		"content_truncated", content.truncated,
+		"error", err,
+	}
+	var deliveryErr *DeliveryError
+	if errors.As(err, &deliveryErr) {
+		attrs = append(attrs,
+			"error_code", deliveryErr.Code,
+			"provider_status", deliveryErr.ProviderStatus,
+			"provider_code", deliveryErr.ProviderCode,
+			"provider_reason", deliveryErr.ProviderReason,
+		)
+		if deliveryErr.OpenTaskID != "" {
+			attrs[3] = deliveryErr.OpenTaskID
+		}
+	}
+	slog.Warn("dingtalk server personal message delivery failed", attrs...)
 }
 
 const (
 	personalMessageTitle            = "MissionOS"
-	personalMessageContentByteLimit = 15000
+	personalMessageTextRuneLimit    = 1000
+	personalMessageContentByteLimit = 4096
 	personalMessageTruncationMarker = "…"
 )
 
-// DingTalk documents a 15000-byte msgParam limit for groupMessages.send:
-// https://open.dingtalk.com/document/orgapp/the-robot-sends-a-group-message
-// The personal-message contract does not publish a separate limit, so apply
-// the same ceiling to the serialized title + text payload at the send boundary.
 func encodePersonalMessageContent(text string) string {
+	return encodePersonalMessageContentDetails(text).serialized
+}
+
+type encodedPersonalMessageContent struct {
+	serialized string
+	truncated  bool
+}
+
+// DingTalk's personal-message contract does not publish an explicit content
+// limit. Keep both the visible text and serialized JSON conservatively bounded
+// at the final send boundary so queued messages cannot fail asynchronously
+// after the API has already returned an openTaskId.
+func encodePersonalMessageContentDetails(text string) encodedPersonalMessageContent {
 	content := encodeContent(personalMessageTitle, text)
-	if len(content) <= personalMessageContentByteLimit {
-		return content
+	runes := []rune(text)
+	if len(runes) <= personalMessageTextRuneLimit && len(content) <= personalMessageContentByteLimit {
+		return encodedPersonalMessageContent{serialized: content}
 	}
 
-	runes := []rune(text)
-	low, high := 0, len(runes)
+	high := len(runes) - 1
+	if maxPrefixRunes := personalMessageTextRuneLimit - 1; high > maxPrefixRunes {
+		high = maxPrefixRunes
+	}
+	low := 0
 	for low < high {
 		mid := low + (high-low+1)/2
 		candidate := encodeContent(personalMessageTitle, string(runes[:mid])+personalMessageTruncationMarker)
@@ -719,7 +758,10 @@ func encodePersonalMessageContent(text string) string {
 		}
 	}
 
-	return encodeContent(personalMessageTitle, string(runes[:low])+personalMessageTruncationMarker)
+	return encodedPersonalMessageContent{
+		serialized: encodeContent(personalMessageTitle, string(runes[:low])+personalMessageTruncationMarker),
+		truncated:  true,
+	}
 }
 
 func encodeContent(title, text string) string {
