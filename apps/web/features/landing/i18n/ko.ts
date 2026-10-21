@@ -269,6 +269,22 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.12",
+          date: "2026-10-21",
+          title: "접근 요청 기록 및 DingTalk 알림 수정",
+          changes: [],
+          features: [],
+          improvements: [
+            "접근 요청과 심사 결과를 DingTalk 개인 메시지와 Mission 도우미로 함께 알리고, 태스크 이름과 심사 화면으로 바로 가는 링크를 표시합니다.",
+            "태스크 공유 화면에서 내부 사용자 ID 대신 신청자의 이름 또는 이메일을 표시합니다.",
+          ],
+          fixes: [
+            "접근 권한 철회 후 재신청한 경우를 포함해 각 접근 요청을 받은 편지함의 독립된 항목으로 유지합니다.",
+            "어떤 알림으로 열어도 태스크 공유 화면에 모든 접근 요청과 처리 결과를 유지합니다.",
+            "너무 긴 DingTalk 개인 메시지를 안전하게 줄이면서 태스크 꼬리말과 링크를 온전히 유지하고 민감 정보를 제거한 전송 진단을 제공합니다.",
+          ],
+        },
+        {
           version: "0.5.11",
           date: "2026-10-20",
           title: "에이전트 태스크 조회 및 DingTalk 멤버 관리",

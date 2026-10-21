@@ -294,6 +294,22 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.12",
+        date: "2026-10-21",
+        title: "Access request history and DingTalk notification fixes",
+        changes: [],
+        features: [],
+        improvements: [
+          "Deliver access request and decision notifications through both DingTalk personal messages and Mission Assistant, with task names and direct review links.",
+          "Show applicant names or emails in task sharing instead of internal user IDs.",
+        ],
+        fixes: [
+          "Keep separate inbox entries for each access request, including new applications after access is revoked.",
+          "Retain all access request records and their results in task sharing, regardless of which notification opens the dialog.",
+          "Safely truncate oversized DingTalk personal messages while preserving the complete task footer and link, with redacted delivery diagnostics.",
+        ],
+      },
+      {
         version: "0.5.11",
         date: "2026-10-20",
         title: "Agent task queries and DingTalk member management",
