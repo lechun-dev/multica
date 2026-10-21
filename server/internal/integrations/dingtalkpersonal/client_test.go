@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestCallToolSendsDWSHeadersAndArguments(t *testing.T) {
@@ -106,6 +108,139 @@ func TestSendUsesMarkdownAndIdempotencyKey(t *testing.T) {
 	}
 	if taskID != "task-1" || messageID != "" {
 		t.Fatalf("taskID = %q, messageID = %q", taskID, messageID)
+	}
+}
+
+func TestEncodePersonalMessageContentPreservesContentWithinLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+	}{
+		{name: "short markdown", text: "**message**"},
+		{
+			name: "exact serialized byte limit",
+			text: strings.Repeat("a", personalMessageContentByteLimit-len(encodeContent(personalMessageTitle, ""))),
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := encodePersonalMessageContent(test.text)
+			want := encodeContent(personalMessageTitle, test.text)
+			if got != want {
+				t.Fatalf("content changed within limit: got %d bytes, want %d bytes", len(got), len(want))
+			}
+			if len(got) > personalMessageContentByteLimit {
+				t.Fatalf("content is %d bytes, limit is %d", len(got), personalMessageContentByteLimit)
+			}
+		})
+	}
+}
+
+func TestEncodePersonalMessageContentTruncatesOversizedTextWithEllipsis(t *testing.T) {
+	t.Parallel()
+
+	textBudget := personalMessageContentByteLimit - len(encodeContent(personalMessageTitle, ""))
+	content := encodePersonalMessageContent(strings.Repeat("a", textBudget+1))
+	if len(content) != personalMessageContentByteLimit {
+		t.Fatalf("content is %d bytes, want %d", len(content), personalMessageContentByteLimit)
+	}
+
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+		t.Fatalf("decode content: %v", err)
+	}
+	if decoded["title"] != personalMessageTitle {
+		t.Fatalf("title = %q", decoded["title"])
+	}
+	if !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker) {
+		t.Fatalf("text does not end in ellipsis: %q", decoded["text"])
+	}
+	if strings.Count(decoded["text"], personalMessageTruncationMarker) != 1 {
+		t.Fatalf("text must contain exactly one ellipsis: %q", decoded["text"])
+	}
+}
+
+func TestEncodePersonalMessageContentKeepsUTF8ValidAndMeasuresJSONEscapes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+	}{
+		{name: "Chinese and emoji", text: strings.Repeat("中文🙂", 5000)},
+		{name: "JSON escapes", text: strings.Repeat("\"\\\n<>&", 4000)},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			content := encodePersonalMessageContent(test.text)
+			if len(content) > personalMessageContentByteLimit {
+				t.Fatalf("content is %d bytes, limit is %d", len(content), personalMessageContentByteLimit)
+			}
+			if !utf8.ValidString(content) {
+				t.Fatal("serialized content is not valid UTF-8")
+			}
+
+			var decoded map[string]string
+			if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+				t.Fatalf("decode content: %v", err)
+			}
+			if !utf8.ValidString(decoded["text"]) {
+				t.Fatal("truncated text is not valid UTF-8")
+			}
+			if !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker) {
+				t.Fatalf("text does not end in ellipsis: %q", decoded["text"])
+			}
+		})
+	}
+}
+
+func TestSendBoundsQueuedOversizedMarkdownAtDeliveryTime(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		arguments := request.Params.Arguments
+		content, ok := arguments["content"].(string)
+		if !ok {
+			t.Fatalf("content = %#v", arguments["content"])
+		}
+		if len(content) > personalMessageContentByteLimit {
+			t.Fatalf("content is %d bytes, limit is %d", len(content), personalMessageContentByteLimit)
+		}
+		if arguments["receiverOpenDingTalkId"] != "open-recipient" || arguments["msgType"] != "markdown" || arguments["uuid"] != "message-key" {
+			t.Fatalf("arguments = %#v", arguments)
+		}
+		var decoded map[string]string
+		if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+			t.Fatalf("decode content: %v", err)
+		}
+		if decoded["title"] != personalMessageTitle || !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker) {
+			t.Fatalf("content = %#v", decoded)
+		}
+		writeRPCResult(t, w, map[string]any{"openTaskId": "task-oversized"})
+	}))
+	defer server.Close()
+
+	service := &Service{httpClient: server.Client(), chatEndpoint: server.URL}
+	taskID, _, err := service.send(context.Background(), "token", "open-recipient", strings.Repeat("超长消息🙂", 5000), "message-key")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if taskID != "task-oversized" {
+		t.Fatalf("taskID = %q", taskID)
 	}
 }
 

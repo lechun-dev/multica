@@ -92,7 +92,7 @@ func (s *Service) send(ctx context.Context, token, recipientOpenID, markdown, id
 	data, err := s.callTool(ctx, s.chatEndpoint, token, "send_personal_message", map[string]any{
 		"receiverOpenDingTalkId": recipientOpenID,
 		"msgType":                "markdown",
-		"content":                encodeContent("MissionOS", markdown),
+		"content":                encodePersonalMessageContent(markdown),
 		"uuid":                   idempotencyKey,
 		"clawType":               "multica",
 	})

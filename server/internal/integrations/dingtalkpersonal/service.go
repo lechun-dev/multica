@@ -691,6 +691,37 @@ func (s *Service) logFailure(message queuedMessage, err error) {
 	slog.Warn("dingtalk server personal message delivery failed", "message_id", message.ID, "error", err)
 }
 
+const (
+	personalMessageTitle            = "MissionOS"
+	personalMessageContentByteLimit = 15000
+	personalMessageTruncationMarker = "…"
+)
+
+// DingTalk documents a 15000-byte msgParam limit for groupMessages.send:
+// https://open.dingtalk.com/document/orgapp/the-robot-sends-a-group-message
+// The personal-message contract does not publish a separate limit, so apply
+// the same ceiling to the serialized title + text payload at the send boundary.
+func encodePersonalMessageContent(text string) string {
+	content := encodeContent(personalMessageTitle, text)
+	if len(content) <= personalMessageContentByteLimit {
+		return content
+	}
+
+	runes := []rune(text)
+	low, high := 0, len(runes)
+	for low < high {
+		mid := low + (high-low+1)/2
+		candidate := encodeContent(personalMessageTitle, string(runes[:mid])+personalMessageTruncationMarker)
+		if len(candidate) <= personalMessageContentByteLimit {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+
+	return encodeContent(personalMessageTitle, string(runes[:low])+personalMessageTruncationMarker)
+}
+
 func encodeContent(title, text string) string {
 	data, _ := json.Marshal(map[string]string{"title": title, "text": text})
 	return string(data)
