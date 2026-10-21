@@ -218,6 +218,89 @@ func TestEncodePersonalMessageContentKeepsUTF8ValidAndMeasuresJSONEscapes(t *tes
 	}
 }
 
+func TestEncodePersonalMessageContentPreservesTaskFooter(t *testing.T) {
+	t.Parallel()
+
+	footer := "\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：[LC-71 · 子任务测试](https://multica.test/issues/LC-71)）"
+	for _, body := range []string{
+		strings.Repeat("a", 2000),
+		strings.Repeat("中文🙂", 2000),
+		strings.Repeat("<\"\\\n", 500),
+		"正文中的分隔线\n\n---\n\n" + strings.Repeat("正文", 1000),
+	} {
+		content := encodePersonalMessageContent(body + footer)
+		var decoded map[string]string
+		if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+			t.Fatalf("decode content: %v", err)
+		}
+		text := decoded["text"]
+		if !strings.HasSuffix(text, personalMessageTruncationMarker+footer) {
+			t.Fatalf("task footer was truncated: %q", text)
+		}
+		prefix := strings.TrimSuffix(text, personalMessageTruncationMarker+footer)
+		if !strings.HasPrefix(body, prefix) || prefix == body {
+			t.Fatalf("body is not a truncated prefix: %q", prefix)
+		}
+		if !utf8.ValidString(text) || utf8.RuneCountInString(text) > personalMessageTextRuneLimit || len(content) > personalMessageContentByteLimit {
+			t.Fatalf("invalid or oversized content: %d runes, %d bytes", utf8.RuneCountInString(text), len(content))
+		}
+		// The retained prefix should use the available budget, including JSON escapes.
+		nextRune := []rune(strings.TrimPrefix(body, prefix))[0]
+		next := prefix + string(nextRune) + personalMessageTruncationMarker + footer
+		if utf8.RuneCountInString(next) <= personalMessageTextRuneLimit && len(encodeContent(personalMessageTitle, next)) <= personalMessageContentByteLimit {
+			t.Fatal("truncation left space for another body character")
+		}
+	}
+
+	for _, body := range []string{"短正文🙂", strings.Repeat("a", personalMessageTextRuneLimit-utf8.RuneCountInString(footer))} {
+		text := body + footer
+		if got := encodePersonalMessageContentDetails(text); got.truncated || got.serialized != encodeContent(personalMessageTitle, text) {
+			t.Fatal("message within the limit changed")
+		}
+	}
+
+	// An ordinary separator in a comment is not an application-generated footer.
+	text := strings.Repeat("正文", 1000) + "\n\n---\n\n普通正文"
+	if got := encodePersonalMessageContent(text); strings.Contains(got, "普通正文") {
+		t.Fatal("ordinary body suffix was incorrectly reserved as a footer")
+	}
+}
+
+func TestEncodePersonalMessageContentReservesFooterBudget(t *testing.T) {
+	t.Parallel()
+	for _, footer := range []string{
+		"\n\n---\n\n（来源：LC-71 · 任务）",
+		"\n\n---\n\n来源：[LC-71](https://multica.test/issues/LC-71)\n\n[打开任务并回复](https://multica.test/issues/LC-71)",
+		"\n\n---\n\n[打开任务并回复](https://multica.test/?q=" + strings.Repeat("<", 500) + ")",
+		"\n\n---\n\n（来源：" + strings.Repeat("a", 983) + "）",
+	} {
+		got := encodePersonalMessageContentDetails(strings.Repeat("正文", 1000) + footer)
+		if got.err != nil {
+			t.Fatalf("unexpected footer error: %v", got.err)
+		}
+		var decoded map[string]string
+		if err := json.Unmarshal([]byte(got.serialized), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if !got.truncated || !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker+footer) || len(got.serialized) > personalMessageContentByteLimit || utf8.RuneCountInString(decoded["text"]) > personalMessageTextRuneLimit {
+			t.Fatalf("footer budget not respected: %q", decoded["text"])
+		}
+	}
+}
+
+func TestSendRejectsFooterThatCannotFitWithoutCallingProvider(t *testing.T) {
+	t.Parallel()
+	for _, title := range []string{strings.Repeat("a", 1000), strings.Repeat("<", 700)} {
+		// No HTTP client is configured: an attempted provider call would panic.
+		service := &Service{}
+		_, _, err := service.send(context.Background(), "token", "recipient", "正文\n\n---\n\n（来源："+title+"）", "key")
+		var deliveryErr *DeliveryError
+		if !errors.As(err, &deliveryErr) || deliveryErr.Code != "message_footer_too_long" || deliveryErr.Retryable {
+			t.Fatalf("error = %v, want non-retryable footer length error", err)
+		}
+	}
+}
+
 func TestQuerySendStatusPreservesFailureDetails(t *testing.T) {
 	t.Parallel()
 
@@ -249,6 +332,7 @@ func TestQuerySendStatusPreservesFailureDetails(t *testing.T) {
 
 func TestSendBoundsQueuedOversizedMarkdownAtDeliveryTime(t *testing.T) {
 	t.Parallel()
+	footer := "\n\n---\n\n[打开任务并回复](https://multica.test/issues/LC-71)（来源：LC-71 · 子任务测试）"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -274,15 +358,18 @@ func TestSendBoundsQueuedOversizedMarkdownAtDeliveryTime(t *testing.T) {
 		if err := json.Unmarshal([]byte(content), &decoded); err != nil {
 			t.Fatalf("decode content: %v", err)
 		}
-		if decoded["title"] != personalMessageTitle || !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker) {
+		if decoded["title"] != personalMessageTitle || !strings.HasSuffix(decoded["text"], personalMessageTruncationMarker+footer) {
 			t.Fatalf("content = %#v", decoded)
+		}
+		if utf8.RuneCountInString(decoded["text"]) > personalMessageTextRuneLimit {
+			t.Fatal("queued text exceeds the character limit")
 		}
 		writeRPCResult(t, w, map[string]any{"openTaskId": "task-oversized"})
 	}))
 	defer server.Close()
 
 	service := &Service{httpClient: server.Client(), chatEndpoint: server.URL}
-	taskID, _, err := service.send(context.Background(), "token", "open-recipient", strings.Repeat("超长消息🙂", 5000), "message-key")
+	taskID, _, err := service.send(context.Background(), "token", "open-recipient", strings.Repeat("超长消息🙂", 5000)+footer, "message-key")
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}

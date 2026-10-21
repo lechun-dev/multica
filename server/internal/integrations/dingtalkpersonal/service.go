@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -730,6 +731,7 @@ func encodePersonalMessageContent(text string) string {
 type encodedPersonalMessageContent struct {
 	serialized string
 	truncated  bool
+	err        error
 }
 
 // DingTalk's personal-message contract does not publish an explicit content
@@ -738,19 +740,29 @@ type encodedPersonalMessageContent struct {
 // after the API has already returned an openTaskId.
 func encodePersonalMessageContentDetails(text string) encodedPersonalMessageContent {
 	content := encodeContent(personalMessageTitle, text)
-	runes := []rune(text)
-	if len(runes) <= personalMessageTextRuneLimit && len(content) <= personalMessageContentByteLimit {
+	if utf8.RuneCountInString(text) <= personalMessageTextRuneLimit && len(content) <= personalMessageContentByteLimit {
 		return encodedPersonalMessageContent{serialized: content}
 	}
 
+	body, footer := splitPersonalMessageFooter(text)
+	runes := []rune(body)
+	suffix := personalMessageTruncationMarker + footer
+	maxPrefixRunes := personalMessageTextRuneLimit - utf8.RuneCountInString(suffix)
+	if maxPrefixRunes < 0 || len(encodeContent(personalMessageTitle, suffix)) > personalMessageContentByteLimit {
+		// Never silently damage the task action or send an oversized payload when
+		// the footer alone cannot fit, even after removing the entire body.
+		return encodedPersonalMessageContent{err: &DeliveryError{
+			Code: "message_footer_too_long", Message: "DingTalk task footer exceeds the personal message limit",
+		}}
+	}
 	high := len(runes) - 1
-	if maxPrefixRunes := personalMessageTextRuneLimit - 1; high > maxPrefixRunes {
+	if high > maxPrefixRunes {
 		high = maxPrefixRunes
 	}
 	low := 0
 	for low < high {
 		mid := low + (high-low+1)/2
-		candidate := encodeContent(personalMessageTitle, string(runes[:mid])+personalMessageTruncationMarker)
+		candidate := encodeContent(personalMessageTitle, string(runes[:mid])+suffix)
 		if len(candidate) <= personalMessageContentByteLimit {
 			low = mid
 		} else {
@@ -759,9 +771,22 @@ func encodePersonalMessageContentDetails(text string) encodedPersonalMessageCont
 	}
 
 	return encodedPersonalMessageContent{
-		serialized: encodeContent(personalMessageTitle, string(runes[:low])+personalMessageTruncationMarker),
+		serialized: encodeContent(personalMessageTitle, string(runes[:low])+suffix),
 		truncated:  true,
 	}
+}
+
+// Reserve the generated task footer, not arbitrary separators in the comment.
+// Splitting at the last separator also covers messages queued before this fix.
+func splitPersonalMessageFooter(text string) (body, footer string) {
+	const separator = "\n\n---\n\n"
+	if index := strings.LastIndex(text, separator); index >= 0 {
+		tail := text[index+len(separator):]
+		if strings.HasPrefix(tail, "[打开任务并回复](") || strings.HasPrefix(tail, "（来源：") || strings.HasPrefix(tail, "来源：") {
+			return text[:index], text[index:]
+		}
+	}
+	return text, ""
 }
 
 func encodeContent(title, text string) string {
