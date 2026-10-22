@@ -5,16 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -117,10 +121,19 @@ func (h *Handler) CreateIssueAccessRequest(w http.ResponseWriter, r *http.Reques
 		h.writeIssueAccessRequestError(w, err)
 		return
 	}
+	var notifications []db.InboxItem
+	if created {
+		notifications, err = loadAccessRequestNotifications(r.Context(), tx, result, "requested")
+		if err != nil {
+			writeProjectAccessGrantError(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeProjectAccessGrantError(w, err)
 		return
 	}
+	h.publishAccessRequestNotifications(actor, notifications)
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
@@ -217,11 +230,50 @@ func (h *Handler) ReviewIssueAccessRequest(w http.ResponseWriter, r *http.Reques
 		h.writeIssueAccessRequestError(w, err)
 		return
 	}
+	notifications, err := loadAccessRequestNotifications(r.Context(), tx, result, result.Status)
+	if err != nil {
+		writeProjectAccessGrantError(w, err)
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeProjectAccessGrantError(w, err)
 		return
 	}
+	h.publishAccessRequestNotifications(actor, notifications)
 	writeJSON(w, http.StatusOK, result)
+}
+
+// 2026-10-20 coder(lq): Read the newly created event's inbox rows inside the
+// transaction, but publish only after commit. Retries must not re-publish old rows.
+func loadAccessRequestNotifications(ctx context.Context, tx pgx.Tx, item issueAccessRequestResponse, event string) ([]db.InboxItem, error) {
+	rows, err := tx.Query(ctx, `SELECT i.* FROM inbox_item i
+		JOIN projectauth_access_request_notifications n
+		  ON n.workspace_id=i.workspace_id AND n.inbox_item_id=i.id
+		WHERE n.workspace_id=$1 AND n.request_id=$2 AND n.event=$3`, item.WorkspaceID, item.ID, event)
+	if err != nil {
+		return nil, wrapProjectPermissionRepositoryError(err)
+	}
+	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.InboxItem])
+	return items, wrapProjectPermissionRepositoryError(err)
+}
+
+func (h *Handler) publishAccessRequestNotifications(actor projectauth.Subject, items []db.InboxItem) {
+	if h.Bus == nil {
+		return
+	}
+	for _, item := range items {
+		response := inboxToResponse(item)
+		// 2026-10-20 coder(lq): Personal realtime routing requires a nested map
+		// with recipient_id; a response struct would be silently discarded.
+		h.publish(protocol.EventInboxNew, actor.WorkspaceID, "member", actor.UserID, map[string]any{"item": map[string]any{
+			"id": response.ID, "workspace_id": response.WorkspaceID,
+			"recipient_type": response.RecipientType, "recipient_id": response.RecipientID,
+			"type": response.Type, "severity": response.Severity, "issue_id": response.IssueID,
+			"title": response.Title, "body": response.Body, "read": response.Read, "archived": response.Archived,
+			"created_at": response.CreatedAt, "issue_status": response.IssueStatus, "issue_priority": response.IssuePriority,
+			"actor_type": response.ActorType, "actor_id": response.ActorID, "details": response.Details,
+		}})
+	}
 }
 
 func (h *Handler) CancelIssueAccessRequest(w http.ResponseWriter, r *http.Request) {
@@ -494,50 +546,85 @@ func (h *Handler) enqueueAccessRequestNotification(ctx context.Context, tx pgx.T
 	if event == accessRequestPending {
 		deliveryEvent = "requested"
 	}
+	// 2026-10-20 coder(lq): Resolve display context in the same transaction;
+	// never expose internal user IDs in human-facing permission notifications.
+	var applicantName, issueTitle, workspaceSlug, issuePrefix, roleName string
+	var issueNumber int32
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(u.name,''),i.title,w.slug,w.issue_prefix,i.number,COALESCE(r.name,'')
+		FROM issue i JOIN workspace w ON w.id=i.workspace_id
+		LEFT JOIN "user" u ON u.id=$3::uuid
+		LEFT JOIN projectauth_task_roles r ON r.workspace_id=i.workspace_id AND r.role_key=$4::text
+		WHERE i.workspace_id=$1::uuid AND i.id=$2::uuid`, item.WorkspaceID, item.IssueID, item.RequesterUserID, string(item.RequestedRole)).
+		Scan(&applicantName, &issueTitle, &workspaceSlug, &issuePrefix, &issueNumber, &roleName); err != nil {
+		return wrapProjectPermissionRepositoryError(err)
+	}
+	if projectauth.IsSystemTaskRole(projectauth.TaskRole(item.RequestedRole)) {
+		roleName = issueAccessRoleLabel(item.RequestedRole)
+	} else if strings.TrimSpace(roleName) == "" {
+		roleName = "任务访问"
+	}
+	notification := notify.AccessRequestNotification{
+		ApplicantName: applicantName, RoleName: roleName,
+		IssueIdentifier: service.IssueIdentifier(issuePrefix, issueNumber), IssueTitle: issueTitle,
+	}
 	title := "任务权限申请"
-	body := fmt.Sprintf("用户 %s 申请任务角色 %s", item.RequesterUserID, item.RequestedRole)
 	severity := "action_required"
 	if event != accessRequestPending {
 		title = "任务权限申请结果"
-		body = fmt.Sprintf("任务角色 %s 的申请已%s", item.RequestedRole, map[string]string{accessRequestApproved: "批准", accessRequestRejected: "拒绝", accessRequestCancelled: "取消", accessRequestExpired: "过期"}[event])
+		notification.Outcome = map[string]string{accessRequestApproved: "批准", accessRequestRejected: "拒绝", accessRequestCancelled: "取消", accessRequestExpired: "过期"}[event]
 		severity = "info"
 	}
+	body := notify.AccessRequestSummary(notification)
+
 	details, err := json.Marshal(map[string]any{"access_request_id": item.ID, "event": event, "requested_role": item.RequestedRole})
 	if err != nil {
 		return fmt.Errorf("marshal task access request notification details: %w", err)
 	}
 	var inboxID string
-	err = tx.QueryRow(ctx, `WITH delivery AS (INSERT INTO projectauth_access_request_notifications (workspace_id,request_id,recipient_user_id,event,inbox_item_id) VALUES ($1,$2,$3,$4,gen_random_uuid()) ON CONFLICT (workspace_id,request_id,recipient_user_id,event) DO NOTHING RETURNING inbox_item_id) INSERT INTO inbox_item (id,workspace_id,recipient_type,recipient_id,type,severity,issue_id,title,body,actor_type,actor_id,details) SELECT inbox_item_id,$1,'member',$3,'task_access_request',$5,$6,$7,$8,'member',$9,$10::jsonb FROM delivery RETURNING id::text`, item.WorkspaceID, item.ID, recipientID, deliveryEvent, severity, item.IssueID, title, body, senderID, details).Scan(&inboxID)
+	err = tx.QueryRow(ctx, `WITH delivery AS (INSERT INTO projectauth_access_request_notifications (workspace_id,request_id,recipient_user_id,event,inbox_item_id) VALUES ($1,$2,$3,$4,gen_random_uuid()) ON CONFLICT (workspace_id,request_id,recipient_user_id,event) DO NOTHING RETURNING inbox_item_id) INSERT INTO inbox_item (id,workspace_id,recipient_type,recipient_id,type,severity,issue_id,title,body,actor_type,actor_id,details) SELECT inbox_item_id,$1,'member',$3,'task_access_request',$5,$6,$7,$8,'member',$9,$10::jsonb FROM delivery RETURNING id::text`, item.WorkspaceID, item.ID, recipientID, deliveryEvent, severity, item.IssueID, title+" · "+notification.IssueIdentifier+" · "+issueTitle, body, senderID, details).Scan(&inboxID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return wrapProjectPermissionRepositoryError(err)
 	}
 	if inboxID == "" {
 		return nil
 	}
-	// 2026-09-18 coder(lq): 隔离可选的钉钉投递，避免外部通知异常阻断权限申请事务。
-	if _, err := tx.Exec(ctx, `SAVEPOINT access_request_dingtalk`); err != nil {
+	// 2026-10-20 coder(lq): A browser link focuses this request in the existing review
+	// dialog even after inbox dismissal; visiting it never grants access.
+	if base := strings.TrimRight(strings.TrimSpace(h.cfg.AppURL), "/"); base != "" {
+		notification.SourceURL = base + "/" + url.PathEscape(workspaceSlug) + "/issues/" + url.PathEscape(notification.IssueIdentifier)
+		notification.ActionURL = notification.SourceURL
+		if event == accessRequestPending {
+			notification.ActionURL += "?access_request=" + url.QueryEscape(item.ID)
+		}
+	}
+	markdown := notify.FormatAccessRequestText(notification)
+	// 2026-10-20 coder(lq): Persist both independent delivery intents before commit;
+	// a failed/retried transaction must not lose or duplicate a robot notification.
+	if err := h.enqueueAccessRequestDingTalkChannel(ctx, tx, item, recipientID, senderID, "robot", func() error {
+		return enqueueAccessRequestRobot(ctx, tx, item, recipientID, event, markdown)
+	}); err != nil {
 		return err
 	}
-	_, dingErr := tx.Exec(ctx, `INSERT INTO dingtalk_personal_message (workspace_id,comment_id,sender_user_id,sender_ding_user_id,sender_union_id,sender_corp_id,recipient_user_id,recipient_ding_user_id,markdown,idempotency_key) SELECT $1,$2,$3,sender.ding_user_id,NULLIF(sender.union_id,''),NULL,$4,recipient.ding_user_id,$5,'task-access-request:'||$2::text||':'||$4::text||':'||$6 FROM LATERAL (SELECT COALESCE(ding_user_id,'') ding_user_id,COALESCE(union_id,'') union_id FROM dingtalk_notify_identities WHERE multica_user_id=$3 AND active=true ORDER BY updated_at DESC LIMIT 1) sender CROSS JOIN LATERAL (SELECT ding_user_id FROM dingtalk_notify_identities WHERE multica_user_id=$4 AND active=true AND login_only=false AND COALESCE(ding_user_id,'')<>'' ORDER BY updated_at DESC LIMIT 1) recipient ON CONFLICT (idempotency_key) DO NOTHING`, item.WorkspaceID, item.ID, senderID, recipientID, body, event)
-	if dingErr != nil {
-		if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT access_request_dingtalk`); rollbackErr != nil {
-			return fmt.Errorf("rollback task access request DingTalk savepoint after %v: %w", dingErr, rollbackErr)
-		}
-		if auditErr := (&projectAuthRepository{db: tx}).RecordAuthorizationAudit(ctx, projectauth.AuthorizationAuditEvent{WorkspaceID: item.WorkspaceID, IssueID: item.IssueID, ActorUserID: senderID, Action: "task_access_request_dingtalk_enqueue_failed", Details: map[string]any{"request_id": item.ID, "recipient_user_id": recipientID, "error": dingErr.Error()}}); auditErr != nil {
-			slog.ErrorContext(ctx, "record task access request DingTalk enqueue failure",
-				"workspace_id", item.WorkspaceID,
-				"issue_id", item.IssueID,
-				"request_id", item.ID,
-				"recipient_user_id", recipientID,
-				"enqueue_error", dingErr,
-				"audit_error", auditErr,
-			)
-		}
-	}
-	if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT access_request_dingtalk`); err != nil {
-		return fmt.Errorf("release task access request DingTalk savepoint: %w", err)
-	}
-	return nil
+	return h.enqueueAccessRequestDingTalkChannel(ctx, tx, item, recipientID, senderID, "personal", func() error {
+		// 2026-10-20 coder(lq): Fix UUID parameter types before converting them
+		// for text identity bindings and delivery keys.
+		_, err := tx.Exec(ctx, `INSERT INTO dingtalk_personal_message (
+		workspace_id,comment_id,sender_user_id,sender_ding_user_id,
+		sender_union_id,sender_corp_id,recipient_user_id,recipient_ding_user_id,markdown,idempotency_key)
+		SELECT $1::uuid,$2::uuid,$3::uuid,sender.ding_user_id,NULLIF(sender.union_id,''),NULL,
+		       $4::uuid,recipient.ding_user_id,$5::text,
+		       'task-access-request:'||$2::uuid::text||':'||$4::uuid::text||':'||$6::text
+		FROM LATERAL (
+			SELECT COALESCE(ding_user_id,'') ding_user_id,COALESCE(union_id,'') union_id
+			FROM dingtalk_notify_identities WHERE multica_user_id=$3::uuid::text AND active=true
+			ORDER BY updated_at DESC LIMIT 1
+		) sender CROSS JOIN LATERAL (
+			SELECT ding_user_id FROM dingtalk_notify_identities
+			WHERE multica_user_id=$4::uuid::text AND active=true AND login_only=false AND COALESCE(ding_user_id,'')<>''
+			ORDER BY updated_at DESC LIMIT 1
+		) recipient ON CONFLICT (idempotency_key) DO NOTHING`, item.WorkspaceID, item.ID, senderID, recipientID, markdown, event)
+		return err
+	})
 }
 
 type issueAccessRequestScanner interface{ Scan(dest ...any) error }

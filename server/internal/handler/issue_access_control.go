@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
 )
 
@@ -199,13 +200,25 @@ func (h *Handler) GetIssueAccessRequestTarget(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "workspace_id is required")
 		return
 	}
-	var id, identifier string
+	var id string
+	var number int32
+	var workspace db.Workspace
+	ref := chi.URLParam(r, "id")
+	var lookupNumber int32
+	if _, parseErr := util.ParseUUID(ref); parseErr != nil {
+		if parts := splitIdentifier(ref); parts != nil {
+			lookupNumber = parts.number
+		}
+	}
+	// 2026-10-14 coder(lq): Identifier is derived, never stored on issue.
+	// Read only a scoped reference and reuse the frozen legacy-prefix rule.
 	err := h.DB.QueryRow(r.Context(), `
-		SELECT issue.id::text, issue.identifier
+		SELECT issue.id::text, issue.number, workspace.issue_prefix, workspace.name
 		FROM issue
+		JOIN workspace ON workspace.id=issue.workspace_id
 		JOIN member ON member.workspace_id=issue.workspace_id AND member.user_id=$2
-		WHERE issue.workspace_id=$1 AND (issue.id::text=$3 OR lower(issue.identifier)=lower($3))
-		LIMIT 1`, workspaceID, userID, chi.URLParam(r, "id")).Scan(&id, &identifier)
+		WHERE issue.workspace_id=$1 AND (lower(issue.id::text)=lower($3) OR issue.number=$4)
+		LIMIT 1`, workspaceID, userID, ref, lookupNumber).Scan(&id, &number, &workspace.IssuePrefix, &workspace.Name)
 	if err != nil {
 		// 2026-10-10 coder(lq): Storage failures are not evidence of deletion.
 		// The inbox fallback must retain the notification and offer retry.
@@ -213,6 +226,11 @@ func (h *Handler) GetIssueAccessRequestTarget(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusInternalServerError, "failed to resolve task")
 			return
 		}
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	identifier := fmt.Sprintf("%s-%d", issuePrefixForWorkspace(workspace), number)
+	if !strings.EqualFold(ref, id) && !strings.EqualFold(ref, identifier) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}

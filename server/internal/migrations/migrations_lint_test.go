@@ -67,6 +67,10 @@ var legacyDuplicateMigrationStems = map[string][]string{
 	// Keep their recorded names stable so existing deployments do not replay
 	// agent_daily_stats under a new version and fail on the existing table.
 	"462": {"462_agent_daily_stats", "462_projectauth_access_grants_project_unique"},
+	// 2026-10-22 coder(lq): master shipped the index in v0.5.9-beta.1 and
+	// main shipped account access in v0.5.12 before these histories merged.
+	// The ledger keys full stems; renaming either would replay published DDL.
+	"602": {"602_github_pr_address_index", "602_user_account_access"},
 }
 
 var migrationPrefixPattern = regexp.MustCompile(`^(\d+)_`)

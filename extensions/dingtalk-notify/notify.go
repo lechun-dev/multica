@@ -57,6 +57,32 @@ type AgentCompleted struct {
 	CompletedAt     time.Time
 }
 
+// AssignmentNotificationKind identifies the two human-assignee transitions
+// that are meaningful to a DingTalk recipient.
+type AssignmentNotificationKind string
+
+const (
+	AssignmentAdded   AssignmentNotificationKind = "assignment_added"
+	AssignmentRemoved AssignmentNotificationKind = "assignment_removed"
+)
+
+// AssignmentNotification is intentionally separate from mentions and Agent
+// completion events. Assignee changes always use the Mission robot's P2P
+// channel and never depend on @mention routing.
+type AssignmentNotification struct {
+	EventID         string
+	WorkspaceID     string
+	RecipientID     string
+	Kind            AssignmentNotificationKind
+	ActorName       string
+	NewAssigneeName string
+	IssueIdentifier string
+	IssueTitle      string
+	SourceURL       string
+	IncludeDetails  bool
+	OccurredAt      time.Time
+}
+
 type MemberBinding struct {
 	WorkspaceID string
 	MemberID    string
@@ -260,16 +286,16 @@ func FormatText(event MentionCreated) string {
 	return strings.Join(sections, "\n\n")
 }
 
-// FormatPersonalMentionText creates the compact copy sent by DWS as the
-// signed-in human. The DingTalk conversation already identifies the sender,
-// and the mention tokens only served as routing instructions inside Multica,
-// so neither belongs in the private-message body.
+// FormatPersonalMentionText creates the copy sent by DWS as the signed-in
+// human. Preserve the complete comment, including readable @names, while
+// removing only Multica's internal mention:// targets that DingTalk cannot
+// resolve.
 func FormatPersonalMentionText(event MentionCreated) string {
-	text := truncateMentionPreview(stripMentionLinks(stripStructuredMentions(sanitizeText(event.Text))))
+	text := formatPersonalMentionLinks(sanitizeText(event.Text))
 	if text == "" {
 		text = "在任务评论中提到了你"
 	}
-	sections := []string{boldPersonalMentionText(text)}
+	sections := []string{text}
 	footer := ""
 	if sourceURL := strings.TrimSpace(event.SourceURL); sourceURL != "" {
 		footer = "[打开任务并回复](" + sourceURL + ")"
@@ -281,16 +307,6 @@ func FormatPersonalMentionText(event MentionCreated) string {
 		sections = append(sections, "---", footer)
 	}
 	return strings.Join(sections, "\n\n")
-}
-
-func boldPersonalMentionText(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			lines[i] = "**" + line + "**"
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // BuildCompletionMessages resolves each requested human recipient to their
@@ -336,6 +352,112 @@ func BuildCompletionMessages(ctx context.Context, event AgentCompleted, recipien
 
 func failedMentionTarget(eventID, workspaceID string, target MentionTarget, reason string) Delivery {
 	return Delivery{Message: Message{EventID: eventID, WorkspaceID: workspaceID, TargetID: target.ID, TargetKind: target.Kind}, Status: "failed", Error: reason}
+}
+
+// BuildAssignmentMessage resolves one current or former human assignee to an
+// active DingTalk identity. Assignment messages never fall back to a group.
+func BuildAssignmentMessage(ctx context.Context, event AssignmentNotification, resolver Resolver) ([]Message, []Delivery, error) {
+	if strings.TrimSpace(event.EventID) == "" || strings.TrimSpace(event.WorkspaceID) == "" {
+		return nil, nil, errors.New("assignment event_id and workspace_id are required")
+	}
+	if strings.TrimSpace(event.RecipientID) == "" {
+		return nil, nil, errors.New("assignment recipient_id is required")
+	}
+	if event.Kind != AssignmentAdded && event.Kind != AssignmentRemoved {
+		return nil, nil, errors.New("unsupported assignment notification kind")
+	}
+	if resolver == nil {
+		return nil, nil, errors.New("assignment resolver is required")
+	}
+	binding, found, err := resolver.MemberBinding(ctx, event.WorkspaceID, event.RecipientID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve assignment recipient %s: %w", event.RecipientID, err)
+	}
+	target := MentionTarget{ID: event.RecipientID, Kind: "member"}
+	if !found || !binding.Active || strings.TrimSpace(binding.DingUserID) == "" {
+		return nil, []Delivery{failedMentionTarget(event.EventID, event.WorkspaceID, target, "member is not bound to DingTalk")}, nil
+	}
+	return []Message{{
+		EventID: event.EventID, WorkspaceID: event.WorkspaceID,
+		TargetID: event.RecipientID, TargetKind: "member", DingUserID: binding.DingUserID,
+		RobotCode: binding.RobotCode, ChannelType: "p2p", Text: FormatAssignmentText(event),
+	}}, nil, nil
+}
+
+// FormatAssignmentText keeps the assignee notification to the two approved
+// message types. Task identity and its link are optional and omitted when the
+// recipient can no longer view the task.
+func FormatAssignmentText(event AssignmentNotification) string {
+	sections := make([]string, 0, 5)
+	switch event.Kind {
+	case AssignmentAdded:
+		sections = append(sections, "📌 **你已成为该任务的负责人**")
+	case AssignmentRemoved:
+		heading := "该任务已转交"
+		if name := strings.TrimSpace(event.NewAssigneeName); name != "" {
+			heading += "给 " + escapeMarkdown(name)
+		}
+		sections = append(sections, "↗️ **"+heading+"**")
+	default:
+		return ""
+	}
+	if metadata := formatAssignmentMetadata(event); metadata != "" {
+		sections = append(sections, metadata)
+	}
+	return appendAssignmentTaskDetails(sections, event)
+}
+
+// FormatPersonalAssignmentText creates the copy sent from the human operator
+// to the new assignee. It deliberately omits the Mission robot emoji while
+// preserving the same operation and task context.
+func FormatPersonalAssignmentText(event AssignmentNotification) string {
+	if event.Kind != AssignmentAdded {
+		return ""
+	}
+	sections := []string{"你已成为该任务的负责人"}
+	if metadata := formatAssignmentMetadata(event); metadata != "" {
+		sections = append(sections, metadata)
+	}
+	return appendAssignmentTaskDetails(sections, event)
+}
+
+func formatAssignmentMetadata(event AssignmentNotification) string {
+	lines := make([]string, 0, 2)
+	if actor := strings.TrimSpace(event.ActorName); actor != "" {
+		lines = append(lines, "操作人："+escapeMarkdown(actor))
+	}
+	if !event.OccurredAt.IsZero() {
+		loc, err := time.LoadLocation("Asia/Shanghai")
+		if err != nil {
+			loc = time.FixedZone("CST", 8*60*60)
+		}
+		lines = append(lines, "操作时间："+event.OccurredAt.In(loc).Format("2006-01-02 15:04"))
+	}
+	// DingTalk's Markdown renderer collapses a single newline inside one
+	// paragraph. Separate the fields as paragraphs so they stay on distinct
+	// lines in both Markdown messages and ActionCard bodies.
+	return strings.Join(lines, "\n\n")
+}
+
+func appendAssignmentTaskDetails(sections []string, event AssignmentNotification) string {
+	if !event.IncludeDetails {
+		return strings.Join(sections, "\n\n")
+	}
+	identifier := strings.TrimSpace(event.IssueIdentifier)
+	title := strings.TrimSpace(event.IssueTitle)
+	label := escapeMarkdown(identifier)
+	if label == "" {
+		label = escapeMarkdown(title)
+	} else if title != "" {
+		label += " · " + escapeMarkdown(title)
+	}
+	if label != "" {
+		sections = append(sections, "---", "来源："+label)
+	}
+	if source := strings.TrimSpace(event.SourceURL); source != "" {
+		sections = append(sections, "[打开任务]("+source+")")
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 // FormatAgentCompletionText is deliberately not phrased as a mention. Keep
@@ -478,6 +600,21 @@ var mentionLinkRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(?:member|agent|s
 var structuredAtMentionRe = regexp.MustCompile(`\[@(.+?)\]\(mention://(?:member|agent|squad|all)/[^)]+\)`)
 var repeatedHorizontalSpaceRe = regexp.MustCompile(`[ \t]+`)
 var spaceBeforePunctuationRe = regexp.MustCompile(`[ \t]+([,，。.!！?？;；:：、])`)
+
+// formatPersonalMentionLinks gives structured @names visual emphasis in the
+// DingTalk 1V1 body. It does not guess from literal @ text, so email addresses,
+// external links, and ordinary prose remain byte-for-byte unchanged. Issue
+// mentions are converted to readable labels without bolding.
+func formatPersonalMentionLinks(text string) string {
+	text = structuredAtMentionRe.ReplaceAllStringFunc(text, func(full string) string {
+		parts := structuredAtMentionRe.FindStringSubmatch(full)
+		if len(parts) != 2 {
+			return full
+		}
+		return "**@" + escapeMarkdown(parts[1]) + "**"
+	})
+	return stripMentionLinks(text)
+}
 
 // stripStructuredMentions removes Multica routing mentions completely. It is
 // intentionally limited to mention:// links: literal @ text and email

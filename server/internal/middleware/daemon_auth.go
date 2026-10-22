@@ -78,6 +78,7 @@ func WithDaemonContext(ctx context.Context, workspaceID, daemonID string) contex
 // Cache misses fall back to the original DB-backed behavior.
 func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		next = enforceAccountAccess(queries, next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — strip any
 			// client-supplied value before any branch can re-stamp
@@ -259,6 +260,10 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
 				writeError(w, http.StatusUnauthorized, "invalid claims")
+				return
+			}
+			if source, _ := claims["source"].(string); source == auth.MissionReadSource {
+				writeError(w, http.StatusForbidden, "mission token cannot access daemon routes")
 				return
 			}
 			sub, ok := claims["sub"].(string)

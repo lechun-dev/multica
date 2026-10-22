@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
@@ -283,6 +284,17 @@ describe("IssueSchema (via ListIssuesResponseSchema)", () => {
         total: 1,
       }),
     ).toThrow();
+  });
+
+  it("accepts optional completion and rejects malformed completion timestamps", () => {
+    for (const value of [null, "2026-10-14T00:00:00.123Z"]) {
+      const parsed = ListIssuesResponseSchema.parse({ issues: [{ ...baseIssue, completed_at: value }], total: 1 });
+      expect(parsed.issues[0]?.completed_at).toBe(value);
+    }
+    expect(ListIssuesResponseSchema.parse({ issues: [baseIssue] }).issues[0]?.completed_at).toBeUndefined();
+    for (const value of [42, "not-a-date"]) {
+      expect(() => ListIssuesResponseSchema.parse({ issues: [{ ...baseIssue, completed_at: value }] })).toThrow();
+    }
   });
 
   it("accepts a primitive metadata KV map", () => {

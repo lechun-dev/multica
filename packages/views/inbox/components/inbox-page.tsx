@@ -1,5 +1,7 @@
 "use client";
 
+import { inboxItemKey } from "@multica/core/inbox/grouping";
+
 import {
   useState,
   useEffect,
@@ -158,7 +160,7 @@ export function InboxPage() {
   const effectiveFilters = useMemo(() => inboxFiltersForPrioritySupport(filters, priorityFilterSupport), [filters, priorityFilterSupport]);
   const visibleItems = useMemo(() => filterInboxItems(viewItems, effectiveFilters), [viewItems, effectiveFilters]);
   const hasActiveFilters = inboxFilterCount(effectiveFilters) > 0;
-  const selectedOnPage = viewItems.find((i) => (i.issue_id ?? i.id) === selectedKey);
+  const selectedOnPage = viewItems.find((i) => inboxItemKey(i) === selectedKey);
   // A deep link can point beyond every loaded page. Resolve its group directly
   // without adding it to the cursor chain or mistaking a page miss for a 404.
   const lookup = useQuery({
@@ -176,8 +178,8 @@ export function InboxPage() {
     if (!isArchivedView || selectedOnPage) return visibleItems;
     return [...visibleItems, ...filterInboxItems(lookupItems, effectiveFilters)];
   }, [isArchivedView, selectedOnPage, visibleItems, lookupItems, effectiveFilters]);
-  const selected = selectionItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
-  const selectedInView = selectedOnPage ?? (isArchivedView ? lookupItems.find((i) => (i.issue_id ?? i.id) === selectedKey) : null);
+  const selected = selectionItems.find((i) => inboxItemKey(i) === selectedKey) ?? null;
+  const selectedInView = selectedOnPage ?? (isArchivedView ? lookupItems.find((i) => inboxItemKey(i) === selectedKey) : null);
   const selectionFilteredOut = !!selectedKey && !!selectedInView && !selected;
 
   // What the DETAIL pane shows, one React transition behind the click.
@@ -358,7 +360,7 @@ export function InboxPage() {
   // re-opens it without a remount.
   const [accessRequestToken, setAccessRequestToken] = useState(0);
   const handleSelect = (item: InboxItem) => {
-    const nextKey = item.issue_id ?? item.id;
+    const nextKey = inboxItemKey(item);
     // Every click on a notification row is a fresh deep-link intent: clear
     // the "highlight already landed" memento entry so the comment jump runs
     // again even if this issue's detail was opened (and its landing
@@ -371,9 +373,8 @@ export function InboxPage() {
         setHighlightRequestToken((t) => t + 1);
       }
     }
-    // 2026-09-20 coder(lq): 任务权限申请通知点开即落到「任务授权」弹窗的对应申请上；
-    // 同一行再次点击靠 token 重放，切换行时由 IssueDetail 按 issue 重挂载自然落位，
-    // 其他类型通知不 bump，避免下拉详情时误弹权限弹窗。
+    // 2026-10-20 coder(lq): Each request row focuses its own application.
+    // Re-clicking reopens the dialog; other notification types leave it alone.
     if (item.type === "task_access_request") {
       setAccessRequestToken((token) => token + 1);
     }
@@ -415,13 +416,13 @@ export function InboxPage() {
   const advanceSelectionPast = (id: string, list: InboxItem[]) => {
     const idx = list.findIndex((i) => i.id === id);
     const target = idx >= 0 ? list[idx] : null;
-    const wasSelected = !!target && (target.issue_id ?? target.id) === selectedKey;
+    const wasSelected = !!target && inboxItemKey(target) === selectedKey;
     if (!wasSelected) return;
     // List is sorted newest-first; prefer the next (older) item, fall back
     // to the previous (newer) one when actioning at the bottom, and only
     // clear the selection when nothing else is left.
     const next = list[idx + 1] ?? list[idx - 1] ?? null;
-    setSelectedKey(next ? (next.issue_id ?? next.id) : "");
+    setSelectedKey(next ? inboxItemKey(next) : "");
   };
 
   // Toasts live in these shared handlers so every archive surface confirms alike.
@@ -500,7 +501,7 @@ export function InboxPage() {
   };
 
   const handleArchiveAllRead = () => {
-    const readKeys = items.filter((i) => i.read).map((i) => i.issue_id ?? i.id);
+    const readKeys = items.filter((i) => i.read).map((i) => inboxItemKey(i));
     if (readKeys.includes(selectedKey)) setSelectedKey("");
     archiveAllReadMutation.mutate(undefined, {
       onError: (err) =>

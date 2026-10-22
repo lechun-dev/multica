@@ -62,10 +62,12 @@ type IssueResponse struct {
 	// field at all: with omitempty a built-in fixture hides it from BOTH
 	// renderings, and the drift guard goes green on a payload that has drifted.
 	// (MUL-6749)
-	StatusName    string  `json:"status_name"`
-	Priority      string  `json:"priority"`
-	AssigneeType  *string `json:"assignee_type"`
-	AssigneeID    *string `json:"assignee_id"`
+	StatusName   string  `json:"status_name"`
+	Priority     string  `json:"priority"`
+	AssigneeType *string `json:"assignee_type"`
+	AssigneeID   *string `json:"assignee_id"`
+	// AssigneeName is a member display name projected only by internal agent reads.
+	AssigneeName  *string `json:"assignee_name,omitempty"`
 	CreatorType   string  `json:"creator_type"`
 	CreatorID     string  `json:"creator_id"`
 	ParentIssueID *string `json:"parent_issue_id"`
@@ -85,7 +87,10 @@ type IssueResponse struct {
 	DueDate   *string `json:"due_date"`
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
-	Revision  int64   `json:"revision"`
+	// Opt-in read projection: nil outer pointer means absent, inner nil means
+	// no known completion. Writes/events must not overwrite a known projection.
+	CompletedAt **string `json:"completed_at,omitempty"`
+	Revision    int64    `json:"revision"`
 	// 2026-09-02 coder(lq): Expose archive state without changing task status.
 	ArchivedAt *string `json:"archived_at,omitempty"`
 	// LastActivityAt is the latest semantic issue activity. It stays nullable
@@ -1456,6 +1461,14 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	timeRanges, ok := parseIssueTimeRanges(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	if r.URL.Query().Get("open_only") == "true" && (len(timeRanges) > 0 || r.URL.Query().Get("include_completed_at") == "true" || r.URL.Query().Get("sort") == "completed_at") {
+		writeError(w, http.StatusBadRequest, "time range/completion projection requires paginated list")
+		return
+	}
 
 	// open_only=true returns all non-done/cancelled issues (no limit).
 	if r.URL.Query().Get("open_only") == "true" {
@@ -1492,7 +1505,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		for i, issue := range issues {
 			openIDs[i] = issue.ID
 		}
-		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+		if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && !missionAgentOwnerRead(r) {
 			userID := requestUserID(r)
 			if userID == "" {
 				writeError(w, http.StatusUnauthorized, "user not authenticated")
@@ -1627,6 +1640,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 			sortCol = s
 		case "last_activity":
 			sortCol = "last_activity_at"
+		case "completed_at":
+			sortCol = issueCompletedAtSQL("i")
+			sortIsExpr = true
 		case "status":
 			sortCol = "status"
 			sortIsExpr = true
@@ -1687,7 +1703,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
 	}
-	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
+	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() && !missionAgentOwnerRead(r) {
 		userID := requestUserID(r)
 		if userID == "" {
 			writeError(w, http.StatusUnauthorized, "user not authenticated")
@@ -1813,7 +1829,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("top_level_only") == "true" {
 		where = append(where, "i.parent_issue_id IS NULL")
 	}
-	where = appendIssueTableSearchFilter(where, addArg, r.URL.Query().Get("q"))
+	where = appendIssueTableSearchFilter(where, addArg, r.URL.Query().Get("q"), r.URL.Query().Get("search_description") == "true")
 	if scheduledFilter.Valid {
 		where = append(where, "(i.start_date IS NOT NULL OR i.due_date IS NOT NULL)")
 	}
@@ -1824,6 +1840,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		where = append(where, propertiesFilterPredicate(propertiesFilter, addArg))
 	}
 	where = appendIssueDateFilter(where, addArg, dateFilter)
+	where = appendIssueTimeRanges(where, addArg, timeRanges)
 	if involvesUserFilter.Valid {
 		ref := addArg(involvesUserFilter)
 		where = append(where, fmt.Sprintf(`(
@@ -1862,7 +1879,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		where = appendIssueWindow(where, addArg, windowPolicy, "$1", "i")
 	}
 
-	if visibilityUserRef != "" {
+	if visibilityUserRef != "" && !missionAgentOwnerRead(r) {
 		includeWorkspaceOwned := r.URL.Query().Get("include_workspace_owned") != "false"
 		organizationSQL := h.organizationReadSQL(r, "$1", visibilityUserRef, addArg)
 		visibilityCTEs = "WITH " + issueVisibilityCandidateCTEDefsWithOrganizations("$1", visibilityUserRef, includeWorkspaceOwned, strings.Join(where, " AND "), organizationSQL)
@@ -1888,7 +1905,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		orderBy = "i." + sortCol
 	}
 	orderBy += " " + sortDir
-	if sortCol == "start_date" || sortCol == "due_date" || sortCol == "last_activity_at" || sortIsProperty {
+	if sortCol == "start_date" || sortCol == "due_date" || sortCol == "last_activity_at" || sortIsProperty || r.URL.Query().Get("sort") == "completed_at" {
 		// Property values are sparse: issues without one sort last in both
 		// directions (mirrors the client comparator).
 		orderBy += " NULLS LAST"
@@ -2008,6 +2025,16 @@ LIMIT %s OFFSET %s`, totalExpr, whereSql, orderBy, limitRef, offsetRef)
 		resp[i].Labels = &labels
 	}
 	h.fillStatusCategories(ctx, wsUUID, resp)
+	if err := h.fillAgentAssigneeNames(r, wsUUID, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read assignee names")
+		return
+	}
+	if r.URL.Query().Get("include_completed_at") == "true" {
+		if err := h.fillIssueCompletion(ctx, wsUUID, resp); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read completion history")
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issues": resp,
@@ -2115,7 +2142,7 @@ func appendIssueDateFilter(where []string, addArg func(any) string, filter *issu
 // preserves the table's active filters, explicit sort, total, and pagination.
 // Every word must appear in the title; a complete identifier (or bare issue
 // number) also matches the immutable numeric issue number.
-func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw string) []string {
+func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw string, searchDescription ...bool) []string {
 	query := strings.TrimSpace(raw)
 	if query == "" {
 		return where
@@ -2127,7 +2154,12 @@ func appendIssueTableSearchFilter(where []string, addArg func(any) string, raw s
 		titleMatches := make([]string, 0, len(words))
 		for _, word := range words {
 			pattern := "%" + escapeLike(word) + "%"
-			titleMatches = append(titleMatches, fmt.Sprintf("LOWER(i.title) LIKE %s", addArg(pattern)))
+			ref := addArg(pattern)
+			match := fmt.Sprintf("LOWER(i.title) LIKE %s", ref)
+			if len(searchDescription) > 0 && searchDescription[0] {
+				match = "(" + match + " OR LOWER(COALESCE(i.description, '')) LIKE " + ref + ")"
+			}
+			titleMatches = append(titleMatches, match)
 		}
 		ors = append(ors, "("+strings.Join(titleMatches, " AND ")+")")
 	}
@@ -2673,6 +2705,20 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
+	assigneeResponses := []IssueResponse{resp}
+	if err := h.fillAgentAssigneeNames(r, issue.WorkspaceID, assigneeResponses); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read assignee names")
+		return
+	}
+	resp = assigneeResponses[0]
+	if r.URL.Query().Get("include_completed_at") == "true" {
+		responses := []IssueResponse{resp}
+		if err := h.fillIssueCompletion(r.Context(), issue.WorkspaceID, responses); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read completion history")
+			return
+		}
+		resp = responses[0]
+	}
 	if issue.ProjectID.Valid {
 		// The issue permission check above is intentionally independent from the
 		// project permission check. This lookup stays workspace-scoped and only
@@ -5314,6 +5360,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			"project_changed":            projectChanged,
 			"duplicate_of_issue_id":      liveDuplicateMark(issue.Status, issue.DuplicateOfIssueID),
 			"prev_duplicate_of_issue_id": liveDuplicateMark(prevIssue.Status, prevIssue.DuplicateOfIssueID),
+			"prev_assignee_type":         textToPtr(prevIssue.AssigneeType),
+			"prev_assignee_id":           uuidToPtr(prevIssue.AssigneeID),
 		})
 
 		// Reassignment does not cancel existing tasks (#4963 / MUL-4113) —

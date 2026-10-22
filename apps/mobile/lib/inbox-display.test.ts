@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { InboxItem } from "@multica/core/types";
 import { deduplicateInboxItems } from "./inbox-display";
@@ -51,4 +52,14 @@ describe("deduplicateInboxItems", () => {
       },
     });
   });
+});
+
+
+it("keeps different access requests independent from ordinary activity on the same task", () => {
+  const rows = [
+    item({ id: "first", type: "task_access_request" }),
+    item({ id: "second", type: "task_access_request" }),
+    item({ id: "activity" }),
+  ];
+  expect(deduplicateInboxItems(rows).map((row) => row.id)).toEqual(["first", "second", "activity"]);
 });

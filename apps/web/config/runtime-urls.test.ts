@@ -297,6 +297,35 @@ describe("runtimeRewriteDestination", () => {
     ).toBeUndefined();
   });
 
+  it("maps only the MissionOS agent issue reads to the runtime API origin", () => {
+    const env = { REMOTE_API_URL: "http://backend:8080" };
+
+    expect(runtimeRewriteDestination("/internal/agent/members", env)).toBe(
+      "http://backend:8080/internal/agent/members",
+    );
+    expect(runtimeRewriteDestination("/internal/agent/members/other", env)).toBeUndefined();
+    expect(runtimeRewriteDestination("/internal/agent/members-export", env)).toBeUndefined();
+
+    expect(runtimeRewriteDestination("/internal/agent/projects", env)).toBe(
+      "http://backend:8080/internal/agent/projects",
+    );
+    expect(runtimeRewriteDestination("/internal/agent/projects/other", env)).toBeUndefined();
+    expect(runtimeRewriteDestination("/internal/agent/projects-export", env)).toBeUndefined();
+
+    expect(runtimeRewriteDestination("/internal/agent/issues", env)).toBe(
+      "http://backend:8080/internal/agent/issues",
+    );
+    expect(
+      runtimeRewriteDestination("/internal/agent/issues/LC-1759", env),
+    ).toBe("http://backend:8080/internal/agent/issues/LC-1759");
+    expect(
+      runtimeRewriteDestination("/internal/agent/other", env),
+    ).toBeUndefined();
+    expect(
+      runtimeRewriteDestination("/internal/agent/issues-export", env),
+    ).toBeUndefined();
+  });
+
   it("maps websocket paths to the runtime API origin", () => {
     expect(
       runtimeRewriteDestination("/ws", {

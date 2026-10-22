@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -41,6 +42,10 @@ type dingtalkNotifyRuntime struct {
 	// Multica database model and makes the routing easy to test.
 	agentOwner         func(context.Context, string, string) (string, error)
 	agentDetails       func(context.Context, string, string) (string, string, error)
+	displayName        func(context.Context, string, string, string) (string, error)
+	canViewIssue       func(context.Context, string, string, string) (bool, error)
+	memberInWorkspace  func(context.Context, string, string) (bool, error)
+	personalAssignment func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification) (bool, error)
 	agentOwnerMentions bool
 	personalWakeup     dingtalkPersonalMessageWakeup
 }
@@ -54,10 +59,13 @@ const (
 	dingtalkNotifyWorkerRetryMax = 30 * time.Second
 )
 
-// registerDingTalkNotifyRuntime wires the personal-mention outbox to the
-// server-side DWS sender. The existing robot worker remains independently
-// gated, so personal delivery cannot alter its routing or payloads.
-func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) (*dingtalkpersonal.Service, error) {
+// registerDingTalkNotifyRuntime wires the signed-in user's personal-mention
+// delivery and the Mission robot's member notifications. The two paths remain
+// independently gated: DWS sends the former, while the robot outbox sends
+// @mention, Agent-completion, and human-assignee notifications.
+// 2026-10-20 coder(lq): Access-request handlers also stage robot messages in
+// this same durable outbox, atomically with their request transaction.
+func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, canViewIssue func(context.Context, string, string, string) (bool, error)) (*dingtalkpersonal.Service, error) {
 	if bus == nil || pool == nil {
 		slog.Warn("dingtalk notify disabled: event bus or database is unavailable")
 		return nil, &dingtalkpersonal.DeliveryError{Code: "dws_runtime_unavailable", Message: "服务器钉钉个人消息运行环境暂时不可用。"}
@@ -114,9 +122,12 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) (*dingta
 	}
 
 	runtime := &dingtalkNotifyRuntime{
-		pool:         pool,
-		agentOwner:   dingtalkAgentOwnerResolver(pool),
-		agentDetails: dingtalkAgentDetailsResolver(pool),
+		pool:              pool,
+		agentOwner:        dingtalkAgentOwnerResolver(pool),
+		agentDetails:      dingtalkAgentDetailsResolver(pool),
+		displayName:       dingtalkDisplayNameResolver(pool),
+		canViewIssue:      canViewIssue,
+		memberInWorkspace: dingtalkWorkspaceMemberChecker(pool),
 	}
 	runtime.personalWakeup = personalService
 	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
@@ -144,9 +155,394 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool) (*dingta
 	runtime.maxAttempts = config.MaxAttempts
 	runtime.agentOwnerMentions = config.AgentOwnerMentions
 	bus.Subscribe(protocol.EventTaskCompleted, runtime.handleTaskCompleted)
+	bus.Subscribe(protocol.EventIssueCreated, runtime.handleIssueCreated)
+	bus.Subscribe(protocol.EventIssueUpdated, runtime.handleIssueUpdated)
 	go runtime.run(context.Background())
 	slog.Info("dingtalk member notifications enabled")
 	return personalService, personalInitErr
+}
+
+type dingtalkAssignmentIssue struct {
+	id              string
+	workspaceID     string
+	identifier      string
+	title           string
+	assigneeType    string
+	assigneeID      string
+	revision        int64
+	actorType       string
+	actorID         string
+	actorName       string
+	newAssigneeName string
+	occurredAt      time.Time
+	isTransfer      bool
+	issueAvailable  bool
+}
+
+func (r *dingtalkNotifyRuntime) handleIssueCreated(e events.Event) {
+	if r == nil || r.store == nil || r.resolver == nil {
+		return
+	}
+	issue := dingtalkAssignmentIssueFromEvent(e)
+	if !issue.issueAvailable && issue.id != "" {
+		actorType, actorID := issue.actorType, issue.actorID
+		loaded, err := r.loadDingTalkAssignmentIssue(context.Background(), e.WorkspaceID, issue.id)
+		if err != nil {
+			slog.Warn("dingtalk assignment notify: created issue lookup failed", "workspace_id", e.WorkspaceID, "issue_id", issue.id, "error", err)
+			return
+		}
+		issue = loaded
+		issue.actorType, issue.actorID = actorType, actorID
+	}
+	if issue.workspaceID == "" {
+		issue.workspaceID = strings.TrimSpace(e.WorkspaceID)
+	}
+	if issue.id == "" || issue.workspaceID == "" || issue.assigneeType != "member" || issue.assigneeID == "" {
+		return
+	}
+	r.enrichAssignmentIssue(context.Background(), &issue)
+	r.enqueueAssignmentNotification(issue, issue.assigneeID, notify.AssignmentAdded, true)
+}
+
+func (r *dingtalkNotifyRuntime) handleIssueUpdated(e events.Event) {
+	if r == nil || r.store == nil || r.resolver == nil {
+		return
+	}
+	payload, ok := e.Payload.(map[string]any)
+	if !ok {
+		return
+	}
+	changed, _ := payload["assignee_changed"].(bool)
+	if !changed {
+		return
+	}
+	issue := dingtalkAssignmentIssueFromEvent(e)
+	if issue.workspaceID == "" {
+		issue.workspaceID = strings.TrimSpace(e.WorkspaceID)
+	}
+	if issue.id == "" || issue.workspaceID == "" || issue.revision <= 0 {
+		slog.Warn("dingtalk assignment notify: updated issue payload is incomplete", "workspace_id", e.WorkspaceID, "issue_id", issue.id, "revision", issue.revision)
+		return
+	}
+	previousType := dingtalkStringValue(payload["prev_assignee_type"])
+	previousID := dingtalkStringValue(payload["prev_assignee_id"])
+	if previousType == issue.assigneeType && previousID == issue.assigneeID {
+		return
+	}
+	issue.isTransfer = previousType != "" && previousID != ""
+	r.enrichAssignmentIssue(context.Background(), &issue)
+	if issue.assigneeType == "member" && issue.assigneeID != "" {
+		r.enqueueAssignmentNotification(issue, issue.assigneeID, notify.AssignmentAdded, false)
+	}
+	if previousType == "member" && previousID != "" {
+		r.enqueueAssignmentNotification(issue, previousID, notify.AssignmentRemoved, false)
+	}
+}
+
+func (r *dingtalkNotifyRuntime) enqueueAssignmentNotification(issue dingtalkAssignmentIssue, recipientID string, kind notify.AssignmentNotificationKind, created bool) {
+	recipientID = strings.TrimSpace(recipientID)
+	if recipientID == "" {
+		return
+	}
+	ctx := context.Background()
+	if r.memberInWorkspace != nil {
+		member, err := r.memberInWorkspace(ctx, issue.workspaceID, recipientID)
+		if err != nil {
+			slog.Warn("dingtalk assignment notify: workspace membership lookup failed", "workspace_id", issue.workspaceID, "issue_id", issue.id, "recipient_id", recipientID, "error", err)
+			return
+		}
+		if !member {
+			slog.Info("dingtalk assignment notify: recipient is no longer a workspace member", "workspace_id", issue.workspaceID, "issue_id", issue.id, "recipient_id", recipientID)
+			return
+		}
+	}
+
+	includeDetails := true
+	if r.canViewIssue != nil {
+		allowed, err := r.canViewIssue(ctx, issue.workspaceID, recipientID, issue.id)
+		if err != nil {
+			slog.Warn("dingtalk assignment notify: issue access lookup failed; sending minimal message", "workspace_id", issue.workspaceID, "issue_id", issue.id, "recipient_id", recipientID, "error", err)
+			includeDetails = false
+		} else {
+			includeDetails = allowed
+		}
+	}
+
+	sourceURL := ""
+	identifier, title := issue.identifier, issue.title
+	if includeDetails {
+		if contextData := r.loadMentionContext(ctx, issue.id, issue.workspaceID, "", "", ""); contextData != nil {
+			if contextData.issueIdentifier != "" {
+				identifier = contextData.issueIdentifier
+			}
+			if contextData.issueTitle != "" {
+				title = contextData.issueTitle
+			}
+			sourceURL = contextData.sourceURL
+		}
+	}
+
+	version := "created"
+	if !created {
+		version = strconv.FormatInt(issue.revision, 10)
+	}
+	eventID := fmt.Sprintf("issue-assignment:%s:%s:%s", issue.id, version, kind)
+	event := notify.AssignmentNotification{
+		EventID: eventID, WorkspaceID: issue.workspaceID, RecipientID: recipientID, Kind: kind,
+		ActorName: issue.actorName, NewAssigneeName: issue.newAssigneeName,
+		IssueIdentifier: identifier, IssueTitle: title, SourceURL: sourceURL,
+		IncludeDetails: includeDetails, OccurredAt: issue.occurredAt,
+	}
+	if !created && issue.isTransfer && kind == notify.AssignmentAdded && issue.actorType == "member" && issue.actorID != "" {
+		r.enqueuePersonalAssignmentNotification(ctx, issue, issue.actorID, recipientID, event)
+	}
+	messages, failures, err := notify.BuildAssignmentMessage(ctx, event, r.resolver)
+	if err != nil {
+		slog.Warn("dingtalk assignment notify: route failed", "event_id", eventID, "workspace_id", issue.workspaceID, "recipient_id", recipientID, "error", err)
+		return
+	}
+	for _, failure := range failures {
+		slog.Info("dingtalk assignment notify: target skipped", "event_id", eventID, "target_id", failure.Message.TargetID, "status", failure.Status, "reason", failure.Error)
+	}
+	if err := notify.EnqueueMessages(ctx, r.store, messages, time.Now().UTC()); err != nil {
+		slog.Warn("dingtalk assignment notify: enqueue failed", "event_id", eventID, "workspace_id", issue.workspaceID, "recipient_id", recipientID, "error", err)
+		return
+	}
+	if len(messages) > 0 {
+		slog.Info("dingtalk assignment notify: enqueued", "event_id", eventID, "workspace_id", issue.workspaceID, "recipient_id", recipientID, "kind", kind)
+	}
+}
+
+func dingtalkAssignmentIssueFromEvent(e events.Event) dingtalkAssignmentIssue {
+	payload, _ := e.Payload.(map[string]any)
+	issue := dingtalkAssignmentIssue{
+		workspaceID: strings.TrimSpace(e.WorkspaceID),
+		actorType:   strings.TrimSpace(e.ActorType), actorID: strings.TrimSpace(e.ActorID),
+	}
+	if payload == nil {
+		return issue
+	}
+	switch value := payload["issue"].(type) {
+	case handler.IssueResponse:
+		issue.id = strings.TrimSpace(value.ID)
+		issue.workspaceID = strings.TrimSpace(value.WorkspaceID)
+		issue.identifier = strings.TrimSpace(value.Identifier)
+		issue.title = strings.TrimSpace(value.Title)
+		issue.assigneeType = dingtalkStringValue(value.AssigneeType)
+		issue.assigneeID = dingtalkStringValue(value.AssigneeID)
+		issue.revision = value.Revision
+		issue.occurredAt = dingtalkTimeValue(value.UpdatedAt)
+		issue.issueAvailable = true
+	case map[string]any:
+		issue.id = dingtalkStringValue(value["id"])
+		issue.workspaceID = dingtalkStringValue(value["workspace_id"])
+		issue.identifier = dingtalkStringValue(value["identifier"])
+		issue.title = dingtalkStringValue(value["title"])
+		issue.assigneeType = dingtalkStringValue(value["assignee_type"])
+		issue.assigneeID = dingtalkStringValue(value["assignee_id"])
+		issue.revision = dingtalkInt64Value(value["revision"])
+		issue.occurredAt = dingtalkTimeValue(value["updated_at"])
+		issue.issueAvailable = true
+	default:
+		issue.id = dingtalkStringValue(payload["issue_id"])
+	}
+	if issue.workspaceID == "" {
+		issue.workspaceID = strings.TrimSpace(e.WorkspaceID)
+	}
+	return issue
+}
+
+func dingtalkTimeValue(value any) time.Time {
+	switch typed := value.(type) {
+	case time.Time:
+		return typed
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+	case *string:
+		if typed != nil {
+			return dingtalkTimeValue(*typed)
+		}
+	}
+	return time.Time{}
+}
+
+func dingtalkStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case *string:
+		if typed != nil {
+			return strings.TrimSpace(*typed)
+		}
+	}
+	return ""
+}
+
+func dingtalkInt64Value(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int32:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	}
+	return 0
+}
+
+func (r *dingtalkNotifyRuntime) loadDingTalkAssignmentIssue(ctx context.Context, workspaceID, issueID string) (dingtalkAssignmentIssue, error) {
+	if r == nil || r.pool == nil {
+		return dingtalkAssignmentIssue{}, errors.New("DingTalk assignment database is unavailable")
+	}
+	var issue dingtalkAssignmentIssue
+	err := r.pool.QueryRow(ctx, `
+		SELECT i.id::text, i.workspace_id::text, w.issue_prefix || '-' || i.number::text,
+		       i.title, COALESCE(i.assignee_type, ''), COALESCE(i.assignee_id::text, ''), i.revision, i.updated_at
+		FROM issue i
+		JOIN workspace w ON w.id = i.workspace_id
+		WHERE i.id = $1 AND i.workspace_id = $2`, issueID, workspaceID).
+		Scan(&issue.id, &issue.workspaceID, &issue.identifier, &issue.title, &issue.assigneeType, &issue.assigneeID, &issue.revision, &issue.occurredAt)
+	if err != nil {
+		return dingtalkAssignmentIssue{}, err
+	}
+	issue.issueAvailable = true
+	return issue, nil
+}
+
+func (r *dingtalkNotifyRuntime) enrichAssignmentIssue(ctx context.Context, issue *dingtalkAssignmentIssue) {
+	if issue == nil {
+		return
+	}
+	if issue.occurredAt.IsZero() {
+		issue.occurredAt = time.Now().UTC()
+	}
+	issue.actorName = r.resolveAssignmentDisplayName(ctx, issue.workspaceID, issue.actorType, issue.actorID)
+	if issue.assigneeType == "member" && issue.assigneeID != "" {
+		issue.newAssigneeName = r.resolveAssignmentDisplayName(ctx, issue.workspaceID, "member", issue.assigneeID)
+	}
+}
+
+func (r *dingtalkNotifyRuntime) resolveAssignmentDisplayName(ctx context.Context, workspaceID, actorType, actorID string) string {
+	actorType, actorID = strings.TrimSpace(actorType), strings.TrimSpace(actorID)
+	if r != nil && r.displayName != nil && workspaceID != "" && actorID != "" {
+		name, err := r.displayName(ctx, workspaceID, actorType, actorID)
+		if err != nil {
+			slog.Warn("dingtalk assignment notify: display name lookup failed", "workspace_id", workspaceID, "actor_type", actorType, "actor_id", actorID, "error", err)
+		} else if strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+	}
+	switch actorType {
+	case "agent":
+		return "MissionOS Agent"
+	case "member":
+		return "一位 MissionOS 成员"
+	case "system":
+		return "系统"
+	default:
+		return ""
+	}
+}
+
+func (r *dingtalkNotifyRuntime) enqueuePersonalAssignmentNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID string, event notify.AssignmentNotification) {
+	if r == nil || strings.TrimSpace(senderUserID) == "" || strings.TrimSpace(recipientUserID) == "" {
+		return
+	}
+	enqueue := r.personalAssignment
+	if enqueue == nil {
+		enqueue = r.insertPersonalAssignmentNotification
+	}
+	enqueued, err := enqueue(ctx, issue, senderUserID, recipientUserID, event)
+	if err != nil {
+		slog.Warn("dingtalk personal assignment: enqueue failed", "workspace_id", issue.workspaceID, "issue_id", issue.id, "sender_user_id", senderUserID, "recipient_user_id", recipientUserID, "error", err)
+		return
+	}
+	if !enqueued {
+		return
+	}
+	if r.personalWakeup != nil {
+		r.personalWakeup.NotifyDingTalkPersonalMessageAvailable(senderUserID)
+	}
+	slog.Info("dingtalk personal assignment enqueued", "workspace_id", issue.workspaceID, "issue_id", issue.id, "sender_user_id", senderUserID, "recipient_user_id", recipientUserID)
+}
+
+func (r *dingtalkNotifyRuntime) insertPersonalAssignmentNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID string, event notify.AssignmentNotification) (bool, error) {
+	if r == nil || r.pool == nil {
+		return false, nil
+	}
+	markdown := notify.FormatPersonalAssignmentText(event)
+	if markdown == "" {
+		return false, nil
+	}
+	idempotencyKey := fmt.Sprintf("dingtalk-personal-assignment:%s:%d:%s", issue.id, issue.revision, recipientUserID)
+	result, err := r.pool.Exec(ctx, `
+		INSERT INTO dingtalk_personal_message (
+		    workspace_id, comment_id, sender_user_id, sender_ding_user_id,
+		    sender_union_id, sender_corp_id, recipient_user_id,
+		    recipient_ding_user_id, markdown, idempotency_key
+		)
+		SELECT $1::uuid, $2::uuid, $3::uuid, sender.ding_user_id,
+		       NULLIF(sender.union_id, ''), NULLIF($6, ''), $4::uuid,
+		       recipient.ding_user_id, $5, $7
+		FROM LATERAL (
+		    SELECT COALESCE(ding_user_id, '') AS ding_user_id,
+		           COALESCE(union_id, '') AS union_id
+		    FROM dingtalk_notify_identities
+		    WHERE multica_user_id = $3::text AND active = true
+		      AND (COALESCE(union_id, '') <> '' OR COALESCE(ding_user_id, '') <> '')
+		    ORDER BY updated_at DESC
+		    LIMIT 1
+		) sender
+		CROSS JOIN LATERAL (
+		    SELECT ding_user_id
+		    FROM dingtalk_notify_identities
+		    WHERE multica_user_id = $4::text AND active = true AND login_only = false
+		      AND COALESCE(ding_user_id, '') <> ''
+		    ORDER BY updated_at DESC
+		    LIMIT 1
+		) recipient
+		WHERE EXISTS (
+		    SELECT 1 FROM member WHERE workspace_id = $1::uuid AND user_id = $3::uuid
+		)
+		  AND EXISTS (
+		    SELECT 1 FROM member WHERE workspace_id = $1::uuid AND user_id = $4::uuid
+		)
+		ON CONFLICT (idempotency_key) DO NOTHING`,
+		issue.workspaceID, issue.id, senderUserID, recipientUserID, markdown,
+		strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")), idempotencyKey)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
+}
+
+func dingtalkDisplayNameResolver(pool *pgxpool.Pool) func(context.Context, string, string, string) (string, error) {
+	return func(ctx context.Context, workspaceID, actorType, actorID string) (string, error) {
+		if pool == nil {
+			return "", errors.New("DingTalk display name resolver database is unavailable")
+		}
+		var name string
+		var err error
+		switch actorType {
+		case "agent":
+			err = pool.QueryRow(ctx, `SELECT name FROM agent WHERE id = $1 AND workspace_id = $2`, actorID, workspaceID).Scan(&name)
+		case "member":
+			err = pool.QueryRow(ctx, `
+				SELECT u.name FROM "user" u JOIN member m ON m.user_id = u.id
+				WHERE u.id = $1 AND m.workspace_id = $2 LIMIT 1`, actorID, workspaceID).Scan(&name)
+		default:
+			return "", nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return strings.TrimSpace(name), err
+	}
 }
 
 // handleTaskCompleted sends a distinct completion message to both the Agent's
@@ -731,6 +1127,21 @@ func (r *dingtalkNotifyRuntime) loadMentionContext(ctx context.Context, issueID,
 
 type dingtalkMentionResolver struct {
 	pool *pgxpool.Pool
+}
+
+func dingtalkWorkspaceMemberChecker(pool *pgxpool.Pool) func(context.Context, string, string) (bool, error) {
+	return func(ctx context.Context, workspaceID, memberID string) (bool, error) {
+		if pool == nil {
+			return false, errors.New("DingTalk workspace membership database is unavailable")
+		}
+		var exists bool
+		err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM member
+				WHERE workspace_id = $1 AND user_id = $2
+			)`, workspaceID, memberID).Scan(&exists)
+		return exists, err
+	}
 }
 
 func (r dingtalkMentionResolver) MemberBinding(ctx context.Context, workspaceID, memberID string) (notify.MemberBinding, bool, error) {

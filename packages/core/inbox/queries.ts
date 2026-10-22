@@ -1,3 +1,4 @@
+import { inboxItemKey } from "./grouping";
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { ArchivedInboxPage } from "../types/inbox";
 import { EMPTY_INBOX_FILTERS, type InboxFilters } from "./filter-store";
@@ -167,7 +168,8 @@ export function useInboxUnreadCount(
 }
 
 /**
- * Deduplicate inbox items by issue_id (one entry per issue, Linear-style).
+ * 2026-10-20 coder(lq): Group ordinary activity by task while keeping
+ * actionable access-request notifications independent.
  * Exported for consumers to use in useMemo — not in queryOptions select
  * (to avoid new array references on every cache update).
  */
@@ -188,7 +190,7 @@ export function deduplicateArchivedInboxItems(items: InboxItem[]): InboxItem[] {
 function groupInboxItemsByIssue(items: InboxItem[]): InboxItem[] {
   const groups = new Map<string, InboxItem[]>();
   for (const item of items) {
-    const key = item.issue_id ?? item.id;
+    const key = inboxItemKey(item);
     const group = groups.get(key) ?? [];
     group.push(item);
     groups.set(key, group);

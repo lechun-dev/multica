@@ -1545,7 +1545,7 @@
     "file_import_description": "テンプレートをダウンロードし、CSV ファイルをアップロードして部門またはユーザーをインポートします。",
     "sync_dingtalk_button": "DingTalk 同期",
     "sync_dingtalk_title": "DingTalk から組織ディレクトリを同期",
-    "sync_dingtalk_description": "設定済みの DingTalk 組織から部門とユーザーを同期します。更新内容はすぐにプロジェクト権限へ反映されます。",
+    "sync_dingtalk_description": "部署とメンバーを同期します。所有者が実行した場合、DingTalkで退職が確認されたアカウントも無効にします。タスク、プロジェクト、履歴は保持され、アカウントが自動で再有効化されることはありません。",
     "close": "閉じる",
     "all_people": "すべてのユーザー",
     "search_people": "名前またはメールを検索",
@@ -1589,7 +1589,13 @@
     "sync_removed": "所属関係 {{count}} 件削除",
     "sync_users_created": "ユーザー {{count}} 件作成",
     "sync_users_matched": "既存ユーザー {{count}} 件一致",
-    "sync_workspace_members": "ワークスペースメンバー {{count}} 件追加"
+    "sync_workspace_members": "ワークスペースメンバー {{count}} 件追加",
+    "sync_accounts_disabled": "無効にした退職者アカウント：{{count}}",
+    "sync_accounts_already_disabled": "既に無効なアカウント：{{count}}",
+    "sync_departures_skipped": "スキップした退職記録：{{count}}（在職中・未照合・保護対象）",
+    "sync_departures_incomplete": "組織の同期は完了しましたが、退職確認に失敗しました。この確認による無効化は行っていません。DingTalkアプリの退職記録の権限とサーバーログを確認してください。",
+    "sync_departures_owner_only": "組織のみ同期しました。退職者の自動無効化にはワークスペース所有者が必要です。本人、所有者、他のワークスペースに対する保護も適用されます。",
+    "sync_departures_not_checked": "サーバーで退職確認は実行されていません。アカウントは自動無効化されていません。"
   },
   "members": {
     "invite_title": "メンバーを招待",
@@ -1680,7 +1686,21 @@
     "revoke_invitation_tooltip": "招待を取り消し",
     "share_links_title": "共有リンク",
     "role_field": "ロール：",
-    "expiry_field": "有効期限："
+    "expiry_field": "有効期限：",
+    "status_filter": "アカウントの状態",
+    "status_all": "すべての状態",
+    "status_enabled": "有効",
+    "status_disabled": "無効",
+    "search_count": "{{total}} 人中 {{count}} 人を表示",
+    "no_matching_members": "一致するメンバーはいません",
+    "disable_action": "アカウントを無効化",
+    "enable_action": "アカウントを有効化",
+    "disable_title": "{{name}} を無効化しますか？",
+    "enable_title": "{{name}} を有効化しますか？",
+    "disable_description": "MissionOS 全体へのログインを禁止し、既存のセッションを終了します。タスクの担当、プロジェクトの関係と履歴は保持されます。",
+    "enable_description": "再ログインできるようになります。以前のセッションと取り消した API トークンは復元されません。",
+    "account_update_failed": "アカウントの更新に失敗しました。再試行してください。",
+    "account_updating": "更新中…"
   },
   "integrations": {
     "status_connected": "接続済み",

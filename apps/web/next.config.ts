@@ -48,6 +48,12 @@ const nextConfig: NextConfig = {
     formats: ["image/avif", "image/webp"],
     qualities: [75, 80, 85],
   },
+  async headers() {
+    return [{
+      source: "/compat/legacy.css",
+      headers: [{ key: "Cache-Control", value: "no-store" }],
+    }];
+  },
   async rewrites() {
     return {
       // Run before file-system routes so /docs isn't shadowed by the
@@ -81,6 +87,26 @@ const nextConfig: NextConfig = {
             {
               source: "/health",
               destination: `${remoteApiUrl}/health`,
+            },
+            {
+              source: "/internal/auth/dingtalk/exchange",
+              destination: `${remoteApiUrl}/internal/auth/dingtalk/exchange`,
+            },
+            {
+              source: "/internal/agent/issues",
+              destination: `${remoteApiUrl}/internal/agent/issues`,
+            },
+            {
+              source: "/internal/agent/members",
+              destination: `${remoteApiUrl}/internal/agent/members`,
+            },
+            {
+              source: "/internal/agent/projects",
+              destination: `${remoteApiUrl}/internal/agent/projects`,
+            },
+            {
+              source: "/internal/agent/issues/:path*",
+              destination: `${remoteApiUrl}/internal/agent/issues/:path*`,
             },
             {
               source: "/auth/:path*",

@@ -571,6 +571,24 @@ describe("InboxPage", () => {
   });
 
   // 2026-09-20 coder(lq): 任务权限申请通知打开即落到对应申请，重复点击靠 token 重放。
+  it("selects both applicants on the same task independently", () => {
+    reset();
+    layout.width = DESKTOP;
+    listData.active = [
+      item({ id: "notice-a", issue_id: "shared-task", type: "task_access_request", details: { access_request_id: "request-a" } }),
+      item({ id: "notice-b", issue_id: "shared-task", type: "task_access_request", details: { access_request_id: "request-b" } }),
+    ];
+    render(<InboxPage />);
+    const rows = screen.getAllByTestId("row");
+    fireEvent.click(rows[0]!);
+    expect(issueDetailProps.at(-1)?.accessRequestId).toBe("request-a");
+    expect(replace).toHaveBeenLastCalledWith("/acme/inbox?issue=notice-a");
+    fireEvent.click(rows[1]!);
+    expect(issueDetailProps.at(-1)?.accessRequestId).toBe("request-b");
+    expect(issueDetailProps.at(-1)?.issueId).toBe("shared-task");
+    expect(replace).toHaveBeenLastCalledWith("/acme/inbox?issue=notice-b");
+  });
+
   it("arms the task access dialog when the opened notification is an access request", () => {
     reset();
     layout.width = DESKTOP;

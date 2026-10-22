@@ -58,6 +58,7 @@ func rejectTemporarilyDisabledUser(w http.ResponseWriter, r *http.Request, userI
 // an mcn_ string is by construction not a valid mul_ PAT or JWT.
 func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, cfSigner *auth.CloudFrontSigner) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		next = enforceAccountAccess(queries, next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — any value supplied by
 			// the client is untrusted and discarded before the auth
@@ -268,6 +269,17 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				http.Error(w, `{"error":"invalid claims"}`, http.StatusUnauthorized)
 				return
 			}
+			if source, _ := claims["source"].(string); source == auth.MissionReadSource {
+				if !auth.ValidateMissionReadScope(r, token, claims, fromCookie) {
+					writeError(w, http.StatusForbidden, "mission token is limited to workspace task reads")
+					return
+				}
+				scope, _ := claims["scope"].(string)
+				if scope == "" {
+					scope = auth.MissionTaskReadScope
+				}
+				r = r.WithContext(auth.WithMissionReadScopeForRequest(r.Context(), scope))
+			}
 
 			sub, ok := claims["sub"].(string)
 			if !ok || strings.TrimSpace(sub) == "" {
@@ -288,7 +300,9 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 			// cookie, instead of being logged out on the anniversary of its
 			// login. No-op until the session drops below half its TTL
 			// (MUL-7436).
-			r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
+			if source, _ := claims["source"].(string); source != auth.MissionReadSource {
+				r = renewCookieSession(w, r, claims, fromCookie, cfSigner)
+			}
 
 			next.ServeHTTP(w, r)
 		})

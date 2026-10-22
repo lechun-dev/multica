@@ -386,3 +386,40 @@ describe("useArchiveInbox stale notifications", () => {
     qc.clear();
   });
 });
+
+describe("access request dismissal scope", () => {
+  it.each(["first", "ordinary"])("archives only the group selected by %s", async (target) => {
+    const qc = new QueryClient();
+    const rows = [
+      item({ id: "first", type: "task_access_request", archived: false }),
+      item({ id: "second", type: "task_access_request", archived: false }),
+      item({ id: "ordinary", archived: false }),
+      item({ id: "older-ordinary", archived: false }),
+    ];
+    qc.setQueryData(inboxKeys.list(WORKSPACE_ID), rows);
+    setApiInstance({ archiveInbox: vi.fn().mockResolvedValue(undefined) } as unknown as ApiClient);
+    const { result, unmount } = renderHook(() => useArchiveInbox(), { wrapper: createWrapper(qc) });
+    await act(async () => { await result.current.mutateAsync(target); });
+    expect(listCache(qc).filter((row) => row.archived).map((row) => row.id)).toEqual(
+      target === "first" ? ["first"] : ["ordinary", "older-ordinary"],
+    );
+    unmount();
+    qc.clear();
+  });
+
+  it("restores one request without restoring other requests or ordinary activity", async () => {
+    const qc = new QueryClient();
+    const rows = [
+      item({ id: "first", type: "task_access_request" }),
+      item({ id: "second", type: "task_access_request" }),
+      item({ id: "ordinary" }),
+    ];
+    qc.setQueryData(inboxKeys.archived(WORKSPACE_ID), rows);
+    setApiInstance({ unarchiveInbox: vi.fn().mockResolvedValue(undefined) } as unknown as ApiClient);
+    const { result, unmount } = renderHook(() => useUnarchiveInbox(), { wrapper: createWrapper(qc) });
+    await act(async () => { await result.current.mutateAsync("first"); });
+    expect(archivedCache(qc).filter((row) => row.archived).map((row) => row.id)).toEqual(["second", "ordinary"]);
+    unmount();
+    qc.clear();
+  });
+});

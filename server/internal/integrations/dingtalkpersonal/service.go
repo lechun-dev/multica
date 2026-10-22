@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -489,6 +490,7 @@ func (s *Service) settle(ctx context.Context, message queuedMessage, err error) 
 	if !errors.As(err, &deliveryErr) {
 		deliveryErr = &DeliveryError{Code: "delivery_failed", Message: "钉钉个人消息发送失败，将自动重试。", Retryable: true, Cause: err}
 	}
+	s.logFailure(message, deliveryErr)
 	if deliveryErr.AuthRequired {
 		s.markCredentialReauthorization(ctx, message.SenderUserID, deliveryErr.Code, deliveryErr.Message)
 		_, _ = s.pool.Exec(ctx, `
@@ -667,12 +669,16 @@ func (s *Service) recordCredentialError(ctx context.Context, userID, code, messa
 }
 
 type DeliveryError struct {
-	Code         string
-	Message      string
-	Retryable    bool
-	AuthRequired bool
-	Identity     bool
-	Cause        error
+	Code           string
+	Message        string
+	Retryable      bool
+	AuthRequired   bool
+	Identity       bool
+	ProviderCode   string
+	ProviderReason string
+	ProviderStatus string
+	OpenTaskID     string
+	Cause          error
 }
 
 func (e *DeliveryError) Error() string {
@@ -688,7 +694,99 @@ func (e *DeliveryError) Error() string {
 func (e *DeliveryError) Unwrap() error { return e.Cause }
 
 func (s *Service) logFailure(message queuedMessage, err error) {
-	slog.Warn("dingtalk server personal message delivery failed", "message_id", message.ID, "error", err)
+	content := encodePersonalMessageContentDetails(message.Markdown)
+	attrs := []any{
+		"message_id", message.ID,
+		"open_task_id", message.OpenTaskID,
+		"content_bytes", len(content.serialized),
+		"content_truncated", content.truncated,
+		"error", err,
+	}
+	var deliveryErr *DeliveryError
+	if errors.As(err, &deliveryErr) {
+		attrs = append(attrs,
+			"error_code", deliveryErr.Code,
+			"provider_status", deliveryErr.ProviderStatus,
+			"provider_code", deliveryErr.ProviderCode,
+			"provider_reason", deliveryErr.ProviderReason,
+		)
+		if deliveryErr.OpenTaskID != "" {
+			attrs[3] = deliveryErr.OpenTaskID
+		}
+	}
+	slog.Warn("dingtalk server personal message delivery failed", attrs...)
+}
+
+const (
+	personalMessageTitle            = "MissionOS"
+	personalMessageTextRuneLimit    = 1000
+	personalMessageContentByteLimit = 4096
+	personalMessageTruncationMarker = "…"
+)
+
+func encodePersonalMessageContent(text string) string {
+	return encodePersonalMessageContentDetails(text).serialized
+}
+
+type encodedPersonalMessageContent struct {
+	serialized string
+	truncated  bool
+	err        error
+}
+
+// DingTalk's personal-message contract does not publish an explicit content
+// limit. Keep both the visible text and serialized JSON conservatively bounded
+// at the final send boundary so queued messages cannot fail asynchronously
+// after the API has already returned an openTaskId.
+func encodePersonalMessageContentDetails(text string) encodedPersonalMessageContent {
+	content := encodeContent(personalMessageTitle, text)
+	if utf8.RuneCountInString(text) <= personalMessageTextRuneLimit && len(content) <= personalMessageContentByteLimit {
+		return encodedPersonalMessageContent{serialized: content}
+	}
+
+	body, footer := splitPersonalMessageFooter(text)
+	runes := []rune(body)
+	suffix := personalMessageTruncationMarker + footer
+	maxPrefixRunes := personalMessageTextRuneLimit - utf8.RuneCountInString(suffix)
+	if maxPrefixRunes < 0 || len(encodeContent(personalMessageTitle, suffix)) > personalMessageContentByteLimit {
+		// Never silently damage the task action or send an oversized payload when
+		// the footer alone cannot fit, even after removing the entire body.
+		return encodedPersonalMessageContent{err: &DeliveryError{
+			Code: "message_footer_too_long", Message: "DingTalk task footer exceeds the personal message limit",
+		}}
+	}
+	high := len(runes) - 1
+	if high > maxPrefixRunes {
+		high = maxPrefixRunes
+	}
+	low := 0
+	for low < high {
+		mid := low + (high-low+1)/2
+		candidate := encodeContent(personalMessageTitle, string(runes[:mid])+suffix)
+		if len(candidate) <= personalMessageContentByteLimit {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+
+	return encodedPersonalMessageContent{
+		serialized: encodeContent(personalMessageTitle, string(runes[:low])+suffix),
+		truncated:  true,
+	}
+}
+
+// Reserve the generated task footer, not arbitrary separators in the comment.
+// Splitting at the last separator also covers messages queued before this fix.
+func splitPersonalMessageFooter(text string) (body, footer string) {
+	const separator = "\n\n---\n\n"
+	if index := strings.LastIndex(text, separator); index >= 0 {
+		tail := text[index+len(separator):]
+		if strings.HasPrefix(tail, "[打开任务并回复](") || strings.HasPrefix(tail, "（来源：") || strings.HasPrefix(tail, "来源：") {
+			return text[:index], text[index:]
+		}
+	}
+	return text, ""
 }
 
 func encodeContent(title, text string) string {

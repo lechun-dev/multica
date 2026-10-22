@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
@@ -1854,8 +1855,9 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 }
 
 // issuePermissionSubject binds agent-process traffic to the human who
-// originated the durable task. A task token therefore never inherits the
-// runtime owner/server credential's broader rights. It also rechecks AgentUse
+// originated the durable task, or its accountable human for scheduled runs.
+// A task token never inherits the runtime owner/server credential's broader
+// rights. It also rechecks AgentUse
 // on the source task for every issue read/write, so a revoke takes effect while
 // an agent is already running rather than only at enqueue/claim boundaries.
 func (h *Handler) issuePermissionSubject(r *http.Request, target db.Issue) (projectauth.Subject, string) {
@@ -1865,14 +1867,17 @@ func (h *Handler) issuePermissionSubject(r *http.Request, target db.Issue) (proj
 	userID := requestUser
 	if actorType == "agent" {
 		task, ok := h.taskFromRequestHeader(r)
-		if !ok || uuidToString(task.AgentID) != actorID || !task.IssueID.Valid || !task.OriginatorUserID.Valid {
+		// 2026-10-12 coder(lq): Reuse enqueue/claim's human selection without
+		// rewriting attribution or falling back to the authenticated runtime owner.
+		authorizationUserID := service.AuthorizationSubject(task.OriginatorUserID, task.AccountableUserID)
+		if !ok || uuidToString(task.AgentID) != actorID || !task.IssueID.Valid || !authorizationUserID.Valid {
 			return projectauth.Subject{}, "denied"
 		}
 		source, err := h.Queries.GetIssue(r.Context(), task.IssueID)
 		if err != nil || source.WorkspaceID != target.WorkspaceID {
 			return projectauth.Subject{}, "denied"
 		}
-		userID = uuidToString(task.OriginatorUserID)
+		userID = uuidToString(authorizationUserID)
 		sourceSubject := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}
 		if allowed, sourceReason := h.effectiveIssueAccessAllowed(r.Context(), sourceSubject, uuidToString(source.ID), projectauth.AgentUse, true); !allowed {
 			return projectauth.Subject{}, sourceReason
@@ -1972,7 +1977,10 @@ func (h *Handler) requireRestrictedSourcePublishAccess(w http.ResponseWriter, r 
 		return true
 	}
 	task, ok := h.taskFromRequestHeader(r)
-	if !ok || !task.IssueID.Valid || !task.OriginatorUserID.Valid {
+	// 2026-10-12 coder(lq): Publishing must judge the same human as task
+	// reads and enqueue/claim, including scheduled runs without an originator.
+	authorizationUserID := service.AuthorizationSubject(task.OriginatorUserID, task.AccountableUserID)
+	if !ok || !task.IssueID.Valid || !authorizationUserID.Valid {
 		writeErrorCode(w, http.StatusForbidden, "task_publish_forbidden", "agent task authorization is unavailable")
 		return false
 	}
@@ -1994,7 +2002,7 @@ func (h *Handler) requireRestrictedSourcePublishAccess(w http.ResponseWriter, r 
 		writeErrorCode(w, http.StatusServiceUnavailable, "project_permission_unavailable", "task authorization is unavailable")
 		return false
 	}
-	subject := projectauth.Subject{UserID: uuidToString(task.OriginatorUserID), WorkspaceID: uuidToString(target.WorkspaceID)}
+	subject := projectauth.Subject{UserID: uuidToString(authorizationUserID), WorkspaceID: uuidToString(target.WorkspaceID)}
 	sourceAccess, err := resolver.ResolveIssue(r.Context(), subject, uuidToString(source.ID))
 	if err != nil {
 		status := http.StatusForbidden

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -154,25 +154,25 @@ describe("LoginPage", () => {
 
   it("shows error when submitting with empty email", async () => {
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    // The Continue button is disabled when email is empty, so we submit the
-    // form programmatically the same way the component does — via form submit.
-    // Since the button is disabled, we directly call handleSendCode's logic
-    // by removing the required attr and submitting.
     const emailInput = screen.getByLabelText(/email/i);
-    // The input has required + the button is disabled, so we need to type
-    // a space then clear to trigger the empty-email error path.
-    // Actually, the component guards `if (!email)` in handleSendCode.
-    // But the button is disabled when `!email`. Let's verify:
     const button = screen.getByRole("button", { name: /continue/i });
-    expect(button).toBeDisabled();
-
-    // Type an email to enable button, then clear it — button becomes disabled again
-    const user = userEvent.setup();
-    await user.type(emailInput, "a");
     expect(button).not.toBeDisabled();
-    await user.clear(emailInput);
-    expect(button).toBeDisabled();
+    fireEvent.submit(emailInput.closest("form")!);
+    expect(await screen.findByText("Email is required")).toBeInTheDocument();
+    expect(mockSendCode).not.toHaveBeenCalled();
+  });
+
+  it("reads an autofilled email even when no React change event fired", async () => {
+    mockSendCode.mockResolvedValueOnce(undefined);
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+    const emailInput = screen.getByLabelText(/email/i) as HTMLInputElement;
+    emailInput.value = "autofill@example.com";
+
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: /continue/i }),
+    );
+
+    expect(mockSendCode).toHaveBeenCalledWith("autofill@example.com");
   });
 
   // -------------------------------------------------------------------------

@@ -654,6 +654,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 2026-10-20 coder(lq): Directory provider pagination can take minutes.
+	// Use the same durable scheduler engine on an independent worker so the daily
+	// refresh cannot starve issue wakeups, plugin schedules, or usage rollups.
+	directoryScheduler := scheduler.NewManager(pool, scheduler.Options{})
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:         httpMetrics,
 		BusinessMetrics:     businessMetrics,
@@ -667,6 +671,7 @@ func main() {
 		WecomRelayOutbound:  wecomRelayOutbound,
 		FeatureFlags:        flags,
 		HeartbeatScheduler:  heartbeatScheduler,
+		DirectoryScheduler:  directoryScheduler,
 		LLMMaxRetries:       llmMaxRetries,
 		LLMDisableThinking:  llmDisableThinking,
 	})
@@ -786,6 +791,7 @@ func main() {
 	// missing because of an unusual partial-migration state — by
 	// logging them on the tick that fails and retrying on the next
 	// cycle, so a temporary outage does not crash the server.
+	go func() { _ = directoryScheduler.Run(sweepCtx) }()
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
 	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
 		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)

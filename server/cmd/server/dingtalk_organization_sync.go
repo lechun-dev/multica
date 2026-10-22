@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
 	notify "github.com/lechun-dev/multica/extensions/dingtalk-notify"
+	"github.com/multica-ai/multica/server/internal/events"
 )
 
 type dingtalkOrganizationSyncResult struct {
@@ -23,6 +25,10 @@ type dingtalkOrganizationSyncResult struct {
 	UsersMatched            int      `json:"users_matched"`
 	WorkspaceMembersCreated int      `json:"workspace_members_created"`
 	Unmatched               []string `json:"unmatched"`
+	DepartureSyncStatus     string   `json:"departure_sync_status"`
+	AccountsDisabled        int      `json:"accounts_disabled"`
+	AccountsAlreadyDisabled int      `json:"accounts_already_disabled"`
+	DeparturesSkipped       int      `json:"departures_skipped"`
 }
 
 // 2026-09-03 coder(lq): Refresh the complete DingTalk directory into
@@ -38,16 +44,37 @@ func (h *dingtalkLoginHandler) SyncDingTalkOrganizations(w http.ResponseWriter, 
 		writeDingTalkError(w, http.StatusNotFound, "workspace not found")
 		return
 	}
-	snapshot, err := h.provider.LoadDirectory(r.Context())
+	allowed, err := h.host.CanSyncAccountAccess(r, workspaceID)
+	if err != nil {
+		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusInternalServerError, err, "failed to verify account sync authority")
+		return
+	}
+	snapshot, departed, result, err := h.loadDingTalkDirectory(r.Context(), workspaceID, allowed)
 	if err != nil {
 		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadGateway, err, "failed to load DingTalk directory")
 		return
 	}
+	// pgx.Tx is used by the host's transaction starter; keep the persistence
+	// implementation in a helper so provider API errors never touch the DB.
+	if err := h.persistDingTalkDirectory(r.Context(), workspaceID, r.Header.Get("X-User-ID"), snapshot, departed, &result); err != nil {
+		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadRequest, err, "failed to persist DingTalk directory")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// 2026-10-20 coder(lq): HTTP and the daily system job share provider validation
+// and all-or-nothing departure reads; neither path fabricates a user request.
+func (h *dingtalkLoginHandler) loadDingTalkDirectory(ctx context.Context, workspaceID string, allowed bool) (notify.DingTalkDirectorySnapshot, []string, dingtalkOrganizationSyncResult, error) {
+	result := dingtalkOrganizationSyncResult{Unmatched: []string{}, DepartureSyncStatus: "owner_required"}
+	snapshot, err := h.provider.LoadDirectory(ctx)
+	if err != nil {
+		return snapshot, nil, result, err
+	}
 	if len(snapshot.Departments) == 0 {
 		// 2026-09-03 coder(lq): Never turn a transiently empty provider response
 		// into a destructive deactivation of the last known directory snapshot.
-		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadGateway, errors.New("DingTalk directory is empty"), "DingTalk directory is empty")
-		return
+		return snapshot, nil, result, errors.New("DingTalk directory is empty")
 	}
 	if len(snapshot.Departments) > 0 {
 		validDepartments := 0
@@ -57,18 +84,33 @@ func (h *dingtalkLoginHandler) SyncDingTalkOrganizations(w http.ResponseWriter, 
 			}
 		}
 		if validDepartments == 0 {
-			h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadGateway, errors.New("DingTalk directory has no valid departments"), "DingTalk directory has no valid departments")
-			return
+			return snapshot, nil, result, errors.New("DingTalk directory has no valid departments")
 		}
 	}
-	result := dingtalkOrganizationSyncResult{Unmatched: []string{}}
-	// pgx.Tx is used by the host's transaction starter; keep the persistence
-	// implementation in a helper so provider API errors never touch the DB.
-	if err := h.persistDingTalkDirectory(r.Context(), workspaceID, snapshot, &result); err != nil {
-		h.writeDingTalkSyncFailure(w, r, workspaceID, http.StatusBadRequest, err, "failed to persist DingTalk directory")
-		return
+	var departed []string
+	if allowed {
+		result.DepartureSyncStatus = "unavailable"
+		// 2026-10-20 coder(lq): Query the lifetime of existing bound accounts in
+		// bounded provider windows. All pages must succeed before any suspension.
+		var since time.Time
+		err := h.pool.QueryRow(ctx, `SELECT COALESCE(min(u.created_at),now()) FROM "user" u
+   JOIN member m ON m.user_id=u.id
+   WHERE m.workspace_id=$1 AND EXISTS (SELECT 1 FROM dingtalk_notify_identities i
+    WHERE i.multica_user_id=u.id::text AND i.active=true)`, workspaceID).Scan(&since)
+		if err != nil {
+			return snapshot, nil, result, err
+		}
+		departed, err = h.provider.LoadDepartedUserIDs(ctx, since.Add(-24*time.Hour), time.Now())
+		if err != nil {
+			// 2026-10-20 coder(lq): Keep directory sync available, but never report departure
+			// sync as successful on permission, pagination, or provider failures.
+			logDingTalkDirectorySyncError(ctx, workspaceID, chimw.GetReqID(ctx), err)
+			departed = nil
+		} else {
+			result.DepartureSyncStatus = "complete"
+		}
 	}
-	writeJSON(w, http.StatusOK, result)
+	return snapshot, departed, result, nil
 }
 
 // 2026-09-04 coder(lq): Keep every directory-sync failure correlated in logs
@@ -115,7 +157,7 @@ func logDingTalkDirectorySyncError(ctx context.Context, workspaceID, requestID s
 	slog.ErrorContext(ctx, "dingtalk directory sync failed", attrs...)
 }
 
-func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, workspaceID string, snapshot notify.DingTalkDirectorySnapshot, result *dingtalkOrganizationSyncResult) error {
+func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, workspaceID, actorID string, snapshot notify.DingTalkDirectorySnapshot, departed []string, result *dingtalkOrganizationSyncResult) error {
 	starter, ok := h.host.TxStarter.(interface {
 		Begin(context.Context) (pgx.Tx, error)
 	})
@@ -127,6 +169,11 @@ func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, wor
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// 2026-10-20 coder(lq): Serialize complete snapshot replacement, including a
+	// manual refresh racing the daily job, rather than interleaving memberships.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "dingtalk_directory:"+workspaceID); err != nil {
+		return err
+	}
 	ids := make(map[string]string, len(snapshot.Departments))
 	for _, dept := range snapshot.Departments {
 		if strings.TrimSpace(dept.ID) == "" || strings.TrimSpace(dept.Name) == "" {
@@ -167,12 +214,14 @@ func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, wor
 		return err
 	}
 	result.MembersRemoved = int(removed.RowsAffected())
+	currentUsers := make([]string, 0, len(snapshot.Members))
 	for _, member := range snapshot.Members {
 		userID, created, workspaceMemberCreated, err := h.resolveDingTalkDirectoryMember(ctx, tx, workspaceID, member)
 		if err != nil {
 			result.Unmatched = append(result.Unmatched, member.Name)
 			continue
 		}
+		currentUsers = append(currentUsers, userID)
 		if created {
 			result.UsersCreated++
 		} else {
@@ -195,7 +244,28 @@ func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, wor
 			}
 		}
 	}
-	return tx.Commit(ctx)
+
+	suspension, err := h.host.SuspendDingTalkDepartures(ctx, tx, workspaceID, actorID, departed, currentUsers)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	result.AccountsDisabled = len(suspension.Changes)
+	result.AccountsAlreadyDisabled = suspension.AlreadyDisabled
+	result.DeparturesSkipped = suspension.Skipped
+	h.host.PublishAccountSuspensions(ctx, workspaceID, actorID, suspension.Changes)
+	// 2026-10-20 coder(lq): Background writes do not pass HTTP cache middleware.
+	// Publish after commit so organization/permission/list generations invalidate
+	// only this workspace, even when no account was suspended.
+	if h.host.Bus != nil {
+		h.host.Bus.Publish(events.Event{Type: "organization:synced", WorkspaceID: workspaceID,
+			ActorType: "system", Payload: map[string]any{"workspace_id": workspaceID}})
+	}
+	slog.InfoContext(ctx, "dingtalk directory account sync completed", "workspace_id", workspaceID, "actor_id", actorID,
+		"departure_sync_status", result.DepartureSyncStatus, "accounts_disabled", result.AccountsDisabled, "departures_skipped", result.DeparturesSkipped)
+	return nil
 }
 
 // 2026-09-03 coder(lq): Resolve every directory person to a local account in

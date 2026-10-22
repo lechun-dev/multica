@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // TestBatchUpdateNoMutationReturnsZero — regression for #1660.
@@ -122,6 +125,68 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 			t.Errorf("issue %s: expected status=in_progress, got %q", id, got.Status)
 		}
 	}
+}
+
+func TestBatchUpdateAssigneeEventIncludesPreviousAssignee(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	issue := createIssueForTest(t, map[string]any{
+		"title":         "BU-assignee-event",
+		"status":        "backlog",
+		"assignee_type": "member",
+		"assignee_id":   testUserID,
+	})
+	targetAgentID := createHandlerTestAgent(t, "Batch Assignee Event Target", nil)
+
+	originalBus := testHandler.Bus
+	testHandler.Bus = events.New()
+	t.Cleanup(func() { testHandler.Bus = originalBus })
+	var updated events.Event
+	testHandler.Bus.Subscribe(protocol.EventIssueUpdated, func(event events.Event) {
+		if payload, ok := event.Payload.(map[string]any); ok {
+			if got, ok := payload["issue"].(IssueResponse); ok && got.ID == issue.ID {
+				updated = event
+			}
+		}
+	})
+
+	recorder := httptest.NewRecorder()
+	testHandler.BatchUpdateIssues(recorder, newRequest(http.MethodPatch, "/api/issues/batch?workspace_id="+testWorkspaceID, map[string]any{
+		"issue_ids": []string{issue.ID},
+		"updates": map[string]any{
+			"assignee_type": "agent",
+			"assignee_id":   targetAgentID,
+		},
+	}))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("BatchUpdateIssues status=%d: %s", recorder.Code, recorder.Body.String())
+	}
+	payload, ok := updated.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("missing issue:updated event for %s", issue.ID)
+	}
+	if changed, _ := payload["assignee_changed"].(bool); !changed {
+		t.Fatalf("assignee_changed=%v, want true; payload=%#v", payload["assignee_changed"], payload)
+	}
+	if got := textPointerValue(payload["prev_assignee_type"]); got != "member" {
+		t.Fatalf("prev_assignee_type=%q, want member", got)
+	}
+	if got := textPointerValue(payload["prev_assignee_id"]); got != testUserID {
+		t.Fatalf("prev_assignee_id=%q, want %s", got, testUserID)
+	}
+}
+
+func textPointerValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case *string:
+		if typed != nil {
+			return *typed
+		}
+	}
+	return ""
 }
 
 // TestBatchUpdateStageOnly — regression for the stage barrier feature: a

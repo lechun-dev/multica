@@ -1,5 +1,7 @@
 "use client";
 
+import { inboxItemKey } from "../inbox/grouping";
+
 import { useEffect, useRef } from "react";
 import { forgetLocalSearchIndex } from "../search-index/instance";
 import { useQueryClient, type InfiniteData, type QueryClient, type QueryFilters } from "@tanstack/react-query";
@@ -612,8 +614,8 @@ export async function handleInboxNew(
       // Fall through with default behavior.
     }
   }
-  // `issueKey` matches the inbox page's URL selector (issue id when the
-  // item is attached to an issue, otherwise the inbox item id). `itemId`
+  // 2026-10-20 coder(lq): `issueKey` matches the inbox group selector,
+  // including independent access-request notices. `itemId`
   // is the inbox row's own id, needed to fire markInboxRead on click.
   // A null slug (workspace list unavailable / item from a workspace this
   // client can't see) still shows the banner — the user should learn about
@@ -622,7 +624,7 @@ export async function handleInboxNew(
   const payload: SystemNotificationPayload = {
     slug: slug ?? "",
     itemId: item.id,
-    issueKey: item.issue_id ?? item.id,
+    issueKey: inboxItemKey(item),
     title: item.title,
     body: item.body ?? "",
   };
@@ -1199,6 +1201,14 @@ export function useRealtimeSync(
       });
     };
 
+    // 2026-10-14 coder(lq): Comment mentions change task-local ACLs.
+    // Refresh those permission reads, never clear unrelated task/workspace caches.
+    const invalidateCommentPermissions = (workspaceId: string, issueId: string) => {
+      for (const key of ["issue-access-control", "issue-effective-access"]) {
+        qc.invalidateQueries({ queryKey: [key, workspaceId, issueId] });
+      }
+    };
+
     const unsubCommentCreated = ws.on("comment:created", (p) => {
       const { comment, issue_revision: issueRevision } = p as CommentCreatedPayload;
       if (!comment?.issue_id) return;
@@ -1210,6 +1220,7 @@ export function useRealtimeSync(
       // updated_at, so the other comment events below deliberately do not.
       const wsId = getCurrentWsId();
       if (wsId) {
+        invalidateCommentPermissions(wsId, comment.issue_id);
         invalidateUpdatedAtSortedIssueLists(qc, wsId);
         invalidateLastActivitySortedIssueLists(qc, wsId);
         // A comment carries only the aggregate owner revision, not a full
@@ -1229,6 +1240,7 @@ export function useRealtimeSync(
       invalidateTimeline(comment.issue_id);
       const wsId = getCurrentWsId();
       if (wsId) {
+        invalidateCommentPermissions(wsId, comment.issue_id);
         invalidateLastActivitySortedIssueLists(qc, wsId);
         if (issue_revision) {
           onIssueAuxiliaryRevision(qc, wsId, comment.issue_id, issue_revision);
@@ -1244,6 +1256,7 @@ export function useRealtimeSync(
       invalidateTimeline(issue_id);
       const wsId = getCurrentWsId();
       if (wsId) {
+        invalidateCommentPermissions(wsId, issue_id);
         invalidateLastActivitySortedIssueLists(qc, wsId);
         if (issue_revision) {
           onIssueAuxiliaryRevision(qc, wsId, issue_id, issue_revision);
@@ -1355,6 +1368,15 @@ export function useRealtimeSync(
         logger.warn("current workspace deleted, switching");
         onToast?.("This workspace was deleted", "info");
         relocateAfterWorkspaceLoss(workspace_id);
+      }
+    });
+
+    // 2026-10-19 coder(lq): End only this account's local session; task and
+    // project records are not archived, removed or reassigned by suspension.
+    const unsubAccountDisabled = ws.on("account:disabled", (payload) => {
+      if (payload && typeof payload === "object" && "user_id" in payload &&
+          payload.user_id === authStore.getState().user?.id) {
+        authStore.getState().sessionExpired();
       }
     });
 
@@ -1840,6 +1862,7 @@ export function useRealtimeSync(
       unsubSubscriberRemoved();
       unsubWsUpdated();
       unsubWsDeleted();
+      unsubAccountDisabled();
       unsubMemberRemoved();
       unsubMemberAdded();
       unsubInvitationCreated();

@@ -263,6 +263,10 @@ export interface ProjectAuthorizationDingTalkSyncResult {
   users_matched: number;
   workspace_members_created: number;
   unmatched: string[];
+  departure_sync_status: "complete" | "unavailable" | "owner_required" | "not_checked";
+  accounts_disabled: number;
+  accounts_already_disabled: number;
+  departures_skipped: number;
 }
 
 export interface ProjectAccessGrantRequest {

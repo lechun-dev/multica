@@ -1553,7 +1553,7 @@
     "file_import_description": "Download a template and upload a CSV file to import departments or people.",
     "sync_dingtalk_button": "Sync DingTalk",
     "sync_dingtalk_title": "Sync organization directory from DingTalk",
-    "sync_dingtalk_description": "Sync departments and people from the configured DingTalk organization. Updates apply to project authorization immediately.",
+    "sync_dingtalk_description": "Synchronisez les services et les membres. Lorsqu’un propriétaire lance la synchronisation, les comptes dont le départ est confirmé par DingTalk sont aussi désactivés. Les tâches, projets et historiques sont conservés ; aucun compte n’est réactivé automatiquement.",
     "close": "Fermer",
     "all_people": "All people",
     "search_people": "Rechercher un nom ou un e-mail",
@@ -1597,7 +1597,13 @@
     "sync_removed": "{{count}} member links removed",
     "sync_users_created": "{{count}} users created",
     "sync_users_matched": "{{count}} existing users matched",
-    "sync_workspace_members": "{{count}} workspace members added"
+    "sync_workspace_members": "{{count}} workspace members added",
+    "sync_accounts_disabled": "Comptes de personnes parties désactivés : {{count}}",
+    "sync_accounts_already_disabled": "Comptes déjà désactivés : {{count}}",
+    "sync_departures_skipped": "Départs ignorés : {{count}} (actifs, non associés ou protégés)",
+    "sync_departures_incomplete": "Annuaire synchronisé, mais la vérification des départs a échoué. Aucun compte n’a été désactivé par cette vérification. Vérifiez les autorisations de l’application DingTalk et les journaux du serveur.",
+    "sync_departures_owner_only": "Seul l’annuaire a été synchronisé. La désactivation automatique nécessite un propriétaire de l’espace. Les protections de votre compte, des propriétaires et des autres espaces restent appliquées.",
+    "sync_departures_not_checked": "Le serveur n’a pas vérifié les départs. Aucun compte n’a été désactivé automatiquement."
   },
   "members": {
     "invite_title": "Inviter un membre",
@@ -1688,7 +1694,21 @@
     "revoke_invitation_tooltip": "Révoquer l'invitation",
     "share_links_title": "Liens de partage",
     "role_field": "Rôle :",
-    "expiry_field": "Expiration :"
+    "expiry_field": "Expiration :",
+    "status_filter": "État du compte",
+    "status_all": "Tous les états",
+    "status_enabled": "Activé",
+    "status_disabled": "Désactivé",
+    "search_count": "{{count}} membres affichés sur {{total}}",
+    "no_matching_members": "Aucun membre correspondant",
+    "disable_action": "Désactiver le compte",
+    "enable_action": "Activer le compte",
+    "disable_title": "Désactiver {{name}} ?",
+    "enable_title": "Activer {{name}} ?",
+    "disable_description": "Bloque la connexion à tout MissionOS et ferme les sessions existantes. Les affectations, les projets et l’historique sont conservés.",
+    "enable_description": "Le compte pourra se reconnecter. Les anciennes sessions et les jetons API révoqués ne seront pas restaurés.",
+    "account_update_failed": "Impossible de modifier le compte. Réessayez.",
+    "account_updating": "Mise à jour…"
   },
   "integrations": {
     "status_connected": "Connecté",

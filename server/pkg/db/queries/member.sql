@@ -27,6 +27,7 @@ DELETE FROM member WHERE id = $1;
 -- name: ListMembersWithUser :many
 SELECT m.id, m.workspace_id, m.user_id, m.role, m.created_at,
        u.name as user_name, u.email as user_email, u.avatar_url as user_avatar_url,
+       (u.account_disabled_at IS NOT NULL)::boolean AS account_disabled,
        -- 2026-09-06 coder(lq): Owners/admins can only receive their role from
        -- an authenticated workspace action; retain that legacy signal for
        -- accounts created before projectauth_user_logins was introduced.

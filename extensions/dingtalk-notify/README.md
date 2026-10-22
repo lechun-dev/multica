@@ -119,6 +119,20 @@ The host bridge reads `DINGTALK_NOTIFY_AGENT_OWNER_MENTIONS` (default `true`)
 to enable or disable P2P notices when another member explicitly mentions an
 Agent. The Agent owner's own member or Agent comments are suppressed.
 
+## 任务权限申请通知
+
+权限申请和审批结果同时写入 MissionOS 机器人通知队列及个人 1v1 队列。
+机器人沿用上述三项应用配置和现有 Worker，不依赖申请人绑定个人钉钉身份；
+接收人须为未禁用的当前工作区成员，且具有有效的通知身份绑定。
+通知显示申请人姓名、中文权限名称、任务编号及名称，不显示用户 ID。
+申请卡片提供“查看并处理申请”按钮，定位到已有的权限申请处理界面；
+点击链接本身不授予权限。结果卡片提供“打开任务”按钮。
+
+两条队列在权限申请事务内分别隔离失败，随事务一起提交或回滚。
+机器人复用现有队列的去重及重试，不通过收件箱事件额外转发，也不会自动补发历史通知。
+配置不完整或接收人无有效绑定时不入机器人队列，并记录跳过原因。
+测试仅使用本地测试数据库、内存实现或模拟接口，不发送真实钉钉消息。
+
 ## 本机 DWS 个人私信
 
 桌面端登录的成员在评论中使用 `mention://member/<user-id>` 提及另一位成员时，
@@ -192,3 +206,81 @@ in the application layer.
 `DINGTALK_API_BASE_URL`、`DINGTALK_OAUTH_AUTH_URL`。OAuth token 和用户信息接口
 使用代码内置的钉钉官方默认地址，无需配置环境变量；只有未来需要接入代理或特殊网关时，
 才应在代码层显式覆盖。Client Secret 和加密密钥只应通过本机 `.env` 或密钥管理器注入。
+
+## Departure-aware directory sync
+
+The host's existing organization-sync action uses the same configured application
+credentials to call `GET /v1.0/contact/empLeaveRecords` (`ListEmpLeaveRecords`).
+Enable the corresponding departure-record read permission on the DingTalk
+application; personal HR-roster permissions do not establish application access.
+The request/query/header/response contract follows Alibaba's official
+`@alicloud/dingtalk` 2.2.48 `contact_1_0` SDK. No SDK dependency is installed.
+
+For the manual HTTP action, only a human workspace owner can trigger account suspension. Self, other owners,
+and accounts outside the operator's owned workspaces remain protected. The host
+matches existing active DingTalk user-ID bindings, never names or email, and skips
+users resolved in the current directory snapshot (including rehires). It never
+re-enables an account, deletes business history, or treats a missing directory
+member as proof of departure.
+
+The host reads from one day before the oldest existing linked local account to
+the sync start, splitting the range into 30-day windows and following every page.
+No suspension runs unless the whole departure read succeeds. On application
+permission, malformed-response, or pagination errors, the normal directory sync
+can still finish but returns `departure_sync_status: unavailable`. An admin or
+machine actor gets `owner_required` and performs directory-only sync. New clients
+show these states explicitly; an older server response defaults to `not_checked`.
+No additional migration is needed beyond the account-access migration 602.
+
+Regression checks use mocked DingTalk endpoints and the dedicated integration
+database; they do not call live DingTalk or suspend production accounts.
+
+### Daily refresh (MissionOS server)
+
+The server registers `dingtalk_directory_daily` when the DingTalk adapter is
+configured and project authorization is enabled. It runs at **03:00 Beijing time
+(UTC+08:00) every day**, using the application credentials above, not a logged-in
+person's DWS authorization. `DINGTALK_DIRECTORY_SYNC_ENABLED=false` disables this
+job at server startup without disabling manual refresh or DingTalk login.
+
+Only existing workspaces with DingTalk organization records are enrolled; the job
+does not import the enterprise directory into unrelated workspaces. The first
+currently enabled workspace owner (ordered by membership creation time and ID)
+provides the account-management authorization ceiling, not provider credentials.
+No enabled owner means a failed audited run without any provider calls or writes.
+The job rechecks this authority after provider reads and retains every manual
+self/owner/cross-workspace protection. Protected accounts are counted as skipped,
+not silently suspended. Re-enabling remains a manual owner action.
+
+The existing PostgreSQL `sys_cron_executions` ledger provides cross-replica daily
+slot deduplication, leases, heartbeats and restart recovery. One independent
+worker avoids delaying other scheduled server jobs during directory pagination.
+A missed schedule catches up to the latest due daily slot, not every historical
+day, and a successful slot is not replayed on each restart. Each occurrence has
+at most **3 attempts**, with **5-minute and 30-minute** retry delays, a 20-minute
+run timeout and a 25-minute stale lease. After retries are exhausted, the next
+daily slot can run normally.
+
+A departure-read error still permits ordinary directory refresh but marks the
+scheduled run failed and eligible for retry; no account is suspended from partial
+departure results. Invalid/empty directory snapshots are never persisted. Manual
+and scheduled snapshot writes are transaction-serialized per workspace. Successful
+commits publish `organization:synced`, invalidating only the affected workspace's
+organization/permission/list read generations, including background writes that
+bypass HTTP middleware. Tasks, projects and business history are not deleted.
+
+Inspect recent runs without employee data or credentials:
+
+```sql
+SELECT scope_id AS workspace_id, plan_time, status, attempt, next_retry_at,
+       rows_affected, result, error_code
+FROM sys_cron_executions
+WHERE job_name = 'dingtalk_directory_daily'
+ORDER BY plan_time DESC, scope_id
+LIMIT 30;
+```
+
+Coverage: `TestDingTalkDirectoryDaily*`,
+`TestDingTalkDirectorySyncEventInvalidatesWorkspaceCaches` and existing manual
+directory/account-access regressions. Fixtures use fake DingTalk
+endpoints and the local integration database, never production account writes.

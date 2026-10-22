@@ -308,6 +308,10 @@ vi.mock("../../projects/components/project-picker", () => ({
 
 // Mock api
 const mockApiObj = vi.hoisted(() => ({
+  getIssueAccessRequestTarget: vi.fn(),
+  listTaskPermissionRoles: vi.fn(),
+  listIssueAccessRequests: vi.fn(),
+  createIssueAccessRequest: vi.fn(),
   getIssue: vi.fn(),
   listTimeline: vi.fn().mockResolvedValue([]),
   listComments: vi.fn().mockResolvedValue([]),
@@ -726,6 +730,30 @@ describe("IssueDetail (shared)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Archive notification" }));
     expect(onDone).toHaveBeenCalledOnce();
     expect(mockApiObj.updateIssue).not.toHaveBeenCalled();
+    qc.clear();
+  });
+
+  // 2026-10-14 coder(lq): A hidden task may return 404 rather than 403;
+  // only the scoped reference endpoint can distinguish denial from deletion.
+  it.each([403, 404])("offers a working access request after task detail status %s", async (status) => {
+    mockApiObj.getIssue.mockRejectedValue(new ApiError("denied", status, "Error"));
+    mockApiObj.getIssueAccessRequestTarget.mockResolvedValue({ id: "issue-1", identifier: "LC-1788" });
+    mockApiObj.listTaskPermissionRoles.mockResolvedValue({ roles: [] });
+    mockApiObj.listIssueAccessRequests.mockResolvedValue({ items: [] });
+    mockApiObj.createIssueAccessRequest.mockResolvedValue({});
+    const onDelete = vi.fn();
+    const qc = createTestQueryClient();
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={qc}>
+          <IssueDetail issueId="issue-1" onDelete={onDelete} />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Request access" }));
+    await waitFor(() => expect(mockApiObj.createIssueAccessRequest).toHaveBeenCalledWith("issue-1", expect.objectContaining({ requested_role: "viewer" })));
+    expect(mockApiObj.getIssueAccessRequestTarget).toHaveBeenCalledWith("issue-1");
+    expect(onDelete).not.toHaveBeenCalled();
     qc.clear();
   });
 

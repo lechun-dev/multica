@@ -13,7 +13,7 @@ import (
 
 const archivedInboxFacets = `-- name: ArchivedInboxFacets :many
 WITH newest AS MATERIALIZED (
-    SELECT DISTINCT ON (COALESCE(i.issue_id, i.id))
+    SELECT DISTINCT ON (CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END)
            i.id, i.issue_id, i.created_at, i.read,
            CASE WHEN i.actor_type = 'system' THEN 'system'
                 ELSE i.actor_type || ':' || i.actor_id::text END AS actor
@@ -22,14 +22,14 @@ WITH newest AS MATERIALIZED (
       AND i.recipient_type = 'member'
       AND i.recipient_id = $2::uuid
       AND i.archived = true
-      AND (i.issue_id IS NULL OR NOT EXISTS (
+      AND (i.type = 'task_access_request' OR i.issue_id IS NULL OR NOT EXISTS (
           SELECT 1 FROM inbox_item active
           WHERE active.workspace_id = i.workspace_id
             AND active.recipient_type = i.recipient_type
             AND active.recipient_id = i.recipient_id
-            AND active.issue_id = i.issue_id AND active.archived = false
+            AND active.issue_id = i.issue_id AND active.type <> 'task_access_request' AND active.archived = false
       ))
-    ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC
+    ORDER BY CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END, i.created_at DESC, i.id DESC
 ), projected AS (
     SELECT newest.id, newest.issue_id, newest.created_at, newest.read, newest.actor, iss.status AS issue_status, iss.priority AS issue_priority
     FROM newest
@@ -105,7 +105,7 @@ func (q *Queries) ArchivedInboxFacets(ctx context.Context, arg ArchivedInboxFace
 
 const listArchivedInboxPage = `-- name: ListArchivedInboxPage :many
 WITH newest AS MATERIALIZED (
-    SELECT DISTINCT ON (COALESCE(i.issue_id, i.id))
+    SELECT DISTINCT ON (CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END)
            i.id, i.issue_id, i.created_at, i.read,
            CASE WHEN i.actor_type = 'system' THEN 'system'
                 ELSE i.actor_type || ':' || i.actor_id::text END AS actor
@@ -114,16 +114,15 @@ WITH newest AS MATERIALIZED (
       AND i.recipient_type = 'member'
       AND i.recipient_id = $2::uuid
       AND i.archived = true
-      AND ($3::uuid IS NULL OR i.issue_id = $3::uuid
-           OR (i.issue_id IS NULL AND i.id = $3::uuid))
-      AND (i.issue_id IS NULL OR NOT EXISTS (
+      AND ($3::uuid IS NULL OR (CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END) = $3::uuid)
+      AND (i.type = 'task_access_request' OR i.issue_id IS NULL OR NOT EXISTS (
           SELECT 1 FROM inbox_item active
           WHERE active.workspace_id = i.workspace_id
             AND active.recipient_type = i.recipient_type
             AND active.recipient_id = i.recipient_id
-            AND active.issue_id = i.issue_id AND active.archived = false
+            AND active.issue_id = i.issue_id AND active.type <> 'task_access_request' AND active.archived = false
       ))
-    ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC
+    ORDER BY CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END, i.created_at DESC, i.id DESC
 ), projected AS (
     SELECT newest.id, newest.issue_id, newest.created_at, newest.read, newest.actor, iss.status AS issue_status, iss.priority AS issue_priority
     FROM newest
@@ -152,7 +151,8 @@ JOIN inbox_item i ON i.id = selected.id
 LEFT JOIN LATERAL (
     SELECT a.details->>'comment_id' AS comment_id
     FROM inbox_item a
-    WHERE i.issue_id IS NOT NULL AND a.issue_id = i.issue_id
+    WHERE i.type <> 'task_access_request' AND a.type <> 'task_access_request'
+      AND i.issue_id IS NOT NULL AND a.issue_id = i.issue_id
       AND a.workspace_id = i.workspace_id AND a.recipient_type = i.recipient_type
       AND a.recipient_id = i.recipient_id AND a.archived = true
       AND NULLIF(a.details->>'comment_id', '') IS NOT NULL

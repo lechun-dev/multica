@@ -154,6 +154,58 @@ describe("MembersTab", () => {
     expect(screen.getByText("No members match this search.")).toBeInTheDocument();
   });
 
+  // 2026-10-22 coder(lq): Keep private account controls inside the upstream
+  // member views; filtering must not remove the current owner's authority.
+  it("keeps owner account controls when a search hides the current owner", async () => {
+    data.members.push({ ...member("xiaohui", "张晓慧", "member"), can_manage_account: true });
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "晓慧" } });
+    expect(screen.queryByText("Ada Lovelace")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions for 张晓慧" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Disable account" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("blocks sign-in across MissionOS");
+  });
+
+  it("does not offer global suspension to admins or for protected owners", async () => {
+    data.members = [
+      member("user-1", "Ada Lovelace", "admin"),
+      { ...member("user-2", "Grace Hopper", "member"), can_manage_account: false },
+      { ...member("user-3", "Alan Turing", "owner"), can_manage_account: false },
+    ];
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
+    await user.click(screen.getByRole("button", { name: "Actions for Grace Hopper" }));
+    expect(screen.queryByRole("menuitem", { name: "Disable account" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "Actions for Alan Turing" })).not.toBeInTheDocument();
+  });
+
+  it("protects another owner and filters disabled accounts without affecting invitation views", async () => {
+    data.members = [
+      member("user-1", "Ada Lovelace", "owner"),
+      { ...member("user-2", "Grace Hopper", "owner"), can_manage_account: false },
+      { ...member("user-3", "Alan Turing", "member"), account_disabled: true, can_manage_account: true },
+    ];
+    const user = userEvent.setup();
+    renderWithI18n(<MembersTab />);
+    await user.click(screen.getByRole("button", { name: "Actions for Grace Hopper" }));
+    expect(screen.queryByRole("menuitem", { name: "Disable account" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Account status" }));
+    await user.click(await screen.findByRole("option", { name: "Disabled" }));
+    expect(screen.getByText("Alan Turing")).toBeInTheDocument();
+    expect(screen.queryByText("Grace Hopper")).not.toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 3 members")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions for Alan Turing" }));
+    expect(await screen.findByRole("menuitem", { name: "Enable account" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("tab", { name: /Pending invitations/ }));
+    expect(screen.getByText("linus@acme.dev")).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Account status" })).not.toBeInTheDocument();
+  });
+
   it("shows when each pending invitation was sent and expires", async () => {
     const user = userEvent.setup();
     renderWithI18n(<MembersTab />);

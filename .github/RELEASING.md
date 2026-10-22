@@ -82,6 +82,20 @@ workflow; there is no separate image-version field. Branches, `latest`, commit
 SHA tags, release candidates, and other unsupported suffixes are rejected
 before the workflow connects to a deployment host.
 
+After readiness and permission-policy checks pass, the shared deployment workflow
+verifies both running image references and IDs, then atomically saves the selected
+`MULTICA_IMAGE_TAG` in the target directory's `.env`, preserving its permissions
+and other settings. It rechecks Compose image resolution without the temporary
+shell override. A healthy container alone is not proof of the correct version.
+Do not print or back up the full `.env` into logs or repository files.
+
+Existing immutable release tags retain their original workflow implementation.
+When deploying a tag created before this safeguard, explicitly verify and save
+the same image tag on the host after the deployment succeeds. Do not rewrite
+an old tag to update its workflow. Before any maintenance that recreates services,
+check the saved tag and resolved images; normal container restarts do not change
+images, but Compose recreation can select an older saved version.
+
 The manual workflow must exist on the repository's default branch for GitHub to
 expose the **Run workflow** button, but the selected release and its application
 code do not have to come from that branch. Test and beta deployments may select

@@ -1,5 +1,6 @@
 "use client";
 
+import { filterMembers, MemberSearchControls, MemberAccountAccessDialog, type MemberStatusFilter } from "./member-account-access";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Copy,
@@ -9,7 +10,6 @@ import {
   Mail,
   MoreHorizontal,
   Plus,
-  Search,
   Shield,
   Trash2,
   User,
@@ -176,6 +176,7 @@ function MemberRow({
   busy,
   onRoleChange,
   onRemove,
+  onAccountAccessChange,
 }: {
   member: MemberWithUser;
   canManage: boolean;
@@ -187,6 +188,7 @@ function MemberRow({
   busy: boolean;
   onRoleChange: (role: MemberRole) => void;
   onRemove: () => void;
+  onAccountAccessChange: () => void;
 }) {
   const { t } = useT("settings");
   const displayName = member.name || member.email;
@@ -197,7 +199,8 @@ function MemberRow({
   const canEditRole = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
   const canRemove = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
   const isLastOwner = member.role === "owner" && ownerCount <= 1;
-  const showMenu = canEditRole || canRemove;
+  const canManageAccount = canManageOwners && !isSelf && member.can_manage_account === true;
+  const showMenu = canEditRole || canRemove || canManageAccount;
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -213,6 +216,7 @@ function MemberRow({
         </div>
         <div className="truncate text-caption text-muted-foreground">{member.email}</div>
       </div>
+      {member.account_disabled && <Badge variant="secondary">{t(($) => $.members.status_disabled)}</Badge>}
       <span className="hidden w-32 shrink-0 text-caption tabular-nums text-muted-foreground md:block">
         {t(($) => $.members.joined, {
           date: new Date(member.created_at).toLocaleDateString(locale),
@@ -282,6 +286,11 @@ function MemberRow({
                   )}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+            )}
+            {canManageAccount && (
+              <DropdownMenuItem variant={member.account_disabled ? undefined : "destructive"} onClick={onAccountAccessChange}>
+                {member.account_disabled ? t(($) => $.members.enable_action) : t(($) => $.members.disable_action)}
+              </DropdownMenuItem>
             )}
             {canEditRole && canRemove && <DropdownMenuSeparator />}
             {canRemove && (
@@ -417,6 +426,8 @@ export function MembersTab() {
   const navigation = useOptionalNavigation();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
+  const [memberStatus, setMemberStatus] = useState<MemberStatusFilter>("all");
+  const [accountTarget, setAccountTarget] = useState<MemberWithUser | null>(null);
   const sortedMembers = useMemo(
     () => [...members].sort(compareMemberRegistration),
     [members],
@@ -490,13 +501,9 @@ export function MembersTab() {
     enabled: billingEnabled && canManageWorkspace,
   }).data?.seatCapacity;
   const needle = memberQuery.trim().toLocaleLowerCase();
-  const visibleMembers = needle
-    ? sortedMembers.filter(
-        (m) =>
-          m.name.toLocaleLowerCase().includes(needle) ||
-          m.email.toLocaleLowerCase().includes(needle),
-      )
-    : sortedMembers;
+  // 2026-10-22 coder(lq): Filter only the member projection; management authority
+  // and owner protection continue to use the complete workspace membership.
+  const visibleMembers = filterMembers(sortedMembers, memberQuery, memberStatus);
 
   const sendInvitation = useCallback(
     async (email: string, role: MemberRole) => {
@@ -678,6 +685,9 @@ export function MembersTab() {
   };
 
   useEffect(() => {
+    setAccountTarget(null);
+    setMemberQuery("");
+    setMemberStatus("all");
     setInviteSeatPurchase((current) =>
       current && current.workspaceId !== wsId ? null : current,
     );
@@ -938,20 +948,12 @@ export function MembersTab() {
               </span>
             ) : null}
             {activeView === "members" ? (
-              <div className="relative w-full sm:w-56">
-                <Search
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                  type="search"
-                  value={memberQuery}
-                  onChange={(event) => setMemberQuery(event.target.value)}
-                  placeholder={t(($) => $.members.search_placeholder)}
-                  aria-label={t(($) => $.members.search_placeholder)}
-                  className="pl-8"
-                />
-              </div>
+              <MemberSearchControls
+                search={memberQuery}
+                status={memberStatus}
+                onSearchChange={setMemberQuery}
+                onStatusChange={setMemberStatus}
+              />
             ) : activeView === "links" ? (
               <Button variant="outline" size="sm" onClick={() => setShareLinkOpen(true)}>
                 <Plus />
@@ -961,6 +963,7 @@ export function MembersTab() {
           </div>
         </div>
 
+        {activeView === "members" ? <p className="text-caption text-muted-foreground">{t(($) => $.members.search_count, { count: visibleMembers.length, total: members.length })}</p> : null}
         {activeView === "members" ? (
           visibleMembers.length > 0 ? (
             <SettingsCard>
@@ -975,13 +978,14 @@ export function MembersTab() {
                     busy={memberActionId === m.id}
                     onRoleChange={(role) => handleRoleChange(m.id, role)}
                     onRemove={() => handleRemoveMember(m)}
+                    onAccountAccessChange={() => setAccountTarget(m)}
                   />
                 </div>
               ))}
             </SettingsCard>
           ) : (
             <EmptyList>
-              {needle ? t(($) => $.members.no_results) : t(($) => $.members.no_members)}
+              {needle || memberStatus !== "all" ? t(($) => $.members.no_results) : t(($) => $.members.no_members)}
             </EmptyList>
           )
         ) : activeView === "invitations" ? (
@@ -1284,6 +1288,8 @@ export function MembersTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {accountTarget && <MemberAccountAccessDialog key={`${wsId}:${accountTarget.id}`} workspaceId={wsId} member={accountTarget} onClose={() => setAccountTarget(null)} />}
 
       <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
         <AlertDialogContent>

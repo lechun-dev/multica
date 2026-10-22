@@ -887,6 +887,20 @@ describe("handleInboxNew", () => {
     });
   });
 
+  it("targets the individual access-request notice from an OS banner", async () => {
+    const qc = createQueryClient();
+    qc.setQueryData<Workspace[]>(workspaceKeys.list(), []);
+    qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
+      preferences: { system_notifications: "all" },
+    });
+    const showNotification = stubDesktopAPI();
+    await handleInboxNew(qc, inboxItem({ id: "request-notice", type: "task_access_request" }));
+    expect(showNotification).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: "request-notice", issueKey: "request-notice",
+    }));
+    qc.clear();
+  });
+
   it("invalidates the ITEM's workspace inbox cache and resolves its slug, not the active workspace's", async () => {
     const qc = createQueryClient();
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [

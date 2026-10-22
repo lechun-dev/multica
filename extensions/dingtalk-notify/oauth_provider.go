@@ -65,6 +65,7 @@ type DingTalkOAuthProvider struct {
 	DepartmentDetailURL string
 	DepartmentListURL   string
 	UserListURL         string
+	DepartureListURL    string
 	ClientID            string
 	ClientSecret        string
 	Scope               string
@@ -473,27 +474,11 @@ func (p DingTalkOAuthProvider) loadDepartments(ctx context.Context, accessToken 
 // department 1. The host persists the snapshot transactionally, so this
 // method never mutates Multica data itself.
 func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirectorySnapshot, error) {
-	tokenURL := p.AppTokenURL
-	if tokenURL == "" {
-		tokenURL = dingtalkAPIBase + "/v1.0/oauth2/accessToken"
+	accessToken, err := p.directoryAppToken(ctx)
+	if err != nil {
+		return DingTalkDirectorySnapshot{}, err
 	}
-	payload, _ := json.Marshal(map[string]string{"appKey": p.ClientID, "appSecret": p.ClientSecret})
-	var token struct {
-		AccessToken string `json:"accessToken"`
-	}
-	if err := p.postJSON(ctx, tokenURL, payload, &token); err != nil {
-		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "", err)
-	}
-	if token.AccessToken == "" {
-		return DingTalkDirectorySnapshot{}, newDingTalkDirectorySyncError("application_token", "", 0, "DingTalk application token response missing accessToken", nil)
-	}
-	interval := p.DirectoryRequestInterval
-	if interval < 0 {
-		interval = 0
-	} else if interval == 0 {
-		interval = defaultDingTalkDirectoryRequestInterval
-	}
-	limiter := &dingtalkDirectoryLimiter{interval: interval}
+	limiter := p.directoryLimiter()
 
 	departments := make([]DingTalkDirectoryDepartment, 0)
 	departmentIDs := make(map[string]struct{})
@@ -506,7 +491,7 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 			continue
 		}
 		seen[id] = true
-		dept, err := p.loadDingTalkSubDepartments(ctx, token.AccessToken, id, limiter)
+		dept, err := p.loadDingTalkSubDepartments(ctx, accessToken, id, limiter)
 		if err != nil {
 			return DingTalkDirectorySnapshot{}, err
 		}
@@ -525,7 +510,7 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 
 	membersByID := map[string]DingTalkDirectoryMember{}
 	for _, d := range append([]DingTalkDirectoryDepartment{{ID: "1"}}, departments...) {
-		members, err := p.loadDingTalkDepartmentUsers(ctx, token.AccessToken, d.ID, limiter)
+		members, err := p.loadDingTalkDepartmentUsers(ctx, accessToken, d.ID, limiter)
 		if err != nil {
 			return DingTalkDirectorySnapshot{}, err
 		}

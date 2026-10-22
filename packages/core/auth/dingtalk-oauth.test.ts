@@ -6,9 +6,26 @@ import {
   dingtalkCallbackProtocol,
   dingtalkNextFromState,
   isDesktopDingTalkState,
+  isDingTalkWebView,
 } from "./dingtalk-oauth";
 
 describe("DingTalk OAuth helpers", () => {
+  it("recognizes DingTalk embedded browser user agents", () => {
+    expect(
+      isDingTalkWebView(
+        "Mozilla/5.0 (Linux; Android 14; MHA-AL00) AppleWebKit/537.36 DingTalk/7.6.20",
+      ),
+    ).toBe(true);
+    expect(
+      isDingTalkWebView(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe(false);
+    expect(
+      isDingTalkWebView("Mozilla/5.0 Chrome/128.0 Safari/537.36"),
+    ).toBe(false);
+  });
+
   it("starts a desktop-aware flow on an absolute API origin", () => {
     expect(
       buildDingTalkLoginURL("https://multica.example.test", "desktop"),

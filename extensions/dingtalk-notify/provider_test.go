@@ -1,10 +1,12 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -79,7 +81,69 @@ func TestActionCardParamExtractsTitleBodyAndReplyButton(t *testing.T) {
 	}
 }
 
+func TestActionCardParamSupportsOpenTaskButton(t *testing.T) {
+	text := "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)"
+	param, ok := mustActionCardParam(text)
+	if !ok {
+		t.Fatal("expected assignment action card payload")
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(param), &got); err != nil {
+		t.Fatalf("decode action card payload: %v", err)
+	}
+	if got["singleTitle"] != "打开任务" || got["singleURL"] != "https://example.test/task" {
+		t.Fatalf("button=%q url=%q", got["singleTitle"], got["singleURL"])
+	}
+	if strings.Contains(got["text"], "[打开任务]") {
+		t.Fatalf("button markdown leaked into card body: %q", got["text"])
+	}
+}
+
+func TestDingTalkProviderSendsAssignmentAsActionCard(t *testing.T) {
+	var messageKey string
+	var messageParam map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "accessToken") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "token", "expireIn": 7200})
+			return
+		}
+		var body struct {
+			MsgKey   string `json:"msgKey"`
+			MsgParam string `json:"msgParam"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		messageKey = body.MsgKey
+		if err := json.Unmarshal([]byte(body.MsgParam), &messageParam); err != nil {
+			t.Fatalf("decode message param: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
+	err := p.Send(context.Background(), Message{
+		ChannelType: "p2p", DingUserID: "user",
+		Text: "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageKey != msgKeyActionCard {
+		t.Fatalf("message key=%q, want %q", messageKey, msgKeyActionCard)
+	}
+	if messageParam["singleTitle"] != "打开任务" || messageParam["singleURL"] != "https://example.test/task" {
+		t.Fatalf("action card param=%v", messageParam)
+	}
+}
+
 func TestDingTalkProviderFallsBackToMarkdownWhenActionCardUnsupported(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	var messageKeys []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "accessToken") {
@@ -103,14 +167,88 @@ func TestDingTalkProviderFallsBackToMarkdownWhenActionCardUnsupported(t *testing
 	defer srv.Close()
 	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
 	err := p.Send(context.Background(), Message{
+		EventID:     "issue-assignment:issue-1:7:assignment_added",
+		WorkspaceID: "workspace-1",
+		TargetID:    "member-1",
+		TargetKind:  "member",
 		ChannelType: "p2p", DingUserID: "user",
-		Text: "🔔 **张畅提到了你**\n\nhello\n\n来源：lechun-test\n\n[打开任务并回复](https://example.test/task)",
+		Text: "📌 **你已成为该任务的负责人**\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(messageKeys, ",") != "sampleActionCard,sampleMarkdown" {
 		t.Fatalf("message keys=%v", messageKeys)
+	}
+	gotLogs := logs.String()
+	for _, want := range []string{
+		"action card rejected; falling back to markdown",
+		"delivered with markdown fallback",
+		`"event_id":"issue-assignment:issue-1:7:assignment_added"`,
+		`"workspace_id":"workspace-1"`,
+		`"target_id":"member-1"`,
+		`"http_status":400`,
+		`"dingtalk_code":"UnsupportedMsgKey"`,
+		`"fallback_type":"sampleMarkdown"`,
+	} {
+		if !strings.Contains(gotLogs, want) {
+			t.Fatalf("logs do not contain %q:\n%s", want, gotLogs)
+		}
+	}
+}
+
+func TestDingTalkProviderLogsFailedMarkdownFallbackWithoutSecrets(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "accessToken") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "token", "expireIn": 7200})
+			return
+		}
+		var body struct {
+			MsgKey string `json:"msgKey"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		if body.MsgKey == msgKeyActionCard {
+			_, _ = w.Write([]byte(`{"code":"UnsupportedMsgKey","message":"msgKey actionCard is not supported access_token=card-secret"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":"InvalidParameter","message":"markdown rejected client_secret=fallback-secret"}`))
+	}))
+	defer srv.Close()
+
+	p := &DingTalkProvider{BaseURL: srv.URL, ClientID: "app", ClientSecret: "secret", RobotCode: "robot"}
+	err := p.Send(context.Background(), Message{
+		EventID:     "issue-assignment:issue-1:7:assignment_removed",
+		ChannelType: "p2p", DingUserID: "user",
+		Text: "↗️ **该任务已转交给 李群**\n\n操作人：张畅\n\n操作时间：2026-10-13 17:01\n\n---\n\n来源：LC-71 · 子任务测试\n\n[打开任务](https://example.test/task)",
+	})
+	if err == nil {
+		t.Fatal("expected failed markdown fallback")
+	}
+	gotLogs := logs.String()
+	for _, want := range []string{
+		"markdown fallback failed",
+		`"http_status":400`,
+		`"dingtalk_code":"UnsupportedMsgKey"`,
+		`"fallback_http_status":400`,
+		`"fallback_dingtalk_code":"InvalidParameter"`,
+		"[redacted]",
+	} {
+		if !strings.Contains(gotLogs, want) {
+			t.Fatalf("logs do not contain %q:\n%s", want, gotLogs)
+		}
+	}
+	for _, secret := range []string{"card-secret", "fallback-secret"} {
+		if strings.Contains(gotLogs, secret) {
+			t.Fatalf("logs leaked secret %q:\n%s", secret, gotLogs)
+		}
 	}
 }
 

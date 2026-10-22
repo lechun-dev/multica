@@ -23,7 +23,7 @@ export interface SystemNotificationPayload {
   slug: string;
   /** Inbox row id — lets the click mark the item read. */
   itemId: string;
-  /** `?issue=<…>` selector for the inbox page (issue id, else the item id). */
+  /** 2026-10-20 coder(lq): Inbox group selector; access requests use notice IDs. */
   issueKey: string;
   title: string;
   body: string;

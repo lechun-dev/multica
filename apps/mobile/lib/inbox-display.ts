@@ -1,3 +1,4 @@
+import { inboxItemKey } from "@multica/core/inbox/grouping";
 /**
  * Inbox title display helpers.
  *
@@ -98,8 +99,8 @@ export function getInboxDisplayTitle(item: InboxItem): string {
  *
  * Steps:
  *   1. Drop archived rows (these never appear in web's inbox view).
- *   2. Group by `issue_id` (fall back to `id` for items with no issue
- *      attached — e.g. quick_create_failed).
+ *   2. Group ordinary activity by task; access requests and issue-less
+ *      notices keep their own IDs (2026-10-20 coder(lq)).
  *   3. In each group, keep the newest by `created_at`.
  *   4. Preserve the newest grouped `comment_id` anchor when the newest row
  *      is a later status/metadata event for the same issue.
@@ -109,7 +110,7 @@ export function deduplicateInboxItems(items: InboxItem[]): InboxItem[] {
   const active = items.filter((i) => !i.archived);
   const groups = new Map<string, InboxItem[]>();
   for (const item of active) {
-    const key = item.issue_id ?? item.id;
+    const key = inboxItemKey(item);
     const group = groups.get(key) ?? [];
     group.push(item);
     groups.set(key, group);

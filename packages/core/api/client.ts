@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
-import { WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
+import { MemberWithUserSchema, MembersWithUserSchema, WorkspaceWakeupPageSchema, IssueWakeupSchema, IssueWakeupSummaryRowSchema, PausedWakeupSchema, SystemWakeupSchema, WakeupRunSchema, WorkspaceSystemWakeupSchema } from "./schemas";
 import type { InboxFilters } from "../inbox/filter-store";
 import type { ArchivedInboxPage, ArchivedInboxFacets } from "../types/inbox";
 import { configStore } from "../config";
@@ -3562,7 +3562,9 @@ export class ApiClient {
 
   // Members
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members`);
+    const endpoint = `/api/workspaces/${workspaceId}/members`;
+    const raw = await this.fetch<unknown>(endpoint);
+    return parseWithFallback<MemberWithUser[]>(raw, MembersWithUserSchema, [], { endpoint });
   }
 
   async createMember(workspaceId: string, data: CreateMemberRequest): Promise<Invitation> {
@@ -3577,6 +3579,16 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+  }
+
+  async setMemberAccountAccess(workspaceId: string, memberId: string, disabled: boolean): Promise<MemberWithUser> {
+    const endpoint = `/api/workspaces/${workspaceId}/members/${memberId}/account-access`;
+    const raw = await this.fetch<unknown>(endpoint, { method: "PATCH", body: JSON.stringify({ disabled }) });
+    const member = parseWithFallback<MemberWithUser | null>(raw, MemberWithUserSchema, null, { endpoint });
+    if (!member || member.id !== memberId || member.account_disabled !== disabled) {
+      throw new Error("Account access response could not be verified");
+    }
+    return member;
   }
 
   async deleteMember(workspaceId: string, memberId: string): Promise<void> {
@@ -4348,6 +4360,10 @@ export class ApiClient {
       users_matched: 0,
       workspace_members_created: 0,
       unmatched: [],
+      departure_sync_status: "not_checked",
+      accounts_disabled: 0,
+      accounts_already_disabled: 0,
+      departures_skipped: 0,
     }, { endpoint: "POST /api/workspaces/:id/projectauth/organizations/sync" });
   }
 

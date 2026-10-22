@@ -142,6 +142,24 @@ export function runtimeRewriteDestination(
   if (pathname === "/health") {
     return appendPath(remoteApiUrl, "/health");
   }
+  // The MissionOS service-to-service DingTalk identity exchange is not a
+  // browser page. Keep the exact endpoint on the backend origin so the
+  // MissionOS Go handler receives the signed POST instead of Next.js
+  // rendering a page-level 404.
+  if (pathname === "/internal/auth/dingtalk/exchange") {
+    return appendPath(remoteApiUrl, pathname);
+  }
+  // Purpose-specific MissionOS reads used by newDingSDK. Keep this match
+  // narrow: other /internal routes must not become reachable through the web
+  // origin merely because these agent-facing endpoints are proxied.
+  if (
+    pathname === "/internal/agent/members" ||
+    pathname === "/internal/agent/projects" ||
+    pathname === "/internal/agent/issues" ||
+    pathname.startsWith("/internal/agent/issues/")
+  ) {
+    return appendPath(remoteApiUrl, pathname);
+  }
   if (isBackendAuthPath(pathname)) {
     return appendPath(remoteApiUrl, pathname);
   }

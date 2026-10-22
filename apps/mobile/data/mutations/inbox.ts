@@ -1,3 +1,4 @@
+import { inboxItemKey } from "@multica/core/inbox/grouping";
 /**
  * Mobile inbox mutations. Mirrors the optimistic-update + invalidate pattern
  * of packages/core/inbox/mutations.ts — written here in mobile-owned code
@@ -100,10 +101,10 @@ export function useArchiveInbox() {
       // Patching only the tapped row would let dedup'd siblings briefly
       // resurface between the request and the WS invalidate.
       const target = prev?.find((i) => i.id === id);
-      const issueId = target?.issue_id ?? null;
+      const groupKey = target ? inboxItemKey(target) : id;
       qc.setQueryData<InboxItem[]>(key, (old) =>
         old?.map((item) =>
-          item.id === id || (issueId && item.issue_id === issueId)
+          inboxItemKey(item) === groupKey
             ? { ...item, archived: true }
             : item,
         ),

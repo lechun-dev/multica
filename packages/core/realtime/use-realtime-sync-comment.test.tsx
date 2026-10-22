@@ -154,6 +154,41 @@ describe("useRealtimeSync — comment activity cache coherence", () => {
     expect(qc.getQueryState(lastActivityBoardKey)?.isInvalidated).toBe(true);
   });
 
+  // 2026-10-14 coder(lq): Mention ACL changes must refresh the task's
+  // permission panels without evicting another task or workspace's cache.
+  it.each(["comment:created", "comment:updated", "comment:deleted"])("refreshes only the affected task permissions after %s", (event) => {
+    const keys = ["issue-access-control", "issue-effective-access"];
+    for (const key of keys) {
+      qc.setQueryData([key, "ws-1", "issue-1"], {});
+      qc.setQueryData([key, "ws-1", "issue-2"], {});
+      qc.setQueryData([key, "ws-2", "issue-1"], {});
+    }
+    const { ws, handlers } = createRecordingWs();
+    renderHook(() => useRealtimeSync(ws, createStores()), { wrapper: createWrapper(qc) });
+    handlers[event]?.(event === "comment:deleted"
+      ? { issue_id: "issue-1", comment_id: "c1" }
+      : { comment: { id: "c1", issue_id: "issue-1" } });
+    for (const key of keys) {
+      expect(qc.getQueryState([key, "ws-1", "issue-1"])?.isInvalidated).toBe(true);
+      expect(qc.getQueryState([key, "ws-1", "issue-2"])?.isInvalidated).toBe(false);
+      expect(qc.getQueryState([key, "ws-2", "issue-1"])?.isInvalidated).toBe(false);
+    }
+  });
+
+  it("ends only the account named in a suspension event", () => {
+    const expired = vi.fn();
+    const stores = createStores();
+    Object.assign(stores.authStore, { getState: () => ({ user: { id: "u1" }, sessionExpired: expired }) });
+    const { ws, handlers } = createRecordingWs();
+    renderHook(() => useRealtimeSync(ws, stores), { wrapper: createWrapper(qc) });
+    handlers["account:disabled"]?.({ user_id: "other-user" });
+    handlers["account:disabled"]?.({});
+    handlers["account:disabled"]?.(null);
+    expect(expired).not.toHaveBeenCalled();
+    handlers["account:disabled"]?.({ user_id: "u1" });
+    expect(expired).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a comment event with no issue_id", () => {
     qc.setQueryData<ListIssuesCache>(updatedBoardKey, bucketed());
 

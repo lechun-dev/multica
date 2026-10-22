@@ -185,14 +185,27 @@ export function LoginPage({
   const handleSendCode = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
-      if (!email) {
+      // iOS/WebView autofill can update the native input without React seeing
+      // an onChange event. Read the form control at submit time so the button
+      // remains usable and the existing validation still applies.
+      const submittedEmail =
+        (e?.currentTarget instanceof HTMLFormElement
+          ? (
+              e.currentTarget.elements.namedItem(
+                "login-email",
+              ) as HTMLInputElement | null
+            )?.value
+          : null) ?? email;
+      const normalizedEmail = submittedEmail.trim();
+      if (!normalizedEmail) {
         setError(t(($) => $.common.email_required));
         return;
       }
+      setEmail(normalizedEmail);
       setLoading(true);
       setError("");
       try {
-        await useAuthStore.getState().sendCode(email);
+        await useAuthStore.getState().sendCode(normalizedEmail);
         setStep("code");
         setCode("");
         setCooldown(60);
@@ -485,6 +498,7 @@ export function LoginPage({
                 placeholder={t(($) => $.common.email_placeholder)}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onInput={(e) => setEmail(e.currentTarget.value)}
                 autoFocus
                 required
               />
@@ -500,7 +514,7 @@ export function LoginPage({
             form="login-form"
             className="w-full"
             size="lg"
-            disabled={!email || loading}
+            disabled={loading}
           >
             {loading
               ? t(($) => $.signin.sending)

@@ -31,15 +31,15 @@ func (q *Queries) ArchiveAllInbox(ctx context.Context, arg ArchiveAllInboxParams
 
 const archiveAllReadInbox = `-- name: ArchiveAllReadInbox :execrows
 WITH newest_groups AS (
-    SELECT DISTINCT ON (COALESCE(i.issue_id, i.id))
-           COALESCE(i.issue_id, i.id) AS group_id,
+    SELECT DISTINCT ON (CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END)
+           CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END AS group_id,
            i.read
     FROM inbox_item i
     WHERE i.workspace_id = $1
       AND i.recipient_type = 'member'
       AND i.recipient_id = $2
       AND i.archived = false
-    ORDER BY COALESCE(i.issue_id, i.id), i.created_at DESC, i.id DESC
+    ORDER BY CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END, i.created_at DESC, i.id DESC
 ), read_groups AS (
     SELECT group_id
     FROM newest_groups
@@ -51,7 +51,7 @@ WHERE i.workspace_id = $1
   AND i.recipient_type = 'member'
   AND i.recipient_id = $2
   AND i.archived = false
-  AND COALESCE(i.issue_id, i.id) = selected.group_id
+  AND CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END = selected.group_id
 `
 
 type ArchiveAllReadInboxParams struct {
@@ -75,6 +75,7 @@ func (q *Queries) ArchiveAllReadInbox(ctx context.Context, arg ArchiveAllReadInb
 const archiveCompletedInbox = `-- name: ArchiveCompletedInbox :execrows
 UPDATE inbox_item i SET archived = true
 WHERE i.workspace_id = $1 AND i.recipient_type = 'member' AND i.recipient_id = $2 AND i.archived = false
+  AND i.type <> 'task_access_request'
   AND i.issue_id IN (
     SELECT id FROM issue
     WHERE workspace_id = $1
@@ -98,7 +99,7 @@ func (q *Queries) ArchiveCompletedInbox(ctx context.Context, arg ArchiveComplete
 
 const archiveInboxByIssue = `-- name: ArchiveInboxByIssue :execrows
 UPDATE inbox_item SET archived = true
-WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3 AND issue_id = $4 AND archived = false
+WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3 AND issue_id = $4 AND type <> 'task_access_request' AND archived = false
 `
 
 type ArchiveInboxByIssueParams struct {
@@ -214,7 +215,7 @@ func (q *Queries) CountUnreadInbox(ctx context.Context, arg CountUnreadInboxPara
 const countUnreadInboxByWorkspace = `-- name: CountUnreadInboxByWorkspace :many
 SELECT newest.workspace_id, count(*) AS count
 FROM (
-    SELECT DISTINCT ON (i.workspace_id, COALESCE(i.issue_id, i.id))
+    SELECT DISTINCT ON (i.workspace_id, CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END)
         i.workspace_id, i.read
     FROM inbox_item i
     JOIN member m ON m.workspace_id = i.workspace_id AND m.user_id = i.recipient_id
@@ -223,7 +224,7 @@ FROM (
       AND i.recipient_id = $1
       AND i.archived = false
       AND (i.issue_id IS NULL OR iss.archived_at IS NULL)
-    ORDER BY i.workspace_id, COALESCE(i.issue_id, i.id), i.created_at DESC
+    ORDER BY i.workspace_id, CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END, i.created_at DESC
 ) newest
 WHERE newest.read = false
 GROUP BY newest.workspace_id
@@ -388,7 +389,7 @@ func (q *Queries) GetInboxItemInWorkspace(ctx context.Context, arg GetInboxItemI
 const listArchivedInboxItems = `-- name: ListArchivedInboxItems :many
 WITH eligible_archived AS MATERIALIZED (
     SELECT i.id,
-           COALESCE(i.issue_id, i.id) AS group_id,
+           CASE WHEN i.type = 'task_access_request' THEN i.id ELSE COALESCE(i.issue_id, i.id) END AS group_id,
            i.created_at,
            i.details
     FROM inbox_item i
@@ -396,13 +397,13 @@ WITH eligible_archived AS MATERIALIZED (
       AND i.recipient_type = $2
       AND i.recipient_id = $3
       AND i.archived = true
-      AND (i.issue_id IS NULL OR NOT EXISTS (
+      AND (i.type = 'task_access_request' OR i.issue_id IS NULL OR NOT EXISTS (
           SELECT 1
           FROM inbox_item active
           WHERE active.workspace_id = i.workspace_id
             AND active.recipient_type = i.recipient_type
             AND active.recipient_id = i.recipient_id
-            AND active.issue_id = i.issue_id
+            AND active.issue_id = i.issue_id AND active.type <> 'task_access_request'
             AND active.archived = false
       ))
 ), newest_groups AS (
@@ -465,6 +466,8 @@ type ListArchivedInboxItemsRow struct {
 	IssuePriority pgtype.Text        `json:"issue_priority"`
 }
 
+// 2026-10-20 coder(lq): Access requests group by notice ID throughout
+// listing, counters and dismissal; ordinary activity still groups by task.
 // Archived counterpart of ListInboxItems, backing the inbox's "Archived"
 // sub-view (MUL-3736).
 //
@@ -683,7 +686,7 @@ func (q *Queries) MarkInboxUnread(ctx context.Context, id pgtype.UUID) (InboxIte
 
 const unarchiveInboxByIssue = `-- name: UnarchiveInboxByIssue :execrows
 UPDATE inbox_item SET archived = false
-WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3 AND issue_id = $4 AND archived = true
+WHERE workspace_id = $1 AND recipient_type = $2 AND recipient_id = $3 AND issue_id = $4 AND type <> 'task_access_request' AND archived = true
 `
 
 type UnarchiveInboxByIssueParams struct {

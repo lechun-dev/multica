@@ -1367,6 +1367,7 @@ export const IssueSchema = z.object({
   // Optional for compatibility with older self-hosted backends; a current
   // backend emits null until its historical backfill reaches the issue.
   last_activity_at: z.string().nullable().optional(),
+  completed_at: z.string().datetime({ offset: true }).nullable().optional(),
   // Detail-only and potentially large. A malformed additive field must not
   // erase an otherwise usable issue returned by a mixed-version server.
   source_context: IssueSourceContextSchema.optional().catch(undefined),
@@ -3630,7 +3631,11 @@ export const MemberWithUserSchema = z.object({
   email: z.string().optional().default(""),
   avatar_url: z.string().nullable().optional().default(null),
   has_logged_in: z.boolean().optional().default(false),
+  account_disabled: z.boolean().optional().default(false),
+  can_manage_account: z.boolean().optional().default(false),
 }).loose();
+
+export const MembersWithUserSchema = z.array(MemberWithUserSchema);
 
 export const ProjectMemberSchema = z.object({
   project_id: z.string(),
@@ -3907,6 +3912,10 @@ export const ProjectAuthorizationDingTalkSyncResultSchema = z.object({
   users_matched: z.number().default(0),
   workspace_members_created: z.number().default(0),
   unmatched: z.array(z.string()).default([]),
+  departure_sync_status: z.enum(["complete", "unavailable", "owner_required", "not_checked"]).catch("unavailable").default("not_checked"),
+  accounts_disabled: z.number().int().nonnegative().default(0),
+  accounts_already_disabled: z.number().int().nonnegative().default(0),
+  departures_skipped: z.number().int().nonnegative().default(0),
 }).loose();
 export type ProjectAuthorizationDingTalkSyncResult = z.infer<typeof ProjectAuthorizationDingTalkSyncResultSchema>;
 

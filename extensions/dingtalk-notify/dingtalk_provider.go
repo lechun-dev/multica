@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -176,13 +177,46 @@ func (p *DingTalkProvider) Send(ctx context.Context, message Message) error {
 		// for an explicit unsupported-message-type response so transient failures
 		// are still retried by the outbox worker instead of sending duplicates.
 		if msgKey == msgKeyActionCard && isUnsupportedActionCardError(err) {
+			attrs := actionCardFallbackLogAttrs(message, err)
+			slog.WarnContext(ctx, "dingtalk notify: action card rejected; falling back to markdown", attrs...)
 			body["msgKey"] = msgKeyMarkdown
 			body["msgParam"] = mustMarkdownParam(message.Text)
-			return p.sendWithRefresh(ctx, path, body)
+			if fallbackErr := p.sendWithRefresh(ctx, path, body); fallbackErr != nil {
+				failureAttrs := append([]any(nil), attrs...)
+				failureAttrs = appendDingTalkErrorLogAttrs(failureAttrs, "fallback_", fallbackErr)
+				slog.WarnContext(ctx, "dingtalk notify: markdown fallback failed", failureAttrs...)
+				return fallbackErr
+			}
+			slog.InfoContext(ctx, "dingtalk notify: delivered with markdown fallback", attrs...)
+			return nil
 		}
 		return err
 	}
 	return nil
+}
+
+func actionCardFallbackLogAttrs(message Message, err error) []any {
+	attrs := []any{
+		"event_id", message.EventID,
+		"workspace_id", message.WorkspaceID,
+		"target_id", message.TargetID,
+		"target_kind", message.TargetKind,
+		"channel_type", message.ChannelType,
+		"fallback_type", msgKeyMarkdown,
+	}
+	return appendDingTalkErrorLogAttrs(attrs, "", err)
+}
+
+func appendDingTalkErrorLogAttrs(attrs []any, prefix string, err error) []any {
+	var apiErr *DingTalkHTTPError
+	if errors.As(err, &apiErr) {
+		return append(attrs,
+			prefix+"http_status", apiErr.Status,
+			prefix+"dingtalk_code", redactDingTalkSecrets(apiErr.Code),
+			prefix+"dingtalk_message", redactDingTalkSecrets(apiErr.Message),
+		)
+	}
+	return append(attrs, prefix+"error", redactDingTalkSecrets(err.Error()))
 }
 
 func (p *DingTalkProvider) sendWithRefresh(ctx context.Context, path string, body map[string]any) error {
@@ -231,10 +265,21 @@ func mustActionCardParam(text string) (string, bool) {
 		return "", false
 	}
 	lastLine := strings.TrimSpace(textLines[len(textLines)-1])
-	const buttonPrefix = "[打开任务并回复]("
 	lastLine = strings.TrimPrefix(lastLine, "**")
 	lastLine = strings.TrimSuffix(lastLine, "**")
-	if !strings.HasPrefix(lastLine, buttonPrefix) || !strings.HasSuffix(lastLine, ")") {
+	buttonTitle := ""
+	buttonPrefix := ""
+	// 2026-10-20 coder(lq): Permission requests retain their dedicated review
+	// action instead of degrading to a plain Markdown-only notification.
+	for _, title := range []string{"打开任务并回复", "打开任务", "查看并处理申请"} {
+		prefix := "[" + title + "]("
+		if strings.HasPrefix(lastLine, prefix) {
+			buttonTitle = title
+			buttonPrefix = prefix
+			break
+		}
+	}
+	if buttonPrefix == "" || !strings.HasSuffix(lastLine, ")") {
 		return "", false
 	}
 	actionURL := strings.TrimSuffix(strings.TrimPrefix(lastLine, buttonPrefix), ")")
@@ -249,7 +294,7 @@ func mustActionCardParam(text string) (string, bool) {
 	b, err := json.Marshal(map[string]string{
 		"title":       cardTitle,
 		"text":        cardText,
-		"singleTitle": "打开任务并回复",
+		"singleTitle": buttonTitle,
 		"singleURL":   actionURL,
 	})
 	if err != nil {

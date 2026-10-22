@@ -7,7 +7,7 @@ import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { memberListOptions } from "@multica/core/workspace/queries";
+import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   ProjectAuthorizationDingTalkSyncResult,
   ProjectAuthorizationImportKind,
@@ -135,8 +135,15 @@ export function ProjectAuthorizationOrganizationsTab() {
     try {
       const result = await api.syncProjectAuthorizationDingTalk(workspaceId);
       setSyncResult(result);
-      await queryClient.invalidateQueries({ queryKey: ["project-permission-organizations", workspaceId] });
-      toast.success(t(($) => $.project_authorization_organizations.sync_success));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["project-permission-organizations", workspaceId] }),
+        queryClient.invalidateQueries({ queryKey: workspaceKeys.members(workspaceId) }),
+      ]);
+      if (result.departure_sync_status === "unavailable") {
+        toast.warning(t(($) => $.project_authorization_organizations.sync_departures_incomplete));
+      } else {
+        toast.success(t(($) => $.project_authorization_organizations.sync_success));
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t(($) => $.project_authorization_organizations.sync_failed));
     } finally {
@@ -299,7 +306,19 @@ export function ProjectAuthorizationOrganizationsTab() {
                   <span>{t(($) => $.project_authorization_organizations.sync_users_created, { count: syncResult.users_created })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_users_matched, { count: syncResult.users_matched })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_workspace_members, { count: syncResult.workspace_members_created })}</span>
+                  <span>{t(($) => $.project_authorization_organizations.sync_accounts_disabled, { count: syncResult.accounts_disabled })}</span>
+                  <span>{t(($) => $.project_authorization_organizations.sync_accounts_already_disabled, { count: syncResult.accounts_already_disabled })}</span>
+                  <span>{t(($) => $.project_authorization_organizations.sync_departures_skipped, { count: syncResult.departures_skipped })}</span>
                 </div>
+                {syncResult.departure_sync_status !== "complete" && (
+                  <p role="status" className="border-t border-surface-border px-4 py-3 text-caption text-muted-foreground">
+                    {syncResult.departure_sync_status === "owner_required"
+                      ? t(($) => $.project_authorization_organizations.sync_departures_owner_only)
+                      : syncResult.departure_sync_status === "not_checked"
+                        ? t(($) => $.project_authorization_organizations.sync_departures_not_checked)
+                        : t(($) => $.project_authorization_organizations.sync_departures_incomplete)}
+                  </p>
+                )}
                 {syncResult.unmatched.length ? <p className="border-t border-surface-border px-4 py-3 text-caption text-muted-foreground break-words">{syncResult.unmatched.join("、")}</p> : null}
               </div>
             ) : null}

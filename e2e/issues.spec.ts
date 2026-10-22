@@ -54,6 +54,22 @@ test.describe("Issues", () => {
     await expect(page.locator("text=In Progress")).toBeVisible();
   });
 
+  test(
+    "issues page loads when the browser lacks Array.prototype.toSorted",
+    async ({ page }) => {
+      await page.addInitScript(() => {
+        Reflect.deleteProperty(Array.prototype, "toSorted");
+      });
+      await api.createIssue("E2E Legacy WebView " + Date.now());
+      await reloadAppPage(page);
+
+      await expect(page.locator("text=Backlog")).toBeVisible();
+      await expect(
+        page.getByText("Something went wrong displaying this section."),
+      ).toBeHidden();
+    },
+  );
+
   test("can switch from board to list view", async ({ page }) => {
     const title = "E2E List Switch " + Date.now();
     await api.createIssue(title);

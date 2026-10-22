@@ -1,3 +1,4 @@
+import { inboxItemKey } from "@multica/core/inbox/grouping";
 import type { InboxItem } from "@multica/core/types";
 
 function singleLine(value: string | null | undefined): string {
@@ -78,7 +79,7 @@ export function resolveDetailItem(
   detailKey: string,
 ): InboxItem | null {
   const byKey = (key: string) =>
-    visibleItems.find((i) => (i.issue_id ?? i.id) === key) ?? null;
+    visibleItems.find((i) => inboxItemKey(i) === key) ?? null;
   const deferred = detailKey ? byKey(detailKey) : null;
   if (deferred) return deferred;
   // No stale row to hold: either the pane is empty (nothing selected yet) or

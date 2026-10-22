@@ -523,6 +523,70 @@ export function createEnDict(
     },
     entries: [
       {
+        version: "0.5.12",
+        date: "2026-10-21",
+        title: "Access request history and DingTalk notification fixes",
+        changes: [],
+        features: [],
+        improvements: [
+          "Deliver access request and decision notifications through both DingTalk personal messages and Mission Assistant, with task names and direct review links.",
+          "Show applicant names or emails in task sharing instead of internal user IDs.",
+        ],
+        fixes: [
+          "Keep separate inbox entries for each access request, including new applications after access is revoked.",
+          "Retain all access request records and their results in task sharing, regardless of which notification opens the dialog.",
+          "Safely truncate oversized DingTalk personal messages while preserving the complete task footer and link, with redacted delivery diagnostics.",
+        ],
+      },
+      {
+        version: "0.5.11",
+        date: "2026-10-20",
+        title: "Agent task queries and DingTalk member management",
+        changes: [],
+        features: [
+          "Add read-only APIs for agents to query issue lists and details and resolve member and project names to IDs.",
+          "Add member search, safe suspension of confirmed departed DingTalk accounts, and scheduled directory and departure refreshes.",
+        ],
+        improvements: [
+          "Allow workspace owners to query all projects and issues through scoped agent APIs without changing normal application permissions.",
+          "Verify deployed image versions and persist the verified release tag for subsequent deployments.",
+        ],
+        fixes: [
+          "Improve DingTalk embedded-browser login, email autofill, and CSS compatibility in older browsers.",
+          "Align issue manager permissions and access-request notification recipients.",
+        ],
+      },
+      {
+        version: "0.5.10",
+        date: "2026-10-14",
+        title: "Comment mention permissions and task access requests",
+        changes: [],
+        features: [],
+        improvements: [
+          "Refresh only the affected task permission panels after comment changes.",
+        ],
+        fixes: [
+          "Grant task access to people mentioned in new comments in the same transaction as the comment.",
+          "Fix task-reference lookup errors and restore access requests when task details return a permission-denied response.",
+        ],
+      },
+      {
+        version: "0.5.9",
+        date: "2026-10-14",
+        title: "DingTalk assignment notifications and mobile compatibility",
+        changes: [],
+        features: [
+          "Notify people in DingTalk when they become responsible for a task or when a task is transferred, with consistent Mission Assistant cards and direct messages.",
+        ],
+        improvements: [
+          "Preserve complete DingTalk direct-message content, emphasize mentioned names, and add privacy-safe diagnostics when ActionCard delivery falls back to Markdown.",
+        ],
+        fixes: [
+          "Support older mobile in-app browsers that do not provide modern immutable array sorting APIs.",
+          "Filter mention notifications by task access and authorize scheduled agent task operations through the accountable human.",
+        ],
+      },
+      {
         version: "0.5.8",
         date: "2026-10-10",
         title: "Task permissions and a clearer inbox",

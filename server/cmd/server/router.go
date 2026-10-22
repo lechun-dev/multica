@@ -37,6 +37,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/seatcapacity"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -216,6 +217,9 @@ func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analytics
 }
 
 type RouterOptions struct {
+	// 2026-10-20 coder(lq): Register the router-owned DingTalk adapter without
+	// starting background work in router construction or creating a second adapter.
+	DirectoryScheduler  *scheduler.Manager
 	HTTPMetrics         *obsmetrics.HTTPMetrics
 	BusinessMetrics     *obsmetrics.BusinessMetrics
 	ReadCacheMetrics    *obsmetrics.ReadCacheMetrics
@@ -404,6 +408,9 @@ func seatCapacityExecutor(cloudURL string) seatcapacity.Executor {
 // NewRouter shim) discard the second value.
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb redis.UniversalClient, opts RouterOptions) (chi.Router, *handler.Handler) {
 	queries := db.New(pool)
+	if pool != nil {
+		hub.SetAccountQueries(queries)
+	}
 	emailSvc := service.NewEmailService()
 	daemonHub := opts.DaemonHub
 	if daemonHub == nil {
@@ -927,10 +934,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("dingtalk integration disabled (MULTICA_DINGTALK_SECRET_KEY not set)")
 	}
-	// Member @mentions use the deployment-wide DingTalk login application and
-	// are intentionally independent from the optional per-Agent BYO robot
-	// integration above.
-	dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr := registerDingTalkNotifyRuntime(bus, pool)
+	// Signed-in-user 1V1 messages and Mission robot member notifications use
+	// the deployment-wide DingTalk application. They remain independent from
+	// the optional per-Agent BYO robot integration above.
+	dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr := registerDingTalkNotifyRuntime(bus, pool, h.CanMemberViewIssue)
 
 	// WeCom smart-bot integration ("智能机器人" / aibot). Per-installation
 	// WebSocket long connection to wss://openws.work.weixin.qq.com; the
@@ -1534,12 +1541,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		dingtalkRedirectURI = strings.TrimRight(signupConfig.AppURL, "/") + "/auth/dingtalk/callback"
 	}
 	dingtalkLogin := newDingTalkLoginHandler(h, pool, dingtalkRedirectURI, dingtalkPersonalDelivery, dingtalkPersonalDeliveryErr)
+	if opts.DirectoryScheduler != nil && envBool("DINGTALK_DIRECTORY_SYNC_ENABLED", true) {
+		if err := opts.DirectoryScheduler.Register(dingtalkLogin.directorySyncJob()); err != nil {
+			slog.Error("scheduler: register DingTalk daily directory sync", "error", err)
+		}
+	}
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
 	r.With(authRL).Get("/auth/dingtalk/start", dingtalkLogin.ServeHTTP)
 	r.With(authRL).Post("/auth/dingtalk", dingtalkLogin.ServeHTTP)
 	r.Post("/auth/logout", h.Logout)
+	r.With(middleware.MissionExchangeAuth(strings.TrimSpace(os.Getenv("MISSION_EXCHANGE_SECRET")), rdb)).Post("/internal/auth/dingtalk/exchange", h.ExchangeDingTalkReadToken)
 
 	// Public API
 	r.Get("/api/config", h.GetConfig)
@@ -1678,6 +1691,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(h.FrequentReadMutationMiddleware)
 		r.Use(h.PermissionReadMutationMiddleware)
 
+		// Purpose-specific read-only surface for newDingSDK. These routes stay
+		// outside the ordinary /api/issues tree so an owner-scoped Mission JWT
+		// can widen only agent task/project reads; browser pages and normal APIs retain
+		// PROJECT_OWNER_BYPASS_ENABLED=false semantics.
+		r.Route("/internal/agent", func(r chi.Router) {
+			r.Get("/members", h.ListAgentReadMembers)
+			r.Get("/projects", h.ListAgentReadProjects)
+			r.Get("/issues", h.ListAgentReadIssues)
+			r.Get("/issues/{id}", h.GetAgentReadIssue)
+		})
+
 		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
 		// session after a surface asks for something over the postMessage
 		// bridge — the iframe holds no credential and never reaches these
@@ -1790,6 +1814,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/members", h.CreateInvitation)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
+						r.Patch("/account-access", h.SetMemberAccountAccess)
 						r.Delete("/", h.DeleteMember)
 					})
 					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
