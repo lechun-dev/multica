@@ -294,6 +294,18 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.13",
+        date: "2026-10-26",
+        title: "让评论中的提及更醒目",
+        changes: [],
+        features: [],
+        improvements: [
+          "评论中选中的成员和智能体 @ 提及改为蓝色并保留加粗，编辑时与发送后样式一致，同时适配浅色和深色主题。",
+          "手动输入的普通 @名字 保持原样，不改变提及通知逻辑。",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.5.12",
         date: "2026-10-21",
         title: "修复权限申请记录与钉钉通知",

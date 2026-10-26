@@ -269,6 +269,18 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.13",
+          date: "2026-10-26",
+          title: "댓글 멘션 가독성 개선",
+          changes: [],
+          features: [],
+          improvements: [
+            "선택한 멤버와 에이전트의 @멘션을 굵은 글씨를 유지하면서 파란색으로 표시합니다. 편집 중과 전송 후에 동일하게 표시되며 밝은 테마와 어두운 테마를 지원합니다.",
+            "직접 입력한 일반 @이름의 표시와 멘션 알림 동작은 변경하지 않습니다.",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.5.12",
           date: "2026-10-21",
           title: "접근 요청 기록 및 DingTalk 알림 수정",

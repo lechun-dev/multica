@@ -294,6 +294,18 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.13",
+        date: "2026-10-26",
+        title: "Clearer comment mentions",
+        changes: [],
+        features: [],
+        improvements: [
+          "Highlight selected member and agent @mentions in blue while retaining bold text, consistently in the editor and sent comments, with light and dark theme support.",
+          "Keep manually typed @names unchanged without affecting mention notifications.",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.5.12",
         date: "2026-10-21",
         title: "Access request history and DingTalk notification fixes",

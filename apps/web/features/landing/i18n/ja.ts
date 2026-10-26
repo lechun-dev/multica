@@ -270,6 +270,18 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.13",
+          date: "2026-10-26",
+          title: "コメントのメンションを見やすく改善",
+          changes: [],
+          features: [],
+          improvements: [
+            "選択したメンバーとエージェントの @メンションを太字のまま青色で表示します。編集中と送信後で表示を統一し、ライトテーマとダークテーマに対応しました。",
+            "手入力した通常の @名前 の表示と、メンション通知の動作は変更しません。",
+          ],
+          fixes: [],
+        },
+        {
           version: "0.5.12",
           date: "2026-10-21",
           title: "アクセス申請履歴と DingTalk 通知の修正",
