@@ -72,6 +72,17 @@ function renderProjectMention(adapter: NavigationAdapter) {
   return renderMention({ type: "project", id: PROJECT_ID, label: "Roadmap" }, adapter);
 }
 
+describe("MentionView people mentions", () => {
+  it.each(["member", "agent"])("uses the shared mention style for a selected %s", (type) => {
+    const { container } = renderMention(
+      { type, id: "person-1", label: "Selected person" },
+      makeAdapter(),
+    );
+
+    expect(container.querySelector(".mention")).toHaveTextContent("@Selected person");
+  });
+});
+
 describe("MentionView project mention", () => {
   it("renders an anchor carrying the project path", () => {
     renderProjectMention(makeAdapter());

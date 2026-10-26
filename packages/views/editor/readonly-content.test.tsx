@@ -316,6 +316,31 @@ describe("ReadonlyContent highlight Markdown", () => {
   });
 });
 
+describe("ReadonlyContent people mention styling", () => {
+  it("styles selected members and agents without styling plain @ text", () => {
+    const { container } = render(
+      <ReadonlyContent content="[@Selected member](mention://member/member-1) @PlainMember [@Selected agent](mention://agent/agent-1) @PlainAgent" />,
+    );
+
+    const mentions = container.querySelectorAll(".mention");
+    expect(Array.from(mentions, (mention) => mention.textContent)).toEqual([
+      "@Selected member",
+      "@Selected agent",
+    ]);
+    expect(container).toHaveTextContent("@PlainMember");
+    expect(container).toHaveTextContent("@PlainAgent");
+    expect(mentions[0]?.closest(".rich-text-editor")).not.toBeNull();
+  });
+
+  it("uses the theme-aware brand color and retains bold weight for mentions", () => {
+    const proseCss = readFileSync("editor/styles/prose.css", "utf8");
+    const mentionRule = proseCss.match(/\.rich-text-editor \.mention\s*\{([^}]+)\}/)?.[1];
+
+    expect(mentionRule).toContain("color: var(--brand);");
+    expect(mentionRule).toContain("font-weight: 600;");
+  });
+});
+
 describe("ReadonlyContent issue mention Markdown", () => {
   it("renders an issue mention inside a task list as an issue mention card", () => {
     const { container, getByTestId } = render(

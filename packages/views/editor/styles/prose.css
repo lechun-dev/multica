@@ -426,7 +426,7 @@
 
 /* Mentions */
 .rich-text-editor .mention {
-  color: var(--primary);
+  color: var(--brand);
   font-weight: 600;
   text-decoration: none;
   margin: 0 0.125rem;
