@@ -734,6 +734,43 @@ describe("useIssueSurfaceController", () => {
     expect(result.current.isEmpty).toBe(false);
   });
 
+  it.each([
+    { type: "workspace" as const },
+    { type: "my" as const, userId: "user-1", relation: "assigned" as const },
+  ])("shares search across views in $type tasks without dropping filters or scope", async (scope) => {
+    const store = getIssueSurfaceViewStore("search-test");
+    store.getState().setViewMode("list");
+    store.getState().togglePriorityFilter("high");
+    listIssues.mockResolvedValue({ issues: [], total: 0 });
+
+    const { result } = renderHook(
+      () => useIssueSurfaceController({
+        scope,
+        modes: ["list", "board", "table", "swimlane"],
+        searchable: true,
+      }),
+      { wrapper: makeWrapper(qc, "search-test") },
+    );
+    const expectedScope = result.current.tableQuerySpec.scope;
+    act(() => result.current.setTableSearch("  发布计划 MUL-123  "));
+    expect(result.current.tableQuerySpec.search).toBeUndefined();
+    await waitFor(() => expect(result.current.tableQuerySpec.search).toBe("发布计划 MUL-123"));
+
+    for (const mode of ["table", "board", "swimlane", "list"] as const) {
+      act(() => store.getState().setViewMode(mode));
+      expect(result.current.tableSearch).toBe("  发布计划 MUL-123  ");
+      expect(result.current.tableQuerySpec).toMatchObject({
+        scope: expectedScope,
+        search: "发布计划 MUL-123",
+        filters: { priorities: ["high"] },
+      });
+    }
+    act(() => result.current.setTableSearch(""));
+    await waitFor(() => expect(result.current.tableQuerySpec.search).toBeUndefined());
+    expect(result.current.tableQuerySpec.scope).toEqual(expectedScope);
+    expect(result.current.tableQuerySpec.filters.priorities).toEqual(["high"]);
+  });
+
   it("loads only the Table facet whose filter submenu is active", async () => {
     const store = getIssueSurfaceViewStore("project:p1");
     store.getState().setViewMode("table");

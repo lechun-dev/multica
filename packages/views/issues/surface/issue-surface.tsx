@@ -36,7 +36,7 @@ import { GanttView } from "../components/gantt-view";
 import { IssuesHeader } from "../components/issues-header";
 import { ListView } from "../components/list-view";
 import { SwimLaneView } from "../components/swimlane-view";
-import { TableView } from "../components/table-view";
+import { TableIssueSearch, TableView } from "../components/table-view";
 import { useT } from "../../i18n";
 import { IssueContextMenuProvider } from "../actions";
 import { IssueSurfaceActionsProvider } from "./actions-context";
@@ -82,6 +82,7 @@ export function IssueSurface({
   surfaceKey,
   createDefaults,
   search,
+  searchable,
   renderHeader,
   renderEmpty,
   renderLoading,
@@ -171,6 +172,7 @@ export function IssueSurface({
         modes={modes}
         createDefaults={createDefaults}
         search={search}
+        searchable={searchable}
         renderHeader={renderHeader}
         renderEmpty={renderEmpty}
         renderLoading={renderLoading}
@@ -189,6 +191,7 @@ function IssueSurfaceContent({
   modes,
   createDefaults,
   search,
+  searchable,
   renderHeader,
   renderEmpty,
   renderLoading,
@@ -201,11 +204,13 @@ function IssueSurfaceContent({
   // One polling owner for the whole surface; individual cards only select cache data.
   useQuery({ ...workspaceWakeupSummariesOptions(workspaceId), refetchInterval: 10_000 });
   const { t } = useT("projects");
+  const { t: tIssues } = useT("issues");
   const controller = useIssueSurfaceController({
     scope,
     modes,
     createDefaults,
     search,
+    searchable,
   });
   const [tableLoadedIssues, setTableLoadedIssues] = useState<Issue[]>([]);
   const handleTableLoadedIssuesChange = useCallback((next: Issue[]) => {
@@ -287,6 +292,16 @@ function IssueSurfaceContent({
             }
           />
         )}
+        {searchable && controller.viewMode !== "table" && (
+          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5">
+            <TableIssueSearch
+              value={controller.tableSearch}
+              onChange={controller.setTableSearch}
+              placeholder={tIssues(($) => $.table.search_placeholder)}
+              clearLabel={tIssues(($) => $.table.search_clear)}
+            />
+          </div>
+        )}
         {/* A failed status catalog precedes loading/empty/content on purpose.
             Row fetching is suspended while it is down (a custom status filter
             cannot be routed without it), so every branch below would render an
@@ -306,7 +321,11 @@ function IssueSurfaceContent({
           // agents-working chip drops you into most often (MUL-5525). This
           // branch precedes `renderEmpty` on purpose: every surface's own empty
           // copy describes the unfiltered case.
-          controller.hasActiveFilters ? (
+          searchable && controller.hasActiveSearch ? (
+            <div className="flex flex-1 min-h-0 items-center justify-center text-muted-foreground">
+              <p className="text-body">{tIssues(($) => $.actor_issues.search_empty)}</p>
+            </div>
+          ) : controller.hasActiveFilters ? (
             <FilteredEmptyState />
           ) : renderEmpty ? (
             renderEmpty(renderContext)

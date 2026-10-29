@@ -62,6 +62,7 @@ interface UseIssueSurfaceControllerInput {
   modes: IssueSurfaceMode[];
   createDefaults?: IssueCreateDefaults;
   search?: string;
+  searchable?: boolean;
 }
 
 export interface IssueSurfaceController {
@@ -109,7 +110,9 @@ export interface IssueSurfaceController {
     projectMap: Map<string, Project>;
     childProgressMap: Map<string, ChildProgress>;
   }>;
+  /** Local query shared across layouts on searchable pages. */
   tableSearch: string;
+  hasActiveSearch: boolean;
   /** Canonical server-owned Table membership. */
   tableQuerySpec: IssueTableQuerySpec;
   /** Exact disjunctive counts for the active server-backed filter submenu. */
@@ -207,6 +210,7 @@ export function useIssueSurfaceController({
   modes,
   createDefaults,
   search = "",
+  searchable = false,
 }: UseIssueSurfaceControllerInput): IssueSurfaceController {
   const wsId = useWorkspaceId();
   const workspaceMembersQuery = useQuery(memberListOptions(wsId));
@@ -335,8 +339,9 @@ export function useIssueSurfaceController({
       : grouping;
   const usesGantt = effectiveViewMode === "gantt" && !!projectId;
   const usesTable = effectiveViewMode === "table";
-  const activeSearch = usesTable ? tableSearch : search;
+  const activeSearch = usesTable || searchable ? tableSearch : search;
   const debouncedActiveSearch = useDebouncedTableSearch(activeSearch);
+  const hasActiveSearch = Boolean(activeSearch.trim() || debouncedActiveSearch);
   const usesServerStatusSurface =
     effectiveViewMode === "list" ||
     (effectiveViewMode === "board" && effectiveGrouping === "status");
@@ -900,6 +905,7 @@ export function useIssueSurfaceController({
     actions,
     selection,
     tableSearch,
+    hasActiveSearch,
     tableQuerySpec,
     tableFacetCounts:
       usesServerStatusSurface ||

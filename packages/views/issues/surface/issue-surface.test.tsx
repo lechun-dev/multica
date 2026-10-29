@@ -746,6 +746,9 @@ describe("IssueSurface — table pagination ownership", () => {
 // runs. The agents-working chip is the most common way into this state.
 describe("IssueSurface — filtered empty state", () => {
   let qc: QueryClient;
+  let listIssues: ReturnType<
+    typeof vi.fn<(params?: ListIssuesParams) => Promise<ListIssuesResponse>>
+  >;
 
   beforeEach(() => {
     mockWsId.current = "ws-1";
@@ -763,7 +766,7 @@ describe("IssueSurface — filtered empty state", () => {
       (args[0] as (value: unknown) => unknown)(probe);
       return path.join(".");
     }) as unknown as () => string);
-    const listIssues = vi.fn(() =>
+    listIssues = vi.fn(() =>
       Promise.resolve({ issues: [], total: 0 } satisfies ListIssuesResponse),
     );
     setApiInstance({
@@ -838,6 +841,40 @@ describe("IssueSurface — filtered empty state", () => {
     await screen.findByText("detail.empty_issues_title");
     expect(screen.queryByText("filtered_empty.title")).toBeNull();
   });
+
+  it.each(["list", "board", "swimlane"] as const)(
+    "keeps %s search usable when the server returns no matches",
+    async (mode) => {
+      const store = getIssueSurfaceViewStore("workspace:all");
+      store.getState().setViewMode(mode);
+      render(
+        <QueryClientProvider client={qc}>
+          <IssueSurface
+            scope={{ type: "workspace" }}
+            modes={["list", "board", "table", "swimlane"]}
+            searchable
+            renderHeader={() => null}
+            batchToolbar="never"
+          />
+        </QueryClientProvider>,
+      );
+
+      const input = screen.getByRole("searchbox", { name: "table.search_placeholder" });
+      fireEvent.change(input, { target: { value: "  中文任务 MUL-123  " } });
+      await waitFor(() => expect(listIssues).toHaveBeenCalledWith(
+        expect.objectContaining({ search: "中文任务 MUL-123" }),
+      ));
+      await screen.findByText("actor_issues.search_empty");
+      expect(screen.queryByText("detail.empty_issues_title")).toBeNull();
+      expect(screen.getByRole("searchbox")).toBe(input);
+
+      fireEvent.click(screen.getByRole("button", { name: "table.search_clear" }));
+      expect(input).toHaveValue("");
+      await screen.findByText("detail.empty_issues_title");
+      expect(screen.queryByText("actor_issues.search_empty")).toBeNull();
+      expect(screen.getByRole("searchbox")).toBe(input);
+    },
+  );
 });
 
 /**
