@@ -105,7 +105,10 @@ export interface IssueCreatedPayload {
 }
 
 export interface IssueUpdatedPayload {
-  issue: Issue;
+  // Workspace broadcasts contain routing/revision hints, not business fields.
+  // Older servers may still send a complete snapshot.
+  issue?: Partial<Issue> & { id: string };
+  issue_id?: string;
   // The server stamps issue:updated with which fields actually changed
   // (server/internal/handler/issue.go publish). assignee_changed lets the
   // realtime layer keep filtered myList caches in place on a non-membership

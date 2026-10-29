@@ -35,6 +35,7 @@ import { telegramKeys } from "../telegram/queries";
 import {
   onIssueCreated,
   onIssueUpdated,
+  refetchIssueUpdateHints,
   onIssueDeleted,
   onIssueLabelsChanged,
   onIssuePropertiesChanged,
@@ -1023,12 +1024,35 @@ export function useRealtimeSync(
     // Filtering by actor_id would block other tabs of the same user.
     // Instead, both mutations and WS handlers use dedup checks to be idempotent.
 
+    const pendingIssueUpdates = new Map<string, Set<string>>();
     const unsubIssueUpdated = ws.on("issue:updated", (p) => {
       const payload = p as IssueUpdatedPayload;
       const { issue } = payload;
-      if (!issue?.id) return;
+      const issueId = issue?.id ?? payload.issue_id;
+      if (!issueId) return;
       const wsId = getCurrentWsId();
       if (wsId) {
+        if (!issue || typeof issue.title !== "string" || typeof issue.status !== "string") {
+          let ids = pendingIssueUpdates.get(wsId);
+          if (!ids) {
+            ids = new Set();
+            pendingIssueUpdates.set(wsId, ids);
+          }
+          ids.add(issueId);
+          const timerKey = `issue-update:${wsId}`;
+          // Fixed batching window: continuous updates cannot postpone reads
+          // indefinitely. All affected details share one list refresh.
+          if (!timers.has(timerKey)) {
+            debouncedRefresh(timerKey, () => {
+              const pending = pendingIssueUpdates.get(wsId);
+              pendingIssueUpdates.delete(wsId);
+              if (pending && getCurrentWsId() === wsId) {
+                void refetchIssueUpdateHints(qc, wsId, pending);
+              }
+            });
+          }
+          return;
+        }
         onIssueUpdated(qc, wsId, issue, {
           assigneeChanged: payload.assignee_changed,
           statusChanged: payload.status_changed,

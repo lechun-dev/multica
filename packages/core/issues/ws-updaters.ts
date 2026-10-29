@@ -1,6 +1,7 @@
 import { issueStatusCategory } from "./status-category";
-import type { QueryClient } from "@tanstack/react-query";
+import type { Query, QueryClient } from "@tanstack/react-query";
 import { issueKeys, issueListIncludesWorkspaceOwned } from "./queries";
+import { inboxKeys } from "../inbox/queries";
 import { labelKeys } from "../labels/queries";
 import { projectKeys } from "../projects/queries";
 import {
@@ -417,6 +418,40 @@ export function onIssueCreated(
     qc.invalidateQueries({ queryKey: issueKeys.children(wsId, issue.parent_issue_id) });
     qc.invalidateQueries({ queryKey: issueKeys.childProgress(wsId) });
   }
+}
+
+/** Refetch permission-filtered reads after routing-only update events.
+ * Never merge a hint's revision into an entity that still has old fields. */
+export async function refetchIssueUpdateHints(
+  qc: QueryClient,
+  wsId: string,
+  issueIds: ReadonlySet<string>,
+) {
+  const listKinds = new Set([
+    "list", "my", "flat", "table-query", "assignee-groups",
+    "project-gantt", "children", "children-by-parents", "child-progress",
+  ]);
+  const filters = {
+    predicate: (query: Query) => {
+      const key = query.queryKey;
+      if (key[1] !== wsId) return false;
+      if (key[0] === inboxKeys.all(wsId)[0] || key[0] === projectKeys.all(wsId)[0]) return true;
+      if (key[0] !== "issues") return false;
+      if (key[2] === "detail") return issueIds.has(key[3] as string);
+      if (key[2] === "identifier") {
+        const issue = query.state.data as Issue | null | undefined;
+        return !!issue && issueIds.has(issue.id);
+      }
+      // A hint cannot determine membership, ordering or counts, including an
+      // issue entering a filtered window where it was not previously loaded.
+      // Inactive views become stale; only mounted queries issue HTTP reads.
+      return listKinds.has(key[2] as string);
+    },
+  };
+  // Also cancel initial reads with no data: an HTTP snapshot started before
+  // the committed event must not land after the authoritative replacement.
+  await qc.cancelQueries(filters);
+  await qc.invalidateQueries(filters);
 }
 
 export function onIssueUpdated(
