@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/multica-ai/multica/server/internal/wscompress"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -128,16 +129,19 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	// proxy variables set, ProxyFromEnvironment returns nil and the connection
 	// is direct, exactly as before.
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout:  10 * time.Second,
+		Proxy:             http.ProxyFromEnvironment,
+		EnableCompression: !d.cfg.DisableWSCompression,
 	}
-	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
+	conn, err := dialWakeup(ctx, dialer, wsURL, headers)
 	if err != nil {
 		return 0, err
 	}
 	connectedAt := time.Now()
 	uptime := func() time.Duration { return time.Since(connectedAt) }
 	defer conn.Close()
+	conn.EnableWriteCompression(false)
+	_ = conn.SetCompressionLevel(1)
 	// HTTP heartbeats resume the moment WS detaches so the freshness window
 	// from a previous connection cannot keep them silenced past disconnect.
 	defer d.clearWSHeartbeatAcks()
@@ -272,6 +276,7 @@ func (d *Daemon) runWSWriter(conn *websocket.Conn, writes <-chan *wsOutbound, do
 			continue
 		}
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		conn.EnableWriteCompression(!d.cfg.DisableWSCompression && len(item.data) >= 1024 && wscompress.ClientMessageAllowed(item.data))
 		if err := conn.WriteMessage(websocket.TextMessage, item.data); err != nil {
 			d.logger.Debug("task wakeup websocket write failed", "error", err)
 			conn.Close()
@@ -382,7 +387,7 @@ func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<-
 func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskWakeups chan<- taskWakeup, wsRPCGeneration uint64) error {
 	d.configureTaskWakeupReadLiveness(conn)
 	for {
-		_, raw, err := conn.ReadMessage()
+		_, raw, err := wscompress.ReadMessage(conn, taskWakeupReadLimit)
 		if err != nil {
 			return err
 		}
@@ -534,4 +539,19 @@ func sleepWithContextOrRuntimeChange(ctx context.Context, d time.Duration, runti
 	case <-timer.C:
 		return nil
 	}
+}
+
+// Gorilla v1.5.3 cannot accept context takeover. Retry only its specific
+// post-101 extension error; authentication, TLS and transport failures retain
+// the existing reconnect path. A peer declining extensions needs no retry.
+func dialWakeup(ctx context.Context, dialer websocket.Dialer, wsURL string, headers http.Header) (*websocket.Conn, error) {
+	conn, response, err := dialer.DialContext(ctx, wsURL, headers)
+	if err != nil && dialer.EnableCompression && response != nil && response.StatusCode == http.StatusSwitchingProtocols && err.Error() == "websocket: invalid compression negotiation" {
+		if response.Body != nil {
+			response.Body.Close()
+		}
+		dialer.EnableCompression = false
+		conn, _, err = dialer.DialContext(ctx, wsURL, headers)
+	}
+	return conn, err
 }

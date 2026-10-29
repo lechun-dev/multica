@@ -1,0 +1,34 @@
+# Safe starting policy. Both interfaces remain uncompressed until explicitly
+# enabled after deployment approval. See ../websocket-compression.md.
+threshold: 1024
+level: 1
+instance: ""
+
+realtime:
+  negotiate: false
+  send: false
+  # Only enable on a controlled instance when /ws authenticates in its first
+  # message. Sending still requires the authenticated rule below.
+  pre_auth: false
+  rule:
+    default: false
+    allow: []
+    allow_by: user_id
+    deny: []
+    deny_by: user_id
+    percent:
+      percent: 0
+      by: user_id
+
+daemon:
+  negotiate: false
+  send: false
+  rule:
+    default: false
+    allow: []
+    allow_by: user_id
+    deny: []
+    deny_by: user_id
+    percent:
+      percent: 0
+      by: user_id

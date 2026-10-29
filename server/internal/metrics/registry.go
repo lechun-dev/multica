@@ -31,6 +31,7 @@ type Registry struct {
 
 func NewRegistry(opts RegistryOptions) *Registry {
 	reg := prometheus.NewRegistry()
+	reg.MustRegister(NewWSCompressionCollector())
 	reg.MustRegister(collectors.NewGoCollector())
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 

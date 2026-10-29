@@ -18,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/wscompress"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -222,6 +223,7 @@ func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 // Client represents a single WebSocket connection with identity and the set
 // of scopes it is currently subscribed to.
 type Client struct {
+	compression  *wscompress.Session
 	accountCheck func(context.Context) error
 	hub          *Hub
 	conn         *websocket.Conn
@@ -277,6 +279,7 @@ type SubscriptionCallback func(scopeType, scopeID string)
 
 // Hub manages WebSocket connections organized into scope-based rooms.
 type Hub struct {
+	compression    *wscompress.Controller
 	accountQueries *db.Queries
 	rooms          map[scopeKey]map[*Client]bool
 	clients        map[*Client]bool // every connected client (used by global Broadcast and snapshots)
@@ -731,13 +734,14 @@ func firstMessageAuth(conn *websocket.Conn) (token, errMsg string, closed bool) 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	defer conn.SetReadDeadline(time.Time{})
 
-	_, raw, err := conn.ReadMessage()
+	_, raw, err := wscompress.ReadMessage(conn, inboundReadLimit)
 	if err != nil {
 		if errors.Is(err, websocket.ErrReadLimit) {
 			// gorilla has already replied CloseMessageTooBig (1009), so an
 			// auth_error frame here would be data sent after a close frame.
 			// Counted separately to keep the breach out of ordinary churn.
 			M.InboundTooLargeTotal.Add(1)
+			wscompress.RealtimeStats.InboundTooLarge.Add(1)
 			slog.Warn("ws: pre-auth frame exceeded read limit", "limit_bytes", inboundReadLimit)
 			conn.Close()
 			return "", "", true
@@ -817,7 +821,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		userID = uid
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, compression, err := wscompress.Upgrade(hub.compression, wscompress.Realtime, upgrader, w, r, userID, workspaceID)
 	if err != nil {
 		slog.Error("websocket upgrade failed", "error", err)
 		return
@@ -855,7 +859,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		userID = uid
 
 		if !writeWSAuthFrame(
-			conn,
+			compression,
 			[]byte(`{"type":"auth_ack"}`),
 			"auth_ack",
 			"workspace_id", workspaceID,
@@ -881,7 +885,9 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		"client_os", clientOS,
 	)
 
+	compression.Identity(userID, workspaceID)
 	client := &Client{
+		compression: compression,
 		hub:         hub,
 		conn:        conn,
 		send:        make(chan []byte, 256),
@@ -924,13 +930,14 @@ func (c *Client) readPump() {
 	})
 
 	for {
-		_, raw, err := c.conn.ReadMessage()
+		_, raw, err := wscompress.ReadMessage(c.conn, inboundReadLimit)
 		if err != nil {
 			switch {
 			case errors.Is(err, websocket.ErrReadLimit):
 				// Counted separately so an over-limit close stays visible
 				// instead of blending into ordinary connection churn.
 				M.InboundTooLargeTotal.Add(1)
+				wscompress.RealtimeStats.InboundTooLarge.Add(1)
 				slog.Warn("ws: inbound frame exceeded read limit",
 					"limit_bytes", inboundReadLimit,
 					"user_id", c.userID,
@@ -1078,7 +1085,7 @@ func (c *Client) writePump() {
 			if !c.accountAccessAllowed() {
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			if err := wscompress.Write(c.compression, c.conn, message); err != nil {
 				slog.Warn("websocket write error", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
 				return
 			}
@@ -1094,3 +1101,6 @@ func (c *Client) writePump() {
 		}
 	}
 }
+
+// SetCompressionController is startup-only; sessions consult its live policy.
+func (h *Hub) SetCompressionController(c *wscompress.Controller) { h.compression = c }

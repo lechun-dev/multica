@@ -3,6 +3,7 @@ package daemonws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/multica-ai/multica/server/internal/wscompress"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -148,12 +150,13 @@ func (i ClientIdentity) AllowsWorkspace(workspaceID string) bool {
 }
 
 type client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	identity  ClientIdentity
-	runtimeMu sync.RWMutex
-	runtimes  map[string]struct{}
+	compression *wscompress.Session
+	hub         *Hub
+	conn        *websocket.Conn
+	send        chan []byte
+	identity    ClientIdentity
+	runtimeMu   sync.RWMutex
+	runtimes    map[string]struct{}
 
 	// ctx is cancelled when the connection tears down, so async RPC handlers
 	// stop instead of running against a dead socket. cancel is invoked from
@@ -310,7 +313,8 @@ type MessageKindRecorder interface {
 // Hub keeps daemon WebSocket connections indexed by runtime ID. Messages are
 // best-effort wakeup hints; the daemon still uses HTTP claim for correctness.
 type Hub struct {
-	upgrader websocket.Upgrader
+	compression *wscompress.Controller
+	upgrader    websocket.Upgrader
 
 	mu          sync.RWMutex
 	clients     map[*client]bool
@@ -415,7 +419,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, identity C
 		return
 	}
 
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	conn, compression, err := wscompress.Upgrade(h.compression, wscompress.Daemon, h.upgrader, w, r, identity.UserID, identity.PrimaryWorkspaceID())
 	if err != nil {
 		slog.Error("daemon websocket upgrade failed", "error", err)
 		return
@@ -428,12 +432,13 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, identity C
 		}
 	}
 	c := &client{
-		hub:      h,
-		conn:     conn,
-		send:     make(chan []byte, 16),
-		identity: identity,
-		runtimes: runtimes,
-		rpcSem:   make(chan struct{}, maxInFlightRPCPerClient),
+		compression: compression,
+		hub:         h,
+		conn:        conn,
+		send:        make(chan []byte, 16),
+		identity:    identity,
+		runtimes:    runtimes,
+		rpcSem:      make(chan struct{}, maxInFlightRPCPerClient),
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	h.register(c)
@@ -980,8 +985,11 @@ func (c *client) readPump() {
 	})
 
 	for {
-		_, raw, err := c.conn.ReadMessage()
+		_, raw, err := wscompress.ReadMessage(c.conn, 64*1024)
 		if err != nil {
+			if errors.Is(err, websocket.ErrReadLimit) {
+				wscompress.DaemonStats.InboundTooLarge.Add(1)
+			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				slog.Debug("daemon websocket read error", "error", err, "daemon_id", c.identity.DaemonID)
 			}
@@ -1171,7 +1179,7 @@ func (c *client) writePump() {
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			if err := wscompress.Write(c.compression, c.conn, message); err != nil {
 				slog.Debug("daemon websocket write error", "error", err, "daemon_id", c.identity.DaemonID)
 				return
 			}
@@ -1183,3 +1191,6 @@ func (c *client) writePump() {
 		}
 	}
 }
+
+// SetCompressionController is startup-only; sessions consult its live policy.
+func (h *Hub) SetCompressionController(c *wscompress.Controller) { h.compression = c }

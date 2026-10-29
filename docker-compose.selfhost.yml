@@ -210,6 +210,8 @@ services:
       MULTICA_WECOM_TRACE: ${MULTICA_WECOM_TRACE:-}
       # 钉钉机器人集成。留空表示禁用；启用前请生成 Base64 编码的 32 字节密钥。
       MULTICA_DINGTALK_SECRET_KEY: ${MULTICA_DINGTALK_SECRET_KEY:-}
+      # Optional WebSocket compression policy; empty keeps compression disabled.
+      MULTICA_WS_COMPRESSION_FILE: ${MULTICA_WS_COMPRESSION_FILE:-}
       # 服务端钉钉个人消息 OAuth 令牌的独立加密密钥；不得与机器人密钥共用。
       MULTICA_DWS_TOKEN_KEY: ${MULTICA_DWS_TOKEN_KEY:-}
       # 独立钉钉通知模块。三个应用凭据完整后，成员 @通知自动启动。

@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/selfhosttelemetry"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/wscompress"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -387,10 +388,19 @@ func main() {
 	slog.Info("connected to database")
 	logPoolConfig(pool)
 
+	compressionCtx, stopCompression := context.WithCancel(context.Background())
+	defer stopCompression()
+	compression, err := wscompress.FromEnv(compressionCtx)
+	if err != nil {
+		slog.Error("WebSocket compression configuration failed", "error", err)
+		os.Exit(1)
+	}
 	bus := events.New()
 	hub := realtime.NewHub()
+	hub.SetCompressionController(compression)
 	go hub.Run()
 	daemonHub := daemonws.NewHub()
+	daemonHub.SetCompressionController(compression)
 	var daemonWakeup service.TaskWakeupNotifier = daemonHub
 	// Nil unless a Redis relay is running: without one there is only one
 	// replica, and it both publishes the completion and holds the socket.
