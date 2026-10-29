@@ -231,17 +231,31 @@ func TestDingTalkNotifyRuntimeDeduplicatesCompletedOwnerAndInitiator(t *testing.
 
 func TestDingTalkNotifyRuntimeNotifiesMemberAssignedOnIssueCreate(t *testing.T) {
 	const memberID = "11111111-1111-1111-1111-111111111111"
+	const actorID = "33333333-3333-3333-3333-333333333333"
 	store := notify.NewMemoryStore()
+	personalCalls := 0
+	wakeup := &personalMentionWakeupRecorder{}
 	runtime := &dingtalkNotifyRuntime{
 		store: store,
 		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
 			memberID: {DingUserID: "ding-assignee", Active: true},
 		}},
+		personalAssignment: func(_ context.Context, _ dingtalkAssignmentIssue, senderID, recipientID string, event notify.AssignmentNotification, created bool) (bool, error) {
+			personalCalls++
+			if senderID != actorID || recipientID != memberID || event.EventID != "issue-assignment:issue-1:created:assignment_added" || !created {
+				t.Fatalf("unexpected personal creation route: sender=%s recipient=%s event=%+v", senderID, recipientID, event)
+			}
+			if !strings.Contains(notify.FormatPersonalAssignmentText(event), "MUL-123 · 优化手机端登录") {
+				t.Fatal("personal creation message is missing the task context")
+			}
+			return true, nil
+		},
+		personalWakeup: wakeup,
 	}
 	assigneeType := "member"
 	assigneeID := memberID
 	runtime.handleIssueCreated(events.Event{
-		Type: protocol.EventIssueCreated, WorkspaceID: "workspace-1", ActorType: "member", ActorID: memberID,
+		Type: protocol.EventIssueCreated, WorkspaceID: "workspace-1", ActorType: "member", ActorID: actorID,
 		Payload: map[string]any{"issue": handler.IssueResponse{
 			ID: "issue-1", WorkspaceID: "workspace-1", Identifier: "MUL-123", Title: "优化手机端登录",
 			AssigneeType: &assigneeType, AssigneeID: &assigneeID, Revision: 1,
@@ -253,6 +267,9 @@ func TestDingTalkNotifyRuntimeNotifiesMemberAssignedOnIssueCreate(t *testing.T) 
 	}
 	if item := items[0]; item.Message.TargetID != memberID || item.Message.ChannelType != "p2p" || !strings.Contains(item.Message.Text, "你已成为该任务的负责人") {
 		t.Fatalf("unexpected created assignment message: %+v", item.Message)
+	}
+	if personalCalls != 1 || len(wakeup.users) != 1 || wakeup.users[0] != actorID {
+		t.Fatalf("personal creation calls=%d wakeups=%v, want one for %s", personalCalls, wakeup.users, actorID)
 	}
 }
 
@@ -319,7 +336,7 @@ func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 			}
 			return "", nil
 		},
-		personalAssignment: func(_ context.Context, issue dingtalkAssignmentIssue, senderID, recipientID string, event notify.AssignmentNotification) (bool, error) {
+		personalAssignment: func(_ context.Context, issue dingtalkAssignmentIssue, senderID, recipientID string, event notify.AssignmentNotification, created bool) (bool, error) {
 			key := issue.id + ":" + strconv.FormatInt(issue.revision, 10) + ":" + recipientID
 			if _, exists := personalKeys[key]; exists {
 				return false, nil
@@ -378,7 +395,7 @@ func TestDingTalkNotifyRuntimeNotifiesBothSidesOfMemberTransfer(t *testing.T) {
 	}
 }
 
-func TestDingTalkNotifyRuntimeAssignsPreviouslyUnassignedIssueWithMissionOnly(t *testing.T) {
+func TestDingTalkNotifyRuntimeAssignsPreviouslyUnassignedIssueWithPersonalMessage(t *testing.T) {
 	const (
 		newID   = "22222222-2222-2222-2222-222222222222"
 		actorID = "33333333-3333-3333-3333-333333333333"
@@ -390,8 +407,11 @@ func TestDingTalkNotifyRuntimeAssignsPreviouslyUnassignedIssueWithMissionOnly(t 
 		resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
 			newID: {DingUserID: "ding-new", Active: true},
 		}},
-		personalAssignment: func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification) (bool, error) {
+		personalAssignment: func(_ context.Context, _ dingtalkAssignmentIssue, senderID, recipientID string, event notify.AssignmentNotification, created bool) (bool, error) {
 			personalCalls++
+			if senderID != actorID || recipientID != newID || event.Kind != notify.AssignmentAdded || created {
+				t.Fatalf("unexpected first assignment route: sender=%s recipient=%s event=%+v", senderID, recipientID, event)
+			}
 			return true, nil
 		},
 	}
@@ -411,8 +431,99 @@ func TestDingTalkNotifyRuntimeAssignsPreviouslyUnassignedIssueWithMissionOnly(t 
 	if len(items) != 1 || items[0].Message.TargetID != newID {
 		t.Fatalf("previously unassigned Mission messages=%d, want one for %s: %+v", len(items), newID, items)
 	}
-	if personalCalls != 0 {
-		t.Fatalf("previously unassigned personal deliveries=%d, want 0", personalCalls)
+	if personalCalls != 1 {
+		t.Fatalf("previously unassigned personal deliveries=%d, want 1", personalCalls)
+	}
+}
+
+func TestDingTalkNotifyRuntimePersonalAssignmentBoundaries(t *testing.T) {
+	const memberID = "22222222-2222-2222-2222-222222222222"
+	for _, created := range []bool{true, false} {
+		phase := "updated"
+		if created {
+			phase = "created"
+		}
+		for _, tc := range []struct {
+			name           string
+			actorType      string
+			missingActorID bool
+			assigneeType   string
+			unchanged      bool
+			formerMember   bool
+			restricted     bool
+			enqueueErr     error
+			notEnqueued    bool
+			wantPersonal   int
+			wantRobot      int
+		}{
+			{name: "agent actor", actorType: "agent", assigneeType: "member", wantRobot: 1},
+			{name: "system actor", actorType: "system", assigneeType: "member", wantRobot: 1},
+			{name: "missing actor", actorType: "member", missingActorID: true, assigneeType: "member", wantRobot: 1},
+			{name: "agent assignee", actorType: "member", assigneeType: "agent"},
+			{name: "squad assignee", actorType: "member", assigneeType: "squad"},
+			{name: "no assignee", actorType: "member"},
+			{name: "former workspace member", actorType: "member", assigneeType: "member", formerMember: true},
+			{name: "restricted task", actorType: "member", assigneeType: "member", restricted: true, wantPersonal: 1, wantRobot: 1},
+			{name: "personal queue failure", actorType: "member", assigneeType: "member", enqueueErr: errors.New("queue unavailable"), wantPersonal: 1, wantRobot: 1},
+			{name: "personal identity unavailable", actorType: "member", assigneeType: "member", notEnqueued: true, wantPersonal: 1, wantRobot: 1},
+			{name: "same assignee", actorType: "member", assigneeType: "member", unchanged: true},
+		} {
+			if created && tc.unchanged {
+				continue
+			}
+			t.Run(phase+"/"+tc.name, func(t *testing.T) {
+				store := notify.NewMemoryStore()
+				wakeup := &personalMentionWakeupRecorder{}
+				personalCalls := 0
+				runtime := &dingtalkNotifyRuntime{
+					store: store,
+					resolver: dingtalkNotifyResolverStub{bindings: map[string]notify.MemberBinding{
+						memberID: {DingUserID: "ding-assignee", Active: true},
+					}},
+					memberInWorkspace: func(context.Context, string, string) (bool, error) { return !tc.formerMember, nil },
+					canViewIssue:      func(context.Context, string, string, string) (bool, error) { return !tc.restricted, nil },
+					personalAssignment: func(_ context.Context, _ dingtalkAssignmentIssue, _, recipientID string, event notify.AssignmentNotification, isCreated bool) (bool, error) {
+						personalCalls++
+						if recipientID != memberID || isCreated != created {
+							t.Fatalf("unexpected personal route: recipient=%s created=%t", recipientID, isCreated)
+						}
+						if tc.restricted && (event.IncludeDetails || strings.Contains(notify.FormatPersonalAssignmentText(event), "Private title")) {
+							t.Fatal("restricted task details leaked into the personal notification")
+						}
+						return !tc.notEnqueued && tc.enqueueErr == nil, tc.enqueueErr
+					},
+					personalWakeup: wakeup,
+				}
+				actorID := "33333333-3333-3333-3333-333333333333"
+				if tc.missingActorID {
+					actorID = ""
+				}
+				issue := handler.IssueResponse{ID: "issue-1", WorkspaceID: "workspace-1", Title: "Private title", Revision: 2}
+				if tc.assigneeType != "" {
+					issue.AssigneeType, issue.AssigneeID = ptrString(tc.assigneeType), ptrString(memberID)
+				}
+				payload := map[string]any{"issue": issue, "assignee_changed": true}
+				if tc.unchanged {
+					payload["prev_assignee_type"], payload["prev_assignee_id"] = "member", memberID
+				}
+				event := events.Event{WorkspaceID: "workspace-1", ActorType: tc.actorType, ActorID: actorID, Payload: payload}
+				if created {
+					runtime.handleIssueCreated(event)
+				} else {
+					runtime.handleIssueUpdated(event)
+				}
+				if personalCalls != tc.wantPersonal || len(store.Snapshot()) != tc.wantRobot {
+					t.Fatalf("personal calls=%d robot messages=%d, want %d/%d", personalCalls, len(store.Snapshot()), tc.wantPersonal, tc.wantRobot)
+				}
+				wantWakeups := tc.wantPersonal
+				if tc.notEnqueued || tc.enqueueErr != nil {
+					wantWakeups = 0
+				}
+				if len(wakeup.users) != wantWakeups {
+					t.Fatalf("personal wakeups=%v, want %d", wakeup.users, wantWakeups)
+				}
+			})
+		}
 	}
 }
 
@@ -440,7 +551,7 @@ func TestDingTalkNotifyRuntimeAgentTransferUsesMissionOnly(t *testing.T) {
 				return "", nil
 			}
 		},
-		personalAssignment: func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification) (bool, error) {
+		personalAssignment: func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification, bool) (bool, error) {
 			personalCalls++
 			return true, nil
 		},

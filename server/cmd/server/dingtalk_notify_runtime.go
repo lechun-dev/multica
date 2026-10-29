@@ -45,7 +45,7 @@ type dingtalkNotifyRuntime struct {
 	displayName        func(context.Context, string, string, string) (string, error)
 	canViewIssue       func(context.Context, string, string, string) (bool, error)
 	memberInWorkspace  func(context.Context, string, string) (bool, error)
-	personalAssignment func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification) (bool, error)
+	personalAssignment func(context.Context, dingtalkAssignmentIssue, string, string, notify.AssignmentNotification, bool) (bool, error)
 	agentOwnerMentions bool
 	personalWakeup     dingtalkPersonalMessageWakeup
 }
@@ -175,7 +175,6 @@ type dingtalkAssignmentIssue struct {
 	actorName       string
 	newAssigneeName string
 	occurredAt      time.Time
-	isTransfer      bool
 	issueAvailable  bool
 }
 
@@ -229,7 +228,6 @@ func (r *dingtalkNotifyRuntime) handleIssueUpdated(e events.Event) {
 	if previousType == issue.assigneeType && previousID == issue.assigneeID {
 		return
 	}
-	issue.isTransfer = previousType != "" && previousID != ""
 	r.enrichAssignmentIssue(context.Background(), &issue)
 	if issue.assigneeType == "member" && issue.assigneeID != "" {
 		r.enqueueAssignmentNotification(issue, issue.assigneeID, notify.AssignmentAdded, false)
@@ -293,8 +291,8 @@ func (r *dingtalkNotifyRuntime) enqueueAssignmentNotification(issue dingtalkAssi
 		IssueIdentifier: identifier, IssueTitle: title, SourceURL: sourceURL,
 		IncludeDetails: includeDetails, OccurredAt: issue.occurredAt,
 	}
-	if !created && issue.isTransfer && kind == notify.AssignmentAdded && issue.actorType == "member" && issue.actorID != "" {
-		r.enqueuePersonalAssignmentNotification(ctx, issue, issue.actorID, recipientID, event)
+	if kind == notify.AssignmentAdded && issue.actorType == "member" && issue.actorID != "" {
+		r.enqueuePersonalAssignmentNotification(ctx, issue, issue.actorID, recipientID, event, created)
 	}
 	messages, failures, err := notify.BuildAssignmentMessage(ctx, event, r.resolver)
 	if err != nil {
@@ -449,7 +447,7 @@ func (r *dingtalkNotifyRuntime) resolveAssignmentDisplayName(ctx context.Context
 	}
 }
 
-func (r *dingtalkNotifyRuntime) enqueuePersonalAssignmentNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID string, event notify.AssignmentNotification) {
+func (r *dingtalkNotifyRuntime) enqueuePersonalAssignmentNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID string, event notify.AssignmentNotification, created bool) {
 	if r == nil || strings.TrimSpace(senderUserID) == "" || strings.TrimSpace(recipientUserID) == "" {
 		return
 	}
@@ -457,7 +455,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalAssignmentNotification(ctx contex
 	if enqueue == nil {
 		enqueue = r.insertPersonalAssignmentNotification
 	}
-	enqueued, err := enqueue(ctx, issue, senderUserID, recipientUserID, event)
+	enqueued, err := enqueue(ctx, issue, senderUserID, recipientUserID, event, created)
 	if err != nil {
 		slog.Warn("dingtalk personal assignment: enqueue failed", "workspace_id", issue.workspaceID, "issue_id", issue.id, "sender_user_id", senderUserID, "recipient_user_id", recipientUserID, "error", err)
 		return
@@ -471,7 +469,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalAssignmentNotification(ctx contex
 	slog.Info("dingtalk personal assignment enqueued", "workspace_id", issue.workspaceID, "issue_id", issue.id, "sender_user_id", senderUserID, "recipient_user_id", recipientUserID)
 }
 
-func (r *dingtalkNotifyRuntime) insertPersonalAssignmentNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID string, event notify.AssignmentNotification) (bool, error) {
+func (r *dingtalkNotifyRuntime) insertPersonalAssignmentNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID string, event notify.AssignmentNotification, created bool) (bool, error) {
 	if r == nil || r.pool == nil {
 		return false, nil
 	}
@@ -479,7 +477,12 @@ func (r *dingtalkNotifyRuntime) insertPersonalAssignmentNotification(ctx context
 	if markdown == "" {
 		return false, nil
 	}
-	idempotencyKey := fmt.Sprintf("dingtalk-personal-assignment:%s:%d:%s", issue.id, issue.revision, recipientUserID)
+	version := strconv.FormatInt(issue.revision, 10)
+	if created {
+		// Minimal creation events may reload a newer revision on replay.
+		version = "created"
+	}
+	idempotencyKey := fmt.Sprintf("dingtalk-personal-assignment:%s:%s:%s", issue.id, version, recipientUserID)
 	result, err := r.pool.Exec(ctx, `
 		INSERT INTO dingtalk_personal_message (
 		    workspace_id, comment_id, sender_user_id, sender_ding_user_id,

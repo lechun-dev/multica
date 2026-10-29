@@ -26,8 +26,10 @@ func TestDingTalkPersonalAssignmentOutboxRoutesOperatorToNewAssignee(t *testing.
 	stamp := time.Now().UnixNano()
 	actorID := fixture.User(t, "Assignment Actor", fmt.Sprintf("assignment-actor-%d@example.test", stamp))
 	targetID := fixture.User(t, "Assignment Target", fmt.Sprintf("assignment-target-%d@example.test", stamp))
+	unboundID := fixture.User(t, "Unbound Member", fmt.Sprintf("assignment-unbound-%d@example.test", stamp))
 	fixture.Member(t, testWorkspaceID, actorID, "member")
 	fixture.Member(t, testWorkspaceID, targetID, "member")
+	fixture.Member(t, testWorkspaceID, unboundID, "member")
 	actorDingID := fmt.Sprintf("assignment-actor-ding-%d", stamp)
 	targetDingID := fmt.Sprintf("assignment-target-ding-%d", stamp)
 	for _, identity := range []struct {
@@ -48,45 +50,85 @@ func TestDingTalkPersonalAssignmentOutboxRoutesOperatorToNewAssignee(t *testing.
 	}
 	fixture.Cleanup(t, `DELETE FROM dingtalk_personal_message WHERE sender_user_id = $1`, actorID)
 
-	wakeup := &personalMentionWakeupRecorder{}
-	runtime := &dingtalkNotifyRuntime{pool: testPool, personalWakeup: wakeup}
-	issue := dingtalkAssignmentIssue{
-		id: "44444444-4444-4444-4444-444444444444", workspaceID: testWorkspaceID,
-		identifier: "MUL-888", title: "转交消息测试", revision: 12,
-	}
-	event := notify.AssignmentNotification{
-		WorkspaceID: testWorkspaceID, RecipientID: targetID, Kind: notify.AssignmentAdded,
-		ActorName: "张畅", IssueIdentifier: issue.identifier, IssueTitle: issue.title,
-		IncludeDetails: true, OccurredAt: time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC),
-	}
-	runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event)
-	runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event)
+	for _, tc := range []struct {
+		name    string
+		created bool
+		version string
+	}{
+		{name: "updated", version: "12"},
+		{name: "created", created: true, version: "created"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Check real SQL deduplication; no delivery worker or provider is started.
+			wakeup := &personalMentionWakeupRecorder{}
+			runtime := &dingtalkNotifyRuntime{pool: testPool, personalWakeup: wakeup}
+			issue := dingtalkAssignmentIssue{
+				id: uuid.NewString(), workspaceID: testWorkspaceID,
+				identifier: "MUL-888", title: "转交消息测试", revision: 12,
+			}
+			event := notify.AssignmentNotification{
+				WorkspaceID: testWorkspaceID, RecipientID: targetID, Kind: notify.AssignmentAdded,
+				ActorName: "张畅", IssueIdentifier: issue.identifier, IssueTitle: issue.title,
+				IncludeDetails: true, OccurredAt: time.Date(2026, 10, 13, 2, 30, 0, 0, time.UTC),
+			}
+			runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event, tc.created)
+			if tc.created {
+				// A replay of a minimal create event can load an already updated issue.
+				issue.revision++
+			}
+			runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event, tc.created)
 
-	var senderDingID, recipientDingID, markdown, idempotencyKey string
-	err := testPool.QueryRow(context.Background(), `
-		SELECT sender_ding_user_id, recipient_ding_user_id, markdown, idempotency_key
-		FROM dingtalk_personal_message
-		WHERE sender_user_id = $1 AND recipient_user_id = $2 AND comment_id = $3`,
-		actorID, targetID, issue.id).Scan(&senderDingID, &recipientDingID, &markdown, &idempotencyKey)
-	if err != nil {
-		t.Fatalf("load personal assignment outbox: %v", err)
-	}
-	if senderDingID != actorDingID || recipientDingID != targetDingID {
-		t.Fatalf("personal assignment route sender=%q recipient=%q, want %q/%q", senderDingID, recipientDingID, actorDingID, targetDingID)
-	}
-	wantMarkdown := "你已成为该任务的负责人\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-888 · 转交消息测试"
-	if markdown != wantMarkdown {
-		t.Fatalf("personal assignment markdown=%q, want %q", markdown, wantMarkdown)
-	}
-	wantKey := "dingtalk-personal-assignment:" + issue.id + ":12:" + targetID
-	if idempotencyKey != wantKey {
-		t.Fatalf("personal assignment idempotency key=%q, want %q", idempotencyKey, wantKey)
-	}
-	if count := fixture.Count(t, `SELECT count(*) FROM dingtalk_personal_message WHERE idempotency_key = $1`, wantKey); count != 1 {
-		t.Fatalf("replayed personal assignment rows=%d, want 1", count)
-	}
-	if len(wakeup.users) != 1 || wakeup.users[0] != actorID {
-		t.Fatalf("personal assignment wakeups=%v, want [%s]", wakeup.users, actorID)
+			var senderDingID, recipientDingID, markdown, idempotencyKey string
+			err := testPool.QueryRow(context.Background(), `
+				SELECT sender_ding_user_id, recipient_ding_user_id, markdown, idempotency_key
+				FROM dingtalk_personal_message
+				WHERE sender_user_id = $1 AND recipient_user_id = $2 AND comment_id = $3`,
+				actorID, targetID, issue.id).Scan(&senderDingID, &recipientDingID, &markdown, &idempotencyKey)
+			if err != nil {
+				t.Fatalf("load personal assignment outbox: %v", err)
+			}
+			if senderDingID != actorDingID || recipientDingID != targetDingID {
+				t.Fatalf("personal assignment route sender=%q recipient=%q, want %q/%q", senderDingID, recipientDingID, actorDingID, targetDingID)
+			}
+			wantMarkdown := "你已成为该任务的负责人\n\n操作人：张畅\n\n操作时间：2026-10-13 10:30\n\n---\n\n来源：MUL-888 · 转交消息测试"
+			if markdown != wantMarkdown {
+				t.Fatalf("personal assignment markdown=%q, want %q", markdown, wantMarkdown)
+			}
+			wantKey := "dingtalk-personal-assignment:" + issue.id + ":" + tc.version + ":" + targetID
+			if idempotencyKey != wantKey {
+				t.Fatalf("personal assignment idempotency key=%q, want %q", idempotencyKey, wantKey)
+			}
+			if count := fixture.Count(t, `SELECT count(*) FROM dingtalk_personal_message WHERE idempotency_key = $1`, wantKey); count != 1 {
+				t.Fatalf("replayed personal assignment rows=%d, want 1", count)
+			}
+			if len(wakeup.users) != 1 || wakeup.users[0] != actorID {
+				t.Fatalf("personal assignment wakeups=%v, want [%s]", wakeup.users, actorID)
+			}
+
+			// A later genuine reassignment to the same person must still enqueue.
+			issue.revision++
+			runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, actorID, targetID, event, false)
+			if count := fixture.Count(t, `SELECT count(*) FROM dingtalk_personal_message WHERE comment_id = $1`, issue.id); count != 2 {
+				t.Fatalf("assignment after replay rows=%d, want 2", count)
+			}
+			if len(wakeup.users) != 2 {
+				t.Fatalf("later assignment wakeups=%v, want two", wakeup.users)
+			}
+
+			for _, missing := range []struct{ senderID, recipientID string }{
+				{senderID: unboundID, recipientID: targetID},
+				{senderID: actorID, recipientID: unboundID},
+			} {
+				issue.id = uuid.NewString()
+				runtime.enqueuePersonalAssignmentNotification(context.Background(), issue, missing.senderID, missing.recipientID, event, tc.created)
+				if count := fixture.Count(t, `SELECT count(*) FROM dingtalk_personal_message WHERE comment_id = $1`, issue.id); count != 0 {
+					t.Fatalf("unbound assignment rows=%d, want 0", count)
+				}
+			}
+			if len(wakeup.users) != 2 {
+				t.Fatalf("unbound identities must not wake delivery: %v", wakeup.users)
+			}
+		})
 	}
 }
 
