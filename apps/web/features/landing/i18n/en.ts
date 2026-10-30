@@ -294,6 +294,21 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.14",
+        date: "2026-10-30",
+        title: "Realtime sync and assignment notifications",
+        changes: [],
+        features: [],
+        improvements: [
+          "Add optional WebSocket transport compression while keeping clients without compression support compatible.",
+        ],
+        fixes: [
+          "Show search in every Issues and My Issues view.",
+          "Refresh issue status and other updates across open pages without a manual reload.",
+          "Send DingTalk personal notifications when creating an issue with a member assignee or assigning a member for the first time.",
+        ],
+      },
+      {
         version: "0.5.13",
         date: "2026-10-26",
         title: "Clearer comment mentions",

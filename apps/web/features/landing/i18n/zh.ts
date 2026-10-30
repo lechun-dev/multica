@@ -294,6 +294,21 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.14",
+        date: "2026-10-30",
+        title: "实时同步与负责人通知",
+        changes: [],
+        features: [],
+        improvements: [
+          "新增可选的 WebSocket 传输压缩，兼容不支持压缩的客户端。",
+        ],
+        fixes: [
+          "任务和我的任务的所有视图均显示搜索框。",
+          "修复任务状态等更新在其他已打开页面中未及时同步的问题。",
+          "创建任务时指定成员负责人，或首次指定成员负责人时，发送钉钉个人消息通知。",
+        ],
+      },
+      {
         version: "0.5.13",
         date: "2026-10-26",
         title: "让评论中的提及更醒目",

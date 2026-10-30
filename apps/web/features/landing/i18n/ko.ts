@@ -269,6 +269,21 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.14",
+          date: "2026-10-30",
+          title: "실시간 동기화 및 담당자 알림",
+          changes: [],
+          features: [],
+          improvements: [
+            "WebSocket 전송 압축을 선택적으로 활성화할 수 있으며, 압축을 지원하지 않는 클라이언트와의 호환성을 유지합니다.",
+          ],
+          fixes: [
+            "태스크와 내 태스크의 모든 보기에서 검색창을 표시합니다.",
+            "태스크 상태 등의 변경 사항이 열려 있는 다른 페이지에 즉시 반영되지 않는 문제를 수정했습니다.",
+            "태스크를 만들 때 멤버를 담당자로 지정하거나 처음으로 멤버를 담당자로 지정하면 DingTalk 개인 메시지로 알립니다.",
+          ],
+        },
+        {
           version: "0.5.13",
           date: "2026-10-26",
           title: "댓글 멘션 가독성 개선",
