@@ -29,6 +29,7 @@ export function AgentAccessSettings({
     >
       <SettingsCard>
         <AccessPicker
+          agentName={agent.name}
           permissionMode={agent.permission_mode}
           invocationTargets={agent.invocation_targets}
           visibility={agent.visibility}

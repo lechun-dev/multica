@@ -731,6 +731,17 @@ type DingtalkPersonalMessage struct {
 	DeliveredAt         pgtype.Timestamptz `json:"delivered_at"`
 }
 
+type DirectoryReportingLine struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	Provider          string             `json:"provider"`
+	ExternalUserID    string             `json:"external_user_id"`
+	ManagerExternalID string             `json:"manager_external_id"`
+	SyncStatus        string             `json:"sync_status"`
+	AttemptedAt       pgtype.Timestamptz `json:"attempted_at"`
+	SuccessfulAt      pgtype.Timestamptz `json:"successful_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`
@@ -1200,6 +1211,59 @@ type Member struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type MemberHandover struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	SourceMemberID   pgtype.UUID        `json:"source_member_id"`
+	SourceUserID     pgtype.UUID        `json:"source_user_id"`
+	RecipientUserID  pgtype.UUID        `json:"recipient_user_id"`
+	ActorID          pgtype.UUID        `json:"actor_id"`
+	Preview          []byte             `json:"preview"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	Automatic        bool               `json:"automatic"`
+	ChecklistIssueID pgtype.UUID        `json:"checklist_issue_id"`
+}
+
+type MemberHandoverAutomation struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	SourceUserID      pgtype.UUID        `json:"source_user_id"`
+	Eligible          bool               `json:"eligible"`
+	VerifiedAt        pgtype.Timestamptz `json:"verified_at"`
+	Status            string             `json:"status"`
+	Reason            string             `json:"reason"`
+	RecipientUserID   pgtype.UUID        `json:"recipient_user_id"`
+	HandoverID        pgtype.UUID        `json:"handover_id"`
+	AttemptedAt       pgtype.Timestamptz `json:"attempted_at"`
+	ManagerSyncFailed bool               `json:"manager_sync_failed"`
+}
+
+type MemberHandoverNotification struct {
+	EventID         string             `json:"event_id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	RecipientUserID pgtype.UUID        `json:"recipient_user_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	HandoverID      pgtype.UUID        `json:"handover_id"`
+	Payload         []byte             `json:"payload"`
+	Status          string             `json:"status"`
+	LastError       string             `json:"last_error"`
+	Attempts        int32              `json:"attempts"`
+	NextAttemptAt   pgtype.Timestamptz `json:"next_attempt_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	StagedAt        pgtype.Timestamptz `json:"staged_at"`
+}
+
+type MemberHandoverResource struct {
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	SourceUserID    pgtype.UUID        `json:"source_user_id"`
+	ResourceType    string             `json:"resource_type"`
+	ResourceID      pgtype.UUID        `json:"resource_id"`
+	RecipientUserID pgtype.UUID        `json:"recipient_user_id"`
+	HandoverID      pgtype.UUID        `json:"handover_id"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+}
+
 type NotificationPreference struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -1402,6 +1466,43 @@ type ProjectauthAccessGrant struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ProjectauthAccessRequest struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	RequesterUserID  pgtype.UUID        `json:"requester_user_id"`
+	RequestedRoleKey string             `json:"requested_role_key"`
+	Reason           string             `json:"reason"`
+	Status           string             `json:"status"`
+	ReviewerUserID   pgtype.UUID        `json:"reviewer_user_id"`
+	ReviewComment    string             `json:"review_comment"`
+	GrantExpiresAt   pgtype.Timestamptz `json:"grant_expires_at"`
+	IdempotencyKey   string             `json:"idempotency_key"`
+	ReviewedAt       pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectauthAccessRequestNotification struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	RequestID       pgtype.UUID        `json:"request_id"`
+	RecipientUserID pgtype.UUID        `json:"recipient_user_id"`
+	Event           string             `json:"event"`
+	InboxItemID     pgtype.UUID        `json:"inbox_item_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectauthGrantConstraint struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	GrantID     pgtype.UUID        `json:"grant_id"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	OriginKind  string             `json:"origin_kind"`
+	OriginID    pgtype.UUID        `json:"origin_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ProjectauthIssueAccessGrant struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -1413,6 +1514,26 @@ type ProjectauthIssueAccessGrant struct {
 	GrantedBy   pgtype.UUID        `json:"granted_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectauthIssueMentionRevocation struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	SubjectID         string             `json:"subject_id"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy         pgtype.UUID        `json:"revoked_by"`
+	DescriptionDigest string             `json:"description_digest"`
+}
+
+type ProjectauthIssuePolicy struct {
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	ProjectAccessMode string             `json:"project_access_mode"`
+	PolicyVersion     int64              `json:"policy_version"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	UpdatedBy         pgtype.UUID        `json:"updated_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ProjectauthOrganization struct {
@@ -1432,6 +1553,24 @@ type ProjectauthOrganizationMember struct {
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
 	UserID         pgtype.UUID        `json:"user_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectauthTaskRole struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RoleKey     string             `json:"role_key"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	IsSystem    bool               `json:"is_system"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectauthTaskRolePermission struct {
+	RoleID     pgtype.UUID        `json:"role_id"`
+	Permission string             `json:"permission"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type ProjectauthUserLogin struct {

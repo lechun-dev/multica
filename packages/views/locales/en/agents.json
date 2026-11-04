@@ -996,5 +996,16 @@
     "selected_one": "{{count}} selected",
     "selected_other": "{{count}} selected",
     "clear_selection": "Clear selection"
+  },
+  "sharing_warning": {
+    "title": "High risk: let others operate your computer",
+    "description": "Sharing lets the selected people run this agent. On your computer or in a cloud environment, they may execute commands, read or change files, and use accounts and tools already authorized there. The agent’s permissions and safety restrictions determine the actual scope.",
+    "trust": "Share only with people you trust.",
+    "acknowledgement": "I understand that others may operate my computer or the agent’s environment through this agent.",
+    "confirm": "Confirm sharing",
+    "agents": "Agents",
+    "audience": "Share with",
+    "workspace": "Entire workspace",
+    "selected_members": "Selected people"
   }
 }

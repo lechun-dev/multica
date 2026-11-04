@@ -45,6 +45,7 @@ export type WSEventType =
   | "member:added"
   | "member:updated"
   | "member:removed"
+  | "member:handover"
   | "daemon:heartbeat"
   | "daemon:register"
   | "skill:created"
@@ -170,20 +171,21 @@ export interface IssueStatusChangedPayload {
   action?: "created" | "updated" | "archived" | "reordered";
 }
 
+// Agent events are refresh signals; older servers may still send a resource.
 export interface AgentStatusPayload {
-  agent: Agent;
+  agent?: Agent;
 }
 
 export interface AgentCreatedPayload {
-  agent: Agent;
+  agent?: Agent;
 }
 
 export interface AgentArchivedPayload {
-  agent: Agent;
+  agent?: Agent;
 }
 
 export interface AgentRestoredPayload {
-  agent: Agent;
+  agent?: Agent;
 }
 
 export interface InboxNewPayload {
@@ -617,6 +619,7 @@ export interface WSEventPayloadMap {
   "member:added": MemberAddedPayload;
   "member:updated": MemberUpdatedPayload;
   "member:removed": MemberRemovedPayload;
+  "member:handover": { handover_id: string };
   "subscriber:added": SubscriberAddedPayload;
   "subscriber:removed": SubscriberRemovedPayload;
   "activity:created": ActivityCreatedPayload;

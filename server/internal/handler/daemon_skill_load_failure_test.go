@@ -86,7 +86,7 @@ func seedSkillLoadFixture(t *testing.T, ctx context.Context, name string) (runti
 	dbfx.Exec(t, `INSERT INTO skill_file (skill_id, path, content) VALUES ($1, 'rules.md', 'rules content')`, skillID)
 	dbfx.Exec(t, `INSERT INTO agent_skill (agent_id, skill_id) VALUES ($1, $2)`, agentID, skillID)
 
-	taskID = dbfx.Task(t, agentID, testutil.Cols{
+	taskID = dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id": runtimeID,
 		"issue_id":   issueID,
 	})

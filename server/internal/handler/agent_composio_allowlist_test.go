@@ -38,11 +38,11 @@ func allowlistFixture(t *testing.T) (agentID, agentOwnerID string) {
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks, owner_id,
+			runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id,
 			instructions, custom_env, custom_args
 		)
 		VALUES ($1, 'allowlist-test-agent', '', 'cloud', '{}'::jsonb,
-		        $2, 'workspace', 1, $3, '', '{}'::jsonb, '[]'::jsonb)
+		        $2, 'workspace', 'public_to', 1, $3, '', '{}'::jsonb, '[]'::jsonb)
 		RETURNING id
 	`, testWorkspaceID, handlerTestRuntimeID(t), agentOwnerID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -50,6 +50,12 @@ func allowlistFixture(t *testing.T) (agentID, agentOwnerID string) {
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_invocation_target (agent_id, target_type, target_id) VALUES ($1, 'workspace', $2)`, agentID, testWorkspaceID); err != nil {
+		t.Fatalf("share allowlist fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_invocation_target WHERE agent_id=$1`, agentID)
 	})
 	return agentID, agentOwnerID
 }

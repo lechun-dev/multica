@@ -985,5 +985,16 @@
     "selected_one": "{{count}} sélectionné",
     "selected_other": "{{count}} sélectionnés",
     "clear_selection": "Effacer la sélection"
+  },
+  "sharing_warning": {
+    "title": "Opération à haut risque : autoriser d’autres personnes à utiliser votre ordinateur",
+    "description": "Le partage permet aux personnes autorisées d’exécuter cet agent. Sur votre ordinateur ou dans un environnement cloud, elles pourraient exécuter des commandes, lire ou modifier des fichiers et utiliser les comptes et outils déjà autorisés. La portée réelle dépend des permissions et des restrictions de sécurité de l’agent.",
+    "trust": "Partagez uniquement avec des personnes de confiance.",
+    "acknowledgement": "Je comprends que d’autres personnes pourraient utiliser mon ordinateur ou l’environnement de cet agent par son intermédiaire.",
+    "confirm": "Confirmer le partage",
+    "agents": "Agents",
+    "audience": "Partager avec",
+    "workspace": "Tout l’espace de travail",
+    "selected_members": "Membres sélectionnés"
   }
 }

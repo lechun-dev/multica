@@ -29,8 +29,8 @@ export function projectPermissionCellValue(explicitRole?: string | null): string
   return role || NO_ACCESS;
 }
 
-function projectMembersKey(projectId: string) {
-  return ["project-members", projectId] as const;
+function projectMembersKey(workspaceId: string, projectId: string) {
+  return ["project-members", workspaceId, projectId] as const;
 }
 
 // 2026-08-28 coder(lq): Compose this report from existing project/member
@@ -63,7 +63,7 @@ export function ProjectPermissionsTab() {
   });
   const projectMemberQueries = useQueries({
     queries: projects.map((project) => ({
-      queryKey: projectMembersKey(project.id),
+      queryKey: projectMembersKey(workspaceId, project.id),
       queryFn: () => api.listProjectMembers(project.id),
       enabled: !!workspaceId && !!project.id,
     })),
@@ -148,7 +148,7 @@ export function ProjectPermissionsTab() {
     try {
       if (value === NO_ACCESS) await api.removeProjectMember(projectId, userId);
       else await api.addProjectMember(projectId, { user_id: userId, role: value });
-      await queryClient.invalidateQueries({ queryKey: projectMembersKey(projectId) });
+      await queryClient.invalidateQueries({ queryKey: projectMembersKey(workspaceId, projectId) });
       toast.success(t(($) => $.permission_report.saved));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t(($) => $.permission_report.save_failed));

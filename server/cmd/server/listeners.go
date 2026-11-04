@@ -260,7 +260,9 @@ func projectOutbound(eventType string, payload any) any {
 	// workspace. Clients only use this event family to invalidate and refetch
 	// permission-filtered API queries, so expose an empty refresh signal and
 	// keep titles, assignees, resource IDs, and run details off the wire.
-	if strings.HasPrefix(eventType, "autopilot:") {
+	// Agent changes are refresh signals too: a workspace connection does not
+	// confer access to private or member-shared agent metadata.
+	if strings.HasPrefix(eventType, "autopilot:") || strings.HasPrefix(eventType, "agent:") {
 		return map[string]any{}
 	}
 	if workspaceSafeProjectionEvents[eventType] {

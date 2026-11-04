@@ -529,7 +529,7 @@ WITH locked_issue AS MATERIALIZED (
               comment.parent_id, comment.workspace_id, comment.resolved_at,
               comment.resolved_by_type, comment.resolved_by_id, comment.source_task_id,
               comment.quick_action_id, comment.via_plugin_id, comment.revision,
-              comment.deleted_at, target.did_change
+              comment.deleted_at, target.did_change, target.content AS previous_content
 ), touched_issue AS (
     UPDATE issue
     SET revision = issue.revision + 1,
@@ -548,7 +548,8 @@ SELECT updated_comment.id, updated_comment.issue_id, updated_comment.author_type
        updated_comment.source_task_id, updated_comment.quick_action_id,
        updated_comment.via_plugin_id, updated_comment.revision,
        updated_comment.deleted_at,
-       COALESCE((SELECT revision FROM touched_issue), 0)::bigint AS issue_revision
+       COALESCE((SELECT revision FROM touched_issue), 0)::bigint AS issue_revision,
+       updated_comment.previous_content
 FROM updated_comment;
 
 -- name: BumpCommentRevision :one

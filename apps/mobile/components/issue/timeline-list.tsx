@@ -1,79 +1,10 @@
 /**
- * The scrolling timeline. ASC chronological — oldest at top, newest near the
- * bottom (above the composer). Pull-to-refresh refetches issue + timeline.
+ * Oldest-first timeline with a one-shot latest-conversation landing. Mount
+ * the loaded list separately from its loading placeholder so FlashList can
+ * initialize against real data. Native MVCP preserves history reading during
+ * resizes; no automatic following of new messages.
  *
- * Backend returns the full timeline in one shot (server-side pagination
- * was dropped in #2322 — p99 ~30 entries per issue, cursor walking only
- * created bugs at reply-thread boundaries). The previous "Pull to load
- * older" UX and top-edge `fetchOlder` trigger are gone.
- *
- * Inbox deep-link — FlashList v2 `startRenderingFromBottom` (mirrors
- * chat-message-list.tsx):
- *   When `highlightCommentId` is set, we pass
- *   `maintainVisibleContentPosition.startRenderingFromBottom: true` to
- *   FlashList and remount the list via `key={`hl-${highlightNonce}`}` once
- *   timeline data has arrived. FlashList's `getInitialScrollIndex()` then
- *   lands on the last data item; after the initial paint MVCP keeps the
- *   visible content stable across async resizes (Shiki highlight, image
- *   natural-size, WS `comment:updated`). No JS-side scroll dance.
- *
- *   The previous implementation hand-rolled a `landed` state gate that
- *   re-fired `scrollToEnd` on every `onContentSizeChange`. That deadlocked
- *   the user at the bottom: `onScrollBeginDrag` queued `setLanded(true)`
- *   but a concurrent `onContentSizeChange` (from MVCP's own ScrollAnchor
- *   reposition, or from a markdown pass finishing) read the stale React
- *   closure, saw `landed === false`, and slammed the user back to bottom
- *   before the commit landed. State-vs-event races don't survive iOS
- *   markdown rendering hogging the JS thread.
- *
- *   The matching <CommentCard>'s `RootHighlightOverlay` fires when the
- *   target row enters the render window — so for a deep-link pointing
- *   at an old comment, the user scrolls up and the flash plays as the
- *   row mounts. `HIGHLIGHT_HOLD_MS` (5s) is the window for that.
- *
- *   Why not `scrollToIndex`: it requires accurate height estimates that
- *   variable-height markdown bubbles can't provide, even with
- *   `onScrollToIndexFailed` retry. Same lesson web learned (see
- *   `packages/views/issues/components/issue-detail.tsx:1822-1850` — they
- *   split the path into virtualized-for-browse / flat-for-deep-link
- *   precisely because "virtualization and 'land precisely on a target'
- *   have fundamentally opposed contracts"). Mobile sidesteps the split
- *   by not pretending to land precisely.
- *
- * `maintainVisibleContentPosition` is enabled by default on FlashList v2
- * and is implemented inside the C++ shadow tree — it compensates the
- * scroll offset both when a row is INSERTED above the viewport AND when
- * an upper row RESIZES (a WS `comment:updated` / `reaction:added` /
- * `resolved` event on an older comment used to push the user's read
- * position down by the delta). On FlatList the same prop was iOS-only
- * + JS-side; the FlashList path is steadier and animates the offset
- * compensation rather than snapping it.
- *
- * List engine: FlashList v2 (Shopify). Migrated from FlatList because:
- *   1. Cell recycling — markdown bubbles (Shiki highlight, image natural-
- *      size, lightbox provider injection) are expensive to mount; FlashList
- *      keeps them in recycled cells when scrolling through history rather
- *      than re-running the multi-pass render each time a row re-enters the
- *      window.
- *   2. Native MVCP — see paragraph above. Smoother behavior than FlatList's
- *      JS-side implementation when WS events resize an upper row.
- *   3. Async-render stability — async markdown size changes inside the
- *      viewport no longer cause the visual "twitch" we saw with FlatList,
- *      because FlashList re-layouts inside the shadow tree without
- *      surfacing a JS-side onContentSizeChange storm.
- *
- * What FlashList v2 does NOT change about this file:
- *   - The deep-link "land at bottom + flash on row mount" pattern (Linear
- *     iOS). FlashList's `scrollToIndex` is still estimate-based, so we
- *     intentionally don't try to land precisely on a specific comment —
- *     we land at the bottom and let `RootHighlightOverlay` claim the
- *     target when the user scrolls past it. `startRenderingFromBottom`
- *     is NOT enabled: a normal issue-open should show the header (title,
- *     description, status) first, not jump straight to the latest reply.
- *   - Spacing between rows. FlashList ignores `gap-*` on
- *     `contentContainer` the same way it does in chat-message-list.tsx —
- *     we use `ItemSeparatorComponent` for the 12 px breathing room and
- *     `ListHeaderComponentStyle` to add the same gap below the header.
+ * Inbox links retain the existing bottom landing and target-row highlight.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -105,6 +36,7 @@ import type { ImageSequenceBlock } from "@multica/core/attachments/image-sequenc
 import { useColorScheme } from "@/lib/use-color-scheme";
 import { THEME } from "@/lib/theme";
 import { useCommentSelectStore } from "@/data/comment-select-store";
+import { resolveTimelineInitialLanding, type TimelineInitialLanding } from "@/lib/timeline-initial-landing";
 
 interface Props {
   issue: Issue;
@@ -374,19 +306,15 @@ export function TimelineList({
     </View>
   );
 
-  // When a fresh inbox deep-link arrives AND timeline data has loaded, force
-  // a FlashList remount so `getInitialScrollIndex()` re-runs with
-  // `startRenderingFromBottom: true` and lands on the last data item. If we
-  // mounted before data arrived, FlashList's one-shot initial-scroll
-  // (useRecyclerViewController.applyInitialScrollIndex, gated on
-  // `initialScrollCompletedRef`) would have already declared completion at
-  // length 0 and never re-fire. Switching the key when data goes empty →
-  // non-empty under a live highlight is the cheapest way to re-arm it.
-  const hasData = dataWithDivider.length > 0;
-  const flashListKey =
-    highlightCommentId && hasData
-      ? `hl-${highlightNonce ?? "0"}`
-      : "list";
+  // Initial-scroll is one-shot in FlashList. Re-arm when initial data arrives,
+  // but keep the key stable through refreshes and realtime appends.
+  const hasConversation = data.some((row) => row.entry.type === "comment");
+  const [initialLanding, setInitialLanding] = useState<TimelineInitialLanding>({
+    issueId: issue.id, bottom: null,
+  });
+  const landing = resolveTimelineInitialLanding(initialLanding, issue.id, entries !== undefined, hasConversation);
+  if (landing !== initialLanding) setInitialLanding(landing);
+  const flashListKey = `${issue.id}:${landing.bottom === null ? "loading" : "ready"}:${highlightCommentId ? `hl-${highlightNonce ?? "0"}` : "list"}`;
 
   return (
     <ImageSequenceProvider blocks={imageBlocks}>
@@ -424,15 +352,10 @@ export function TimelineList({
         // Tap-on-row inside the list (long-press a comment, tap a
         // reaction) should still register even when the keyboard is up.
         keyboardShouldPersistTaps="handled"
-        // FlashList v2 MVCP. `startRenderingFromBottom` only applies when a
-        // deep-link is active — a normal issue-open lands at the top so the
-        // user sees the header (title, description, status) first. After
-        // initial paint the (always-on) MVCP keeps visible content stable
-        // when upper rows resize via async markdown / WS events; we do NOT
-        // set `autoscrollToBottomThreshold` because timeline uses an
-        // explicit "↓ N new" chip instead of silently following appends.
+        // Initial landing only; MVCP preserves reading position afterwards.
+        // The explicit new-message chip owns navigation to later appends.
         maintainVisibleContentPosition={{
-          startRenderingFromBottom: !!highlightCommentId,
+          startRenderingFromBottom: !!highlightCommentId || landing.bottom === true,
         }}
         // "Activity" is a section heading, not a sibling row — it should
         // hug the first entry the way iOS Settings / Linear sections do.

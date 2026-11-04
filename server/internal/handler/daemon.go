@@ -1907,7 +1907,8 @@ func claimPollHintDelay(now, fireAt time.Time) time.Duration {
 //     claim-time runtime read and daemon delivery (PUCK-89 blocker 1);
 //   - the private-runtime owner fence re-runs against the locked row;
 //   - agent.runtime_id still equals the claimed task's runtime (rebind fence);
-//   - agent ownership still satisfies the private-runtime binding.
+//   - agent ownership still satisfies the private-runtime binding;
+//   - the task principal still has current agent invocation permission.
 //   - response requesting-user identity is refreshed from that same owner;
 //
 // On mismatch the task is settled through the existing
@@ -1968,6 +1969,12 @@ func (h *Handler) finalizeClaimDelivery(
 				Detail: "runtime owner missing before task delivery",
 			}
 		}
+		if !service.CanTaskInvokeAgent(ctx, qtx, agent, *task) {
+			return &service.ClaimDeliveryAuthzError{
+				Reason: "error_agent_access_revoked",
+				Detail: "task principal no longer has agent access before delivery",
+			}
+		}
 		if owner, oerr := qtx.GetUser(ctx, locked.OwnerID); oerr != nil {
 			slog.Debug("failed to load locked runtime owner for brief injection",
 				"runtime_id", runtimeID,
@@ -1996,6 +2003,12 @@ func (h *Handler) finalizeClaimDelivery(
 	// Authorization rejected at the delivery boundary: settle through the
 	// existing failure path so the task never reaches the daemon.
 	switch authzErr.Reason {
+	case "error_agent_access_revoked":
+		failure := h.failClaimedTaskBeforeLaunch(ctx, task,
+			"This task cannot start because its requester no longer has access to the agent.",
+			taskfailure.ReasonRuntimeAccessDenied,
+			"error_agent_access_revoked", http.StatusForbidden, "agent access revoked before task delivery")
+		return nil, failure, nil
 	case "error_agent_runtime_changed":
 		failure := h.failClaimedTaskBeforeLaunch(
 			ctx, task,

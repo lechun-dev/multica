@@ -735,7 +735,13 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 		       COALESCE(u.avatar_url, ''), m.role,
 		       -- 2026-09-06 coder(lq): Preserve the legacy authenticated-user
 		       -- signal carried by workspace owner/admin roles.
-		       (l.user_id IS NOT NULL OR u.onboarded_at IS NOT NULL OR m.role IN ('owner', 'admin')) AS has_logged_in
+		       (l.user_id IS NOT NULL OR u.onboarded_at IS NOT NULL OR m.role IN ('owner', 'admin')) AS has_logged_in,
+		       COALESCE(manager.user_id,''), COALESCE(manager.name,''),
+		       CASE WHEN line.successful_at IS NULL THEN 'not_synced'
+		            WHEN line.manager_external_id='' THEN 'unset'
+		            WHEN manager.user_id IS NULL THEN 'unlinked'
+		            WHEN manager.disabled THEN 'inactive' ELSE 'ready' END,
+		       CASE WHEN o.provider='dingtalk' AND COALESCE(a.manager_sync_failed,false) THEN 'failed' ELSE COALESCE(line.sync_status,'not_synced') END,line.successful_at,line.attempted_at
 		FROM projectauth_organization_members om
 		JOIN projectauth_organizations o
 		  ON o.id = om.organization_id
@@ -746,6 +752,18 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 		 AND m.user_id = om.user_id
 		JOIN "user" u ON u.id = om.user_id
 		LEFT JOIN projectauth_user_logins l ON l.user_id = om.user_id
+		LEFT JOIN directory_reporting_lines line ON line.workspace_id=om.workspace_id AND line.user_id=om.user_id AND line.provider=o.provider
+		LEFT JOIN member_handover_automation a ON a.workspace_id=om.workspace_id AND a.source_user_id=om.user_id
+		LEFT JOIN LATERAL (
+		 SELECT mu.id::text AS user_id,COALESCE(NULLIF(mu.name,''),mu.email) AS name,
+		        (mu.account_disabled_at IS NOT NULL) AS disabled
+		 FROM directory_reporting_lines manager_line
+		 JOIN "user" mu ON mu.id=manager_line.user_id
+		 JOIN member mm ON mm.user_id=mu.id AND mm.workspace_id=om.workspace_id
+		 WHERE manager_line.external_user_id=line.manager_external_id AND manager_line.provider=line.provider
+		   AND manager_line.workspace_id=line.workspace_id
+		 ORDER BY manager_line.user_id LIMIT 1
+		) manager ON true
 		WHERE om.workspace_id = $1
 		ORDER BY u.name, u.email, om.organization_id`, workspaceID)
 	if err != nil {
@@ -756,7 +774,9 @@ func (r *projectAuthRepository) ListOrganizationMembers(ctx context.Context, wor
 	for rows.Next() {
 		var member projectauth.OrganizationMember
 		if err := rows.Scan(&member.OrganizationID, &member.UserID, &member.Name,
-			&member.Email, &member.AvatarURL, &member.WorkspaceRole, &member.HasLoggedIn); err != nil {
+			&member.Email, &member.AvatarURL, &member.WorkspaceRole, &member.HasLoggedIn,
+			&member.ManagerUserID, &member.ManagerName, &member.ManagerStatus, &member.ManagerSyncStatus,
+			&member.ManagerSuccessfulAt, &member.ManagerAttemptedAt); err != nil {
 			return nil, wrapProjectPermissionRepositoryError(err)
 		}
 		members = append(members, member)

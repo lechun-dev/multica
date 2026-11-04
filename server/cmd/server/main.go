@@ -723,6 +723,9 @@ func main() {
 		go runAutopilotQuotaReconciler(autopilotCtx, autopilotSvc)
 	}
 	go runDBStatsLogger(sweepCtx, pool)
+	if h.MemberHandoverWorker != nil {
+		go h.MemberHandoverWorker.Run(sweepCtx)
+	}
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}

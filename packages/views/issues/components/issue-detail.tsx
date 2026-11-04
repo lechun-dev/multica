@@ -8,8 +8,8 @@ import {
 import { useStatusLabel } from "../utils/status-label";
 import { priorityLabel } from "../utils/priority-label";
 import { useIssueStatuses } from "@multica/core/issue-statuses/hooks";
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment, type ReactNode } from "react";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment, type ReactNode, type Ref } from "react";
+import { Virtuoso, type VirtuosoHandle, type VirtuosoProps } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { AppLink, useBackOrReplace } from "../../navigation";
 import {
@@ -476,6 +476,41 @@ type TimelineItem =
   | { kind: "comment"; id: string; entry: TimelineEntry }
   | { kind: "resolved-bar"; id: string; entry: TimelineEntry }
   | { kind: "activity-group"; id: string; entries: TimelineEntry[] };
+
+function IssueTimeline({
+  timelineRef,
+  timelineKey,
+  ...props
+}: VirtuosoProps<TimelineItem, unknown> & { timelineRef: Ref<VirtuosoHandle>; timelineKey: string }) {
+  // Keep the landing stable until this list unmounts. Parent updates can
+  // arrive before Virtuoso has finished measuring and applying its landing.
+  const [landing] = useState(() => {
+    // The outgoing flat list is still mounted during this initial render.
+    // Restore a visible row, since estimated virtual heights cannot preserve
+    // the same reading position from a document scroll offset alone.
+    const parent = props.customScrollParent;
+    const flat = parent?.querySelector("[data-flat-issue-timeline]");
+    if (parent && flat?.getAttribute("data-flat-issue-timeline") === timelineKey) {
+      const top = parent.getBoundingClientRect().top;
+      const rows = Array.from(flat.children);
+      const index = rows.findIndex((row) => row.getBoundingClientRect().bottom > top);
+      if (index >= 0 && rows[index]!.getBoundingClientRect().top <= top) {
+        return {
+          initialScrollTop: undefined,
+          initialTopMostItemIndex: {
+            index, align: "start" as const,
+            offset: top - rows[index]!.getBoundingClientRect().top,
+          },
+        };
+      }
+    }
+    return {
+      initialScrollTop: props.initialScrollTop,
+      initialTopMostItemIndex: props.initialTopMostItemIndex ?? 0,
+    };
+  });
+  return <Virtuoso {...props} {...landing} ref={timelineRef} />;
+}
 
 type RawTimelineGroup = {
   type: "comment" | "activities";
@@ -1485,7 +1520,8 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
 
-  const { data: commentTasks } = useQuery(issueTasksOptions(id));
+  const { data: commentTasks, isLoading: commentTasksLoading } = useQuery(issueTasksOptions(id));
+  const timelineReady = !timelineLoading && !commentTasksLoading;
   const enteringRunIds = useNewRunIds(id, commentTasks);
   const previousCommentRuns = useRef(new Map<string, CommentRun[]>());
   const { runs: commentRuns, timeline: displayTimeline, standaloneRuns } = useMemo(() => {
@@ -1699,6 +1735,20 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
   // Virtuoso instance — minimap jumps drive the scroll container directly.
   const isFlatTimeline = !!highlightCommentId || find.open;
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const initializedTimelineRef = useRef<string | null>(null);
+  const timelineKey = `${wsId}:${id}`;
+  const hasConversation = displayTimeline.some((entry) => entry.type === "comment") || standaloneRuns.length > 0;
+  useEffect(() => {
+    // A loaded flat timeline already owns the reader's position. Switching
+    // back to virtualization must preserve it rather than land again.
+    if (isFlatTimeline && timelineReady && scrollContainerEl) {
+      initializedTimelineRef.current = timelineKey;
+    }
+  }, [isFlatTimeline, timelineReady, scrollContainerEl, timelineKey]);
+  const attachTimeline = useCallback((instance: VirtuosoHandle | null) => {
+    virtuosoRef.current = instance;
+    if (instance) initializedTimelineRef.current = `${wsId}:${id}`;
+  }, [wsId, id]);
   // Scroll a freshly posted comment into view, aligned so its bottom sits just
   // above the sticky composer (never behind it). A reply lives inside its root
   // CommentCard, so the containing top-level row is the scroll target. Flat and
@@ -1933,7 +1983,7 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
   // ref populates only on the post-loading render, so it's the signal that
   // the timeline (and the deep-link target id) has actually rendered.
   useEffect(() => {
-    if (!highlightCommentId || items.length === 0) return;
+    if (!highlightCommentId || !timelineReady || items.length === 0) return;
     // An explicit replay request (re-click on the already-open notification
     // row): the host cleared the memento entry and bumped the token, so
     // re-arm the landing guard and fall through to the jump.
@@ -2030,7 +2080,7 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
       cancelAnimationFrame(rafId);
       clearTimeout(fade);
     };
-  }, [highlightCommentId, highlightRequestToken, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
+  }, [highlightCommentId, highlightRequestToken, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand, timelineReady]);
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);
@@ -2266,15 +2316,15 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
   useIssueDetailScrollRestore({
     restoreKey: `${wsId}:${id}`,
     scrollContainerEl,
-    ready: !!issue && !loading && !timelineLoading,
+    ready: !!issue && !loading && timelineReady,
     // Disabled only while the comment deep link still has a landing to run —
     // the jump owns the scroll then. Once the landing is consumed (a tab
     // switch back), this hook's retry loop IS the restore: the one-shot
     // ref-attach assignment clamps against a container whose async content
     // (markdown, images) hasn't reached its captured height yet.
     disabled: !!highlightCommentId && consumedHighlightId !== highlightCommentId,
-    // The tab memento's offset, when the platform serves one. It must win
-    // over this hook's module-level map — see the parameter doc.
+    latest: hasConversation,
+    // A desktop tab switch restores the reader's position.
     overrideTop: restoredScrollTop,
   });
 
@@ -2974,6 +3024,7 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
             </Tooltip>
             <IssueAccessGrantsDialog
               issueId={issue.id}
+              issueIdentifier={issue.identifier}
               projectId={issue.project_id}
               focusRequestId={accessRequestId ?? null}
               focusRequestToken={accessRequestToken}
@@ -3583,7 +3634,7 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
                 first commit. Without this null guard Virtuoso falls back to
                 its own scroller, grabs 0 height inside overflow-y-auto, and
                 miscomputes total-height on first paint. */}
-            {timelineLoading && timelineView.groups.length === 0 ? (
+            {!timelineReady ? (
               <TimelineSkeleton />
             ) : (
               // Two render modes:
@@ -3613,12 +3664,21 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
                   <TimelineSkeleton />
                 ) : (
                   <div className="mt-4">
-                    <Virtuoso
+                    <IssueTimeline
                       key={`${wsId}:${id}`}
-                      ref={virtuosoRef}
+                      timelineKey={timelineKey}
+                      timelineRef={attachTimeline}
                       customScrollParent={scrollContainerEl}
                       data={items}
-                      initialScrollTop={restoredScrollTop}
+                      initialScrollTop={initializedTimelineRef.current === timelineKey
+                        ? scrollContainerEl.scrollTop
+                        : restoredScrollTop}
+                      initialTopMostItemIndex={
+                        initializedTimelineRef.current !== timelineKey &&
+                        restoredScrollTop === undefined && hasConversation
+                          ? { index: "LAST", align: "end" }
+                          : undefined
+                      }
                       increaseViewportBy={{ top: 800, bottom: 800 }}
                       computeItemKey={(_i, item) => `${item.kind}:${item.kind === "run" ? item.run.task.id : item.id}`}
                       skipAnimationFrameInResizeObserver
@@ -3631,7 +3691,7 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
                   </div>
                 )
               ) : (
-                <div className="mt-4">
+                <div className="mt-4" data-flat-issue-timeline={timelineKey}>
                   {items.map((item, i) => (
                     <Fragment key={`${item.kind}:${item.kind === "run" ? item.run.task.id : item.id}`}>
                       {renderItem(i, item)}

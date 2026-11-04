@@ -4,6 +4,7 @@ import {
   ALL_ACCESS_SCOPES,
   effectiveAccessScope,
   isAccessChangeReady,
+  isAgentAccessExpansion,
 } from "./effective-access";
 
 function ws(): AgentInvocationTarget {
@@ -95,5 +96,25 @@ describe("isAccessChangeReady", () => {
     expect(
       isAccessChangeReady({ permission_mode: "public_to", invocation_targets: [] }),
     ).toBe(false);
+  });
+});
+
+
+describe("isAgentAccessExpansion", () => {
+  const people = (ids: string[]) => ids.map((target_id) => ({ target_type: "member" as const, target_id }));
+  it.each([
+    ["private", [], "public_to", people(["a"]), true],
+    ["private", [], "public_to", [{ target_type: "workspace" }], true],
+    ["public_to", people(["a", "b"]), "public_to", people(["b", "a"]), false],
+    ["public_to", people(["a", "b"]), "public_to", people(["a"]), false],
+    ["public_to", people(["a"]), "public_to", people(["b"]), true],
+    ["public_to", people(["a"]), "public_to", [{ target_type: "workspace" }], true],
+    ["public_to", [{ target_type: "workspace", target_id: null }], "public_to", people(["a"]), false],
+    ["public_to", people(["a"]), "private", [], false],
+  ] as const)("checks audience %s %j -> %s %j", (mode, targets, nextMode, nextTargets, expected) => {
+    expect(isAgentAccessExpansion(
+      { permission_mode: mode, invocation_targets: targets },
+      { permission_mode: nextMode, invocation_targets: nextTargets },
+    )).toBe(expected);
   });
 });

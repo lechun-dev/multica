@@ -104,8 +104,8 @@ func seedCommentBackedQueuedTask(t *testing.T, ctx context.Context, agentID, run
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, trigger_comment_id, status, priority)
-		VALUES ($1, $2, $3, $4, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, trigger_comment_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, $4, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID, commentID).Scan(&taskID); err != nil {
 		t.Fatalf("seed comment-backed task: %v", err)
@@ -188,8 +188,8 @@ func TestClaimTasksByRuntime_StaleReclaimRecordsDeliveryReceipt(t *testing.T) {
 	// Stale dispatched, comment-backed, never started, past the 90s window.
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, trigger_comment_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, $4, 'dispatched', 0, now() - interval '120 seconds', NULL)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, trigger_comment_id, status, priority, dispatched_at, started_at, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, $4, 'dispatched', 0, now() - interval '120 seconds', NULL, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, a, rt, i, commentID).Scan(&taskID); err != nil {
 		t.Fatalf("seed stale dispatched comment task: %v", err)
@@ -303,8 +303,8 @@ func TestClaimTasksByRuntime_RepairsStaleCommentPlan(t *testing.T) {
 	// Stale plan: trigger_comment_id NULL, only coalesced survivor remains.
 	var staleID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, coalesced_comment_ids)
-		VALUES ($1, $2, $3, 'queued', 0, ARRAY[$4]::uuid[])
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, coalesced_comment_ids, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, ARRAY[$4]::uuid[], (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, rt, issueID, survivorID).Scan(&staleID); err != nil {
 		t.Fatalf("seed stale task: %v", err)

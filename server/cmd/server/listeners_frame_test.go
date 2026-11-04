@@ -81,3 +81,26 @@ func TestRegisterListeners_FrameContainsActorType(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentEventsDoNotBroadcastPrivateMetadata(t *testing.T) {
+	for _, eventType := range []string{protocol.EventAgentCreated, protocol.EventAgentStatus, protocol.EventAgentArchived, protocol.EventAgentRestored} {
+		t.Run(eventType, func(t *testing.T) {
+			bus := events.New()
+			b := &fakeBroadcaster{}
+			registerListeners(bus, b)
+			bus.Publish(events.Event{Type: eventType, WorkspaceID: "ws", Payload: map[string]any{"agent": map[string]any{"id": "private-id", "name": "secret-name", "instructions": "secret-instructions", "owner_id": "private-owner"}}})
+			if len(b.workspaceCalls) != 1 {
+				t.Fatal("missing refresh event")
+			}
+			var frame struct {
+				Payload map[string]any `json:"payload"`
+			}
+			if err := json.Unmarshal(b.workspaceCalls[0].msg, &frame); err != nil {
+				t.Fatal(err)
+			}
+			if len(frame.Payload) != 0 {
+				t.Fatalf("private metadata in refresh event: %v", frame.Payload)
+			}
+		})
+	}
+}

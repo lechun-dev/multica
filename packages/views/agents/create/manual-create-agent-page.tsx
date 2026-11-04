@@ -79,6 +79,7 @@ export function ManualCreateAgentPage() {
   });
 
   const submit = useCreateAgentSubmit({
+    members: form.members,
     draft: form.draft,
     runtimeId: form.selectedRuntime?.id ?? null,
     squadId,
@@ -122,6 +123,7 @@ export function ManualCreateAgentPage() {
         </>
       }
     >
+      {submit.sharingConfirmation}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-4xl px-5 py-8 sm:px-8">
           {duplicateAgent && (

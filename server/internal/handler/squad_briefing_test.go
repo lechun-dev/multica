@@ -437,10 +437,10 @@ RETURNING id
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id)
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id, originator_user_id, accountable_user_id)
 VALUES ($1, $2, $3, 'queued', 0,
         ($1::uuid = (SELECT leader_id FROM squad WHERE id = $4::uuid)),
-        $4::uuid)
+        $4::uuid, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 RETURNING id
 `, agentID, runtimeID, issueID, squadID).Scan(&taskID); err != nil {
 		t.Fatalf("queue task: %v", err)

@@ -202,6 +202,18 @@ export function ProjectAuthorizationDirectory({
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-body font-medium">{member.name || member.email}</div>
                       {member.name && member.email ? <div className="truncate text-caption text-muted-foreground">{member.email}</div> : null}
+                      <div className="text-caption text-muted-foreground break-words">
+                        {member.manager_name
+                          ? t(($) => $.project_authorization_organizations.manager_label, { name: member.manager_name })
+                          : member.manager_status === "unset"
+                            ? t(($) => $.project_authorization_organizations.manager_unset)
+                            : member.manager_status === "unlinked"
+                              ? t(($) => $.project_authorization_organizations.manager_unlinked)
+                              : t(($) => $.project_authorization_organizations.manager_not_synced)}
+                        {member.manager_status === "inactive" && <span className="ml-2">{t(($) => $.project_authorization_organizations.manager_inactive)}</span>}
+                      </div>
+                      {member.manager_sync_status === "failed" && <div className="text-caption text-destructive">{t(($) => $.project_authorization_organizations.manager_failed)}</div>}
+                      {member.manager_successful_at && <div className="text-caption text-muted-foreground">{t(($) => $.project_authorization_organizations.manager_last_synced, { time: new Date(member.manager_successful_at).toLocaleString() })}</div>}
                     </div>
                     <div className="flex shrink-0 items-center gap-2 text-caption text-muted-foreground">
                       <span>{member.workspace_role}</span>

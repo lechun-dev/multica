@@ -16,6 +16,8 @@ import (
 )
 
 type dingtalkOrganizationSyncResult struct {
+	ManagersSynced          int      `json:"managers_synced"`
+	ManagersFailed          int      `json:"managers_failed"`
 	OrganizationsCreated    int      `json:"organizations_created"`
 	OrganizationsUpdated    int      `json:"organizations_updated"`
 	OrganizationsDisabled   int      `json:"organizations_disabled"`
@@ -215,11 +217,22 @@ func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, wor
 	}
 	result.MembersRemoved = int(removed.RowsAffected())
 	currentUsers := make([]string, 0, len(snapshot.Members))
+	var failedManagers []string
 	for _, member := range snapshot.Members {
 		userID, created, workspaceMemberCreated, err := h.resolveDingTalkDirectoryMember(ctx, tx, workspaceID, member)
 		if err != nil {
 			result.Unmatched = append(result.Unmatched, member.Name)
 			continue
+		}
+		synced, err := persistDingTalkReportingLine(ctx, tx, workspaceID, userID, member)
+		if err != nil {
+			return err
+		}
+		if synced {
+			result.ManagersSynced++
+		} else {
+			result.ManagersFailed++
+			failedManagers = append(failedManagers, userID)
 		}
 		currentUsers = append(currentUsers, userID)
 		if created {
@@ -245,13 +258,22 @@ func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, wor
 		}
 	}
 
+	if err := h.host.RecordDingTalkManagerSyncOutcomes(ctx, tx, workspaceID, currentUsers, failedManagers); err != nil {
+		return err
+	}
 	suspension, err := h.host.SuspendDingTalkDepartures(ctx, tx, workspaceID, actorID, departed, currentUsers)
 	if err != nil {
+		return err
+	}
+	// Preserve only provider-verified, manageable departures. A returned employee
+	// invalidates old evidence before the daily handover runner can use it.
+	if err := h.host.RecordDingTalkHandoverEvidence(ctx, tx, workspaceID, suspension.VerifiedUsers, currentUsers); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	h.host.WakeMemberHandovers()
 	result.AccountsDisabled = len(suspension.Changes)
 	result.AccountsAlreadyDisabled = suspension.AlreadyDisabled
 	result.DeparturesSkipped = suspension.Skipped
@@ -266,6 +288,50 @@ func (h *dingtalkLoginHandler) persistDingTalkDirectory(ctx context.Context, wor
 	slog.InfoContext(ctx, "dingtalk directory account sync completed", "workspace_id", workspaceID, "actor_id", actorID,
 		"departure_sync_status", result.DepartureSyncStatus, "accounts_disabled", result.AccountsDisabled, "departures_skipped", result.DeparturesSkipped)
 	return nil
+}
+
+// A reporting-line write is optional enrichment. A PostgreSQL statement error
+// aborts its savepoint, not the department/member snapshot or another employee.
+func persistDingTalkReportingLine(ctx context.Context, tx pgx.Tx, workspaceID, userID string, member notify.DingTalkDirectoryMember) (bool, error) {
+	status := member.ManagerReadStatus
+	if status != "complete" {
+		status = "failed"
+	}
+	lineTx, err := tx.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer lineTx.Rollback(ctx)
+	_, writeErr := lineTx.Exec(ctx, `INSERT INTO directory_reporting_lines
+	 (workspace_id,user_id,provider,external_user_id,manager_external_id,sync_status,successful_at)
+	 VALUES ($1,$2::uuid,'dingtalk',$3,CASE WHEN $5='complete' THEN $4 ELSE '' END,$5,CASE WHEN $5='complete' THEN now() END)
+	 ON CONFLICT (workspace_id,user_id,provider) DO UPDATE SET
+	 external_user_id=EXCLUDED.external_user_id,sync_status=EXCLUDED.sync_status,attempted_at=now(),
+	 manager_external_id=CASE WHEN EXCLUDED.sync_status='complete' THEN EXCLUDED.manager_external_id ELSE directory_reporting_lines.manager_external_id END,
+	 successful_at=CASE WHEN EXCLUDED.sync_status='complete' THEN now() ELSE directory_reporting_lines.successful_at END`,
+		workspaceID, userID, member.DingUserID, member.ManagerUserID, status)
+	if writeErr == nil {
+		return status == "complete", lineTx.Commit(ctx)
+	}
+	if err := lineTx.Rollback(ctx); err != nil {
+		return false, errors.Join(writeErr, err)
+	}
+	slog.WarnContext(ctx, "dingtalk manager write failed; continuing directory sync", "workspace_id", workspaceID, "user_id", userID, "error", writeErr)
+	// Preserve the last successful relationship and mark an existing row stale.
+	// Even this diagnostic write must not poison the outer transaction.
+	markerTx, err := tx.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer markerTx.Rollback(ctx)
+	if _, err := markerTx.Exec(ctx, `UPDATE directory_reporting_lines SET sync_status='failed',attempted_at=now() WHERE workspace_id=$1 AND user_id=$2::uuid AND provider='dingtalk'`, workspaceID, userID); err != nil {
+		if rollbackErr := markerTx.Rollback(ctx); rollbackErr != nil {
+			return false, errors.Join(err, rollbackErr)
+		}
+		slog.WarnContext(ctx, "dingtalk manager failure status unavailable; continuing directory sync", "workspace_id", workspaceID, "user_id", userID, "error", err)
+		return false, nil
+	}
+	return false, markerTx.Commit(ctx)
 }
 
 // 2026-09-03 coder(lq): Resolve every directory person to a local account in

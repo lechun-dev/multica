@@ -52,7 +52,7 @@ import {
   notificationPreferenceOptions,
   notificationPreferenceKeys,
 } from "../notification-preferences/queries";
-import { workspaceKeys, workspaceListOptions } from "../workspace/queries";
+import { invalidateMemberHandover, workspaceKeys, workspaceListOptions } from "../workspace/queries";
 import { isWorkspaceDeletePending } from "../workspace/pending-delete";
 import {
   showWebNotification,
@@ -1335,6 +1335,11 @@ export function useRealtimeSync(
       }
     });
 
+    const unsubMemberHandover = ws.on("member:handover", () => {
+      const wsId = getCurrentWsId();
+      if (wsId) void invalidateMemberHandover(qc, wsId);
+    });
+
     const unsubMemberRemoved = ws.on("member:removed", (p) => {
       const { user_id } = p as MemberRemovedPayload;
       const myUserId = authStore.getState().user?.id;
@@ -1816,6 +1821,7 @@ export function useRealtimeSync(
       unsubWsUpdated();
       unsubWsDeleted();
       unsubAccountDisabled();
+      unsubMemberHandover();
       unsubMemberRemoved();
       unsubMemberAdded();
       unsubInvitationCreated();

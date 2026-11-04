@@ -12,7 +12,7 @@ import (
 
 // 2026-10-09 coder(lq): Human invocation uses the same visibility gate as
 // list/detail. Delegated calls use the accountable human's visibility, never
-// the immediate agent actor's unconditional inspection access. Unattributed
+// the immediate agent actor's inspection access. Unattributed
 // system calls retain only the existing workspace-shared admission rule.
 
 // canInvokeAgent reports whether a run may be enqueued for `agent` on behalf of
@@ -88,28 +88,26 @@ func (h *Handler) invokeAgentDecision(ctx context.Context, agent db.Agent, actor
 }
 
 // 2026-10-09 coder(lq): canAccessPrivateAgent is the human visibility and invocation authority.
-// Agent actors retain inspection access; invocation must instead call this
-// with their human originator, as canInvokeAgent does.
+// Delegated calls use their human originator; unattributed agents may only
+// inspect themselves or workspace-shared peers.
 //
 // Rules:
-//   - agent actors always pass (A2A collaboration + inspection preserved).
+//   - an agent may inspect itself or workspace-shared peers.
 //   - the agent owner always passes.
-//   - workspace owner/admin pass (governance / inventory visibility retained).
+//   - workspace roles never grant access on their own.
 //   - a regular member passes for a public_to agent only when they hit a
-//     workspace or member target; private agents stay owner+admin only.
+//     workspace or member target; private agents stay owner-only.
 func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) bool {
-	if actorType == "agent" {
+	if actorType == "agent" && uuidToString(agent.ID) == actorID {
 		return true
 	}
-	if uuidToString(agent.OwnerID) == actorID {
+	if actorType == "member" && actorID != "" && uuidToString(agent.OwnerID) == actorID {
 		return true
 	}
-	member, err := h.getWorkspaceMember(ctx, actorID, workspaceID)
-	if err != nil {
-		return false
-	}
-	if roleAllowed(member.Role, "owner", "admin") {
-		return true
+	if actorType == "member" {
+		if _, err := h.getWorkspaceMember(ctx, actorID, workspaceID); err != nil {
+			return false
+		}
 	}
 	if agent.PermissionMode != "public_to" {
 		return false
@@ -118,7 +116,7 @@ func (h *Handler) canAccessPrivateAgent(ctx context.Context, agent db.Agent, act
 	if err != nil {
 		return false
 	}
-	return memberHitsInvocationTargets(targets, actorID)
+	return actorAllowedToViewAgent(agent, targets, actorType, actorID, "")
 }
 
 // memberHitsInvocationTargets is the pure predicate deciding whether a regular
@@ -141,20 +139,53 @@ func memberHitsInvocationTargets(targets []db.AgentInvocationTarget, userID stri
 
 // memberAllowedToViewAgent is the ListAgents / aggregation filter predicate.
 // Caller supplies the agent's already-batch-loaded invocation targets so the
-// list endpoint avoids an N+1. Workspace owner/admin and the agent owner see
-// everything; a regular member sees a public_to agent only when on its
+// list endpoint avoids an N+1. The agent owner sees their own agents;
+// other members see a public_to agent only when on its
 // allow-list, and never sees other members' private agents.
 func memberAllowedToViewAgent(agent db.Agent, targets []db.AgentInvocationTarget, userID, role string) bool {
-	if roleAllowed(role, "owner", "admin") {
-		return true
-	}
-	if uuidToString(agent.OwnerID) == userID {
+	if userID != "" && uuidToString(agent.OwnerID) == userID {
 		return true
 	}
 	if agent.PermissionMode != "public_to" {
 		return false
 	}
 	return memberHitsInvocationTargets(targets, userID)
+}
+
+// Delegated inspection uses the same human originator as invocation. An
+// unattributed agent retains self-inspection and workspace-shared discovery.
+func (h *Handler) agentAccessPrincipal(r *http.Request, workspaceID string) (string, string) {
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	if actorType == "agent" {
+		if originator := h.invokeOriginatorFromRequest(r, actorType, actorID); originator != "" {
+			return "member", originator
+		}
+	}
+	return actorType, actorID
+}
+
+func (h *Handler) canAccessAgentRequest(r *http.Request, agent db.Agent, workspaceID string) bool {
+	actorType, actorID := h.agentAccessPrincipal(r, workspaceID)
+	return h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID)
+}
+
+func actorAllowedToViewAgent(agent db.Agent, targets []db.AgentInvocationTarget, actorType, actorID, role string) bool {
+	if actorType == "member" {
+		return memberAllowedToViewAgent(agent, targets, actorID, role)
+	}
+	if actorType == "agent" {
+		if actorID != "" && uuidToString(agent.ID) == actorID {
+			return true
+		}
+		if agent.PermissionMode == "public_to" {
+			for _, target := range targets {
+				if target.TargetType == "workspace" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // invokeOriginatorFromRequest resolves the top-of-chain human user id for an
@@ -170,7 +201,8 @@ func (h *Handler) invokeOriginatorFromRequest(r *http.Request, actorType, actorI
 	if actorType == "agent" {
 		if taskIDHeader := r.Header.Get("X-Task-ID"); taskIDHeader != "" {
 			if taskUUID, err := util.ParseUUID(taskIDHeader); err == nil {
-				if task, err := h.Queries.GetAgentTask(r.Context(), taskUUID); err == nil {
+				if task, err := h.Queries.GetAgentTask(r.Context(), taskUUID); err == nil &&
+					uuidToString(task.AgentID) == actorID {
 					return uuidToString(task.OriginatorUserID)
 				}
 			}
@@ -341,10 +373,8 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 	}
 	allowed := make(map[string]struct{}, len(agents))
 	for _, a := range agents {
-		if actorType == "member" {
-			if !memberAllowedToViewAgent(a, targetsByAgent[uuidToString(a.ID)], actorID, role) {
-				continue
-			}
+		if !actorAllowedToViewAgent(a, targetsByAgent[uuidToString(a.ID)], actorType, actorID, role) {
+			continue
 		}
 		allowed[uuidToString(a.ID)] = struct{}{}
 	}
@@ -366,17 +396,12 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 //     tasks and book real usage that the rollups aggregate all the same. Left
 //     alone they surface as a bare UUID whose spend and failure profile belong
 //     to whoever opened that builder session.
-//  2. For a plain member only, the user agents they may not view.
+//  2. User agents the actor may not view, regardless of workspace role.
 //
 // Hard-deleted agents are deliberately NOT in the set: they are already absent
 // from the agent table, have no visibility left to protect, and the dashboard
 // renders them as their own "deleted agents" bucket — folding them in here
 // would relabel a real deletion as a permission boundary.
-//
-// Because of (1) this always reads the agent table, but the per-agent
-// invocation-target lookup is skipped for actors who see every user agent
-// (agent actors, workspace owner/admin) since nothing there can change their
-// answer.
 func (h *Handler) restrictedAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, bool) {
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
@@ -387,21 +412,15 @@ func (h *Handler) restrictedAgentIDs(ctx context.Context, workspaceID, actorType
 		return nil, false
 	}
 
-	// Whether per-agent visibility can restrict anything for this actor at all.
-	judgeUserAgents := actorType == "member" && !roleAllowed(role, "owner", "admin")
-	var targetsByAgent map[string][]db.AgentInvocationTarget
-	if judgeUserAgents {
-		var ok bool
-		if targetsByAgent, ok = h.loadInvocationTargetsByAgent(ctx, agents); !ok {
-			return nil, false
-		}
+	targetsByAgent, ok := h.loadInvocationTargetsByAgent(ctx, agents)
+	if !ok {
+		return nil, false
 	}
 
 	restricted := make(map[string]struct{})
 	for _, a := range agents {
 		if a.Kind == "user" {
-			if !judgeUserAgents ||
-				memberAllowedToViewAgent(a, targetsByAgent[uuidToString(a.ID)], actorID, role) {
+			if actorAllowedToViewAgent(a, targetsByAgent[uuidToString(a.ID)], actorType, actorID, role) {
 				continue
 			}
 		}

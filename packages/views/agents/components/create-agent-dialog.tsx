@@ -44,6 +44,7 @@ import {
 import { ActorAvatar } from "../../common/actor-avatar";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
+import { useAgentSharingConfirmation } from "./use-agent-sharing-confirmation";
 
 export function CreateAgentDialog({
   runtimes,
@@ -97,48 +98,13 @@ export function CreateAgentDialog({
     template ? `${template.name}${t(($) => $.create_dialog.duplicate_copy_suffix)}` : "",
   );
   const [description, setDescription] = useState(template?.description ?? "");
-  // Legacy visibility state. Kept as the source of truth when
-  // `accessPickerEnabled` is false; only used to seed the new access state
-  // when the flag flips on for a duplicate.
-  const [visibility, setVisibility] = useState<AgentVisibility>(
-    template?.visibility ?? "workspace",
-  );
-
-  // New access state (MUL-3963 aligned). When duplicating, seed from the
-  // template so the clone lands with the source agent's grants; otherwise
-  // default to public_to + workspace, matching the legacy "Workspace" default
-  // so a plain "click Create" produces the same result as before.
-  const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>(
-    template?.permission_mode ?? "public_to",
-  );
-  const [workspaceTargetOn, setWorkspaceTargetOn] = useState<boolean>(() => {
-    if (template) {
-      return (template.invocation_targets ?? []).some(
-        (tgt) => tgt.target_type === "workspace",
-      );
-    }
-    return true;
-  });
-  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        (template?.invocation_targets ?? [])
-          .filter((tgt) => tgt.target_type === "member" && tgt.target_id)
-          .map((tgt) => tgt.target_id as string),
-      ),
-  );
-
-  // Team targets on the template are preserved across the create so we don't
-  // silently drop a grant type the picker doesn't expose yet (mirrors
-  // AccessPicker's `teamIds` pass-through).
-  const templateTeamTargets: AgentInvocationTargetInput[] = (
-    template?.invocation_targets ?? []
-  )
-    .filter((tgt) => tgt.target_type === "team" && tgt.target_id)
-    .map((tgt) => ({
-      target_type: "team" as const,
-      target_id: tgt.target_id as string,
-    }));
+  // Every new agent, including a copy, starts without grants.
+  const [visibility, setVisibility] = useState<AgentVisibility>("private");
+  const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("private");
+  const [workspaceTargetOn, setWorkspaceTargetOn] = useState(false);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(() => new Set());
+  const templateTeamTargets: AgentInvocationTargetInput[] = [];
+  const { confirmSharing, sharingConfirmation } = useAgentSharingConfirmation();
 
   const [model, setModel] = useState(template?.model ?? "");
   const [instructions, setInstructions] = useState(template?.instructions ?? "");
@@ -213,7 +179,7 @@ export function CreateAgentDialog({
       !name.trim() ||
       !selectedRuntime ||
       selectedRuntimeLocked ||
-      accessSelectionInvalid
+      accessSelectionInvalid || creating
     ) {
       return;
     }
@@ -235,7 +201,7 @@ export function CreateAgentDialog({
         // let the backend derive the legacy `visibility` field. Mirror the
         // AccessPicker `emit` normalisation — a public_to with zero targets
         // collapses to private as defense in depth so the backend never sees
-        // an "empty public" request. Team targets from the template survive.
+        // an "empty public" request. Copies start without inherited grants.
         const invocationTargets: AgentInvocationTargetInput[] = [];
         if (permissionMode === "public_to") {
           if (workspaceTargetOn) {
@@ -273,6 +239,16 @@ export function CreateAgentDialog({
           data.max_concurrent_tasks = template.max_concurrent_tasks;
         }
       }
+      if (data.permission_mode === "public_to" || data.visibility === "workspace") {
+        if (!(await confirmSharing({
+          names: [data.name],
+          targets: data.invocation_targets ?? [{ target_type: "workspace" }],
+          members,
+        }))) {
+          setCreating(false);
+          return;
+        }
+      }
       const createdAgent = await onCreate(data);
       // Squad context: attach the agent after skills land so the
       // squad's Members tab shows the agent with its skills already
@@ -295,6 +271,7 @@ export function CreateAgentDialog({
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      {sharingConfirmation}
       <DialogContent className="p-0 gap-0 flex flex-col overflow-hidden !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-full !max-w-2xl !h-[85vh]">
         <DialogHeader className="border-b px-5 py-3 space-y-0">
           <DialogTitle className="text-title-sm font-semibold">{headerTitle}</DialogTitle>

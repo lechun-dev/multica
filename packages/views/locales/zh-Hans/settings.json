@@ -1420,9 +1420,28 @@
     "no_access": "无权限",
     "inherited_owner": "继承空间所有者权限",
     "read_only_hint": "只有空间所有者或项目所有者可以修改角色",
-    "roles": { "owner": "所有者", "admin": "管理员", "manager": "项目管理员", "member": "成员", "viewer": "查看者" },
-    "permissions": { "project.view": "查看项目", "project.edit": "编辑项目", "project.issue.create": "创建任务", "project.issue.comment": "评论任务", "project.issue.manage": "管理任务", "project.issue.archive": "归档任务", "project.agent.use": "使用智能体", "project.member.manage": "管理成员", "project.settings.manage": "管理项目设置" },
-    "sources": { "workspace_role": "空间角色", "project_role": "项目角色" }
+    "roles": {
+      "owner": "所有者",
+      "admin": "管理员",
+      "manager": "项目管理员",
+      "member": "成员",
+      "viewer": "查看者"
+    },
+    "permissions": {
+      "project.view": "查看项目",
+      "project.edit": "编辑项目",
+      "project.issue.create": "创建任务",
+      "project.issue.comment": "评论任务",
+      "project.issue.manage": "管理任务",
+      "project.issue.archive": "归档任务",
+      "project.agent.use": "使用智能体",
+      "project.member.manage": "管理成员",
+      "project.settings.manage": "管理项目设置"
+    },
+    "sources": {
+      "workspace_role": "空间角色",
+      "project_role": "项目角色"
+    }
   },
   "permission_roles": {
     "title": "权限角色",
@@ -1510,7 +1529,17 @@
     "sync_departures_skipped": "跳过离职记录 {{count}} 条（在职、未匹配或权限保护）",
     "sync_departures_incomplete": "组织目录已同步，但离职核验未完成，未据此禁用任何账号。请检查钉钉应用的离职记录读取权限及服务端日志。",
     "sync_departures_owner_only": "本次仅同步组织目录。离职账号自动禁用需要由工作区所有者执行；其他工作区所有者、本人及跨工作区账号仍受权限保护。",
-    "sync_departures_not_checked": "服务端未执行离职核验，未自动禁用账号。"
+    "sync_departures_not_checked": "服务端未执行离职核验，未自动禁用账号。",
+    "manager_label": "直属主管：{{name}}",
+    "manager_unset": "未设置直属主管",
+    "manager_unlinked": "主管未关联当前工作区账号",
+    "manager_inactive": "主管账号已停用",
+    "manager_not_synced": "尚未同步主管",
+    "manager_failed": "主管读取失败；如有历史结果，将保留展示",
+    "manager_last_synced": "最近成功同步：{{time}}",
+    "sync_managers_synced": "主管同步成功：{{count}}",
+    "sync_managers_failed": "主管读取失败：{{count}}",
+    "sync_managers_incomplete": "部分主管信息读取失败，请检查应用权限及通讯录可见范围后重试。"
   },
   "members": {
     "search_placeholder": "搜索姓名或邮箱",
@@ -1615,5 +1644,46 @@
     "status_loading": "正在检查...",
     "status_unknown": "状态暂不可用",
     "channel_hint": "在 {{channel}} 中与智能体对话、创建任务。"
+  },
+  "member_handover": {
+    "action": "交接项目和任务",
+    "title": "开放 {{name}} 的工作权限",
+    "scope": "开放本工作区未完成工作的管理权限，不包含私人智能体及电脑访问权限。",
+    "recipient": "接收人",
+    "select_recipient": "选择当前工作区内的可用成员",
+    "no_recipients": "当前工作区没有可用的接收人。",
+    "loading": "正在生成预览...",
+    "preview_failed": "无法生成预览，请刷新后重试。",
+    "execute_failed": "无法开放权限，请刷新预览后重试。",
+    "expired": "预览已过期，请刷新后再确认。",
+    "empty": "没有符合条件的未完成工作。",
+    "projects": "项目（{{count}}）",
+    "issues": "任务（{{count}}）",
+    "grant": "授予 {{role}} 权限",
+    "reassign": "变更负责人",
+    "consequence": "项目和任务负责人保持不变，接收人可通过现有功能分配工作。系统生成交接清单，并仅通知接收人，包括同时为 owner 的接收人。",
+    "refresh": "刷新预览",
+    "submitting": "正在开放权限...",
+    "confirm": "开放权限",
+    "automation": {
+      "pending": "待开放权限",
+      "failed": "权限开放失败",
+      "completed": "已开放权限",
+      "no_work": "无待处理工作",
+      "unknown": "交接状态未知",
+      "manager_not_synced": "尚未同步直属主管",
+      "manager_unset": "未设置直属主管",
+      "manager_unlinked": "主管未关联工作区账号",
+      "manager_inactive": "主管已停用",
+      "people_unavailable": "账号或接收人不可用，请手动指定接收人",
+      "source_not_manageable": "当前 owner 无权管理此账号的全部工作区",
+      "execution_failed": "权限开放失败，后台将独立重试",
+      "notification_pending": "Mission 通知等待路由",
+      "notification_staged": "已加入 Mission 发送队列",
+      "notification_delivered": "Mission 通知已送达",
+      "notification_failed": "Mission 发送失败，请联系维护人员排查",
+      "attention": "需人工处理",
+      "manager_read_failed": "主管读取失败，需确认关系后重试"
+    }
   }
 }

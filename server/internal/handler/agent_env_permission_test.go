@@ -31,14 +31,14 @@ func TestCanManageAgentEnv_Pure(t *testing.T) {
 		role   string
 		want   bool
 	}{
-		{"workspace owner, not agent owner", owned, otherUserID, "owner", true},
-		{"workspace admin, not agent owner", owned, otherUserID, "admin", true},
+		{"workspace owner, not agent owner", owned, otherUserID, "owner", false},
+		{"workspace admin, not agent owner", owned, otherUserID, "admin", false},
 		{"agent owner with member role", owned, ownerUserID, "member", true},
 		{"agent owner with admin role", owned, ownerUserID, "admin", true},
 		{"plain member, not agent owner", owned, otherUserID, "member", false},
 		{"plain member with no role string", owned, otherUserID, "", false},
 		{"null owner_id, plain member", orphaned, otherUserID, "member", false},
-		{"null owner_id, workspace admin", orphaned, otherUserID, "admin", true},
+		{"null owner_id, workspace admin", orphaned, otherUserID, "admin", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

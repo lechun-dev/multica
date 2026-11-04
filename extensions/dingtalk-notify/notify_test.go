@@ -64,6 +64,38 @@ func TestBuildMessagesUsesMemberGroupsOnlyForExplicitGroupIntent(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesKeepsDescriptionMentionsInP2P(t *testing.T) {
+	event := MentionCreated{EventID: "created-1", WorkspaceID: "w1", Text: "请在项目群里确认", Targets: []MentionTarget{{ID: "m1", Kind: "member"}}}
+	messages, failures, err := BuildMessagesWithOptions(context.Background(), event, resolverStub{
+		member: MemberBinding{DingUserID: "d1", Active: true, Groups: []AgentChannel{{ChannelID: "g1", ChannelName: "项目群", Active: true}}}, found: true,
+	}, RoutingOptions{MemberP2POnly: true})
+	if err != nil || len(failures) != 0 || len(messages) != 1 || messages[0].ChannelType != "p2p" || messages[0].DingUserID != "d1" {
+		t.Fatalf("description mention routing messages=%+v failures=%+v err=%v", messages, failures, err)
+	}
+}
+
+func TestAssignmentMergesCreationDescriptionMention(t *testing.T) {
+	event := AssignmentNotification{
+		Kind: AssignmentAdded, IncludeDetails: true, IssueIdentifier: "LC-3034", SourceURL: "https://multica.test/issues/LC-3034",
+		MentionText: "[@李群](mention://member/11111111-1111-1111-1111-111111111111) 第一段\n第二段\n第三段必须完整保留",
+	}
+	robot, personal := FormatAssignmentText(event), FormatPersonalAssignmentText(event)
+	for channel, body := range map[string]string{"robot": robot, "personal": personal} {
+		if !strings.Contains(body, "你已成为该任务的负责人") || !strings.Contains(body, "你也在任务正文中被提及") || !strings.Contains(body, event.SourceURL) || strings.Contains(body, "mention://") {
+			t.Fatalf("%s merged message lost context: %q", channel, body)
+		}
+	}
+	if strings.Contains(robot, "第三段必须完整保留") || !strings.Contains(personal, "第三段必须完整保留") || !strings.Contains(personal, "**@李群**") {
+		t.Fatalf("robot must preview and personal must preserve the full body: robot=%q personal=%q", robot, personal)
+	}
+	event.IncludeDetails = false
+	for _, body := range []string{FormatAssignmentText(event), FormatPersonalAssignmentText(event)} {
+		if strings.Contains(body, "第一段") || strings.Contains(body, event.SourceURL) || strings.Contains(body, "被提及") {
+			t.Fatalf("minimal assignment leaked description mention: %q", body)
+		}
+	}
+}
+
 func TestBuildMessagesUsesNamedMemberGroupOnly(t *testing.T) {
 	event := MentionCreated{EventID: "e1", WorkspaceID: "w1", Actor: Actor{Name: "Alice"}, Text: "请发到项目群", Targets: []MentionTarget{{ID: "m1", Kind: "member"}}}
 	messages, failures, err := BuildMessages(context.Background(), event, resolverStub{member: MemberBinding{DingUserID: "d1", Active: true, Groups: []AgentChannel{{ChannelID: "g1", ChannelName: "项目群", Active: true}, {ChannelID: "g2", ChannelName: "其他群", Active: true}}}, found: true})

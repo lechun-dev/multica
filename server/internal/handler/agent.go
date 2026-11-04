@@ -1178,12 +1178,10 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	alwaysRedact := workspaceAlwaysRedactSecrets(ws.Settings)
 
-	// Resolve the request actor once. Agents bypass the view gate to preserve
-	// A2A collaboration; members see a private agent only when they own it or
-	// are workspace owner/admin, and a public_to agent only when on its
-	// invocation allow-list. Targets are batch-loaded to avoid an N+1 and
-	// reused to enrich each response's invocation_targets.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	// Resolve visibility once, including the human originator of delegated calls.
+	// Workspace roles do not bypass private or scoped permissions.
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	viewType, viewID := h.agentAccessPrincipal(r, workspaceID)
 	targetsByAgent, ok := h.loadInvocationTargetsByAgent(r.Context(), agents)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")
@@ -1192,10 +1190,8 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
 		targets := targetsByAgent[uuidToString(a.ID)]
-		if actorType == "member" {
-			if !memberAllowedToViewAgent(a, targets, actorID, member.Role) {
-				continue
-			}
+		if !actorAllowedToViewAgent(a, targets, viewType, viewID, member.Role) {
+			continue
 		}
 		resp := h.agentToResponse(a)
 		// The map is keyed by runtime, and active + archived agents may share one.
@@ -1248,8 +1244,8 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	if !h.canAccessAgentRequest(r, agent, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -1883,8 +1879,8 @@ func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent d
 		return false
 	}
 	isAdmin := roleAllowed(member.Role, "owner", "admin")
-	isAgentOwner := uuidToString(agent.OwnerID) == requestUserID(r)
-	if !isAdmin && !isAgentOwner {
+	isAgentOwner := requestUserID(r) != "" && uuidToString(agent.OwnerID) == requestUserID(r)
+	if !isAgentOwner && (!isAdmin || agent.PermissionMode != "public_to") {
 		writeError(w, http.StatusForbidden, "only the agent owner can manage this agent")
 		return false
 	}
@@ -2257,7 +2253,19 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.Queries.UpdateAgent(r.Context(), params)
+	writeQueries := h.Queries
+	var commitPermission func() error
+	if replacePermissionTargets {
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to begin agent permission update")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		writeQueries = h.Queries.WithTx(tx)
+		commitPermission = func() error { return tx.Commit(r.Context()) }
+	}
+	updated, err := writeQueries.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
 		// return a clear conflict instead of a 500 that leaks the raw
@@ -2283,7 +2291,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL, so
 	// mcp_config, thinking_level, and service_tier use dedicated clear queries.
 	if shouldClearMcpConfig {
-		updated, err = h.Queries.ClearAgentMcpConfig(r.Context(), updated.ID)
+		updated, err = writeQueries.ClearAgentMcpConfig(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config: "+err.Error())
@@ -2291,7 +2299,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearThinkingLevel {
-		updated, err = h.Queries.ClearAgentThinkingLevel(r.Context(), updated.ID)
+		updated, err = writeQueries.ClearAgentThinkingLevel(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level: "+err.Error())
@@ -2299,7 +2307,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearServiceTier {
-		updated, err = h.Queries.ClearAgentServiceTier(r.Context(), updated.ID)
+		updated, err = writeQueries.ClearAgentServiceTier(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent service_tier failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear service_tier: "+err.Error())
@@ -2307,7 +2315,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if shouldClearComposioAllowlist {
-		updated, err = h.Queries.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
+		updated, err = writeQueries.ClearAgentComposioToolkitAllowlist(r.Context(), updated.ID)
 		if err != nil {
 			slog.Warn("clear agent composio_toolkit_allowlist failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to clear composio_toolkit_allowlist: "+err.Error())
@@ -2316,12 +2324,19 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Invocation targets (MUL-3963): replace wholesale when the owner touched
-	// permission. Done after the row update so a permission_mode flip and its
-	// targets land together.
+	// permission. The agent row lock and target replacement share a transaction
+	// with the final task-delivery gate.
 	if replacePermissionTargets {
-		if err := h.replaceInvocationTargets(r.Context(), updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
+		if err := replaceInvocationTargetsWithQueries(r.Context(), writeQueries, updated.ID, parseUUID(requestUserID(r)), resolvedPerm.targets); err != nil {
 			slog.Warn("update agent: persist invocation targets failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to update invocation targets: "+err.Error())
+			return
+		}
+	}
+
+	if commitPermission != nil {
+		if err := commitPermission(); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit agent permission update")
 			return
 		}
 	}
@@ -2783,8 +2798,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	// Run history is part of the private-agent gate ("查看历史会话"). Same
 	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessAgentRequest(r, agent, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}

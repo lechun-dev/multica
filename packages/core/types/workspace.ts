@@ -85,6 +85,7 @@ export interface User {
 }
 
 export interface MemberWithUser {
+  handover?: { status: "pending" | "failed" | "completed" | "no_work" | "unknown"; reason: string; recipient_name: string; attempted_at: string | null; notification_status: "pending" | "staged" | "delivered" | "failed" | "" };
   id: string;
   workspace_id: string;
   user_id: string;

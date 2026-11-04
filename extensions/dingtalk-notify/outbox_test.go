@@ -65,3 +65,23 @@ func TestWorkerMarksPermanentFailure(t *testing.T) {
 		t.Fatalf("status=%s", got)
 	}
 }
+
+func TestWorkerDoesNotReportSuppressedMessagesAsDelivered(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Unix(100, 0)
+	m := Message{EventID: "handover-summary:test", WorkspaceID: "w1", TargetID: "owner", TargetKind: "member"}
+	if err := EnqueueMessages(ctx, store, []Message{m}, now); err != nil {
+		t.Fatal(err)
+	}
+	p := &retryProvider{err: SuppressedDelivery{Reason: "owner_notifications_suppressed"}}
+	w := Worker{Store: store, Provider: p, Now: func() time.Time { return now }}
+	for range 2 {
+		if _, err := w.RunOnce(ctx, 10); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if item := store.Snapshot()[0]; item.Status != StatusSkipped || item.LastError != "owner_notifications_suppressed" || p.calls != 1 {
+		t.Fatalf("suppressed delivery was retried or misreported: %+v calls=%d", item, p.calls)
+	}
+}

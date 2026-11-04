@@ -13,6 +13,11 @@ type Event struct {
 	ActorID     string
 	Payload     any // JSON-serializable, same shape as current WS payloads
 
+	// PreviousCommentContent is an internal edit snapshot, captured under the
+	// comment's write lock. Never include old comment text in realtime payloads.
+	// Nil distinguishes attachment updates and tombstones from content edits.
+	PreviousCommentContent *string `json:"-"`
+
 	// Optional scope hints used by the realtime fanout layer to route the
 	// event to a more specific scope than `workspace:{WorkspaceID}`. When set
 	// these tell the listener which Redis stream / Hub room to publish on

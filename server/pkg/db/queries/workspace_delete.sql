@@ -537,6 +537,21 @@ DELETE FROM comment WHERE comment.workspace_id = $1;
 -- project/issue tables. Sweep their leaves before issue and project roots so a
 -- workspace deletion cannot leave ACL, request, or role-directory orphans.
 WITH
+deleted_handover_notifications AS (
+    DELETE FROM member_handover_notifications WHERE member_handover_notifications.workspace_id = $1
+),
+deleted_handover_resources AS (
+    DELETE FROM member_handover_resources WHERE member_handover_resources.workspace_id = $1
+),
+deleted_handover_automation AS (
+    DELETE FROM member_handover_automation WHERE member_handover_automation.workspace_id = $1
+),
+deleted_reporting_lines AS (
+    DELETE FROM directory_reporting_lines WHERE directory_reporting_lines.workspace_id = $1
+),
+deleted_member_handovers AS (
+    DELETE FROM member_handovers WHERE member_handovers.workspace_id = $1
+),
 deleted_request_notifications AS (
     DELETE FROM projectauth_access_request_notifications WHERE workspace_id = $1
 ),
@@ -573,7 +588,7 @@ deleted_organization_members AS (
 deleted_mention_revocations AS (
     DELETE FROM projectauth_issue_mention_revocations WHERE workspace_id = $1
 )
-DELETE FROM projectauth_organizations WHERE workspace_id = $1;
+DELETE FROM projectauth_organizations WHERE projectauth_organizations.workspace_id = $1;
 
 -- name: DeleteWorkspaceIssueRoots :exec
 WITH deleted_wakeup_receipts AS (

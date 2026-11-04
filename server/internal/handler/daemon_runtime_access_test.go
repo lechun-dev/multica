@@ -659,6 +659,7 @@ func TestClaimTasksByRuntime_OwnerChangedAfterSnapshotSettlesMismatchReturnsVali
 	// to the new owner, so only the stale-snapshot task is rejected at the gate.
 	dbfx.Exec(t, `UPDATE agent_runtime SET visibility = 'public' WHERE id = $1`, runtimeID)
 	dbfx.Exec(t, `UPDATE agent SET owner_id = $1 WHERE id = $2`, newOwnerID, validAgentID)
+	dbfx.Exec(t, `UPDATE agent_task_queue SET originator_user_id=$1, accountable_user_id=$1 WHERE id=$2`, newOwnerID, validTaskID)
 	dbfx.Exec(t, `UPDATE agent_task_queue SET priority = 1 WHERE id = $1`, mismatchTaskID)
 	injectRuntimeOwnerFlipAfterClaim(t, ctx, mismatchTaskID, runtimeID, newOwnerID)
 	runtimeSnapshot, err := testHandler.Queries.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{
@@ -697,5 +698,87 @@ func TestClaimTasksByRuntime_OwnerChangedAfterSnapshotSettlesMismatchReturnsVali
 	}
 	if validStatus != "dispatched" {
 		t.Fatalf("valid task status = %q, want dispatched", validStatus)
+	}
+}
+
+func TestClaimDelivery_RechecksAgentSharing(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	for _, tc := range []struct {
+		name                  string
+		owner, shared, revoke bool
+		role                  string
+		allowed               bool
+		unattributed          bool
+		autopilot             bool
+	}{
+		{name: "owner remains allowed", owner: true, allowed: true},
+		{name: "explicit member remains allowed", shared: true, allowed: true},
+		{name: "member grant revoked after claim", shared: true, revoke: true},
+		{name: "admin cannot run private agent", role: "admin"},
+		{name: "unattributed task cannot run private agent", unattributed: true},
+		{name: "legacy autopilot owner remains allowed", owner: true, autopilot: true, allowed: true},
+		{name: "legacy autopilot admin cannot run private agent", role: "admin", autopilot: true},
+		{name: "legacy autopilot member grant revoked", shared: true, revoke: true, autopilot: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			runtimeID := createClaimReclaimRuntime(t, ctx, "Agent sharing delivery")
+			agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Agent sharing delivery "+uuid.NewString())
+			requester := testUserID
+			if !tc.owner {
+				requester = dbfx.User(t, tc.name, uuid.NewString()+"@example.com")
+				role := tc.role
+				if role == "" {
+					role = "member"
+				}
+				dbfx.Member(t, testWorkspaceID, requester, role)
+			}
+			if tc.shared {
+				dbfx.Exec(t, `UPDATE agent SET permission_mode='public_to' WHERE id=$1`, agentID)
+				dbfx.Exec(t, `INSERT INTO agent_invocation_target(agent_id,target_type,target_id) VALUES($1,'member',$2)`, agentID, requester)
+			}
+			taskID := seedQueuedIssueTask(t, ctx, agentID, runtimeID, issueID)
+			dbfx.Exec(t, `UPDATE agent_task_queue SET originator_user_id=$1, accountable_user_id=$1 WHERE id=$2`, requester, taskID)
+			if tc.unattributed {
+				dbfx.Exec(t, `UPDATE agent_task_queue SET originator_user_id=NULL, accountable_user_id=NULL WHERE id=$1`, taskID)
+			}
+			if tc.autopilot {
+				autopilotID := dbfx.Insert(t, "autopilot", testutil.Cols{
+					"workspace_id": testWorkspaceID, "title": tc.name,
+					"assignee_id": agentID, "execution_mode": "run_only",
+					"created_by_type": "member", "created_by_id": requester,
+				})
+				runID := dbfx.Insert(t, "autopilot_run", testutil.Cols{
+					"autopilot_id": autopilotID, "source": "schedule", "status": "running",
+				})
+				dbfx.Exec(t, `UPDATE agent_task_queue SET originator_user_id=NULL, accountable_user_id=NULL, autopilot_run_id=$1 WHERE id=$2`, runID, taskID)
+			}
+			task, err := testHandler.TaskService.ClaimTaskForRuntime(ctx, parseUUID(runtimeID))
+			if err != nil || task == nil {
+				t.Fatalf("claim: %v, %+v", err, task)
+			}
+			if tc.revoke {
+				dbfx.Exec(t, `DELETE FROM agent_invocation_target WHERE agent_id=$1`, agentID)
+				dbfx.Exec(t, `UPDATE agent SET permission_mode='private' WHERE id=$1`, agentID)
+			}
+			req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/claim", nil, testWorkspaceID, "agent-sharing-gate")
+			resp, _, _, _, failure, err := testHandler.finalizeClaimDeliveryForTest(req, task, runtimeID, testWorkspaceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var tokens int
+			dbfx.QueryRow(t, `SELECT count(*) FROM task_token WHERE task_id=$1`, taskID).Scan(&tokens)
+			if tc.allowed {
+				if failure != nil || resp.AuthToken == "" || tokens != 1 {
+					t.Fatalf("authorized delivery rejected: %+v, tokens=%d", failure, tokens)
+				}
+			} else {
+				if failure == nil || failure.outcome != "error_agent_access_revoked" || !failure.settled || resp.AuthToken != "" || tokens != 0 {
+					t.Fatalf("revoked access delivered: %+v, tokens=%d", failure, tokens)
+				}
+			}
+		})
 	}
 }

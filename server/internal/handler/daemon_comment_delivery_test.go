@@ -185,9 +185,9 @@ func createCommentDeliveryFixture(t *testing.T, label string) commentDeliveryFix
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority,
-			trigger_comment_id, coalesced_comment_ids
+			trigger_comment_id, coalesced_comment_ids, originator_user_id, accountable_user_id
 		)
-		VALUES ($1, $2, $3, 'queued', 0, $4, ARRAY[$5::uuid, $6::uuid])
+		VALUES ($1, $2, $3, 'queued', 0, $4, ARRAY[$5::uuid, $6::uuid], (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID, ids[2], ids[1], ids[0]).Scan(&taskID); err != nil {
 		t.Fatalf("insert comment delivery task: %v", err)
@@ -697,13 +697,13 @@ func TestCreateRetryTask_PreservesCommentPlanAndResetsReceipt(t *testing.T) {
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority,
 			trigger_comment_id, coalesced_comment_ids, delivered_comment_ids,
-			attempt, max_attempts, failure_reason
+			attempt, max_attempts, failure_reason, originator_user_id, accountable_user_id
 		)
 		VALUES (
 			$1, $2, $3, 'failed', 0,
 			$4, ARRAY[$5::uuid, $6::uuid], ARRAY[$4::uuid, $5::uuid, $6::uuid],
 			1, 3, 'timeout'
-		)
+		, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID, commentIDs[2], commentIDs[0], commentIDs[1]).Scan(&parentID); err != nil {
 		t.Fatalf("insert retry parent: %v", err)
@@ -758,13 +758,13 @@ func TestRerunIssue_PreservesSourceCommentPlanAndResetsReceipt(t *testing.T) {
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority,
 			trigger_comment_id, coalesced_comment_ids, delivered_comment_ids,
-			started_at, completed_at
+			started_at, completed_at, originator_user_id, accountable_user_id
 		)
 		VALUES (
 			$1, $2, $3, 'completed', 0,
 			$4, ARRAY[$5::uuid, $6::uuid], ARRAY[$4::uuid, $5::uuid, $6::uuid],
 			now() - interval '2 minutes', now() - interval '1 minute'
-		)
+		, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID, commentIDs[2], commentIDs[0], commentIDs[1]).Scan(&sourceID); err != nil {
 		t.Fatalf("insert manual rerun source: %v", err)
@@ -861,9 +861,9 @@ func TestSetTaskDeliveredCommentIDs_CASAndSubset(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority, dispatched_at,
-			trigger_comment_id, coalesced_comment_ids
+			trigger_comment_id, coalesced_comment_ids, originator_user_id, accountable_user_id
 		)
-		VALUES ($1, $2, $3, 'dispatched', 0, now(), $4, ARRAY[$5::uuid])
+		VALUES ($1, $2, $3, 'dispatched', 0, now(), $4, ARRAY[$5::uuid], (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID, commentIDs[1], commentIDs[0]).Scan(&taskID); err != nil {
 		t.Fatalf("insert receipt CAS task: %v", err)

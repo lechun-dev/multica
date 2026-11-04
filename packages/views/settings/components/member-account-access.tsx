@@ -10,18 +10,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@multica/ui/components/ui/alert-dialog";
 import { useT } from "../../i18n";
 
-export type MemberStatusFilter = "all" | "enabled" | "disabled";
+export type MemberStatusFilter = "all" | "enabled" | "disabled" | "handover_pending" | "handover_attention";
 
 export function filterMembers(members: MemberWithUser[], search: string, status: MemberStatusFilter) {
   const needle = search.trim().toLocaleLowerCase();
-  return members.filter((member) =>
-    (status === "all" || (member.account_disabled === true) === (status === "disabled")) &&
-    (!needle || member.name.toLocaleLowerCase().includes(needle) || member.email.toLocaleLowerCase().includes(needle)),
-  );
+  return members.filter((member) => {
+    const disabled = member.account_disabled === true;
+    const handover = member.handover;
+    const statusMatches = status === "all" ||
+      (status === "disabled" && disabled) || (status === "enabled" && !disabled) ||
+      (status === "handover_pending" && disabled && handover?.status === "pending" && !handover.reason) ||
+      (status === "handover_attention" && disabled && !!handover &&
+        (handover.status === "failed" || (handover.status === "pending" && !!handover.reason)));
+    return statusMatches && (!needle || member.name.toLocaleLowerCase().includes(needle) || member.email.toLocaleLowerCase().includes(needle));
+  });
 }
 
-export function MemberSearchControls({ search, status, onSearchChange, onStatusChange }: {
-  search: string; status: MemberStatusFilter;
+export function MemberSearchControls({ search, status, onSearchChange, onStatusChange, canViewHandover = false }: {
+  search: string; status: MemberStatusFilter; canViewHandover?: boolean;
   onSearchChange: (value: string) => void; onStatusChange: (value: MemberStatusFilter) => void;
 }) {
   const { t } = useT("settings");
@@ -30,11 +36,15 @@ export function MemberSearchControls({ search, status, onSearchChange, onStatusC
     { value: "enabled", label: t(($) => $.members.status_enabled) },
     { value: "disabled", label: t(($) => $.members.status_disabled) },
   ];
+  if (canViewHandover) options.push(
+    { value: "handover_pending", label: t(($) => $.member_handover.automation.pending) },
+    { value: "handover_attention", label: t(($) => $.member_handover.automation.attention) },
+  );
   return <div className="flex flex-col gap-3 sm:flex-row">
     <Input type="search" value={search} onChange={(event) => onSearchChange(event.target.value)}
       aria-label={t(($) => $.members.search_placeholder)} placeholder={t(($) => $.members.search_placeholder)} />
     <Select items={options} value={status} onValueChange={(value) => {
-      if (value === "all" || value === "enabled" || value === "disabled") onStatusChange(value);
+      if (value === "all" || value === "enabled" || value === "disabled" || (canViewHandover && (value === "handover_pending" || value === "handover_attention"))) onStatusChange(value);
     }}>
       <SelectTrigger className="sm:w-40" aria-label={t(($) => $.members.status_filter)}>
         <SelectValue>{() => options.find((option) => option.value === status)?.label}</SelectValue>

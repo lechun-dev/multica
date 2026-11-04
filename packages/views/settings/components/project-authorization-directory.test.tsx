@@ -200,4 +200,16 @@ describe("ProjectAuthorizationDirectory", () => {
     expect((await screen.findAllByText("Acme Foods")).length).toBe(2);
     expect(screen.queryByText("All people")).not.toBeInTheDocument();
   });
+
+  it("shows a retained manager with a failed refresh and its last success time", async () => {
+    listProjectAuthorizationOrganizations.mockResolvedValueOnce({
+      organizations,
+      members: [{ ...members[0], manager_name: "Leader Li", manager_status: "ready", manager_sync_status: "failed", manager_successful_at: "2026-11-02T19:00:00Z" }],
+      total: organizations.length, member_total: 1,
+    });
+    renderDirectory();
+    expect(await screen.findByText("Direct manager: Leader Li")).toBeInTheDocument();
+    expect(screen.getByText(/Manager read failed/)).toBeInTheDocument();
+    expect(screen.getByText(/Last successful sync:/)).toBeInTheDocument();
+  });
 });

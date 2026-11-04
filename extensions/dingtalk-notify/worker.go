@@ -14,6 +14,11 @@ type RetryableError struct{ Err error }
 func (e RetryableError) Error() string { return e.Err.Error() }
 func (e RetryableError) Unwrap() error { return e.Err }
 
+// SuppressedDelivery ends an intent without reporting a provider delivery.
+type SuppressedDelivery struct{ Reason string }
+
+func (e SuppressedDelivery) Error() string { return e.Reason }
+
 type RetryPolicy struct {
 	MaxAttempts int
 	BaseDelay   time.Duration
@@ -59,6 +64,14 @@ func (w Worker) RunOnce(ctx context.Context, limit int) (int, error) {
 	for _, item := range items {
 		started := time.Now()
 		sendErr := w.Provider.Send(ctx, item.Message)
+		var suppressed SuppressedDelivery
+		if errors.As(sendErr, &suppressed) {
+			if err := w.Store.MarkSkipped(ctx, item.ID, now, suppressed.Reason); err != nil {
+				return len(items), err
+			}
+			w.recordAudit(ctx, item, StatusSkipped, suppressed.Reason, started)
+			continue
+		}
 		if sendErr == nil {
 			if err := w.Store.MarkDelivered(ctx, item.ID, now); err != nil {
 				return len(items), err

@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
 import { configStore } from "@multica/core/config";
+import { WorkspaceSlugProvider } from "@multica/core/paths";
+import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { renderWithI18n } from "../../test/i18n";
 
 const mocks = vi.hoisted(() => ({
@@ -53,20 +55,37 @@ const control = {
 function renderDialog(
   projectId: string | null = "project-1",
   focus: { focusRequestId?: string | null; focusRequestToken?: number } = {},
+  target: { issueId?: string; issueIdentifier?: string | null; appUrl?: string; workspaceSlug?: string } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return renderWithI18n(
+  const navigation: NavigationAdapter = {
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    pathname: "/test/inbox",
+    searchParams: new URLSearchParams("access_request=request-9&filter=mine"),
+    hash: "#comment-1",
+    getShareableUrl: (path) => `${target.appUrl ?? "https://mission.lechun.cc"}${path}`,
+  };
+  const ui = (task: typeof target) => (
     <QueryClientProvider client={client}>
-      <IssueAccessGrantsDialog
-        issueId="issue-1"
-        projectId={projectId}
-        focusRequestId={focus.focusRequestId ?? null}
-        focusRequestToken={focus.focusRequestToken}
-      />
-    </QueryClientProvider>,
+      <WorkspaceSlugProvider slug={task.workspaceSlug ?? "test"}>
+        <NavigationProvider value={navigation}>
+          <IssueAccessGrantsDialog
+            issueId={task.issueId ?? "issue-1"}
+            issueIdentifier={task.issueIdentifier}
+            projectId={projectId}
+            focusRequestId={focus.focusRequestId ?? null}
+            focusRequestToken={focus.focusRequestToken}
+          />
+        </NavigationProvider>
+      </WorkspaceSlugProvider>
+    </QueryClientProvider>
   );
+  const result = renderWithI18n(ui(target));
+  return { ...result, rerenderDialog: (task: typeof target) => result.rerender(ui(task)) };
 }
 
 const pendingRequest = {
@@ -189,6 +208,43 @@ describe("IssueAccessGrantsDialog", () => {
     expect(within(dialog).queryByText("Allowed")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("Permission source details")).not.toBeInTheDocument();
     expect(within(dialog).queryByTestId("derived-access-row")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "https://mission.lechun.cc",
+    "https://mission-staging.lechun.cc",
+    "http://dev.example.test:3000",
+  ])("copies the task URL on %s instead of the renderer or inbox URL", async (appUrl) => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    renderDialog("project-1", {}, { issueIdentifier: "TES-42", appUrl });
+
+    await user.click(screen.getByRole("button", { name: "Task access" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+    const expectedUrl = `${appUrl}/test/issues/TES-42`;
+    expect(within(dialog).getByRole("textbox", { name: "Task link" })).toHaveValue(expectedUrl);
+
+    await user.click(within(dialog).getByRole("button", { name: "Copy link" }));
+    expect(writeText).toHaveBeenCalledWith(expectedUrl);
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Task link copied");
+    expect(mocks.updateIssueAccessControl).not.toHaveBeenCalled();
+  });
+
+  it("updates an open share dialog when the task or workspace changes and supports ID links", async () => {
+    const user = userEvent.setup();
+    const { rerenderDialog } = renderDialog("project-1", {}, { issueIdentifier: "TES-42" });
+    await user.click(screen.getByRole("button", { name: "Task access" }));
+    const dialog = await screen.findByRole("dialog", { name: "Share task" });
+
+    rerenderDialog({ issueId: "issue-2", issueIdentifier: "OPS-7", workspaceSlug: "operations" });
+    expect(within(dialog).getByRole("textbox", { name: "Task link" })).toHaveValue(
+      "https://mission.lechun.cc/operations/issues/OPS-7",
+    );
+
+    rerenderDialog({ issueId: "issue-3", issueIdentifier: null });
+    expect(within(dialog).getByRole("textbox", { name: "Task link" })).toHaveValue(
+      "https://mission.lechun.cc/test/issues/issue-3",
+    );
   });
 
   it("saves a projectless task grant directly", async () => {

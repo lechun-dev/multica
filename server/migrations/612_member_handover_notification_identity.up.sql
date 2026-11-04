@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_member_handover_notification_identity ON member_handover_notifications (event_id,recipient_user_id);

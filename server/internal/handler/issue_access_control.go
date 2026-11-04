@@ -514,6 +514,9 @@ func (h *Handler) applyIssueAccessControl(ctx context.Context, tx dbExecutor, ac
 	if err := createIssueAccessGrantNotifications(ctx, tx, actor, issueID, issueTitle, current.Grants, normalized); err != nil {
 		return issueAccessControlResponse{}, false, err
 	}
+	if err := h.enqueueIssueAccessGrantNotifications(ctx, tx, actor, issueID, nextVersion, current.Grants, normalized); err != nil {
+		return issueAccessControlResponse{}, false, err
+	}
 	proposed.PolicyVersion = nextVersion
 	return proposed, true, nil
 }

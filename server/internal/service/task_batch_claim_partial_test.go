@@ -88,6 +88,28 @@ func TestClaimTasksForRuntimes_PartialSuccessOnSecondAgentClaimFailure(t *testin
 	}
 }
 
+func TestClaimTasksForRuntimes_PartialSuccessOnLaterRoundFailure(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	tx := &failNthBeginTxStarter{inner: pool, failOn: 3}
+	svc := NewTaskService(db.New(pool), tx, nil, events.New())
+	rt1, rt2 := batchClaimFixture(t, ctx, pool)
+	claimed, err := svc.ClaimTasksForRuntimes(ctx, []pgtype.UUID{util.MustParseUUID(rt1), util.MustParseUUID(rt2)}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 2 {
+		t.Fatalf("claimed %d tasks, want both committed first-round tasks", len(claimed))
+	}
+	remaining, err := NewTaskService(db.New(pool), pool, nil, events.New()).ClaimTasksForRuntimes(ctx, []pgtype.UUID{util.MustParseUUID(rt1)}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("retry claimed %d tasks, want the uncommitted later-round task", len(remaining))
+	}
+}
+
 // TestClaimTasksForRuntimes_PartialSuccessOnCandidateQueryFailureAfterReclaim
 // covers the other partial-commit path: step-2 reclaims a stale dispatched task
 // (committed), then the step-4 candidate SELECT errors. The reclaimed task must

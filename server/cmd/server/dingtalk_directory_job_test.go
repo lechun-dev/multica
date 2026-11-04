@@ -90,6 +90,8 @@ func TestDingTalkDirectoryDailyJob(t *testing.T) {
 			fx.InsertNoID(t, "dingtalk_notify_identities", testutil.Cols{"ding_user_id": dingID, "multica_user_id": uid, "updated_at": time.Now()}, "ding_user_id=$1", dingID)
 			fx.Cleanup(t, `DELETE FROM projectauth_organizations WHERE workspace_id=$1`, ws)
 			fx.Cleanup(t, `DELETE FROM projectauth_organization_members WHERE workspace_id=$1`, ws)
+			fx.Cleanup(t, `DELETE FROM directory_reporting_lines WHERE workspace_id=$1`, ws)
+			fx.Cleanup(t, `DELETE FROM member_handover_automation WHERE workspace_id=$1`, ws)
 			fx.Cleanup(t, `DELETE FROM sys_cron_executions WHERE job_name=$1 AND scope_id=$2`, dingtalkDirectoryJobName, ws)
 			if scenario != "unlinked" {
 				if _, err := testPool.Exec(ctx, `INSERT INTO projectauth_organizations (workspace_id,provider,external_id,name,status) VALUES ($1,'dingtalk','42','Before daily sync','active')`, ws); err != nil {
@@ -134,6 +136,8 @@ func TestDingTalkDirectoryDailyJob(t *testing.T) {
 						}
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"records": []map[string]string{{"userId": dingID, "leaveTime": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)}}})
+				case "/detail":
+					_ = json.NewEncoder(w).Encode(map[string]any{"errcode": 0, "result": map[string]string{"userid": dingID, "manager_userid": ""}})
 				default:
 					t.Errorf("unexpected path %s", r.URL.Path)
 					w.WriteHeader(404)
@@ -148,7 +152,7 @@ func TestDingTalkDirectoryDailyJob(t *testing.T) {
 				syncEvents.Add(1)
 			})
 			host := &handler.Handler{Queries: db.New(testPool), TxStarter: testPool, Bus: bus, ProjectAuth: projectauth.New(nil, true)}
-			login := &dingtalkLoginHandler{host: host, pool: testPool, provider: notify.DingTalkOAuthProvider{ClientID: "fixture", ClientSecret: "fixture", AppTokenURL: upstream.URL + "/token", DepartmentListURL: upstream.URL + "/departments", UserListURL: upstream.URL + "/users", DepartureListURL: upstream.URL + "/departures", DirectoryRequestInterval: -1}}
+			login := &dingtalkLoginHandler{host: host, pool: testPool, provider: notify.DingTalkOAuthProvider{ClientID: "fixture", ClientSecret: "fixture", AppTokenURL: upstream.URL + "/token", DepartmentListURL: upstream.URL + "/departments", UserListURL: upstream.URL + "/users", UserDetailURL: upstream.URL + "/detail", DepartureListURL: upstream.URL + "/departures", DirectoryRequestInterval: -1}}
 			job := login.directorySyncJob()
 			scopes := job.Scopes
 			job.Scopes = func(ctx context.Context, now time.Time) ([]scheduler.Scope, error) {

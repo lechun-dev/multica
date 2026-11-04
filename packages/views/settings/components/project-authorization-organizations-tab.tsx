@@ -141,6 +141,8 @@ export function ProjectAuthorizationOrganizationsTab() {
       ]);
       if (result.departure_sync_status === "unavailable") {
         toast.warning(t(($) => $.project_authorization_organizations.sync_departures_incomplete));
+      } else if (result.managers_failed > 0) {
+        toast.warning(t(($) => $.project_authorization_organizations.sync_managers_incomplete));
       } else {
         toast.success(t(($) => $.project_authorization_organizations.sync_success));
       }
@@ -306,10 +308,13 @@ export function ProjectAuthorizationOrganizationsTab() {
                   <span>{t(($) => $.project_authorization_organizations.sync_users_created, { count: syncResult.users_created })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_users_matched, { count: syncResult.users_matched })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_workspace_members, { count: syncResult.workspace_members_created })}</span>
+                  <span>{t(($) => $.project_authorization_organizations.sync_managers_synced, { count: syncResult.managers_synced })}</span>
+                  <span>{t(($) => $.project_authorization_organizations.sync_managers_failed, { count: syncResult.managers_failed })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_accounts_disabled, { count: syncResult.accounts_disabled })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_accounts_already_disabled, { count: syncResult.accounts_already_disabled })}</span>
                   <span>{t(($) => $.project_authorization_organizations.sync_departures_skipped, { count: syncResult.departures_skipped })}</span>
                 </div>
+                {syncResult.managers_failed > 0 && <p role="status" className="border-t border-surface-border px-4 py-3 text-caption text-destructive">{t(($) => $.project_authorization_organizations.sync_managers_incomplete)}</p>}
                 {syncResult.departure_sync_status !== "complete" && (
                   <p role="status" className="border-t border-surface-border px-4 py-3 text-caption text-muted-foreground">
                     {syncResult.departure_sync_status === "owner_required"

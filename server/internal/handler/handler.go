@@ -263,6 +263,7 @@ type Handler struct {
 	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
 	InvitationRateLimiters       InvitationRateLimiters
 	WebhookDeliveryWorker        *WebhookDeliveryWorker
+	MemberHandoverWorker         *MemberHandoverWorker
 	CloudRuntime                 cloudRuntimeProxy
 	// Test-only HTTP override; nil uses the default client in production.
 	googleOAuthHTTPClient *http.Client
@@ -521,6 +522,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg: cfg,
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	h.MemberHandoverWorker = NewMemberHandoverWorker(h)
 	taskSvc.IssueAgentUseAuthorizer = h.authorizeIssueAgentUse
 	// 2026-09-05 coder(lq): Keep autopilot-created tasks on the same project
 	// authorization path as HTTP and channel-created tasks.
@@ -1217,6 +1219,14 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 	}
 	if agent.Kind != "user" {
 		writeError(w, http.StatusNotFound, "agent not found")
+		return db.Agent{}, false
+	}
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+		return db.Agent{}, false
+	}
+	actorType, actorID := h.agentAccessPrincipal(r, workspaceID)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return db.Agent{}, false
 	}
 	return agent, true

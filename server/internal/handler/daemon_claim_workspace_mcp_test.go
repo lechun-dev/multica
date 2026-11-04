@@ -58,8 +58,8 @@ func setupWorkspaceMcpClaimFixture(t *testing.T, ctx context.Context, name, agen
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create task: %v", err)

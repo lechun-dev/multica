@@ -101,7 +101,7 @@ func TestClaimChatAttachmentsPreserveMessageThenCreatedAtOrder(t *testing.T) {
 	m2b := seedMessageAttachment(t, sessionID, m2, "m2b.png", "2020-01-01T00:00:04Z")
 
 	// A legacy (NULL chat_input_task_id) queued chat task for this session.
-	dbfx.Task(t, agentID, testutil.Cols{
+	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id":      runtimeID,
 		"chat_session_id": sessionID,
 		"status":          "queued",
@@ -175,7 +175,7 @@ func TestClaimChatAttachmentBatchReadErrorFailsClosed(t *testing.T) {
 	m1 := seedLegacyChatUserMessage(t, sessionID, "with a file", "2020-01-01T00:00:01Z")
 	seedMessageAttachment(t, sessionID, m1, "doc.png", "2020-01-01T00:00:01Z")
 
-	taskID := dbfx.Task(t, agentID, testutil.Cols{
+	taskID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id":      runtimeID,
 		"chat_session_id": sessionID,
 		"status":          "queued",

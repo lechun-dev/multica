@@ -1777,6 +1777,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Patch("/account-access", h.SetMemberAccountAccess)
+						r.Post("/handover/preview", h.PreviewMemberHandover)
+						r.Post("/handover", h.ExecuteMemberHandover)
 						r.Delete("/", h.DeleteMember)
 					})
 					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)

@@ -130,7 +130,8 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, canViewI
 		memberInWorkspace: dingtalkWorkspaceMemberChecker(pool),
 	}
 	runtime.personalWakeup = personalService
-	bus.Subscribe(protocol.EventCommentCreated, runtime.handleComment)
+	runtime.subscribeCommentEvents(bus)
+	bus.Subscribe(protocol.EventIssueCreated, runtime.handleIssueCreated)
 	slog.Info("dingtalk personal mention outbox enabled")
 
 	config := notify.ConfigFromEnv(os.Getenv)
@@ -141,7 +142,7 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, canViewI
 	}
 
 	store := &notify.SQLStore{DB: sqlDB, Lease: 2 * time.Minute}
-	provider := loggingDingTalkNotifyProvider{next: &notify.DingTalkProvider{
+	provider := loggingDingTalkNotifyProvider{pool: pool, next: &notify.DingTalkProvider{
 		BaseURL:      strings.TrimSpace(config.DingTalkAPIBaseURL),
 		ClientID:     strings.TrimSpace(config.DingTalkClientID),
 		ClientSecret: strings.TrimSpace(config.DingTalkClientSecret),
@@ -155,9 +156,9 @@ func registerDingTalkNotifyRuntime(bus *events.Bus, pool *pgxpool.Pool, canViewI
 	runtime.maxAttempts = config.MaxAttempts
 	runtime.agentOwnerMentions = config.AgentOwnerMentions
 	bus.Subscribe(protocol.EventTaskCompleted, runtime.handleTaskCompleted)
-	bus.Subscribe(protocol.EventIssueCreated, runtime.handleIssueCreated)
 	bus.Subscribe(protocol.EventIssueUpdated, runtime.handleIssueUpdated)
 	go runtime.run(context.Background())
+	go runtime.runHandoverNotificationBridge(context.Background())
 	slog.Info("dingtalk member notifications enabled")
 	return personalService, personalInitErr
 }
@@ -167,6 +168,7 @@ type dingtalkAssignmentIssue struct {
 	workspaceID     string
 	identifier      string
 	title           string
+	description     string
 	assigneeType    string
 	assigneeID      string
 	revision        int64
@@ -179,7 +181,7 @@ type dingtalkAssignmentIssue struct {
 }
 
 func (r *dingtalkNotifyRuntime) handleIssueCreated(e events.Event) {
-	if r == nil || r.store == nil || r.resolver == nil {
+	if r == nil {
 		return
 	}
 	issue := dingtalkAssignmentIssueFromEvent(e)
@@ -196,10 +198,14 @@ func (r *dingtalkNotifyRuntime) handleIssueCreated(e events.Event) {
 	if issue.workspaceID == "" {
 		issue.workspaceID = strings.TrimSpace(e.WorkspaceID)
 	}
-	if issue.id == "" || issue.workspaceID == "" || issue.assigneeType != "member" || issue.assigneeID == "" {
+	if issue.id == "" || issue.workspaceID == "" {
 		return
 	}
 	r.enrichAssignmentIssue(context.Background(), &issue)
+	r.enqueueIssueCreatedDescriptionMentions(issue)
+	if issue.assigneeType != "member" || issue.assigneeID == "" {
+		return
+	}
 	r.enqueueAssignmentNotification(issue, issue.assigneeID, notify.AssignmentAdded, true)
 }
 
@@ -291,8 +297,32 @@ func (r *dingtalkNotifyRuntime) enqueueAssignmentNotification(issue dingtalkAssi
 		IssueIdentifier: identifier, IssueTitle: title, SourceURL: sourceURL,
 		IncludeDetails: includeDetails, OccurredAt: issue.occurredAt,
 	}
-	if kind == notify.AssignmentAdded && issue.actorType == "member" && issue.actorID != "" {
-		r.enqueuePersonalAssignmentNotification(ctx, issue, issue.actorID, recipientID, event, created)
+	if created && includeDetails && r.canViewIssue != nil && r.memberInWorkspace != nil && recipientID != issue.actorID && recipientID != r.personalMentionSenderUserID(issue.workspaceID, issue.actorType, issue.actorID) {
+		for _, mention := range util.ParseMentions(issue.description) {
+			if mention.Type == "member" && mention.ID == recipientID {
+				event.MentionText = issue.description
+				break
+			}
+		}
+	}
+	senderID := ""
+	if issue.actorType == "member" {
+		senderID = issue.actorID
+	} else if created && event.MentionText != "" {
+		ownerID := r.personalMentionSenderUserID(issue.workspaceID, issue.actorType, issue.actorID)
+		if ownerID != "" && r.issueCreatedPersonalMentionsEnabled(ctx, issue.workspaceID, ownerID) {
+			senderID = ownerID
+		}
+	}
+	if kind == notify.AssignmentAdded && senderID != "" {
+		personalEvent := event
+		if personalEvent.MentionText != "" && !r.issueCreatedPersonalMentionsEnabled(ctx, issue.workspaceID, senderID) {
+			personalEvent.MentionText = ""
+		}
+		r.enqueuePersonalAssignmentNotification(ctx, issue, senderID, recipientID, personalEvent, created)
+	}
+	if r.store == nil || r.resolver == nil {
+		return
 	}
 	messages, failures, err := notify.BuildAssignmentMessage(ctx, event, r.resolver)
 	if err != nil {
@@ -326,6 +356,9 @@ func dingtalkAssignmentIssueFromEvent(e events.Event) dingtalkAssignmentIssue {
 		issue.workspaceID = strings.TrimSpace(value.WorkspaceID)
 		issue.identifier = strings.TrimSpace(value.Identifier)
 		issue.title = strings.TrimSpace(value.Title)
+		if value.Description != nil {
+			issue.description = *value.Description
+		}
 		issue.assigneeType = dingtalkStringValue(value.AssigneeType)
 		issue.assigneeID = dingtalkStringValue(value.AssigneeID)
 		issue.revision = value.Revision
@@ -336,6 +369,14 @@ func dingtalkAssignmentIssueFromEvent(e events.Event) dingtalkAssignmentIssue {
 		issue.workspaceID = dingtalkStringValue(value["workspace_id"])
 		issue.identifier = dingtalkStringValue(value["identifier"])
 		issue.title = dingtalkStringValue(value["title"])
+		switch description := value["description"].(type) {
+		case string:
+			issue.description = description
+		case *string:
+			if description != nil {
+				issue.description = *description
+			}
+		}
 		issue.assigneeType = dingtalkStringValue(value["assignee_type"])
 		issue.assigneeID = dingtalkStringValue(value["assignee_id"])
 		issue.revision = dingtalkInt64Value(value["revision"])
@@ -483,6 +524,15 @@ func (r *dingtalkNotifyRuntime) insertPersonalAssignmentNotification(ctx context
 		version = "created"
 	}
 	idempotencyKey := fmt.Sprintf("dingtalk-personal-assignment:%s:%s:%s", issue.id, version, recipientUserID)
+	return r.insertPersonalIssueNotification(ctx, issue, senderUserID, recipientUserID, markdown, idempotencyKey)
+}
+
+// The personal outbox uses comment_id as the source entity ID for both
+// comment and issue notifications, matching existing assignment delivery.
+func (r *dingtalkNotifyRuntime) insertPersonalIssueNotification(ctx context.Context, issue dingtalkAssignmentIssue, senderUserID, recipientUserID, markdown, idempotencyKey string) (bool, error) {
+	if r == nil || r.pool == nil {
+		return false, nil
+	}
 	result, err := r.pool.Exec(ctx, `
 		INSERT INTO dingtalk_personal_message (
 		    workspace_id, comment_id, sender_user_id, sender_ding_user_id,
@@ -761,25 +811,56 @@ func superviseDingTalkNotifyWorker(ctx context.Context, minDelay, maxDelay time.
 	}
 }
 
-func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
+func (r *dingtalkNotifyRuntime) subscribeCommentEvents(bus *events.Bus) {
+	bus.Subscribe(protocol.EventCommentCreated, r.handleComment)
+	bus.Subscribe(protocol.EventCommentUpdated, r.handleCommentUpdated)
+}
+
+func dingtalkCommentFromEvent(e events.Event) (handler.CommentResponse, bool) {
 	payload, ok := e.Payload.(map[string]any)
+	if !ok {
+		return handler.CommentResponse{}, false
+	}
+	switch c := payload["comment"].(type) {
+	case handler.CommentResponse:
+		return c, true
+	case map[string]any:
+		var comment handler.CommentResponse
+		comment.ID, _ = c["id"].(string)
+		comment.IssueID, _ = c["issue_id"].(string)
+		comment.Content, _ = c["content"].(string)
+		comment.AuthorType, _ = c["author_type"].(string)
+		comment.AuthorID, _ = c["author_id"].(string)
+		comment.Revision = dingtalkInt64Value(c["revision"])
+		return comment, true
+	default:
+		return handler.CommentResponse{}, false
+	}
+}
+
+func (r *dingtalkNotifyRuntime) handleCommentUpdated(e events.Event) {
+	comment, ok := dingtalkCommentFromEvent(e)
+	if !ok || e.PreviousCommentContent == nil || comment.ID == "" || comment.Content == "" ||
+		comment.AuthorType == "system" || comment.Revision < 1 || e.ActorID == "" {
+		return
+	}
+	mentions := util.CommentEditMentions(*e.PreviousCommentContent, comment.Content)
+	if len(mentions) == 0 {
+		return
+	}
+	// An edit is a new action. Never send as the original author when an
+	// administrator edited somebody else's comment.
+	r.enqueuePersonalMentions(e.WorkspaceID, comment.ID, comment.IssueID, comment.Content,
+		e.ActorType, e.ActorID, mentions, comment.Revision, true)
+}
+
+func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
+	comment, ok := dingtalkCommentFromEvent(e)
 	if !ok {
 		return
 	}
-	var commentID, issueID, content, actorType, actorID string
-	switch c := payload["comment"].(type) {
-	case handler.CommentResponse:
-		commentID, issueID, content, actorType = c.ID, c.IssueID, c.Content, c.AuthorType
-		actorID = c.AuthorID
-	case map[string]any:
-		commentID, _ = c["id"].(string)
-		issueID, _ = c["issue_id"].(string)
-		content, _ = c["content"].(string)
-		actorType, _ = c["author_type"].(string)
-		actorID, _ = c["author_id"].(string)
-	default:
-		return
-	}
+	commentID, issueID, content := comment.ID, comment.IssueID, comment.Content
+	actorType, actorID := comment.AuthorType, comment.AuthorID
 	if commentID == "" || content == "" || actorType == "system" {
 		return
 	}
@@ -790,7 +871,7 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 		actorID = e.ActorID
 	}
 	mentions := util.ParseMentions(content)
-	r.enqueuePersonalMentions(e.WorkspaceID, commentID, issueID, content, actorType, actorID, mentions)
+	r.enqueuePersonalMentions(e.WorkspaceID, commentID, issueID, content, actorType, actorID, mentions, comment.Revision, false)
 	if r.store == nil || r.resolver == nil {
 		return
 	}
@@ -856,7 +937,7 @@ func (r *dingtalkNotifyRuntime) handleComment(e events.Event) {
 	slog.Info("dingtalk notify: mentions enqueued", "event_id", commentID, "workspace_id", e.WorkspaceID, "target_count", len(messages))
 }
 
-func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, issueID, content, actorType, actorID string, mentions []util.Mention) {
+func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, issueID, content, actorType, actorID string, mentions []util.Mention, revision int64, updated bool) {
 	if r == nil || r.pool == nil || strings.TrimSpace(actorID) == "" {
 		return
 	}
@@ -896,6 +977,9 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 		event.Actor.Name = contextData.actorName
 	}
 	markdown := notify.FormatPersonalMentionText(event)
+	if updated {
+		markdown = "**评论已更新**\n\n" + markdown
+	}
 	seen := make(map[string]struct{}, len(mentions))
 	enqueued := 0
 	for _, mention := range mentions {
@@ -907,6 +991,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			continue
 		}
 		seen[targetID] = struct{}{}
+		idempotencyKey := fmt.Sprintf("dingtalk-personal-mention:%s:%d:%s", commentID, revision, targetID)
 		result, err := r.pool.Exec(context.Background(), `
 			INSERT INTO dingtalk_personal_message (
 			    workspace_id, comment_id, sender_user_id, sender_ding_user_id,
@@ -915,8 +1000,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			)
 			SELECT $1::uuid, $2::uuid, $3::uuid, sender.ding_user_id,
 			       NULLIF(sender.union_id, ''), NULLIF($6, ''), $4::uuid,
-			       recipient.ding_user_id, $5,
-			       'dingtalk-personal-mention:' || $2::text || ':' || $4::text
+			       recipient.ding_user_id, $5, $7
 			FROM LATERAL (
 			    SELECT COALESCE(ding_user_id, '') AS ding_user_id,
 			           COALESCE(union_id, '') AS union_id
@@ -944,7 +1028,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			)
 			ON CONFLICT (idempotency_key) DO NOTHING`,
 			workspaceID, commentID, senderUserID, targetID, markdown,
-			strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")))
+			strings.TrimSpace(os.Getenv("DINGTALK_CORP_ID")), idempotencyKey)
 		if err != nil {
 			slog.Warn("dingtalk personal mention: enqueue failed", "comment_id", commentID, "target_id", targetID, "error", err)
 			continue
@@ -953,7 +1037,7 @@ func (r *dingtalkNotifyRuntime) enqueuePersonalMentions(workspaceID, commentID, 
 			enqueued++
 			continue
 		}
-		reason, reasonErr := r.personalMentionEnqueueSkipReason(workspaceID, commentID, senderUserID, targetID)
+		reason, reasonErr := r.personalMentionEnqueueSkipReason(workspaceID, idempotencyKey, senderUserID, targetID)
 		if reasonErr != nil {
 			slog.Warn("dingtalk personal mention: enqueue produced no row and diagnosis failed", "comment_id", commentID, "target_id", targetID, "error", reasonErr)
 			continue
@@ -985,13 +1069,13 @@ func (r *dingtalkNotifyRuntime) personalMentionSenderUserID(workspaceID, actorTy
 	}
 }
 
-func (r *dingtalkNotifyRuntime) personalMentionEnqueueSkipReason(workspaceID, commentID, senderUserID, recipientUserID string) (string, error) {
+func (r *dingtalkNotifyRuntime) personalMentionEnqueueSkipReason(workspaceID, idempotencyKey, senderUserID, recipientUserID string) (string, error) {
 	var reason string
 	err := r.pool.QueryRow(context.Background(), `
 		SELECT CASE
 		    WHEN EXISTS (
 		        SELECT 1 FROM dingtalk_personal_message
-		        WHERE idempotency_key = 'dingtalk-personal-mention:' || $2::text || ':' || $4::text
+		        WHERE idempotency_key = $2::text
 		    ) THEN 'duplicate'
 		    WHEN NOT EXISTS (
 		        SELECT 1 FROM member WHERE workspace_id = $1::uuid AND user_id = $3::uuid
@@ -1014,7 +1098,7 @@ func (r *dingtalkNotifyRuntime) personalMentionEnqueueSkipReason(workspaceID, co
 		          AND COALESCE(ding_user_id, '') <> ''
 		    ) THEN 'recipient_identity_not_send_capable'
 		    ELSE 'unknown'
-		END`, workspaceID, commentID, senderUserID, recipientUserID).Scan(&reason)
+		END`, workspaceID, idempotencyKey, senderUserID, recipientUserID).Scan(&reason)
 	return reason, err
 }
 
@@ -1173,9 +1257,34 @@ func (dingtalkMentionResolver) AgentChannels(context.Context, string, string) ([
 	return nil, nil
 }
 
-type loggingDingTalkNotifyProvider struct{ next notify.Provider }
+type loggingDingTalkNotifyProvider struct {
+	next notify.Provider
+	pool *pgxpool.Pool
+}
 
 func (p loggingDingTalkNotifyProvider) Send(ctx context.Context, message notify.Message) error {
+	// Recheck membership and account availability at delivery. A receiving leader
+	// remains eligible if they also have the workspace owner role.
+	if strings.HasPrefix(message.EventID, "handover-") {
+		if p.pool == nil {
+			return notify.RetryableError{Err: errors.New("handover recipient verification is unavailable")}
+		}
+		var allowed bool
+		err := p.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member m JOIN "user" u ON u.id=m.user_id
+ WHERE m.workspace_id=$1 AND m.user_id=$2::uuid AND u.account_disabled_at IS NULL)`, message.WorkspaceID, message.TargetID).Scan(&allowed)
+		if err != nil {
+			return notify.RetryableError{Err: err}
+		}
+		if !allowed {
+			_, err = p.pool.Exec(ctx, `UPDATE member_handover_notifications SET status='cancelled',last_error='recipient_notifications_suppressed'
+ WHERE workspace_id=$1 AND event_id=$2 AND recipient_user_id=$3::uuid`, message.WorkspaceID, message.EventID, message.TargetID)
+			if err != nil {
+				return notify.RetryableError{Err: err}
+			}
+			slog.Info("handover notification suppressed", "event_id", message.EventID, "workspace_id", message.WorkspaceID)
+			return notify.SuppressedDelivery{Reason: "recipient_notifications_suppressed"}
+		}
+	}
 	if p.next == nil {
 		return errors.New("dingtalk notify provider is unavailable")
 	}
@@ -1186,4 +1295,23 @@ func (p loggingDingTalkNotifyProvider) Send(ctx context.Context, message notify.
 	}
 	slog.Info("dingtalk notify: delivered", "event_id", message.EventID, "workspace_id", message.WorkspaceID, "target_id", message.TargetID)
 	return nil
+}
+
+// Intent routing and Mission delivery are independent from daily handover retries.
+func (r *dingtalkNotifyRuntime) runHandoverNotificationBridge(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := handler.FlushMemberHandoverNotifications(attempt, r.pool, r.canViewIssue)
+		cancel()
+		if err != nil {
+			slog.WarnContext(ctx, "handover Mission intent routing failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

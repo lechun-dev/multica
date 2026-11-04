@@ -47,13 +47,13 @@ func TestClaimTask_ChatResumesCancelledTurnSession(t *testing.T) {
 	dbfx.Exec(t, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, chat_session_id,
-			status, priority, started_at, completed_at, session_id, work_dir
+			status, priority, started_at, completed_at, session_id, work_dir, originator_user_id, accountable_user_id
 		)
-		VALUES ($1, $2, $3, 'cancelled', 0, now(), now(), 'cancelled-turn-session', '/tmp/cancelled-turn-workdir')
+		VALUES ($1, $2, $3, 'cancelled', 0, now(), now(), 'cancelled-turn-session', '/tmp/cancelled-turn-workdir', (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 	dbfx.Exec(t, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
@@ -83,23 +83,23 @@ func TestClaimTask_ChatCancelledSessionStaysExcludedWhenRetired(t *testing.T) {
 	dbfx.Exec(t, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, chat_session_id,
-			status, priority, started_at, completed_at, session_id, work_dir
+			status, priority, started_at, completed_at, session_id, work_dir, originator_user_id, accountable_user_id
 		)
 		VALUES ($1, $2, $3, 'cancelled', 0, now() - interval '5 minutes', now() - interval '4 minutes',
-		        'retired-cancelled-session', '/tmp/retired-cancelled-workdir')
+		        'retired-cancelled-session', '/tmp/retired-cancelled-workdir', (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 	// A later run resumed that session, could not use it, and retired it.
 	dbfx.Exec(t, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, chat_session_id,
-			status, priority, started_at, completed_at, retired_session_id
+			status, priority, started_at, completed_at, retired_session_id, originator_user_id, accountable_user_id
 		)
 		VALUES ($1, $2, $3, 'completed', 0, now() - interval '2 minutes', now() - interval '1 minutes',
-		        'retired-cancelled-session')
+		        'retired-cancelled-session', (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 	dbfx.Exec(t, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
@@ -126,13 +126,13 @@ func TestClaimTask_IssueResumesCancelledTaskSession(t *testing.T) {
 	dbfx.Exec(t, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id,
-			status, priority, started_at, completed_at, session_id, work_dir
+			status, priority, started_at, completed_at, session_id, work_dir, originator_user_id, accountable_user_id
 		)
-		VALUES ($1, $2, $3, 'cancelled', 0, now(), now(), 'cancelled-issue-session', '/tmp/cancelled-issue-workdir')
+		VALUES ($1, $2, $3, 'cancelled', 0, now(), now(), 'cancelled-issue-session', '/tmp/cancelled-issue-workdir', (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, issueID)
 	dbfx.Exec(t, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, issueID)
 
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
@@ -267,8 +267,8 @@ func TestCancelTask_PointerAdvanceIsAtomicWithStatusFlip(t *testing.T) {
 
 	// The follow-up the user queued while the turn was still running.
 	dbfx.Exec(t, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 
 	// Hold the chat row from another connection so the pointer write blocks.
@@ -355,8 +355,8 @@ func TestPinTaskSession_LateCancelledPinAdvancesChatPointer(t *testing.T) {
 	pinTaskSessionViaAPI(t, taskID, daemonID, "turn2-session", "/tmp/turn2-workdir")
 
 	dbfx.Exec(t, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
@@ -399,11 +399,11 @@ func TestPinTaskSession_LateCancelledPinYieldsToNewerTurn(t *testing.T) {
 	dbfx.Exec(t, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, chat_session_id,
-			status, priority, created_at, started_at, completed_at, session_id, work_dir
+			status, priority, created_at, started_at, completed_at, session_id, work_dir, originator_user_id, accountable_user_id
 		)
 		VALUES ($1, $2, $3, 'completed', 0, now() - interval '2 minutes',
 		        now() - interval '2 minutes', now() - interval '1 minutes',
-		        'turn3-session', '/tmp/turn3-workdir')
+		        'turn3-session', '/tmp/turn3-workdir', (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 
 	pinTaskSessionViaAPI(t, cancelledID, daemonID, "turn2-session", "/tmp/turn2-workdir")
@@ -443,8 +443,8 @@ func TestPinTaskSession_PointerAdvanceIsAtomicWithPin(t *testing.T) {
 	})
 
 	dbfx.Exec(t, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 	`, agentID, runtimeID, chatSessionID)
 
 	blockTx := beginWarmedTx(t, ctx)
@@ -944,9 +944,9 @@ func TestPinTaskSession_LateCancelledPin(t *testing.T) {
 		}
 		dbfx.QueryRow(t, `
 			INSERT INTO agent_task_queue (
-				agent_id, runtime_id, status, priority, started_at, completed_at, session_id
+				agent_id, runtime_id, status, priority, started_at, completed_at, session_id, originator_user_id, accountable_user_id
 			)
-			VALUES ($1, $2, $3, 0, now(), now(), $4)
+			VALUES ($1, $2, $3, 0, now(), now(), $4, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 			RETURNING id
 		`, agentID, runtimeID, status, session).Scan(&id)
 		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, id) })

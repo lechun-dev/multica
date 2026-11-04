@@ -7,13 +7,14 @@ import { buildCreateAgentRequest, type AgentDraft } from "@multica/core/agents";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { Agent } from "@multica/core/types";
+import type { Agent, MemberWithUser } from "@multica/core/types";
 import {
   cacheAgentResponse,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
+import { useAgentSharingConfirmation } from "../components/use-agent-sharing-confirmation";
 
 interface AgentCreateErrors {
   nameError: string | null;
@@ -42,6 +43,7 @@ export function classifyAgentCreateError(
  */
 export function useCreateAgentSubmit(options: {
   draft: AgentDraft;
+  members?: MemberWithUser[];
   runtimeId: string | null;
   squadId: string | null;
   /** Creation-source attribution for the `agent_created` analytics event. */
@@ -56,6 +58,7 @@ export function useCreateAgentSubmit(options: {
   const navigation = useNavigation();
   const qc = useQueryClient();
 
+  const { confirmSharing, sharingConfirmation } = useAgentSharingConfirmation();
   const [creating, setCreating] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -69,14 +72,14 @@ export function useCreateAgentSubmit(options: {
     setNameError(null);
     setFormError(null);
     try {
-      const agent = await api.createAgent(
-        buildCreateAgentRequest({
-          draft,
-          runtimeId,
-          template,
-          duplicateSource,
-        }),
-      );
+      const request = buildCreateAgentRequest({ draft, runtimeId, template, duplicateSource });
+      if (request.permission_mode === "public_to") {
+        if (!(await confirmSharing({ names: [request.name], targets: request.invocation_targets ?? [], members: options.members }))) {
+          setCreating(false);
+          return;
+        }
+      }
+      const agent = await api.createAgent(request);
       if (!agent.id) throw new Error(t(($) => $.creation_studio.create_failed));
 
       if (squadId) {
@@ -130,6 +133,7 @@ export function useCreateAgentSubmit(options: {
   };
 
   return {
+    sharingConfirmation,
     create,
     creating,
     nameError,
