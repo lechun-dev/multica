@@ -1,11 +1,17 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
@@ -90,6 +96,9 @@ func handoverFixture(t *testing.T) (*testutil.Fixture, string, string, string, s
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(handoverTestLogWriter{t}, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	ws := dbfx.Workspace(t, "Handover fixture", "handover-"+time.Now().Format("150405.000000000"))
 	fx := testutil.New(dbfx.Pool, ws, testUserID)
 	fx.Member(t, ws, testUserID, "owner")
@@ -202,5 +211,49 @@ func TestMemberHandoverAuthorityAndManualReceiver(t *testing.T) {
 	handoverRequest(t, testUserID, ws, member, false, map[string]any{"recipient_user_id": recipient}).Want(200).JSON(&manual)
 	if manual.PreviewID == "" || manual.RecipientUserID != recipient {
 		t.Fatal("manual active receiver did not produce a preview")
+	}
+}
+
+// Attach diagnostics to the test event so CI's failure-only output retains them.
+type handoverTestLogWriter struct{ t *testing.T }
+
+func (w handoverTestLogWriter) Write(p []byte) (int, error) {
+	w.t.Helper()
+	w.t.Log(strings.TrimSpace(string(p)))
+	return len(p), nil
+}
+
+func TestHandoverErrorDiagnosticsPreserveHTTPContract(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"database failure", &pgconn.PgError{Code: "23514", Message: "fixture constraint failed", Detail: "sensitive fixture detail"}, 500},
+		{"serialization conflict", &pgconn.PgError{Code: "40001"}, 409},
+		{"deadlock", &pgconn.PgError{Code: "40P01"}, 409},
+		{"validation", handoverInvalid(403, "recipient unavailable"), 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs.Reset()
+			w := httptest.NewRecorder()
+			writeHandoverError(w, fmt.Errorf("handover checklist create issue: %w", tc.err))
+			if w.Code != tc.status {
+				t.Fatalf("status: got %d, want %d", w.Code, tc.status)
+			}
+			if strings.Contains(w.Body.String(), "fixture") || strings.Contains(w.Body.String(), "SQLSTATE") || strings.Contains(w.Body.String(), "checklist") {
+				t.Fatalf("API leaked internal diagnostic: %s", w.Body.String())
+			}
+			if tc.status == 500 && (!strings.Contains(logs.String(), "handover checklist create issue") || !strings.Contains(logs.String(), "sqlstate=23514")) {
+				t.Fatalf("stage or SQLSTATE missing from server diagnostics: %s", logs.String())
+			}
+			if strings.Contains(logs.String(), "sensitive fixture detail") {
+				t.Fatal("database detail leaked into diagnostics")
+			}
+		})
 	}
 }

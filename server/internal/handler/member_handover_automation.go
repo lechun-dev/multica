@@ -132,29 +132,40 @@ func lockHandoverPeople(ctx context.Context, tx pgx.Tx, ids []string) error {
 	return nil
 }
 
-func (h *Handler) runAutomaticMemberHandover(ctx context.Context, ws, actor, memberID string) (string, string, error) {
+func (h *Handler) runAutomaticMemberHandover(ctx context.Context, ws, actor, memberID string) (status, reason string, err error) {
+	stage := "begin transaction"
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("automatic handover %s: %w", stage, err)
+		}
+	}()
 	policy := service.ResolveIssueCountPolicy(ctx, h.Entitlements, parseUUID(ws))
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return "", "", err
 	}
 	defer tx.Rollback(ctx)
+	stage = "set isolation"
 	if _, err = tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`); err != nil {
 		return "", "", err
 	}
+	stage = "configure timeouts"
 	if err = configureHandoverTransaction(ctx, tx); err != nil {
 		return "", "", err
 	}
 	// Serializable reads revalidate directory evidence without holding its global lock.
+	stage = "lock source"
 	for _, key := range []string{"member_handover:" + ws + ":" + memberID} {
 		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, key); err != nil {
 			return "", "", err
 		}
 	}
+	stage = "validate source"
 	source, err := validateHandoverPeople(ctx, tx, ws, memberID, actor, "")
 	if err != nil {
 		return automaticHandoverValidation(err)
 	}
+	stage = "read departure evidence"
 	var eligible bool
 	if err = tx.QueryRow(ctx, `SELECT eligible FROM member_handover_automation WHERE workspace_id=$1 AND source_user_id=$2::uuid`, ws, source).Scan(&eligible); err != nil {
 		return "", "", err
@@ -162,17 +173,21 @@ func (h *Handler) runAutomaticMemberHandover(ctx context.Context, ws, actor, mem
 	if !eligible {
 		return "skipped", "", nil
 	}
+	stage = "load resources"
 	projects, issues, err := loadHandoverResources(ctx, tx, ws, source, false)
 	if err != nil {
 		return "", "", err
 	}
 	if len(projects)+len(issues) == 0 {
+		stage = "save no-work status"
 		if _, err = tx.Exec(ctx, `UPDATE member_handover_automation SET status=CASE WHEN handover_id IS NULL THEN 'no_work' ELSE 'completed' END,reason='',attempted_at=now() WHERE workspace_id=$1 AND source_user_id=$2::uuid`, ws, source); err != nil {
 			return "", "", err
 		}
+		stage = "commit no-work status"
 		return "no_work", "", tx.Commit(ctx)
 	}
 	p := memberHandoverPreview{SourceUserID: source, ManagerStatus: "not_synced", ManagerSyncStatus: "not_synced"}
+	stage = "load manager"
 	if err = loadHandoverManager(ctx, tx, ws, &p); err != nil {
 		return "", "", err
 	}
@@ -183,11 +198,13 @@ func (h *Handler) runAutomaticMemberHandover(ctx context.Context, ws, actor, mem
 		return "pending", "manager_" + p.ManagerStatus, nil
 	}
 	p.RecipientUserID = p.ManagerUserID
+	stage = "validate recipient"
 	if _, err = validateHandoverPeople(ctx, tx, ws, memberID, actor, p.RecipientUserID); err != nil {
 		return automaticHandoverValidation(err)
 	}
 	// Serializable reads protect the suspension ceiling; account/membership
 	// locks are acquired only at commit so resource processing cannot hold them.
+	stage = "check manageable accounts"
 	allowed, err := h.Queries.WithTx(tx).ListManageableAccounts(ctx, db.ListManageableAccountsParams{WorkspaceID: parseUUID(ws), ActorID: parseUUID(actor)})
 	if err != nil {
 		return "", "", err
@@ -201,32 +218,40 @@ func (h *Handler) runAutomaticMemberHandover(ctx context.Context, ws, actor, mem
 	if !manageable {
 		return "pending", "source_not_manageable", nil
 	}
+	stage = "lock resources"
 	p.Projects, p.Issues, err = loadHandoverResources(ctx, tx, ws, source, true)
 	if err != nil {
 		return "", "", err
 	}
 	if len(p.Projects)+len(p.Issues) == 0 {
+		stage = "save locked no-work status"
 		_, err = tx.Exec(ctx, `UPDATE member_handover_automation SET status=CASE WHEN handover_id IS NULL THEN 'no_work' ELSE 'completed' END,reason='',attempted_at=now() WHERE workspace_id=$1 AND source_user_id=$2::uuid`, ws, source)
 		if err == nil {
+			stage = "commit locked no-work status"
 			err = tx.Commit(ctx)
 		}
 		return "no_work", "", err
 	}
 	body, _ := json.Marshal(p)
+	stage = "save preview"
 	err = tx.QueryRow(ctx, `INSERT INTO member_handovers(workspace_id,source_member_id,source_user_id,recipient_user_id,actor_id,preview,expires_at,automatic)
   VALUES($1,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::jsonb,now()+interval '15 minutes',true) RETURNING id::text`, ws, memberID, source, p.RecipientUserID, actor, body).Scan(&p.PreviewID)
 	if err != nil {
 		return "", "", err
 	}
+	stage = "apply permissions"
 	if err = h.applyMemberHandover(ctx, tx, ws, actor, &p, policy); err != nil {
 		return "", "", err
 	}
+	stage = "lock people"
 	if err = lockHandoverPeople(ctx, tx, []string{actor, source, p.RecipientUserID}); err != nil {
 		return "", "", err
 	}
+	stage = "revalidate people"
 	if _, err = validateHandoverPeople(ctx, tx, ws, memberID, actor, p.RecipientUserID); err != nil {
 		return automaticHandoverValidation(err)
 	}
+	stage = "commit"
 	if err = tx.Commit(ctx); err != nil {
 		return "", "", err
 	}
@@ -279,14 +304,20 @@ func (h *Handler) recordAutomaticHandoverProblem(ctx context.Context, ws, source
 	return tx.Commit(ctx)
 }
 
-func (h *Handler) applyMemberHandover(ctx context.Context, tx pgx.Tx, ws, actor string, p *memberHandoverPreview, policy service.IssueCountPolicy) error {
+func (h *Handler) applyMemberHandover(ctx context.Context, tx pgx.Tx, ws, actor string, p *memberHandoverPreview, policy service.IssueCountPolicy) (err error) {
+	stage := "grant resources"
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("handover %s: %w", stage, err)
+		}
+	}()
 	repo := &projectAuthRepository{db: tx}
 	for _, group := range []struct {
 		kind  string
 		items []handoverResource
 	}{{"project", p.Projects}, {"issue", p.Issues}} {
 		for _, item := range group.items {
-			var err error
+			stage = "grant " + group.kind
 			if group.kind == "project" {
 				err = repo.PromoteProjectMember(ctx, item.ID, p.RecipientUserID, projectauth.ProjectRole(item.Role))
 				if err == nil {
@@ -298,19 +329,23 @@ func (h *Handler) applyMemberHandover(ctx context.Context, tx pgx.Tx, ws, actor 
 			if err != nil {
 				return err
 			}
+			stage = "record " + group.kind + " resource"
 			if _, err = tx.Exec(ctx, `INSERT INTO member_handover_resources(workspace_id,source_user_id,resource_type,resource_id,recipient_user_id,handover_id)
     VALUES($1,$2::uuid,$3,$4::uuid,$5::uuid,$6::uuid)`, ws, p.SourceUserID, group.kind, item.ID, p.RecipientUserID, p.PreviewID); err != nil {
 				return err
 			}
 		}
 	}
+	stage = "stage checklist"
 	if err := h.stageHandoverChecklist(ctx, tx, ws, actor, p, policy); err != nil {
 		return err
 	}
+	stage = "complete preview"
 	if _, err := tx.Exec(ctx, `UPDATE member_handovers SET completed_at=now() WHERE id=$1::uuid AND workspace_id=$2`, p.PreviewID, ws); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE member_handover_automation SET status='completed',reason='',recipient_user_id=$3::uuid,handover_id=$4::uuid,attempted_at=now() WHERE workspace_id=$1 AND source_user_id=$2::uuid`, ws, p.SourceUserID, p.RecipientUserID, p.PreviewID)
+	stage = "complete automation status"
+	_, err = tx.Exec(ctx, `UPDATE member_handover_automation SET status='completed',reason='',recipient_user_id=$3::uuid,handover_id=$4::uuid,attempted_at=now() WHERE workspace_id=$1 AND source_user_id=$2::uuid`, ws, p.SourceUserID, p.RecipientUserID, p.PreviewID)
 	return err
 }
 

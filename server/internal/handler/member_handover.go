@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -60,6 +62,12 @@ func writeHandoverError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "handover changed concurrently; generate a new preview")
 		return
 	}
+	// Keep database details in server diagnostics, never in the API response.
+	attrs := []any{"error", err}
+	if pgErr != nil {
+		attrs = append(attrs, "sqlstate", pgErr.Code)
+	}
+	slog.Error("member handover failed", attrs...)
 	writeError(w, http.StatusInternalServerError, "failed to prepare or complete handover")
 }
 func decodeHandoverInput(w http.ResponseWriter, r *http.Request, input any) bool {
@@ -113,12 +121,12 @@ func (h *Handler) PreviewMemberHandover(w http.ResponseWriter, r *http.Request) 
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover preview begin transaction: %w", err))
 		return
 	}
 	defer tx.Rollback(r.Context())
 	if _, err = tx.Exec(r.Context(), `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover preview set isolation: %w", err))
 		return
 	}
 	preview := memberHandoverPreview{Projects: []handoverResource{}, Issues: []handoverResource{}, ManagerStatus: "not_synced", ManagerSyncStatus: "not_synced"}
@@ -127,7 +135,7 @@ func (h *Handler) PreviewMemberHandover(w http.ResponseWriter, r *http.Request) 
 		err = loadHandoverManager(r.Context(), tx, workspaceID, &preview)
 	}
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover preview validate source or load manager: %w", err))
 		return
 	}
 	recipient := input.RecipientUserID
@@ -142,7 +150,7 @@ func (h *Handler) PreviewMemberHandover(w http.ResponseWriter, r *http.Request) 
 				recipient = ""
 				preview.ManagerStatus = "inactive"
 			} else {
-				writeHandoverError(w, err)
+				writeHandoverError(w, fmt.Errorf("handover preview validate recipient: %w", err))
 				return
 			}
 		}
@@ -150,7 +158,7 @@ func (h *Handler) PreviewMemberHandover(w http.ResponseWriter, r *http.Request) 
 	preview.RecipientUserID = recipient
 	preview.Projects, preview.Issues, err = loadHandoverResources(r.Context(), tx, workspaceID, preview.SourceUserID, false)
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover preview load resources: %w", err))
 		return
 	}
 	if recipient != "" && len(preview.Projects)+len(preview.Issues) > 0 {
@@ -161,12 +169,12 @@ func (h *Handler) PreviewMemberHandover(w http.ResponseWriter, r *http.Request) 
 		err = tx.QueryRow(r.Context(), `INSERT INTO member_handovers (workspace_id,source_member_id,source_user_id,recipient_user_id,actor_id,preview,expires_at)
    VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::jsonb,$7) RETURNING id::text`, workspaceID, memberID, preview.SourceUserID, recipient, actorID, body, expires).Scan(&preview.PreviewID)
 		if err != nil {
-			writeHandoverError(w, err)
+			writeHandoverError(w, fmt.Errorf("handover preview save preview: %w", err))
 			return
 		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover preview commit: %w", err))
 		return
 	}
 	writeJSON(w, 200, preview)
@@ -323,20 +331,20 @@ func (h *Handler) ExecuteMemberHandover(w http.ResponseWriter, r *http.Request) 
 	policy := service.ResolveIssueCountPolicy(ctx, h.Entitlements, parseUUID(workspaceID))
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute begin transaction: %w", err))
 		return
 	}
 	defer tx.Rollback(r.Context())
 	if _, err = tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE`); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute set isolation: %w", err))
 		return
 	}
 	if err = configureHandoverTransaction(ctx, tx); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute configure timeouts: %w", err))
 		return
 	}
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "member_handover:"+workspaceID+":"+memberID); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute lock source: %w", err))
 		return
 	}
 	var body []byte
@@ -349,12 +357,12 @@ func (h *Handler) ExecuteMemberHandover(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute load preview: %w", err))
 		return
 	}
 	var preview memberHandoverPreview
 	if err = json.Unmarshal(body, &preview); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute decode preview: %w", err))
 		return
 	}
 	preview.PreviewID = input.PreviewID
@@ -370,7 +378,7 @@ func (h *Handler) ExecuteMemberHandover(w http.ResponseWriter, r *http.Request) 
 	var sourceID string
 	sourceID, err = validateHandoverPeople(ctx, tx, workspaceID, memberID, actorID, preview.RecipientUserID)
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute validate people: %w", err))
 		return
 	}
 	if sourceID != preview.SourceUserID {
@@ -379,7 +387,7 @@ func (h *Handler) ExecuteMemberHandover(w http.ResponseWriter, r *http.Request) 
 	}
 	projects, issues, err := loadHandoverResources(ctx, tx, workspaceID, preview.SourceUserID, true)
 	if err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute lock resources: %w", err))
 		return
 	}
 	before, _ := json.Marshal([][]handoverResource{preview.Projects, preview.Issues})
@@ -389,21 +397,21 @@ func (h *Handler) ExecuteMemberHandover(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err = h.applyMemberHandover(ctx, tx, workspaceID, actorID, &preview, policy); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute apply permissions: %w", err))
 		return
 	}
 	// Revalidate under short shared locks at commit. Serializable snapshots reject
 	// concurrent account/role changes without locking directory rows during grants.
 	if err = lockHandoverPeople(ctx, tx, []string{actorID, preview.SourceUserID, preview.RecipientUserID}); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute lock people: %w", err))
 		return
 	}
 	if _, err = validateHandoverPeople(ctx, tx, workspaceID, memberID, actorID, preview.RecipientUserID); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute revalidate people: %w", err))
 		return
 	}
 	if err = tx.Commit(ctx); err != nil {
-		writeHandoverError(w, err)
+		writeHandoverError(w, fmt.Errorf("handover execute commit: %w", err))
 		return
 	}
 	preview.Completed = true
@@ -420,27 +428,30 @@ func recordHandoverGrant(ctx context.Context, tx pgx.Tx, workspaceID, projectID,
 		_, err := tx.Exec(ctx, `INSERT INTO projectauth_access_grants(workspace_id,project_id,issue_id,subject_type,subject_id,role_key,source,granted_by)
    VALUES($1,$2::uuid,NULLIF($3,'')::uuid,'user',$4,$5,'system',$6::uuid) ON CONFLICT DO NOTHING`, workspaceID, projectID, issueID, recipient, role, actorID)
 		if err != nil {
-			return err
+			return fmt.Errorf("handover insert project grant: %w", err)
 		}
 		err = tx.QueryRow(ctx, `SELECT id::text FROM projectauth_access_grants WHERE workspace_id=$1 AND project_id=$2::uuid
    AND issue_id IS NOT DISTINCT FROM NULLIF($3,'')::uuid AND subject_type='user' AND subject_id=$4 AND role_key=$5`, workspaceID, projectID, issueID, recipient, role).Scan(&id)
 		if err != nil {
-			return err
+			return fmt.Errorf("handover read project grant: %w", err)
 		}
 	} else {
 		_, err := tx.Exec(ctx, `INSERT INTO projectauth_issue_access_grants(workspace_id,issue_id,subject_type,subject_id,role_key,source,granted_by)
    VALUES($1,$2::uuid,'user',$3,$4,'system',$5::uuid) ON CONFLICT DO NOTHING`, workspaceID, issueID, recipient, role, actorID)
 		if err != nil {
-			return err
+			return fmt.Errorf("handover insert task grant: %w", err)
 		}
 		err = tx.QueryRow(ctx, `SELECT id::text FROM projectauth_issue_access_grants WHERE workspace_id=$1 AND issue_id=$2::uuid AND subject_type='user' AND subject_id=$3 AND role_key=$4`, workspaceID, issueID, recipient, role).Scan(&id)
 		if err != nil {
-			return err
+			return fmt.Errorf("handover read task grant: %w", err)
 		}
 	}
 	// The receiver needs a durable grant even when an identical older share expired.
 	_, err := tx.Exec(ctx, `INSERT INTO projectauth_grant_constraints(workspace_id,grant_id,origin_kind,origin_id)
   VALUES($1,$2::uuid,'system',$3::uuid) ON CONFLICT(workspace_id,grant_id) DO UPDATE SET
   expires_at=NULL,origin_kind='system',origin_id=EXCLUDED.origin_id,updated_at=now()`, workspaceID, id, handoverID)
-	return err
+	if err != nil {
+		return fmt.Errorf("handover save grant constraints: %w", err)
+	}
+	return nil
 }
