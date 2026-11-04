@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS directory_reporting_lines_external_identity_idx;

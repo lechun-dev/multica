@@ -115,8 +115,8 @@ func enqueueClaimTask(t *testing.T, ctx context.Context, fx squadBriefingClaimFi
 		squadArg = nil
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id)
-		VALUES ($1, $2, $3, 'queued', 0, $4, $5)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, is_leader_task, squad_id, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, $4, $5, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, fx.AgentID, fx.RuntimeID, fx.IssueID, isLeader, squadArg).Scan(&taskID); err != nil {
 		t.Fatalf("enqueue claim task: %v", err)

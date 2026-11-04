@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/events"
+	dbfx "github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -94,55 +95,76 @@ func batchClaimFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (r
 	return rt1, rt2
 }
 
-// TestClaimTasksForRuntimes_MultiRuntimeDrain verifies the machine-level batch
-// claim (MUL-4257): a single call claims across all runtimes, one task per
-// agent per call (matching the singular path's dedup), routes each task to its
-// runtime, respects a subsequent drain, and reports empty once nothing is
-// queued.
+// MultiRuntimeDrain fills capacity in rounds rather than stopping after one
+// claim per agent. Candidate order still gives each runtime a turn first.
 func TestClaimTasksForRuntimes_MultiRuntimeDrain(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
 	svc := NewTaskService(db.New(pool), pool, nil, events.New())
-
 	rt1, rt2 := batchClaimFixture(t, ctx, pool)
 	ids := []pgtype.UUID{util.MustParseUUID(rt1), util.MustParseUUID(rt2)}
-
-	// Call 1: one task per agent (agent1→rt1, agent2→rt2) => 2 tasks, one per runtime.
-	got1, err := svc.ClaimTasksForRuntimes(ctx, ids, 5)
+	got, err := svc.ClaimTasksForRuntimes(ctx, ids, 5)
 	if err != nil {
-		t.Fatalf("call1: %v", err)
+		t.Fatal(err)
 	}
-	if len(got1) != 2 {
-		t.Fatalf("call1 claimed %d tasks, want 2", len(got1))
+	if len(got) != 3 {
+		t.Fatalf("claimed %d tasks, want 3", len(got))
 	}
-	seen := map[string]int{}
-	for _, task := range got1 {
-		seen[util.UUIDToString(task.RuntimeID)]++
+	for i, want := range []string{rt1, rt2, rt1} {
+		if actual := util.UUIDToString(got[i].RuntimeID); actual != want {
+			t.Fatalf("task %d runtime = %s, want %s", i, actual, want)
+		}
 	}
-	if seen[rt1] != 1 || seen[rt2] != 1 {
-		t.Fatalf("call1 runtime distribution = %v, want one task each for rt1/rt2", seen)
-	}
-
-	// Call 2: agent1 still has a second queued task (different issue, capacity 5);
-	// agent2 is drained => exactly 1 task, on rt1.
-	got2, err := svc.ClaimTasksForRuntimes(ctx, ids, 5)
+	got, err = svc.ClaimTasksForRuntimes(ctx, ids, 5)
 	if err != nil {
-		t.Fatalf("call2: %v", err)
+		t.Fatal(err)
 	}
-	if len(got2) != 1 {
-		t.Fatalf("call2 claimed %d tasks, want 1", len(got2))
+	if len(got) != 0 {
+		t.Fatalf("drained batch returned %d tasks", len(got))
 	}
-	if util.UUIDToString(got2[0].RuntimeID) != rt1 {
-		t.Fatalf("call2 claimed runtime = %s, want rt1", util.UUIDToString(got2[0].RuntimeID))
-	}
+}
 
-	// Call 3: everything dispatched => empty.
-	got3, err := svc.ClaimTasksForRuntimes(ctx, ids, 5)
-	if err != nil {
-		t.Fatalf("call3: %v", err)
-	}
-	if len(got3) != 0 {
-		t.Fatalf("call3 claimed %d tasks, want 0", len(got3))
+func TestClaimTasksForRuntimes_AgentCapacityAndRefill(t *testing.T) {
+	for _, capacity := range []int{1, 10} {
+		t.Run(fmt.Sprint(capacity), func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTaskClaimRacePool(t)
+			rt1, _ := batchClaimFixture(t, ctx, pool)
+			var agentID, workspaceID, ownerID string
+			if err := pool.QueryRow(ctx, `UPDATE agent SET max_concurrent_tasks=$2 WHERE runtime_id=$1 RETURNING id, workspace_id, owner_id`, rt1, capacity).Scan(&agentID, &workspaceID, &ownerID); err != nil {
+				t.Fatal(err)
+			}
+			fx := dbfx.New(pool, workspaceID, ownerID)
+			// Fixture already has two tasks; add ten independent issues.
+			for i := range 10 {
+				issueID := fx.Issue(t, fmt.Sprintf("capacity issue %d", i))
+				fx.Task(t, agentID, dbfx.Cols{"issue_id": issueID, "runtime_id": rt1})
+			}
+			svc := NewTaskService(db.New(pool), pool, nil, events.New())
+			ids := []pgtype.UUID{util.MustParseUUID(rt1)}
+			got, err := svc.ClaimTasksForRuntimes(ctx, ids, 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != capacity {
+				t.Fatalf("claimed %d, want capacity %d", len(got), capacity)
+			}
+			blocked, err := svc.ClaimTasksForRuntimes(ctx, ids, 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(blocked) != 0 {
+				t.Fatalf("full agent claimed %d more tasks", len(blocked))
+			}
+			fx.Exec(t, `UPDATE agent_task_queue SET status='completed' WHERE id=$1`, util.UUIDToString(got[0].ID))
+			refilled, err := svc.ClaimTasksForRuntimes(ctx, ids, 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(refilled) != 1 {
+				t.Fatalf("released slot claimed %d tasks, want 1", len(refilled))
+			}
+		})
 	}
 }
 

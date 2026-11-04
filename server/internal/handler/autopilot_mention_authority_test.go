@@ -616,9 +616,9 @@ func TestCreateComment_AutopilotWorkerResultWakesSquadLeader(t *testing.T) {
 }
 
 // 2026-10-09 coder(lq): TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage
-// preserves MUL-4857 lineage isolation under visibility-based invocation. An
-// admin may invoke the visible private agent under their own identity, but must
-// not retain the original author's source_task_id. Deferred reconciliation must
+// preserves MUL-4857 lineage isolation under owner-only private access. An
+// admin cannot invoke an unshared private agent or retain the original author's
+// source_task_id. Deferred reconciliation must
 // not reuse that stale lineage to enqueue another run as the autopilot creator.
 func TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage(t *testing.T) {
 	if testHandler == nil || testPool == nil {
@@ -665,10 +665,9 @@ func TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage(t *testing.T) {
 		t.Fatalf("admin UpdateComment: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// 2026-10-09 coder(lq): The admin can see and invoke the worker. This
-	// explicit edit is allowed, without borrowing the old autopilot lineage.
-	if got := countQueued(); got != 1 {
-		t.Fatalf("admin edit must enqueue its visible agent once; got %d queued", got)
+	// The admin cannot invoke an unshared private worker or borrow the old lineage.
+	if got := countQueued(); got != 0 {
+		t.Fatalf("admin edit must not enqueue an unshared private agent; got %d queued", got)
 	}
 
 	// The stale autopilot lineage MUST be cleared so the deferred reconcile fails closed.
@@ -692,7 +691,7 @@ func TestUpdateComment_AdminEditOfAgentCommentClearsStaleLineage(t *testing.T) {
 		t.Fatalf("load worker task: %v", err)
 	}
 	testHandler.reconcileCommentsOnCompletion(ctx, &workerTask)
-	if got := countQueued(); got != 1 {
-		t.Fatalf("completion reconcile must not add a second run using stale lineage; got %d queued", got)
+	if got := countQueued(); got != 0 {
+		t.Fatalf("completion reconcile must not enqueue using stale lineage; got %d queued", got)
 	}
 }

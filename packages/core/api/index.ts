@@ -15,6 +15,7 @@ export type {
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";
+export type { MemberHandoverPreview } from "./schemas";
 export type { DuplicateIssueErrorBody } from "./schemas";
 export { WSClient } from "./ws-client";
 

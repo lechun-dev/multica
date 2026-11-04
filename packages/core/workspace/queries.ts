@@ -212,3 +212,14 @@ export function agentMcpServersOptions(agentId: string) {
     enabled: agentId !== "",
   });
 }
+
+// Handover changes assignments and authorization projections together. Keys in
+// these families carry workspace identity at position 1.
+export async function invalidateMemberHandover(qc: QueryClient, workspaceId: string) {
+  const families = new Set(["inbox", "issues", "projects", "dashboard", "project-members", "project-access-grants", "project-permissions", "issue-access-control", "issue-effective-access", "issue-access-requests", "effective-access-report"]);
+  await Promise.all([
+    qc.invalidateQueries({ queryKey: workspaceKeys.members(workspaceId) }),
+    qc.invalidateQueries({ queryKey: workspaceKeys.assigneeFrequency(workspaceId) }),
+    qc.invalidateQueries({ predicate: (query) => query.queryKey[1] === workspaceId && families.has(String(query.queryKey[0])) }),
+  ]);
+}

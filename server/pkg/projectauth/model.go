@@ -86,7 +86,13 @@ type OrganizationMember struct {
 	AvatarURL      string        `json:"avatar_url,omitempty"`
 	WorkspaceRole  WorkspaceRole `json:"workspace_role"`
 	// 2026-09-06 coder(lq): True only after a real login, not after directory import.
-	HasLoggedIn bool `json:"has_logged_in"`
+	HasLoggedIn         bool       `json:"has_logged_in"`
+	ManagerUserID       string     `json:"manager_user_id"`
+	ManagerName         string     `json:"manager_name"`
+	ManagerStatus       string     `json:"manager_status"`
+	ManagerSyncStatus   string     `json:"manager_sync_status"`
+	ManagerSuccessfulAt *time.Time `json:"manager_successful_at,omitempty"`
+	ManagerAttemptedAt  *time.Time `json:"manager_attempted_at,omitempty"`
 }
 
 // 2026-08-31 coder(lq): Grant subjects are independent from external login

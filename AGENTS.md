@@ -62,7 +62,7 @@ Root frontend commands and `make check` do not verify mobile. Docs-only changes 
 
 ## API Compatibility
 
-- Human agent visibility is also invocation authority; do not add an independent invoke-only ACL or UI. Delegated calls use the human originator's visibility, not the immediate agent actor's inspection access. Task Member includes AgentUse; Task Viewer remains read-only.
+- Private agents are accessible only to their human owner (including delegated calls on that owner's behalf); workspace owner/admin roles do not grant access. Human agent visibility is also invocation authority; do not add an independent invoke-only ACL or UI. Delegated calls use the human originator's visibility, not the immediate agent actor's inspection access. Task Member includes AgentUse; Task Viewer remains read-only.
 
 Installed desktop clients may talk to newer backends. Preserve response compatibility at the API boundary.
 

@@ -88,7 +88,7 @@ function makeRow(
   };
 }
 
-function renderToolbar(rows: AgentListRow[]) {
+function renderToolbar(rows: AgentListRow[], onClear = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = (nextRows: AgentListRow[]) => (
     <QueryClientProvider client={qc}>
@@ -97,7 +97,7 @@ function renderToolbar(rows: AgentListRow[]) {
           rows={nextRows}
           members={[]}
           currentUserId="user-1"
-          onClear={() => {}}
+          onClear={onClear}
         />
       </I18nProvider>
     </QueryClientProvider>
@@ -151,6 +151,40 @@ describe("AgentBatchToolbar — presence", () => {
 });
 
 describe("AgentBatchToolbar — bulk Set access scope", () => {
+  it("cancels the high-risk warning without saving or clearing selection", async () => {
+    const onClear = vi.fn();
+    renderToolbar([makeRow("a", "user-1")], onClear);
+    fireEvent.click(screen.getByRole("button", { name: "Set access scope" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /Entire workspace/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    const warning = await screen.findByRole("alertdialog");
+    fireEvent.keyDown(warning, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(updateAgentSpy).not.toHaveBeenCalled();
+    expect(onClear).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+  });
+
+  it("keeps the dialog and selection after a partial failure and warns again on retry", async () => {
+    const onClear = vi.fn();
+    updateAgentSpy.mockRejectedValueOnce(new Error("temporarily unavailable"));
+    renderToolbar([makeRow("a", "user-1"), makeRow("b", "user-1")], onClear);
+    fireEvent.click(screen.getByRole("button", { name: "Set access scope" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /Entire workspace/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
+    await waitFor(() => expect(updateAgentSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled());
+    expect(onClear).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByRole("button", { name: "Confirm sharing" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
+    await waitFor(() => expect(onClear).toHaveBeenCalledOnce());
+    expect(updateAgentSpy).toHaveBeenCalledTimes(4);
+  });
+
   it("shows the Set access scope button for active owned agents", () => {
     renderToolbar([makeRow("a", "user-1")]);
     expect(
@@ -229,6 +263,10 @@ describe("AgentBatchToolbar — bulk Set access scope", () => {
     await waitFor(() => expect(apply).toBeEnabled());
 
     fireEvent.click(apply);
+    expect(updateAgentSpy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
+
 
     await waitFor(() => expect(updateAgentSpy).toHaveBeenCalledTimes(2));
     expect(updateAgentSpy.mock.calls.map((call) => call[0]).sort()).toEqual([

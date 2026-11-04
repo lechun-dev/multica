@@ -371,6 +371,7 @@ func TestDingTalkOAuthProviderPrefersEnterpriseEmail(t *testing.T) {
 }
 
 func TestDingTalkOAuthProviderLoadsCompleteDirectory(t *testing.T) {
+	managerReads := 0
 	client := httpDoerFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
 		case "/token":
@@ -387,6 +388,13 @@ func TestDingTalkOAuthProviderLoadsCompleteDirectory(t *testing.T) {
 			} else {
 				return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"list":[]}}`), nil
 			}
+		case "/topapi/v2/user/get":
+			managerReads++
+			var input struct {
+				UserID string `json:"userid"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			return jsonResponse(http.StatusOK, `{"errcode":0,"result":{"userid":"`+input.UserID+`","manager_userid":"0201243712852502"}}`), nil
 		case "/topapi/v2/user/list":
 			var req struct {
 				Cursor int64 `json:"cursor"`
@@ -413,6 +421,14 @@ func TestDingTalkOAuthProviderLoadsCompleteDirectory(t *testing.T) {
 	}
 	if len(snapshot.Members) != 2 {
 		t.Fatalf("members=%d, want 2", len(snapshot.Members))
+	}
+	if managerReads != 2 {
+		t.Fatalf("manager reads=%d, want one per unique employee", managerReads)
+	}
+	for _, member := range snapshot.Members {
+		if member.ManagerReadStatus != "complete" || member.ManagerUserID != "0201243712852502" {
+			t.Fatalf("unexpected reporting line: %+v", member)
+		}
 	}
 }
 
@@ -778,5 +794,46 @@ func TestDingTalkOAuthProviderPreservesOAuthEmailWhenEnterpriseEmailIsEmpty(t *t
 	}
 	if user.DingUserID != "u1" || user.Email != "alice@example.com" {
 		t.Fatalf("user=%+v", user)
+	}
+}
+
+func TestDingTalkManagerDetailValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+		failed           bool
+	}{
+		{"manager ID keeps leading zero", `{"errcode":0,"result":{"userid":"u1","manager_userid":"00012"}}`, "00012", false},
+		{"unset", `{"errcode":0,"result":{"userid":"u1"}}`, "", false},
+		{"missing result", `{"errcode":0}`, "", true},
+		{"wrong employee", `{"errcode":0,"result":{"userid":"u2","manager_userid":"u3"}}`, "", true},
+		{"self manager", `{"errcode":0,"result":{"userid":"u1","manager_userid":"u1"}}`, "", true},
+		{"permission denied", `{"errcode":60011,"errmsg":"no permission"}`, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := DingTalkOAuthProvider{DirectoryRequestInterval: -1, DirectoryRetryDelays: []time.Duration{}, Client: httpDoerFunc(func(r *http.Request) (*http.Response, error) { return jsonResponse(200, tc.body), nil })}
+			got, err := p.loadDingTalkManager(context.Background(), "token", "u1", p.directoryLimiter())
+			if (err != nil) != tc.failed || got != tc.want {
+				t.Fatalf("got %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestDingTalkDirectoryManagerFailureDoesNotDiscardEmployees(t *testing.T) {
+	p := DingTalkOAuthProvider{ClientID: "id", ClientSecret: "secret", AppTokenURL: "https://example.test/token", DepartmentListURL: "https://example.test/departments", UserListURL: "https://example.test/users", DirectoryRequestInterval: -1, DirectoryRetryDelays: []time.Duration{}, Client: httpDoerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/token":
+			return jsonResponse(200, `{"accessToken":"token"}`), nil
+		case "/departments":
+			return jsonResponse(200, `{"errcode":0,"result":[]}`), nil
+		case "/users":
+			return jsonResponse(200, `{"errcode":0,"result":{"list":[{"userid":"u1","name":"Alice"}],"has_more":false}}`), nil
+		default:
+			return jsonResponse(200, `{"errcode":60011,"errmsg":"no permission"}`), nil
+		}
+	})}
+	snapshot, err := p.LoadDirectory(context.Background())
+	if err != nil || len(snapshot.Members) != 1 || snapshot.Members[0].ManagerReadStatus != "failed" {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
 	}
 }

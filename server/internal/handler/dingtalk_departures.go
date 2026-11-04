@@ -42,6 +42,7 @@ type DingTalkSuspensionResult struct {
 	Changes         []auth.AccountAccessChange
 	Skipped         int
 	AlreadyDisabled int
+	VerifiedUsers   []string
 }
 
 // 2026-10-20 coder(lq): Match only an existing active provider binding, never
@@ -173,6 +174,9 @@ func (h *Handler) SuspendDingTalkDepartures(ctx context.Context, tx pgx.Tx, work
 		if err != nil {
 			return result, err
 		}
+		if user.AccountDisabledAt.Valid {
+			result.VerifiedUsers = append(result.VerifiedUsers, id)
+		}
 		if user.AccountDisabledAt.Valid || auth.IsTemporarilyDisabledUser(id, user.Email) {
 			result.AlreadyDisabled++
 			continue
@@ -182,6 +186,7 @@ func (h *Handler) SuspendDingTalkDepartures(ctx context.Context, tx pgx.Tx, work
 			return result, err
 		}
 		if change.Changed {
+			result.VerifiedUsers = append(result.VerifiedUsers, id)
 			result.Changes = append(result.Changes, change)
 		}
 	}

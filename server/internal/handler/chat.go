@@ -369,8 +369,7 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusNotFound, "agent not found")
 		return db.ChatSession{}, false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessAgentRequest(r, agent, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return db.ChatSession{}, false
 	}
@@ -422,8 +421,7 @@ func (h *Handler) gatePublicChatSessionForViewer(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "agent not found")
 		return db.ChatSession{}, false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessAgentRequest(r, agent, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return db.ChatSession{}, false
 	}
@@ -2052,7 +2050,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "task not found")
 			return
 		}
-		if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		if !h.canAccessAgentRequest(r, agent, workspaceID) {
 			writeError(w, http.StatusForbidden, "you do not have access to this agent")
 			return
 		}

@@ -29,10 +29,11 @@ The source agent is left untouched. By default the copy lands on the same
 runtime as the source; pass --runtime-id to fork it onto a different runtime.
 
 Copied by default without a dedicated override flag: conversation starters.
+Copies are private unless permission flags explicitly share them.
 
 Copied by default, each overridable with the matching flag: name (suffixed
 " (copy)"), description, instructions, avatar, custom_args, max_concurrent_tasks,
-invocation permission (permission_mode + allow-list), assigned workspace skills,
+assigned workspace skills,
 and — only when the target runtime is unchanged — model, thinking_level and
 service_tier.
 
@@ -216,9 +217,7 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		body["service_tier"] = v
 	}
 
-	// Invocation permission: copy the source's permission_mode + allow-list by
-	// default; any permission flag (or legacy --visibility) fully defines it
-	// instead, so the two never mix.
+	// Copies start private; explicit permission flags can opt in to sharing.
 	permOverride := cmd.Flags().Changed("permission-mode") ||
 		cmd.Flags().Changed("public-to-workspace") ||
 		cmd.Flags().Changed("public-to-member") ||
@@ -230,12 +229,8 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 		}
 		applyAgentPermissionFlags(cmd, body)
 	} else {
-		if pm := strVal(src, "permission_mode"); pm != "" {
-			body["permission_mode"] = pm
-		}
-		if it, ok := src["invocation_targets"]; ok && it != nil {
-			body["invocation_targets"] = it
-		}
+		body["permission_mode"] = "private"
+		body["invocation_targets"] = []any{}
 	}
 
 	// Workspace skills: copy the source's bindings so they attach in the same

@@ -66,6 +66,9 @@ type DingTalkDirectoryMember struct {
 	Name          string
 	Email         string
 	DepartmentIDs []string
+	ManagerUserID string
+	// ManagerReadStatus distinguishes an unset manager from a failed read.
+	ManagerReadStatus string
 }
 
 // 2026-09-04 coder(lq): Keep directory-sync failures actionable without

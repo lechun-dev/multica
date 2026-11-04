@@ -540,17 +540,18 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 type MemberWithUserResponse struct {
-	ID               string  `json:"id"`
-	WorkspaceID      string  `json:"workspace_id"`
-	UserID           string  `json:"user_id"`
-	Role             string  `json:"role"`
-	CreatedAt        string  `json:"created_at"`
-	Name             string  `json:"name"`
-	Email            string  `json:"email"`
-	AvatarURL        *string `json:"avatar_url"`
-	HasLoggedIn      bool    `json:"has_logged_in"`
-	AccountDisabled  bool    `json:"account_disabled"`
-	CanManageAccount bool    `json:"can_manage_account"`
+	Handover         *memberHandoverStatus `json:"handover,omitempty"`
+	ID               string                `json:"id"`
+	WorkspaceID      string                `json:"workspace_id"`
+	UserID           string                `json:"user_id"`
+	Role             string                `json:"role"`
+	CreatedAt        string                `json:"created_at"`
+	Name             string                `json:"name"`
+	Email            string                `json:"email"`
+	AvatarURL        *string               `json:"avatar_url"`
+	HasLoggedIn      bool                  `json:"has_logged_in"`
+	AccountDisabled  bool                  `json:"account_disabled"`
+	CanManageAccount bool                  `json:"can_manage_account"`
 }
 
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
@@ -579,9 +580,30 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 	for _, id := range manageable {
 		manageableIDs[uuidToString(id)] = true
 	}
+	statuses := map[string]*memberHandoverStatus{}
+	isOwner := false
+	for _, m := range members {
+		if uuidToString(m.UserID) == uuidToString(actorID) && m.Role == "owner" {
+			isOwner = true
+		}
+	}
+	if !isMachineCredentialActor(r) && isOwner {
+		tx, txErr := h.TxStarter.Begin(r.Context())
+		if txErr != nil {
+			writeError(w, 500, "failed to load handover status")
+			return
+		}
+		statuses, txErr = loadMemberHandoverStatuses(r.Context(), tx, workspaceID, uuidToString(actorID))
+		tx.Rollback(r.Context())
+		if txErr != nil {
+			writeError(w, 500, "failed to load handover status")
+			return
+		}
+	}
 	resp := make([]MemberWithUserResponse, len(members))
 	for i, m := range members {
 		resp[i] = MemberWithUserResponse{
+			Handover:         statuses[uuidToString(m.UserID)],
 			ID:               uuidToString(m.ID),
 			WorkspaceID:      uuidToString(m.WorkspaceID),
 			UserID:           uuidToString(m.UserID),

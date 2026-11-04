@@ -160,6 +160,7 @@ export function BuilderWorkspace({
   });
 
   const submit = useCreateAgentSubmit({
+    members: form.members,
     draft,
     runtimeId: selectedRuntime?.id ?? null,
     squadId,
@@ -290,6 +291,7 @@ export function BuilderWorkspace({
 
   return (
     <>
+      {submit.sharingConfirmation}
       {/* The group lives here, not on the route, so its two panels are its
           only children — the same shape the chat page uses. A group whose
           children alternate between one and two panels (setup vs conversation)

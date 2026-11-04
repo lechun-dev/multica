@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -541,6 +542,31 @@ func (p DingTalkOAuthProvider) LoadDirectory(ctx context.Context) (DingTalkDirec
 	for _, m := range membersByID {
 		members = append(members, m)
 	}
+	sort.Slice(members, func(i, j int) bool { return members[i].DingUserID < members[j].DingUserID })
+	// Read once per employee, including employees listed in several departments.
+	// A failed detail request must not clear the last successful reporting line.
+	managerCtx, cancelManagers := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancelManagers()
+	for i := range members {
+		if ctx.Err() != nil {
+			return DingTalkDirectorySnapshot{}, ctx.Err()
+		}
+		members[i].ManagerReadStatus = "failed"
+		if managerCtx.Err() != nil {
+			continue
+		}
+		detailCtx, cancelDetail := context.WithTimeout(managerCtx, 5*time.Second)
+		manager, err := p.loadDingTalkManager(detailCtx, accessToken, members[i].DingUserID, limiter)
+		cancelDetail()
+		if err == nil {
+			members[i].ManagerUserID = manager
+			members[i].ManagerReadStatus = "complete"
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return DingTalkDirectorySnapshot{}, err
+	}
 	return DingTalkDirectorySnapshot{Departments: departments, Members: members}, nil
 }
 
@@ -712,4 +738,35 @@ func (p DingTalkOAuthProvider) postJSON(ctx context.Context, endpoint string, pa
 		return fmt.Errorf("decode DingTalk OAuth response: %w", err)
 	}
 	return nil
+}
+
+// loadDingTalkManager preserves provider IDs as strings, including leading zeroes.
+func (p DingTalkOAuthProvider) loadDingTalkManager(ctx context.Context, token, userID string, limiter *dingtalkDirectoryLimiter) (string, error) {
+	endpoint := p.UserDetailURL
+	if endpoint == "" {
+		endpoint = "https://oapi.dingtalk.com/topapi/v2/user/get"
+	}
+	payload, _ := json.Marshal(map[string]string{"userid": userID, "language": "zh_CN"})
+	var response struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+		Result  *struct {
+			UserID        string `json:"userid"`
+			ManagerUserID string `json:"manager_userid"`
+		} `json:"result"`
+	}
+	if err := p.postDirectoryAppJSON(ctx, endpoint, token, payload, &response, limiter); err != nil {
+		return "", err
+	}
+	if response.ErrCode != 0 {
+		return "", newDingTalkDirectorySyncError("manager", "", response.ErrCode, response.ErrMsg, nil)
+	}
+	if response.Result == nil || response.Result.UserID != userID {
+		return "", errors.New("invalid DingTalk employee detail")
+	}
+	manager := strings.TrimSpace(response.Result.ManagerUserID)
+	if manager == userID {
+		return "", errors.New("DingTalk employee cannot manage themselves")
+	}
+	return manager, nil
 }

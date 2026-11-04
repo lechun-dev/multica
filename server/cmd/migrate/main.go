@@ -364,6 +364,16 @@ var concurrentIndexCleanups = map[string]string{
 	"525_projectauth_access_request_notifications_unique":    "projectauth_access_request_notifications_delivery_uidx",
 	"526_projectauth_access_requests_pending_unique":         "projectauth_access_requests_pending_subject_role_uidx",
 	"529_projectauth_issue_mention_revocations_unique":       "projectauth_issue_mention_revocations_subject_uidx",
+	"619_directory_reporting_lines_identity":                 "directory_reporting_lines_identity",
+	"621_member_handovers_identity":                          "member_handovers_identity",
+	"622_member_handovers_workspace":                         "member_handovers_workspace",
+	"623_directory_reporting_lines_external_identity":        "directory_reporting_lines_external_identity_idx",
+	"625_member_handover_automation_identity":                "idx_member_handover_automation_identity",
+	"626_member_handover_resource_identity":                  "idx_member_handover_resource_identity",
+	"627_member_handover_notification_identity":              "idx_member_handover_notification_identity",
+	"628_member_handover_notification_pending":               "idx_member_handover_notification_pending",
+	"629_member_handover_notification_history":               "idx_member_handover_notification_history",
+	"631_member_handover_checklist_index":                    "idx_member_handover_checklist",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction

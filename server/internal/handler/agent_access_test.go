@@ -92,8 +92,8 @@ func TestMemberAllowedToViewAgent_Pure(t *testing.T) {
 		role   string
 		want   bool
 	}{
-		{"workspace owner, not agent owner", otherUserID, "owner", true},
-		{"workspace admin, not agent owner", otherUserID, "admin", true},
+		{"workspace owner, not agent owner", otherUserID, "owner", false},
+		{"workspace admin, not agent owner", otherUserID, "admin", false},
 		{"agent owner with member role", ownerUserID, "member", true},
 		{"agent owner with admin role", ownerUserID, "admin", true},
 		{"plain member, not agent owner", otherUserID, "member", false},
@@ -199,8 +199,7 @@ func newRequestAs(userID, method, path string, body any) *http.Request {
 
 // TestGetAgent_PrivateAgentForbidsPlainMember verifies the private-agent
 // visibility gate at the read-detail endpoint: a workspace member who is
-// neither the agent owner nor a workspace owner/admin gets 403, while the
-// agent owner and workspace owner both succeed. Mirrors the four-entry-point
+// not the agent owner gets 403, including workspace owners/admins. Mirrors the four-entry-point
 // gate (chat, history, edit, delete) on its read surface.
 func TestGetAgent_PrivateAgentForbidsPlainMember(t *testing.T) {
 	if testHandler == nil {
@@ -209,18 +208,11 @@ func TestGetAgent_PrivateAgentForbidsPlainMember(t *testing.T) {
 
 	agentID, ownerID, memberID := privateAgentTestFixture(t)
 
-	// Workspace owner (testUserID): allowed via role.
+	// Workspace ownership does not grant private-agent access.
 	w := httptest.NewRecorder()
 	testHandler.GetAgent(w, withURLParam(newRequest("GET", "/api/agents/"+agentID, nil), "id", agentID))
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetAgent as workspace owner: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var ownerResponse map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &ownerResponse); err != nil {
-		t.Fatalf("decode GetAgent owner response: %v", err)
-	}
-	if _, ok := ownerResponse["runtime_availability"]; ok {
-		t.Fatal("runtime_availability should be omitted when the viewer owns the runtime")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("GetAgent as unrelated workspace owner: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Agent owner (plain member who happens to own the agent): allowed.
@@ -247,16 +239,21 @@ func TestListAgents_FiltersPrivateForPlainMember(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID, _, memberID := privateAgentTestFixture(t)
+	agentID, ownerID, memberID := privateAgentTestFixture(t)
 
-	// Workspace owner sees the agent.
+	// The human agent owner sees the agent.
 	w := httptest.NewRecorder()
-	testHandler.ListAgents(w, newRequest("GET", "/api/agents", nil))
+	testHandler.ListAgents(w, newRequestAs(ownerID, "GET", "/api/agents", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListAgents as owner: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	if !listContainsAgent(t, w.Body.Bytes(), agentID) {
 		t.Fatalf("ListAgents as owner did not include private agent %s", agentID)
+	}
+	w = httptest.NewRecorder()
+	testHandler.ListAgents(w, newRequest("GET", "/api/agents", nil))
+	if w.Code != http.StatusOK || listContainsAgent(t, w.Body.Bytes(), agentID) {
+		t.Fatalf("workspace owner must not see another user's private agent: %d", w.Code)
 	}
 
 	// Plain member does NOT see the agent.
@@ -438,11 +435,11 @@ func TestCreateIssue_AssignToPrivateAgentForbidsPlainMember(t *testing.T) {
 		}
 	}
 
-	// 2026-10-09 coder(lq): A workspace owner can invoke agents they can view.
+	// Workspace ownership does not grant invocation of another person's private agent.
 	w := httptest.NewRecorder()
 	testHandler.CreateIssue(w, newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body(testUserID)))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue as workspace owner (not agent owner): expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("CreateIssue as workspace owner (not agent owner): expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Agent owner (plain member who happens to own the agent): allowed.
@@ -761,10 +758,10 @@ func TestShouldEnqueueOnComment_PrivateAgentGate(t *testing.T) {
 			reason:    "agent owner is always in the allowed_principals set",
 		},
 		{
-			name:      "workspace owner — visible agent allowed",
+			name:      "workspace owner — private agent denied",
 			actorType: "member",
 			actorID:   testUserID,
-			want:      true,
+			want:      false,
 			reason:    "Visible agents are invocable by the same human",
 		},
 		{

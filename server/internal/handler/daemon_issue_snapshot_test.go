@@ -35,7 +35,7 @@ func seedPriorRunWithSnapshot(t *testing.T, agentID, runtimeID, issueID, snapsho
 	if snapshot != "" {
 		cols["issue_snapshot"] = snapshot
 	}
-	dbfx.Task(t, agentID, cols)
+	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, cols)
 }
 
 // issueSnapshotJSON renders a stored snapshot for the issue fixture, letting a
@@ -193,7 +193,7 @@ func TestClaimTaskByRuntime_RecordsItsOwnIssueSnapshot(t *testing.T) {
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, name)
 
 	// No trigger comment: this is the assignment path.
-	taskID := dbfx.Task(t, agentID, testutil.Cols{
+	taskID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id": runtimeID,
 		"issue_id":   issueID,
 	})
@@ -294,7 +294,7 @@ func TestClaimTaskByRuntime_DeltasDateFromTheResumedRun(t *testing.T) {
 
 			// The run we will resume. Its snapshot says the description was
 			// "older instructions" — which is NOT what the issue says now.
-			olderID := dbfx.Task(t, agentID, testutil.Cols{
+			olderID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 				"runtime_id": runtimeID,
 				"issue_id":   issueID,
 				// Completed: it finished a turn, so it proved its prompt
@@ -325,7 +325,7 @@ func TestClaimTaskByRuntime_DeltasDateFromTheResumedRun(t *testing.T) {
 				newer["status"] = "completed"
 				delete(newer, "failure_reason")
 			}
-			dbfx.Task(t, agentID, newer)
+			dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, newer)
 
 			dbfx.Comment(t, issueID, "context between the two runs", testutil.Cols{
 				"created_at": testutil.Raw("now() - interval '90 minutes'"),
@@ -336,7 +336,7 @@ func TestClaimTaskByRuntime_DeltasDateFromTheResumedRun(t *testing.T) {
 				current["rerun_of_task_id"] = olderID
 				current["force_fresh_session"] = true
 			}
-			dbfx.Task(t, agentID, current)
+			dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, current)
 
 			resp := claimCommentTask(t, runtimeID, "resumed-anchor-claim")
 			if resp.Task.PriorSessionID != "older-healthy-session" {
@@ -389,7 +389,7 @@ func TestClaimTaskByRuntime_NeverStartedAnchorRowReportsNoIssueDelta(t *testing.
 
 	// The run that really executed in session S. Its memory — and its
 	// snapshot — say the description was "older instructions".
-	dbfx.Task(t, agentID, testutil.Cols{
+	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id": runtimeID, "issue_id": issueID, "status": "completed",
 		"session_id": "never-started-anchor-session", "work_dir": "/tmp/never-started-anchor",
 		"started_at":     testutil.Raw("now() - interval '2 hours'"),
@@ -399,7 +399,7 @@ func TestClaimTaskByRuntime_NeverStartedAnchorRowReportsNoIssueDelta(t *testing.
 	// A retry child that inherited session S: claimed after the description
 	// was edited to what it is now (so its snapshot matches the current issue),
 	// then the runtime went offline before it started. started_at stays NULL.
-	dbfx.Task(t, agentID, testutil.Cols{
+	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id": runtimeID, "issue_id": issueID, "status": "failed",
 		"failure_reason": "runtime_offline", "error": "runtime went offline",
 		"session_id": "never-started-anchor-session", "work_dir": "/tmp/never-started-anchor",
@@ -408,7 +408,7 @@ func TestClaimTaskByRuntime_NeverStartedAnchorRowReportsNoIssueDelta(t *testing.
 		"issue_snapshot": issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""),
 	})
 	triggerID := dbfx.Comment(t, issueID, "continue")
-	dbfx.Task(t, agentID, testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "trigger_comment_id": triggerID})
+	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "trigger_comment_id": triggerID})
 
 	resp := claimCommentTask(t, runtimeID, "never-started-anchor-claim")
 	if resp.Task.PriorSessionID != "never-started-anchor-session" {
@@ -464,7 +464,7 @@ func TestClaimTaskByRuntime_NoAdoptedSessionHasNoDeltas(t *testing.T) {
 				prior["status"] = "failed"
 				prior["failure_reason"] = "api_invalid_request"
 			}
-			priorID := dbfx.Task(t, agentID, prior)
+			priorID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, prior)
 			dbfx.Comment(t, issueID, "an unseen comment")
 			triggerID := dbfx.Comment(t, issueID, "continue")
 			current := testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "trigger_comment_id": triggerID}
@@ -474,7 +474,7 @@ func TestClaimTaskByRuntime_NoAdoptedSessionHasNoDeltas(t *testing.T) {
 			if mode == "poisoned_rerun" {
 				current["rerun_of_task_id"] = priorID
 			}
-			dbfx.Task(t, agentID, current)
+			dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, current)
 			got := claimCommentTask(t, runtimeID, "no-adopted-session").Task
 			if got.PriorSessionID != "" || got.IssueStateDeltaKnown || got.DeltaKnown || got.NewCommentsSince != "" || got.NewCommentCount != 0 {
 				t.Fatalf("no adopted session must keep both deltas unknown: %+v", got)
@@ -565,7 +565,7 @@ func TestClaimTaskByRuntime_StartedRetryWithoutProviderMustNotWaiveReads(t *test
 	})
 	// The run whose session everything below inherits. Its memory — and its
 	// snapshot — say "old requirements".
-	parentID := dbfx.Task(t, agentID, testutil.Cols{
+	parentID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id": runtimeID, "issue_id": issueID,
 		"status": "failed", "failure_reason": "provider_network",
 		"session_id": "session-before-edit", "work_dir": "/tmp/before-provider-snapshot",

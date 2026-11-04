@@ -80,7 +80,9 @@ type AssignmentNotification struct {
 	IssueTitle      string
 	SourceURL       string
 	IncludeDetails  bool
-	OccurredAt      time.Time
+	// MentionText merges a creation-time description mention into assignment delivery.
+	MentionText string
+	OccurredAt  time.Time
 }
 
 type MemberBinding struct {
@@ -134,6 +136,8 @@ type Provider interface {
 // configured and the feature is enabled by the host.
 type RoutingOptions struct {
 	EnableAgentNotifications bool
+	// MemberP2POnly ignores group intent in non-comment content, such as issue descriptions.
+	MemberP2POnly bool
 }
 
 type Delivery struct {
@@ -173,7 +177,7 @@ func BuildMessagesWithOptions(ctx context.Context, event MentionCreated, resolve
 				failures = append(failures, failed(event, target, "member is not bound to DingTalk"))
 				continue
 			}
-			groupIntent := groupRequested(text, binding.Groups)
+			groupIntent := !options.MemberP2POnly && groupRequested(text, binding.Groups)
 			if groupIntent {
 				matched := 0
 				seen := map[string]struct{}{}
@@ -404,6 +408,9 @@ func FormatAssignmentText(event AssignmentNotification) string {
 	if metadata := formatAssignmentMetadata(event); metadata != "" {
 		sections = append(sections, metadata)
 	}
+	if event.IncludeDetails && event.Kind == AssignmentAdded && strings.TrimSpace(event.MentionText) != "" {
+		sections = append(sections, "你也在任务正文中被提及", truncateMentionPreview(stripMentionLinks(stripStructuredMentions(sanitizeText(event.MentionText)))))
+	}
 	return appendAssignmentTaskDetails(sections, event)
 }
 
@@ -417,6 +424,9 @@ func FormatPersonalAssignmentText(event AssignmentNotification) string {
 	sections := []string{"你已成为该任务的负责人"}
 	if metadata := formatAssignmentMetadata(event); metadata != "" {
 		sections = append(sections, metadata)
+	}
+	if event.IncludeDetails && strings.TrimSpace(event.MentionText) != "" {
+		sections = append(sections, "你也在任务正文中被提及", formatPersonalMentionLinks(sanitizeText(event.MentionText)))
 	}
 	return appendAssignmentTaskDetails(sections, event)
 }

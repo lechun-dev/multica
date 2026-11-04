@@ -1420,9 +1420,28 @@
     "no_access": "アクセスなし",
     "inherited_owner": "ワークスペースオーナーから継承",
     "read_only_hint": "ロールを変更できるのはワークスペースオーナーまたはプロジェクトオーナーのみです",
-    "roles": { "owner": "オーナー", "admin": "管理者", "manager": "プロジェクト管理者", "member": "メンバー", "viewer": "閲覧者" },
-    "permissions": { "project.view": "プロジェクトを表示", "project.edit": "プロジェクトを編集", "project.issue.create": "タスクを作成", "project.issue.comment": "タスクにコメント", "project.issue.manage": "タスクを管理", "project.issue.archive": "タスクをアーカイブ", "project.agent.use": "エージェントを使用", "project.member.manage": "メンバーを管理", "project.settings.manage": "プロジェクト設定を管理" },
-    "sources": { "workspace_role": "ワークスペースロール", "project_role": "プロジェクトロール" }
+    "roles": {
+      "owner": "オーナー",
+      "admin": "管理者",
+      "manager": "プロジェクト管理者",
+      "member": "メンバー",
+      "viewer": "閲覧者"
+    },
+    "permissions": {
+      "project.view": "プロジェクトを表示",
+      "project.edit": "プロジェクトを編集",
+      "project.issue.create": "タスクを作成",
+      "project.issue.comment": "タスクにコメント",
+      "project.issue.manage": "タスクを管理",
+      "project.issue.archive": "タスクをアーカイブ",
+      "project.agent.use": "エージェントを使用",
+      "project.member.manage": "メンバーを管理",
+      "project.settings.manage": "プロジェクト設定を管理"
+    },
+    "sources": {
+      "workspace_role": "ワークスペースロール",
+      "project_role": "プロジェクトロール"
+    }
   },
   "permission_roles": {
     "title": "権限ロール",
@@ -1510,7 +1529,17 @@
     "sync_departures_skipped": "スキップした退職記録：{{count}}（在職中・未照合・保護対象）",
     "sync_departures_incomplete": "組織の同期は完了しましたが、退職確認に失敗しました。この確認による無効化は行っていません。DingTalkアプリの退職記録の権限とサーバーログを確認してください。",
     "sync_departures_owner_only": "組織のみ同期しました。退職者の自動無効化にはワークスペース所有者が必要です。本人、所有者、他のワークスペースに対する保護も適用されます。",
-    "sync_departures_not_checked": "サーバーで退職確認は実行されていません。アカウントは自動無効化されていません。"
+    "sync_departures_not_checked": "サーバーで退職確認は実行されていません。アカウントは自動無効化されていません。",
+    "manager_label": "直属の上司：{{name}}",
+    "manager_unset": "直属の上司が未設定",
+    "manager_unlinked": "上司がこのワークスペースに未連携",
+    "manager_inactive": "上司のアカウントは無効です",
+    "manager_not_synced": "上司は未同期です",
+    "manager_failed": "上司の取得に失敗しました。前回の結果があれば表示します",
+    "manager_last_synced": "最終同期成功：{{time}}",
+    "sync_managers_synced": "上司の同期成功：{{count}}",
+    "sync_managers_failed": "上司の取得失敗：{{count}}",
+    "sync_managers_incomplete": "一部の上司情報を取得できませんでした。アプリの権限と連絡先の公開範囲を確認し、再試行してください。"
   },
   "members": {
     "search_placeholder": "名前またはメールで検索",
@@ -1615,5 +1644,46 @@
     "status_loading": "確認中...",
     "status_unknown": "状態を取得できません",
     "channel_hint": "{{channel}} でエージェントと会話し、タスクを作成します。"
+  },
+  "member_handover": {
+    "action": "業務を引き継ぐ",
+    "title": "{{name}} の作業権限を付与",
+    "scope": "このワークスペースの未完了作業の管理権限を付与します。非公開エージェントとコンピューターへのアクセスは含みません。",
+    "recipient": "引き継ぎ先",
+    "select_recipient": "ワークスペース内の有効なメンバーを選択",
+    "no_recipients": "引き継ぎ先に指定できるメンバーがいません。",
+    "loading": "プレビューを準備中...",
+    "preview_failed": "プレビューを作成できません。更新して再試行してください。",
+    "execute_failed": "権限を付与できません。プレビューを更新して再試行してください。",
+    "expired": "プレビューの有効期限が切れました。更新してから確認してください。",
+    "empty": "対象の未完了業務はありません。",
+    "projects": "プロジェクト（{{count}}）",
+    "issues": "タスク（{{count}}）",
+    "grant": "{{role}} 権限を付与",
+    "reassign": "担当者を変更",
+    "consequence": "プロジェクトとタスクの担当者は変更されません。受信者は既存の機能で作業を割り当てられます。確認用タスクを作成し、受信者にのみ通知します。受信者が owner でも通知します。",
+    "refresh": "プレビューを更新",
+    "submitting": "権限を付与中...",
+    "confirm": "権限を付与",
+    "automation": {
+      "pending": "権限付与待ち",
+      "failed": "権限付与に失敗",
+      "completed": "権限付与済み",
+      "no_work": "残作業なし",
+      "unknown": "引き継ぎ状況は不明です",
+      "manager_not_synced": "直属の上司が未同期です",
+      "manager_unset": "直属の上司が未設定です",
+      "manager_unlinked": "上司のワークスペースアカウントがありません",
+      "manager_inactive": "上司が無効です",
+      "people_unavailable": "アカウントまたは引き継ぎ先が利用できません。手動で選択してください",
+      "source_not_manageable": "owner はこのアカウントの全ワークスペースを管理できません",
+      "execution_failed": "権限付与に失敗しました。バックグラウンドで再試行します",
+      "notification_pending": "Mission 通知のルーティング待ち",
+      "notification_staged": "Mission の送信キューに追加済み",
+      "notification_delivered": "Mission 通知を送信済み",
+      "notification_failed": "Mission の配信に失敗しました。サポートにお問い合わせください",
+      "attention": "手動対応が必要",
+      "manager_read_failed": "上司の取得に失敗しました。関係を確認してください"
+    }
   }
 }

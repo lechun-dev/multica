@@ -3962,7 +3962,7 @@ func (s *TaskService) RequeueTaskAfterClaimFailure(ctx context.Context, task db.
 //     invalidation version for the rest BEFORE the candidate SELECT;
 //  4. list queued candidates across the non-empty set (one SELECT);
 //  5. mark still-empty runtimes so their next idle poll skips Postgres;
-//  6. claim per distinct agent via the runtime-scoped helper, preserving
+//  6. claim in rounds across distinct agents via the runtime-scoped helper, preserving
 //     per-(issue, agent) serialization, the agent concurrency cap, and every
 //     dispatch side effect until maxTasks is reached.
 //
@@ -4121,43 +4121,54 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		}
 	}
 
-	// 6. Claim per distinct agent through the runtime-scoped helper, preserving
-	// per-(issue, agent) serialization, capacity caps, and dispatch side effects.
+	// 6. Give each agent one claim per round, then fill remaining slots in
+	// subsequent rounds. Stop trying an agent as soon as admission returns no
+	// task (capacity, serialization, or an empty queue), so blocked agents never
+	// spin. Each claim retains the atomic capacity check and dispatch effects.
 	triedAgents := make(map[string]struct{}, len(candidates))
+	agents := make([]db.AgentTaskQueue, 0, len(candidates))
 	for i := range candidates {
-		if len(claimed) >= maxTasks {
-			break
-		}
 		agentKey := util.UUIDToString(candidates[i].AgentID)
 		if _, tried := triedAgents[agentKey]; tried {
 			continue
 		}
 		triedAgents[agentKey] = struct{}{}
+		agents = append(agents, candidates[i])
+	}
 
-		task, err := s.claimTask(ctx, candidates[i].AgentID, candidates[i].RuntimeID)
-		if err != nil {
-			// Each scoped claim commits in its own transaction, so earlier
-			// iterations (and step-2 reclaims) are already dispatched
-			// server-side. Returning nil here would drop them and force the
-			// daemon to double-claim via HTTP fallback (MUL-4257). Return the
-			// partial batch instead; the failed agent's task stays queued.
-			if len(claimed) > 0 {
-				slog.Error("batch claim: claim task failed after partial success; returning claimed tasks to avoid loss",
-					"error", err, "claimed", len(claimed))
-				return claimed, nil
+	for len(agents) > 0 && len(claimed) < maxTasks {
+		nextRound := agents[:0]
+		for _, candidate := range agents {
+			if len(claimed) >= maxTasks {
+				break
 			}
-			return nil, fmt.Errorf("claim task: %w", err)
+			task, err := s.claimTask(ctx, candidate.AgentID, candidate.RuntimeID)
+			if err != nil {
+				// Each scoped claim commits in its own transaction, so earlier
+				// iterations (and step-2 reclaims) are already dispatched
+				// server-side. Returning nil here would drop them and force the
+				// daemon to double-claim via HTTP fallback (MUL-4257). Return the
+				// partial batch instead; the failed agent's task stays queued.
+				if len(claimed) > 0 {
+					slog.Error("batch claim: claim task failed after partial success; returning claimed tasks to avoid loss",
+						"error", err, "claimed", len(claimed))
+					return claimed, nil
+				}
+				return nil, fmt.Errorf("claim task: %w", err)
+			}
+			if task == nil {
+				continue
+			}
+			// The SQL claim is scoped to the candidate runtime. Retain this guard as
+			// a defensive contract check so a future query change cannot route work
+			// to a runtime this daemon does not host.
+			if _, ok := runtimeInSet[util.UUIDToString(task.RuntimeID)]; !ok {
+				continue
+			}
+			claimed = append(claimed, *task)
+			nextRound = append(nextRound, candidate)
 		}
-		if task == nil {
-			continue
-		}
-		// The SQL claim is scoped to the candidate runtime. Retain this guard as
-		// a defensive contract check so a future query change cannot route work
-		// to a runtime this daemon does not host.
-		if _, ok := runtimeInSet[util.UUIDToString(task.RuntimeID)]; !ok {
-			continue
-		}
-		claimed = append(claimed, *task)
+		agents = nextRound
 	}
 
 	return claimed, nil

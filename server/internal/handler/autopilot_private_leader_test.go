@@ -223,7 +223,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 // stable, enumeration-safe reason_code (not a silent success). This is the exact
 // case where the old creator-based admission and clicker-based attribution
 // forked.
-func TestTriggerAutopilot_SquadPrivateLeader_VisibleAdminClicker_Allowed(t *testing.T) {
+func TestTriggerAutopilot_SquadPrivateLeader_UnsharedAdminClicker_Blocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -267,7 +267,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_VisibleAdminClicker_Allowed(t *test
 
 	// The workspace owner (testUserID) — NOT the private agent's owner — clicks
 	// Run now. requireAutopilotWrite passes (workspace owner can manage), but the
-	// visibility gate keys on the clicker and admits them.
+	// visibility gate keys on the clicker and denies them without a share.
 	w = httptest.NewRecorder()
 	r = newRequest("POST", "/api/autopilots/"+ap.ID+"/trigger?workspace_id="+testWorkspaceID, nil)
 	r = withURLParam(r, "id", ap.ID)
@@ -279,8 +279,8 @@ func TestTriggerAutopilot_SquadPrivateLeader_VisibleAdminClicker_Allowed(t *test
 	if err := json.NewDecoder(w.Body).Decode(&run); err != nil {
 		t.Fatalf("decode run: %v", err)
 	}
-	if run.Status != "issue_created" {
-		t.Fatalf("run status = %q, want issue_created for a visible agent", run.Status)
+	if run.Status != "skipped" {
+		t.Fatalf("run status = %q, want skipped for an unshared private agent", run.Status)
 	}
 }
 

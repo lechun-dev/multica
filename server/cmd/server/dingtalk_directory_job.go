@@ -130,6 +130,8 @@ func (h *dingtalkLoginHandler) runDirectorySyncJob(ctx context.Context, in sched
 		return scheduler.HandlerResult{}, fmt.Errorf("persist daily DingTalk directory: %w", err)
 	}
 	audit := scheduler.HandlerResult{RowsAffected: int64(result.MembersCreated + result.AccountsDisabled), Result: map[string]any{
+		"managers_synced":           result.ManagersSynced,
+		"managers_failed":           result.ManagersFailed,
 		"departure_sync_status":     result.DepartureSyncStatus,
 		"organizations_created":     result.OrganizationsCreated,
 		"organizations_updated":     result.OrganizationsUpdated,
@@ -144,5 +146,9 @@ func (h *dingtalkLoginHandler) runDirectorySyncJob(ctx context.Context, in sched
 		// missing, but the scheduled occurrence must fail/retry rather than lie.
 		return audit, errors.New("DingTalk directory refreshed but departure verification unavailable; no accounts suspended")
 	}
+	// Permission opening is independently retried from durable departure evidence.
+	// Manager enrichment failures are partial diagnostics, not directory failures.
+	audit.Result["handover_processing"] = "background"
+
 	return audit, nil
 }

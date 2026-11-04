@@ -38,6 +38,7 @@ type Store interface {
 	Enqueue(ctx context.Context, item OutboxItem) (created bool, err error)
 	ClaimDue(ctx context.Context, now time.Time, limit int) ([]OutboxItem, error)
 	MarkDelivered(ctx context.Context, id string, at time.Time) error
+	MarkSkipped(ctx context.Context, id string, at time.Time, reason string) error
 	MarkRetry(ctx context.Context, id string, next time.Time, attempts int, reason string) error
 	MarkFailed(ctx context.Context, id string, at time.Time, attempts int, reason string) error
 }
@@ -106,6 +107,10 @@ func (s *MemoryStore) ClaimDue(_ context.Context, now time.Time, limit int) ([]O
 
 func (s *MemoryStore) MarkDelivered(_ context.Context, id string, at time.Time) error {
 	return s.update(id, func(item *OutboxItem) { item.Status, item.UpdatedAt, item.LastError = StatusDelivered, at, "" })
+}
+
+func (s *MemoryStore) MarkSkipped(_ context.Context, id string, at time.Time, reason string) error {
+	return s.update(id, func(item *OutboxItem) { item.Status, item.UpdatedAt, item.LastError = StatusSkipped, at, reason })
 }
 
 func (s *MemoryStore) MarkRetry(_ context.Context, id string, next time.Time, attempts int, reason string) error {

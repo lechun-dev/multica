@@ -1,5 +1,8 @@
 "use client";
 
+import { MemberHandoverStatus } from "./member-handover-status";
+import { MemberHandoverDialog } from "./member-handover";
+
 import { filterMembers, MemberSearchControls, MemberAccountAccessDialog, type MemberStatusFilter } from "./member-account-access";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -161,6 +164,7 @@ function MemberRow({
   onRoleChange,
   onRemove,
   onAccountAccessChange,
+  onHandover,
 }: {
   member: MemberWithUser;
   canManage: boolean;
@@ -173,6 +177,7 @@ function MemberRow({
   onRoleChange: (role: MemberRole) => void;
   onRemove: () => void;
   onAccountAccessChange: () => void;
+  onHandover: () => void;
 }) {
   const { t } = useT("settings");
   const displayName = member.name || member.email;
@@ -183,7 +188,8 @@ function MemberRow({
   const canRemove = canManage && !isSelf && (member.role !== "owner" || canManageOwners);
   const isLastOwner = member.role === "owner" && ownerCount <= 1;
   const canManageAccount = canManageOwners && !isSelf && member.can_manage_account === true;
-  const showMenu = canEditRole || canRemove || canManageAccount;
+  const canHandover = canManageOwners && !isSelf && member.role !== "owner" && member.account_disabled === true;
+  const showMenu = canEditRole || canRemove || canManageAccount || canHandover;
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -194,6 +200,7 @@ function MemberRow({
           {!member.has_logged_in ? t(($) => $.members.not_registered_suffix) : null}
         </div>
         <div className="text-caption text-muted-foreground truncate">{member.email}</div>
+        {canManageOwners && member.handover && <MemberHandoverStatus handover={member.handover} />}
       </div>
       {showMenu && (
         <DropdownMenu>
@@ -250,6 +257,7 @@ function MemberRow({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             )}
+            {canHandover && <DropdownMenuItem onClick={onHandover}>{t(($) => $.member_handover.action)}</DropdownMenuItem>}
             {canManageAccount && (
               <DropdownMenuItem variant={member.account_disabled ? undefined : "destructive"} onClick={onAccountAccessChange}>
                 {member.account_disabled ? t(($) => $.members.enable_action) : t(($) => $.members.disable_action)}
@@ -392,6 +400,7 @@ export function MembersTab() {
   const { data: invitations = [] } = useQuery(invitationListOptions(wsId));
   const [memberSearch, setMemberSearch] = useState("");
   const [memberStatus, setMemberStatus] = useState<MemberStatusFilter>("all");
+  const [handoverTarget, setHandoverTarget] = useState<MemberWithUser | null>(null);
   const [accountTarget, setAccountTarget] = useState<MemberWithUser | null>(null);
   const sortedMembers = useMemo(
     () => filterMembers([...members].sort(compareMemberRegistration), memberSearch, memberStatus),
@@ -862,7 +871,7 @@ export function MembersTab() {
           </Card>
         )}
 
-        <MemberSearchControls search={memberSearch} status={memberStatus} onSearchChange={setMemberSearch} onStatusChange={setMemberStatus} />
+        <MemberSearchControls canViewHandover={isOwner} search={memberSearch} status={memberStatus} onSearchChange={setMemberSearch} onStatusChange={setMemberStatus} />
         <p className="text-caption text-muted-foreground">{t(($) => $.members.search_count, { count: sortedMembers.length, total: members.length })}</p>
         {sortedMembers.length > 0 ? (
           <SettingsCard>
@@ -878,6 +887,7 @@ export function MembersTab() {
                   onRoleChange={(role) => handleRoleChange(m.id, role)}
                   onRemove={() => handleRemoveMember(m)}
                   onAccountAccessChange={() => setAccountTarget(m)}
+                  onHandover={() => setHandoverTarget(m)}
                 />
               </div>
             ))}
@@ -1098,6 +1108,8 @@ export function MembersTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {handoverTarget && <MemberHandoverDialog key={`${wsId}:${handoverTarget.id}`} workspaceId={wsId} member={handoverTarget} members={members} onClose={() => setHandoverTarget(null)} />}
 
       {accountTarget && <MemberAccountAccessDialog key={`${wsId}:${accountTarget.id}`} workspaceId={wsId} member={accountTarget} onClose={() => setAccountTarget(null)} />}
 

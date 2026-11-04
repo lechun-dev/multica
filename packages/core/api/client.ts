@@ -446,6 +446,8 @@ import {
   IssueAccessRequestTargetSchema,
   ProjectPermissionReportResponseSchema,
   EMPTY_PROJECT_PERMISSION_REPORT_RESPONSE,
+  MemberHandoverPreviewSchema,
+  type MemberHandoverPreview,
   ProjectAuthorizationOrganizationsResponseSchema,
   ProjectAuthorizationDingTalkSyncResultSchema,
   ProjectAuthorizationImportPreviewSchema,
@@ -3413,6 +3415,26 @@ export class ApiClient {
     return member;
   }
 
+  async previewMemberHandover(workspaceId: string, memberId: string, recipientUserId?: string): Promise<MemberHandoverPreview> {
+    const endpoint = `/api/workspaces/${workspaceId}/members/${memberId}/handover/preview`;
+    const raw = await this.fetch<unknown>(endpoint, { method: "POST", body: JSON.stringify(recipientUserId ? { recipient_user_id: recipientUserId } : {}) });
+    const preview = parseWithFallback<MemberHandoverPreview | null>(raw, MemberHandoverPreviewSchema, null, { endpoint });
+    if (!preview || preview.completed || (recipientUserId && preview.recipient_user_id !== recipientUserId)) {
+      throw new Error("Handover preview response could not be verified");
+    }
+    return preview;
+  }
+
+  async executeMemberHandover(workspaceId: string, memberId: string, previewId: string): Promise<MemberHandoverPreview> {
+    const endpoint = `/api/workspaces/${workspaceId}/members/${memberId}/handover`;
+    const raw = await this.fetch<unknown>(endpoint, { method: "POST", body: JSON.stringify({ preview_id: previewId }) });
+    const result = parseWithFallback<MemberHandoverPreview | null>(raw, MemberHandoverPreviewSchema, null, { endpoint });
+    if (!result || result.preview_id !== previewId || result.completed !== true) {
+      throw new Error("Handover response could not be verified");
+    }
+    return result;
+  }
+
   async deleteMember(workspaceId: string, memberId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
@@ -4173,6 +4195,8 @@ export class ApiClient {
       { method: "POST", body: JSON.stringify({}) },
     );
     return parseWithFallback(raw, ProjectAuthorizationDingTalkSyncResultSchema, {
+      managers_synced: 0,
+      managers_failed: 0,
       organizations_created: 0,
       organizations_updated: 0,
       organizations_disabled: 0,

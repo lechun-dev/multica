@@ -706,6 +706,9 @@ func TestUpdateAgent_LegacyVisibilityNoOpForMemberOnlyPublicTo(t *testing.T) {
 		{"target_type": "member", "target_id": memberX},
 	})
 	adminID := createPermissionTestAdmin(t, "perm-legacyvis-admin@multica.test")
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_invocation_target (agent_id, target_type, target_id) VALUES ($1, 'member', $2)`, agentID, adminID); err != nil {
+		t.Fatalf("explicitly share with admin: %v", err)
+	}
 
 	put := func(actorID string, body map[string]any) int {
 		rec := httptest.NewRecorder()
@@ -724,8 +727,8 @@ func TestUpdateAgent_LegacyVisibilityNoOpForMemberOnlyPublicTo(t *testing.T) {
 	if a, _ := testHandler.Queries.GetAgent(ctx, util.MustParseUUID(agentID)); a.PermissionMode != "public_to" {
 		t.Errorf("permission_mode must stay public_to after legacy no-op, got %q", a.PermissionMode)
 	}
-	if n := invocationTargetCount(t, agentID); n != 1 {
-		t.Errorf("member target must be intact after legacy no-op, got %d targets", n)
+	if n := invocationTargetCount(t, agentID); n != 2 {
+		t.Errorf("member targets must be intact after legacy no-op, got %d targets", n)
 	}
 
 	// Admin submitting a REAL legacy change (workspace) is still rejected.

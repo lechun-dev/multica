@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import type {
   AgentInvocationTarget,
   MemberWithUser,
@@ -89,13 +89,18 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     ).not.toBeChecked();
   });
 
-  it("lets the owner grant the entire workspace access", () => {
+  it("lets the owner grant the entire workspace access", async () => {
     const { onChange } = renderPicker({ canEdit: true });
     fireEvent.click(
       screen.getByRole("radio", { name: /^Entire workspace/i }),
     );
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm sharing" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledOnce());
     expect(onChange).toHaveBeenCalledWith({
       permission_mode: "public_to",
       invocation_targets: [{ target_type: "workspace" }],
@@ -115,7 +120,7 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("owner can pick a specific member, emitting a public_to member target", () => {
+  it("owner can pick a specific member, emitting a public_to member target", async () => {
     const { onChange } = renderPicker({
       canEdit: true,
     });
@@ -124,13 +129,18 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     );
     fireEvent.click(screen.getByRole("checkbox", { name: /Alice/i }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm sharing" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledOnce());
     expect(onChange).toHaveBeenCalledWith({
       permission_mode: "public_to",
       invocation_targets: [{ target_type: "member", target_id: "u1" }],
     });
   });
 
-  it("workspace scope removes redundant member grants", () => {
+  it("workspace scope removes redundant member grants", async () => {
     const { onChange } = renderPicker({
       canEdit: true,
       permissionMode: "public_to",
@@ -139,6 +149,11 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     });
     fireEvent.click(screen.getByRole("radio", { name: /^Entire workspace/i }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm sharing" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledOnce());
     expect(onChange).toHaveBeenCalledWith({
       permission_mode: "public_to",
       invocation_targets: [{ target_type: "workspace" }],
@@ -175,4 +190,24 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     // rather than the workspace one, which is the safe degradation.
     expect(screen.getByTestId("access-readonly")).toBeInTheDocument();
   });
+  it("cancel makes no write and the next attempt requires acknowledgement again", async () => {
+    const { onChange } = renderPicker();
+    fireEvent.click(screen.getByRole("radio", { name: /^Entire workspace/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("button", { name: "Confirm sharing" })).toBeDisabled();
+  });
+
+  it("revoking access does not require a sharing acknowledgement", async () => {
+    const { onChange } = renderPicker({ permissionMode: "public_to", invocationTargets: [{ target_type: "workspace", target_id: null }] });
+    fireEvent.click(screen.getByRole("radio", { name: /^Only me/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ permission_mode: "private", invocation_targets: [] }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
 });

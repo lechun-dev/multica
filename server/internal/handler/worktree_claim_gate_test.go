@@ -154,8 +154,8 @@ func TestWorktreeDeliveryMetadataRoundTripsThroughBothTerminalPaths(t *testing.T
 		t.Helper()
 		var taskID string
 		if err := testPool.QueryRow(ctx, `
-			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at)
-			VALUES ($1, $2, $3, 'running', 0, now())
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, originator_user_id, accountable_user_id)
+			VALUES ($1, $2, $3, 'running', 0, now(), (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 			RETURNING id
 		`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 			t.Fatalf("setup: create task: %v", err)
@@ -267,8 +267,8 @@ func TestWorktreeDeliveryMetadataSurvivesEveryTerminalPath(t *testing.T) {
 		t.Helper()
 		var taskID string
 		if err := testPool.QueryRow(ctx, `
-			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at)
-			VALUES ($1, $2, $3, $4, 0, now())
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, originator_user_id, accountable_user_id)
+			VALUES ($1, $2, $3, $4, 0, now(), (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 			RETURNING id
 		`, agentID, runtimeID, issueID, status).Scan(&taskID); err != nil {
 			t.Fatalf("setup: create task: %v", err)
@@ -510,8 +510,8 @@ func TestWorktreeClaimGateCancelPersistsReason(t *testing.T) {
 	}
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, dispatched_at)
-		VALUES ($1, $2, 'dispatched', 0, now())
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, dispatched_at, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, 'dispatched', 0, now(), (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create task: %v", err)
@@ -615,8 +615,8 @@ func seedWorktreeGateClaimFixture(t *testing.T, ctx context.Context, label, daem
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
-		VALUES ($1, $2, $3, 'queued', 0)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'queued', 0, (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create task: %v", err)

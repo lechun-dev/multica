@@ -675,8 +675,8 @@ func insertChannelChatTask(t *testing.T, ctx context.Context, agentID, runtimeID
 	t.Helper()
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at, dispatched_at)
-		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at, dispatched_at, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'running', 2, now(), now(), (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create channel chat task: %v", err)
@@ -692,8 +692,8 @@ func insertSealedChannelChatTask(t *testing.T, ctx context.Context, agentID, run
 	t.Helper()
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at, dispatched_at)
-		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority, started_at, dispatched_at, originator_user_id, accountable_user_id)
+		VALUES ($1, $2, $3, 'running', 2, now(), now(), (SELECT owner_id FROM agent WHERE id=$1), (SELECT owner_id FROM agent WHERE id=$1))
 		RETURNING id
 	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create sealed channel chat task: %v", err)

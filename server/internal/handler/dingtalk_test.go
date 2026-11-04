@@ -158,10 +158,10 @@ func TestListDingTalkGroupsForAgent_FollowsAgentViewPermissionMatrix(t *testing.
 		{
 			name: "private",
 			want: map[string]int{
-				"workspace owner, not agent owner": http.StatusOK, "workspace owner, agent owner": http.StatusOK,
-				"workspace admin, not agent owner": http.StatusOK, "workspace admin, agent owner": http.StatusOK,
+				"workspace owner, not agent owner": http.StatusForbidden, "workspace owner, agent owner": http.StatusOK,
+				"workspace admin, not agent owner": http.StatusForbidden, "workspace admin, agent owner": http.StatusOK,
 				"workspace member, agent owner": http.StatusOK, "targeted member": http.StatusForbidden,
-				"unrelated member": http.StatusForbidden, "non-member": http.StatusForbidden,
+				"unrelated member": http.StatusForbidden, "non-member": http.StatusNotFound,
 				"unauthenticated": http.StatusUnauthorized,
 			},
 		},
@@ -171,17 +171,17 @@ func TestListDingTalkGroupsForAgent_FollowsAgentViewPermissionMatrix(t *testing.
 				"workspace owner, not agent owner": http.StatusOK, "workspace owner, agent owner": http.StatusOK,
 				"workspace admin, not agent owner": http.StatusOK, "workspace admin, agent owner": http.StatusOK,
 				"workspace member, agent owner": http.StatusOK, "targeted member": http.StatusOK,
-				"unrelated member": http.StatusOK, "non-member": http.StatusForbidden,
+				"unrelated member": http.StatusOK, "non-member": http.StatusNotFound,
 				"unauthenticated": http.StatusUnauthorized,
 			},
 		},
 		{
 			name: "public_to_member",
 			want: map[string]int{
-				"workspace owner, not agent owner": http.StatusOK, "workspace owner, agent owner": http.StatusOK,
-				"workspace admin, not agent owner": http.StatusOK, "workspace admin, agent owner": http.StatusOK,
+				"workspace owner, not agent owner": http.StatusForbidden, "workspace owner, agent owner": http.StatusOK,
+				"workspace admin, not agent owner": http.StatusForbidden, "workspace admin, agent owner": http.StatusOK,
 				"workspace member, agent owner": http.StatusOK, "targeted member": http.StatusOK,
-				"unrelated member": http.StatusForbidden, "non-member": http.StatusForbidden,
+				"unrelated member": http.StatusForbidden, "non-member": http.StatusNotFound,
 				"unauthenticated": http.StatusUnauthorized,
 			},
 		},
@@ -558,6 +558,9 @@ func TestRegisterDingTalkBYO_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
 				}
 				setDingTalkAgentPermissionFixture(t, agentID, permissionMode, targetOwnerID)
 				want := tc.denyStatus
+				if permissionMode == "private" && !tc.ownsAgent && want == 0 {
+					want = http.StatusForbidden
+				}
 				if want == 0 {
 					// Authorized requests reach body validation; the empty body is
 					// deliberate so this test never contacts DingTalk.
@@ -696,6 +699,9 @@ func TestRevokeDingTalkInstallation_AuthorizesAgentOwnerAndAdmins(t *testing.T) 
 				}
 				setDingTalkAgentPermissionFixture(t, agentID, permissionMode, targetOwnerID)
 				want := tc.denyStatus
+				if permissionMode == "private" && !tc.ownsAgent && want == 0 {
+					want = http.StatusForbidden
+				}
 				if want == 0 {
 					want = http.StatusNoContent
 				}

@@ -83,10 +83,10 @@ func TestAgentInvocationUsesHumanVisibility(t *testing.T) {
 		want                             bool
 	}{
 		{"owner can invoke own private agent", ownerID, "member", ownerID, true},
-		{"workspace owner can invoke visible private agent", testUserID, "member", testUserID, true},
-		{"workspace admin can invoke visible private agent", adminID, "member", adminID, true},
+		{"workspace owner cannot invoke another person private agent", testUserID, "member", testUserID, false},
+		{"workspace admin cannot invoke another person private agent", adminID, "member", adminID, false},
 		{"member cannot invoke invisible private agent", memberID, "member", memberID, false},
-		{"delegation uses visible human principal", testUserID, "agent", agentID, true},
+		{"delegation uses visible human principal", ownerID, "agent", agentID, true},
 		{"delegation cannot borrow agent actor visibility", memberID, "agent", agentID, false},
 		{"unattributed agent cannot invoke private agent", "", "agent", agentID, false},
 	} {

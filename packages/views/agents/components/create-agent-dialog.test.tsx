@@ -312,7 +312,7 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     const { onCreate } = renderDialog([mine]);
 
     // Legacy copy is rendered — matches VISIBILITY_DESCRIPTION.
-    expect(screen.getByText(/All members can assign/i)).toBeInTheDocument();
+    expect(screen.getByText("Personal")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
       target: { value: "Legacy Agent" },
@@ -323,18 +323,18 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     const payload = onCreate.mock.calls[0]?.[0];
     expect(payload).toBeDefined();
     // Legacy path submits visibility, NOT permission_mode/invocation_targets.
-    expect(payload.visibility).toBe("workspace");
+    expect(payload.visibility).toBe("private");
     expect(payload.permission_mode).toBeUndefined();
     expect(payload.invocation_targets).toBeUndefined();
   });
 
-  it("submits permission_mode=public_to + workspace target when the flag is ON (default)", async () => {
+  it("defaults to private with no grants when the flag is ON", async () => {
     configStore.getState().setFeatureFlags({ [COMPOSIO_MCP_APPS_FLAG]: true });
     const mine = makeRuntime({ id: "rt-mine", name: "My Runtime", owner_id: ME });
     const { onCreate } = renderDialog([mine]);
 
     // New copy replaces the old one.
-    expect(screen.getByText("Only you can run this agent")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Only me/i })).toBeInTheDocument();
     expect(screen.getByText("Entire workspace")).toBeInTheDocument();
     expect(screen.getByText("Specific people")).toBeInTheDocument();
 
@@ -348,10 +348,8 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     expect(payload).toBeDefined();
     // MUL-3963 payload shape.
     expect(payload.visibility).toBeUndefined();
-    expect(payload.permission_mode).toBe("public_to");
-    expect(payload.invocation_targets).toEqual([
-      { target_type: "workspace" },
-    ]);
+    expect(payload.permission_mode).toBe("private");
+    expect(payload.invocation_targets).toEqual([]);
   });
 
   it("submits permission_mode=private with empty targets when Private is chosen", async () => {
@@ -364,7 +362,7 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     });
     // Click the Private card. The Private description doubles as a stable
     // click target inside the button.
-    fireEvent.click(screen.getByText("Only you can run this agent"));
+    fireEvent.click(screen.getByRole("radio", { name: /^Only me/i }));
     fireEvent.click(screen.getByText("Create"));
     await new Promise((r) => setTimeout(r, 0));
 
@@ -400,6 +398,12 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     fireEvent.click(screen.getByRole("radio", { name: /^Specific people/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /^Other/ }));
     fireEvent.click(screen.getByText("Create"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(onCreate).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirm sharing" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /I understand/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm sharing" }));
     await new Promise((r) => setTimeout(r, 0));
 
     const payload = onCreate.mock.calls[0]?.[0];

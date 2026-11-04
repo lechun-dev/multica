@@ -5,6 +5,8 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { MemberWithUser } from "@multica/core/types";
+import { isAgentAccessExpansion } from "@multica/core/agents";
+import { useAgentSharingConfirmation } from "./use-agent-sharing-confirmation";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -55,6 +57,7 @@ export function AgentBatchToolbar({
   const [confirmAccess, setConfirmAccess] = useState(false);
   const [accessChange, setAccessChange] = useState<AccessChange | null>(null);
   const [busy, setBusy] = useState(false);
+  const { confirmSharing, sharingConfirmation } = useAgentSharingConfirmation();
 
   // Must be stable: AccessPicker lists this in the effect that notifies us, so
   // an inline callback would re-notify on every render we cause by storing the
@@ -99,6 +102,7 @@ export function AgentBatchToolbar({
           invocation_targets: change.invocation_targets,
         }),
       ownedRows,
+      false,
     );
     if (summary.failed > 0) {
       toast.error(
@@ -108,11 +112,13 @@ export function AgentBatchToolbar({
         }),
       );
     }
+    return summary.failed === 0;
   };
 
   const runBatch = async (
     fn: (id: string) => Promise<unknown>,
     targets: AgentListRow[],
+    clearOnFailure = true,
   ): Promise<{ succeeded: number; failed: number }> => {
     setBusy(true);
     const settled = await Promise.allSettled(
@@ -121,7 +127,7 @@ export function AgentBatchToolbar({
     const failed = settled.filter((s) => s.status === "rejected").length;
     const succeeded = settled.length - failed;
     invalidate();
-    onClear();
+    if (failed === 0 || clearOnFailure) onClear();
     setBusy(false);
     if (failed > 0) {
       const first = settled.find((s) => s.status === "rejected") as
@@ -136,6 +142,7 @@ export function AgentBatchToolbar({
 
   return (
     <>
+      {sharingConfirmation}
       <AnimatePresence initial={false}>
         {rows.length > 0 && (
           <div
@@ -327,8 +334,16 @@ export function AgentBatchToolbar({
               onClick={async () => {
                 if (!accessChange) return;
                 const change = accessChange;
-                setAccessDialogOpen(false);
-                await applyAccessBulk(change);
+                const targets = ownedRows;
+                setBusy(true);
+                try {
+                  if (targets.some((row) => isAgentAccessExpansion(row.agent, change))) {
+                    if (!(await confirmSharing({ names: targets.map((row) => row.agent.name), targets: change.invocation_targets, members }))) return;
+                  }
+                  if (await applyAccessBulk(change)) setAccessDialogOpen(false);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               {busy ? (

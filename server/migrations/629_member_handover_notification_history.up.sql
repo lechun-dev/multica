@@ -1,0 +1,1 @@
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_member_handover_notification_history ON member_handover_notifications (workspace_id,handover_id);

@@ -37,7 +37,7 @@ export interface AgentDraft {
   skillIds: Set<string>;
   permissionScope: AgentPermissionScope;
   memberIds: Set<string>;
-  /** Team grants are not editable in this form yet, but duplicates must preserve them. */
+  /** Team grants are not editable in this form yet. */
   teamIds: Set<string>;
 }
 
@@ -120,40 +120,12 @@ export function buildInvocationTargets(
 export function deriveDuplicateAccess(
   agent: Pick<Agent, "permission_mode" | "invocation_targets">,
 ): Pick<AgentDraft, "permissionScope" | "memberIds" | "teamIds"> {
-  if (agent.permission_mode !== "public_to") {
-    return {
-      permissionScope: "private",
-      memberIds: new Set(),
-      teamIds: new Set(),
-    };
-  }
-
-  const targets = agent.invocation_targets ?? [];
-  if (targets.some((target) => target.target_type === "workspace")) {
-    return {
-      permissionScope: "workspace",
-      memberIds: new Set(),
-      teamIds: new Set(),
-    };
-  }
-
-  const memberIds = targets
-    .filter((target) => target.target_type === "member" && target.target_id)
-    .map((target) => target.target_id as string);
-  const teamIds = targets
-    .filter((target) => target.target_type === "team" && target.target_id)
-    .map((target) => target.target_id as string);
-  if (memberIds.length === 0 && teamIds.length === 0) {
-    return {
-      permissionScope: "private",
-      memberIds: new Set(),
-      teamIds: new Set(),
-    };
-  }
+  // A copy is a new security boundary; never inherit the source's grants.
+  void agent;
   return {
-    permissionScope: "members",
-    memberIds: new Set(memberIds),
-    teamIds: new Set(teamIds),
+    permissionScope: "private",
+    memberIds: new Set(),
+    teamIds: new Set(),
   };
 }
 

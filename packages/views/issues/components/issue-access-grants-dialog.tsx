@@ -8,6 +8,7 @@ import { Copy, ShieldCheck, UserMinus, Users } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import type { IssueAccessControlDerivedGrant, IssueAccessControlGrant, IssueAccessRequest, TaskAccessMode } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -19,11 +20,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
+import { useNavigation } from "../../navigation";
 import { ProjectMemberMultiSelect } from "../../projects/components/project-member-multi-select";
 import { ProjectPermissionOrganizationTreeSelect } from "../../projects/components/project-permission-organization-tree-select";
 
 type IssueAccessGrantsDialogProps = {
   issueId: string;
+  issueIdentifier?: string | null;
   projectId?: string | null;
   defaultOpen?: boolean;
   /**
@@ -81,9 +84,12 @@ function mergeTaskGrants(current: IssueAccessControlGrant[], additions: IssueAcc
 }
 
 /** Task ACL editor plus a read-only resolver explanation for the current user. */
-export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = false, focusRequestId = null, focusRequestToken }: IssueAccessGrantsDialogProps) {
+export function IssueAccessGrantsDialog({ issueId, issueIdentifier, projectId, defaultOpen = false, focusRequestId = null, focusRequestToken }: IssueAccessGrantsDialogProps) {
   const { t } = useT("projects");
   const workspaceId = useWorkspaceId();
+  const paths = useWorkspacePaths();
+  const navigation = useNavigation();
+  const shareUrl = navigation.getShareableUrl(paths.issueDetail(issueIdentifier || issueId));
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(defaultOpen);
   const [selectedUserIds, setSelectedUserIds] = useState<ReadonlySet<string>>(new Set());
@@ -95,7 +101,6 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
   const [grants, setGrants] = useState<IssueAccessControlGrant[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [shareUrl, setShareUrl] = useState("");
   const [grantsOpen, setGrantsOpen] = useState(false);
   const [focusedRequestId, setFocusedRequestId] = useState<string | null>(null);
   const [focusRingNonce, setFocusRingNonce] = useState(0);
@@ -117,11 +122,6 @@ export function IssueAccessGrantsDialog({ issueId, projectId, defaultOpen = fals
     setMode(controlQuery.data.project_access_mode);
     setGrants(controlQuery.data.grants);
   }, [controlQuery.data, dirty]);
-
-  useEffect(() => {
-    if (!open || typeof window === "undefined") return;
-    setShareUrl(window.location.href);
-  }, [open]);
 
   // 2026-10-20 coder(lq): Inbox selections and direct review links open the
   // matching application. A changed request/token replays the landing.

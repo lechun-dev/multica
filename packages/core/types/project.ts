@@ -210,6 +210,12 @@ export interface ProjectAuthorizationOrganizationMember {
   avatar_url?: string;
   workspace_role: "owner" | "admin" | "member" | string;
   has_logged_in?: boolean;
+  manager_user_id?: string;
+  manager_name?: string;
+  manager_status?: "not_synced" | "unset" | "unlinked" | "inactive" | "ready";
+  manager_sync_status?: "not_synced" | "complete" | "failed";
+  manager_successful_at?: string;
+  manager_attempted_at?: string;
 }
 
 export interface ProjectAuthorizationOrganizationsResponse {
@@ -254,6 +260,8 @@ export interface ProjectAuthorizationImportResult {
 }
 
 export interface ProjectAuthorizationDingTalkSyncResult {
+  managers_synced: number;
+  managers_failed: number;
   organizations_created: number;
   organizations_updated: number;
   organizations_disabled: number;

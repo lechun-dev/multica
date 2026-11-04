@@ -454,12 +454,22 @@ vi.mock("@multica/core/issues/stores", async () => ({
 // layout.
 const scrollIntoViewSpy = vi.hoisted(() => vi.fn());
 const scrollToIndexSpy = vi.hoisted(() => vi.fn());
+const timelineLandings = vi.hoisted(() => [] as Array<unknown>);
+const timelineOffsets = vi.hoisted(() => [] as Array<number | undefined>);
+const timelineRenderLandings = vi.hoisted(() => [] as Array<unknown>);
 
 vi.mock("react-virtuoso", () => ({
   Virtuoso: forwardRef(function MockVirtuoso(
-    { data, itemContent }: { data: unknown[]; itemContent: (i: number, item: unknown) => unknown },
+    { data, itemContent, initialTopMostItemIndex, initialScrollTop }: { data: unknown[]; itemContent: (i: number, item: unknown) => unknown; initialTopMostItemIndex?: unknown; initialScrollTop?: number },
     ref: any,
   ) {
+    timelineRenderLandings.push(initialTopMostItemIndex);
+    const recorded = useRef(false);
+    if (!recorded.current) {
+      timelineLandings.push(initialTopMostItemIndex);
+      timelineOffsets.push(initialScrollTop);
+      recorded.current = true;
+    }
     useImperativeHandle(ref, () => ({
       // Real Virtuoso ref methods are not exercised by tests in this file
       // since the deep-link cold-path drives the container's scrollTop on the
@@ -608,13 +618,14 @@ function createTestQueryClient() {
 
 function renderIssueDetail(issueId = "issue-1") {
   const queryClient = createTestQueryClient();
-  return render(
+  const result = render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <IssueDetail issueId={issueId} />
       </QueryClientProvider>
     </I18nProvider>,
   );
+  return { ...result, queryClient };
 }
 
 /**
@@ -1163,6 +1174,97 @@ describe("IssueDetail (shared)", () => {
 
     expect(screen.queryByTestId("panel-group")).not.toBeInTheDocument();
     expect(screen.queryByText("Properties")).not.toBeInTheDocument();
+  });
+
+  it("initializes ordinary conversation entry at the last virtual row", async () => {
+    timelineLandings.length = 0;
+    renderIssueDetail();
+    await screen.findByTestId("virtuoso-mock");
+    expect(timelineLandings).toContainEqual({ index: "LAST", align: "end" });
+  });
+
+  it("keeps the virtualizer's initial landing stable across page rerenders", async () => {
+    timelineRenderLandings.length = 0;
+    const { queryClient } = renderIssueDetail();
+    await screen.findByTestId("virtuoso-mock");
+    await act(async () => { await queryClient.invalidateQueries(); });
+    expect(timelineRenderLandings.length).toBeGreaterThan(1);
+    expect(timelineRenderLandings.every((landing) =>
+      JSON.stringify(landing) === JSON.stringify({ index: "LAST", align: "end" }),
+    )).toBe(true);
+  });
+
+  it("keeps activity-only tasks at the title", async () => {
+    timelineLandings.length = 0;
+    mockApiObj.listTimeline.mockResolvedValue([{
+      type: "activity", id: "status-only", actor_type: "member", actor_id: "user-1",
+      action: "status_changed", details: { from: "todo", to: "in_progress" },
+      created_at: "2026-01-18T00:00:00Z",
+    }]);
+    renderIssueDetail();
+    await screen.findByTestId("virtuoso-mock");
+    expect(timelineLandings.length).toBeGreaterThan(0);
+    expect(timelineLandings.every((landing) => landing === 0)).toBe(true);
+  });
+
+  it("waits for delayed standalone runs before initializing the timeline", async () => {
+    timelineLandings.length = 0;
+    mockApiObj.listTimeline.mockResolvedValue([]);
+    let resolveTasks!: (tasks: AgentTask[]) => void;
+    mockApiObj.listTasksByIssue.mockReturnValue(new Promise<AgentTask[]>((resolve) => { resolveTasks = resolve; }));
+    renderIssueDetail();
+    await screen.findByText("Implement authentication");
+    expect(screen.queryByTestId("virtuoso-mock")).not.toBeInTheDocument();
+    await act(async () => resolveTasks([{
+      id: "ba2e8d1c-7f9b-4e2a-9c1d-123456789abc", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
+      status: "completed", priority: 0, created_at: "2026-01-16T00:00:00Z", started_at: null, dispatched_at: null,
+      completed_at: "2026-01-16T00:01:00Z", result: null, error: null, delivered_comment_ids: [],
+    }]));
+    await screen.findByTestId("virtuoso-mock");
+    expect(timelineLandings).toContainEqual({ index: "LAST", align: "end" });
+  });
+
+  it("still initializes when the task query fails", async () => {
+    mockApiObj.listTasksByIssue.mockRejectedValue(new Error("Tasks unavailable"));
+    renderIssueDetail();
+    await screen.findByTestId("virtuoso-mock");
+  });
+
+  it("lands a deep link after a delayed task query makes the flat timeline ready", async () => {
+    let resolveTasks!: (tasks: AgentTask[]) => void;
+    mockApiObj.listTasksByIssue.mockReturnValue(new Promise<AgentTask[]>((resolve) => { resolveTasks = resolve; }));
+    const { container } = renderIssueDetailWithHighlight("comment-1");
+    await screen.findByText("Implement authentication");
+    expect(container.querySelector("#comment-comment-1")).toBeNull();
+    await act(async () => resolveTasks([]));
+    await waitFor(() => expect(
+      hasHighlightedCommentBackground(container.querySelector("#comment-comment-1")),
+    ).toBe(true));
+  });
+
+  it("preserves the flat deep-link position when switching to virtualization", async () => {
+    timelineLandings.length = 0;
+    timelineOffsets.length = 0;
+    const { rerender, queryClient, container } = renderIssueDetailWithHighlight("comment-1");
+    await waitFor(() => expect(container.querySelector("#comment-comment-1")).not.toBeNull());
+    const scrollRoot = container.querySelector<HTMLElement>('[data-tab-scroll-root="main:issue-1"]')!;
+    scrollRoot.dispatchEvent(new Event("wheel"));
+    scrollRoot.scrollTop = 320;
+    const flat = container.querySelector("[data-flat-issue-timeline]")!;
+    vi.spyOn(flat.children[0]!, "getBoundingClientRect").mockReturnValue({
+      top: -80, bottom: 200, height: 280,
+      left: 0, right: 600, width: 600, x: 0, y: -80, toJSON: () => ({}),
+    });
+    rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={queryClient}>
+          <IssueDetail issueId="issue-1" />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    await screen.findByTestId("virtuoso-mock");
+    expect(timelineLandings).toEqual([{ index: 0, align: "start", offset: 80 }]);
+    expect(timelineOffsets).toEqual([undefined]);
   });
 
   it("pins the comment composer to the scroll viewport on a wide screen", async () => {

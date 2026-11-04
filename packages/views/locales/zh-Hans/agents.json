@@ -974,5 +974,16 @@
   "actions": {
     "selected_other": "已选 {{count}} 项",
     "clear_selection": "清除选择"
+  },
+  "sharing_warning": {
+    "title": "高危操作：允许他人通过智能体操作你的电脑",
+    "description": "开放后，授权成员可以调用此智能体执行任务。他们可能在你的电脑或云端运行环境中执行命令、读取或修改文件，并使用该环境已授权的账号和工具。实际操作范围取决于智能体的权限与安全限制。",
+    "trust": "仅向你信任的人开放。",
+    "acknowledgement": "我了解他人可能通过此智能体操作我的电脑或智能体的运行环境。",
+    "confirm": "确认开放",
+    "agents": "智能体",
+    "audience": "开放对象",
+    "workspace": "整个工作区",
+    "selected_members": "指定成员"
   }
 }

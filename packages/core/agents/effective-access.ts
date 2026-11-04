@@ -1,4 +1,4 @@
-import type { AgentInvocationTarget, AgentPermissionMode } from "../types";
+import type { AgentInvocationTarget, AgentInvocationTargetInput, AgentPermissionMode } from "../types";
 
 /**
  * The three effective access-scope states shown in the agents list, derived
@@ -8,9 +8,8 @@ import type { AgentInvocationTarget, AgentPermissionMode } from "../types";
  * indistinguishable from a truly owner-only agent — so the list shows this
  * three-state value instead.
  *
- * 2026-10-09 coder(lq): Visibility scopes exclude the workspace administrators' governance access.
  * Anyone who can view an agent can invoke it:
- *   - owner-only      = `private` (personal scope, plus workspace administrators)
+ *   - owner-only      = `private` (agent owner only)
  *   - workspace       = `public_to` with a workspace target (any member/agent/system)
  *   - specific-people = `public_to` without a workspace target (member/team targets)
  */
@@ -53,4 +52,25 @@ export function isAccessChangeReady(
   if (!change) return false;
   if (change.permission_mode === "private") return true;
   return change.invocation_targets.length > 0;
+}
+
+/** True when a change grants authority to anyone outside the current audience. */
+export function isAgentAccessExpansion(
+  current: {
+    permission_mode: AgentPermissionMode;
+    invocation_targets?: readonly { target_type: string; target_id?: string | null }[];
+  },
+  next: {
+    permission_mode: AgentPermissionMode;
+    invocation_targets: readonly AgentInvocationTargetInput[];
+  },
+): boolean {
+  if (next.permission_mode !== "public_to") return false;
+  if (current.permission_mode !== "public_to") return true;
+  const previous = current.invocation_targets ?? [];
+  if (previous.some((target) => target.target_type === "workspace")) return false;
+  return next.invocation_targets.some((target) =>
+    target.target_type === "workspace" ||
+    !previous.some((old) => old.target_type === target.target_type && old.target_id === target.target_id),
+  );
 }

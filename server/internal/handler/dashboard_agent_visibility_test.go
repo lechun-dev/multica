@@ -171,7 +171,7 @@ func TestDashboardPerAgentRollupsFoldRestrictedAgents(t *testing.T) {
 
 	usageID := func(r usageRow) string { return r.AgentID }
 	assertDashboardAgentPresence(t, "usage/by-agent (owner)", dashboardAgentIDSet(ownerUsage, usageID),
-		dashboardAgentPresence{privateAgent: true, publicAgent: true, sentinel: false}, privateAgentID, publicAgentID)
+		dashboardAgentPresence{privateAgent: false, publicAgent: true, sentinel: true}, privateAgentID, publicAgentID)
 	assertDashboardAgentPresence(t, "usage/by-agent (member)", dashboardAgentIDSet(memberUsage, usageID),
 		dashboardAgentPresence{privateAgent: false, publicAgent: true, sentinel: true}, privateAgentID, publicAgentID)
 
@@ -212,7 +212,7 @@ func TestDashboardPerAgentRollupsFoldRestrictedAgents(t *testing.T) {
 
 	runTimeID := func(r runTimeRow) string { return r.AgentID }
 	assertDashboardAgentPresence(t, "agent-runtime (owner)", dashboardAgentIDSet(ownerRunTime, runTimeID),
-		dashboardAgentPresence{privateAgent: true, publicAgent: true, sentinel: false}, privateAgentID, publicAgentID)
+		dashboardAgentPresence{privateAgent: false, publicAgent: true, sentinel: true}, privateAgentID, publicAgentID)
 	assertDashboardAgentPresence(t, "agent-runtime (member)", dashboardAgentIDSet(memberRunTime, runTimeID),
 		dashboardAgentPresence{privateAgent: false, publicAgent: true, sentinel: true}, privateAgentID, publicAgentID)
 
@@ -257,7 +257,7 @@ func TestDashboardPerAgentRollupsFoldRestrictedAgents(t *testing.T) {
 
 	failureID := func(r failureRow) string { return r.AgentID }
 	assertDashboardAgentPresence(t, "failures/by-agent (owner)", dashboardAgentIDSet(ownerFailures, failureID),
-		dashboardAgentPresence{privateAgent: true, publicAgent: true, sentinel: false}, privateAgentID, publicAgentID)
+		dashboardAgentPresence{privateAgent: false, publicAgent: true, sentinel: true}, privateAgentID, publicAgentID)
 	assertDashboardAgentPresence(t, "failures/by-agent (member)", dashboardAgentIDSet(memberFailures, failureID),
 		dashboardAgentPresence{privateAgent: false, publicAgent: true, sentinel: true}, privateAgentID, publicAgentID)
 

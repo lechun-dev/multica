@@ -288,11 +288,9 @@ func beginLarkInstallAs(userID, agentID string) *httptest.ResponseRecorder {
 	return w
 }
 
-// TestBeginLarkInstall_AuthorizesAgentOwnerAndAdmins is the core of MUL-4213:
-// the device-flow scan-to-bind is authorized by canManageAgent, so the agent's
-// owner (a plain workspace member) and workspace owner/admins may begin an
-// install, while a member who is neither is forbidden.
-func TestBeginLarkInstall_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
+// TestBeginLarkInstall_PrivateAgentOwnerOnly verifies scan-to-bind preserves
+// owner-only access even when another member is a workspace admin.
+func TestBeginLarkInstall_PrivateAgentOwnerOnly(t *testing.T) {
 	wireLarkInstallServices(t)
 	agentID, ownerID, memberID := privateAgentTestFixture(t)
 
@@ -301,7 +299,7 @@ func TestBeginLarkInstall_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
 		userID string
 		want   int
 	}{
-		{"workspace owner (admin path)", testUserID, http.StatusOK},
+		{"workspace owner without share", testUserID, http.StatusForbidden},
 		{"agent owner (plain member)", ownerID, http.StatusOK},
 		{"unrelated plain member", memberID, http.StatusForbidden},
 	}
@@ -363,10 +361,9 @@ func TestGetLarkInstallStatus_ScopedToInitiatorOrAdmin(t *testing.T) {
 	}
 }
 
-// TestRevokeLarkInstallation_AuthorizesAgentOwnerAndAdmins mirrors the bind
-// authorization on the unbind path: the bound agent's owner (a plain member)
-// and workspace owner/admins may revoke, an unrelated member may not (MUL-4213).
-func TestRevokeLarkInstallation_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
+// TestRevokeLarkInstallation_PrivateAgentOwnerOnly mirrors owner-only private
+// agent authorization on the unbind path, including workspace admins.
+func TestRevokeLarkInstallation_PrivateAgentOwnerOnly(t *testing.T) {
 	wireLarkInstallServices(t)
 	agentID, ownerID, memberID := privateAgentTestFixture(t)
 
@@ -410,9 +407,9 @@ RETURNING id
 	if code := revoke(ownerID, seedInstallation()); code != http.StatusNoContent {
 		t.Fatalf("revoke as agent owner: want 204, got %d", code)
 	}
-	// Workspace owner/admin: allowed.
-	if code := revoke(testUserID, seedInstallation()); code != http.StatusNoContent {
-		t.Fatalf("revoke as workspace owner: want 204, got %d", code)
+	// Workspace owner/admin without a share: forbidden.
+	if code := revoke(testUserID, seedInstallation()); code != http.StatusForbidden {
+		t.Fatalf("revoke as workspace owner: want 403, got %d", code)
 	}
 }
 

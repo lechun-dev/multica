@@ -36,6 +36,20 @@ describe("member search and account access", () => {
     expect(change).toHaveBeenCalledWith("晓慧");
     expect(screen.getByRole("combobox", { name: "Account status" })).toBeInTheDocument();
   });
+  it("separates pending permissions and actionable failures from account status", () => {
+    const handover: NonNullable<MemberWithUser["handover"]> = {
+      status: "pending", reason: "", recipient_name: "", attempted_at: null, notification_status: "",
+    };
+    const pending: MemberWithUser = { ...member, id: "pending", account_disabled: true, handover };
+    const attention = { ...pending, id: "attention", handover: { ...handover, reason: "manager_read_failed" } };
+    const failed = { ...pending, id: "failed", handover: { ...handover, status: "failed" as const, reason: "execution_failed" } };
+    const opened = { ...pending, id: "opened", handover: { ...handover, status: "completed" as const } };
+    const enabled = { ...attention, id: "enabled", account_disabled: false };
+    const records = [pending, attention, failed, opened, enabled];
+    expect(filterMembers(records, "", "handover_pending")).toEqual([pending]);
+    expect(filterMembers(records, "", "handover_attention")).toEqual([attention, failed]);
+    expect(filterMembers(records, "", "disabled")).toEqual([pending, attention, failed, opened]);
+  });
   it("does not mutate the account until the global-impact confirmation is accepted", async () => {
     const close = vi.fn(); setAccess.mockResolvedValue({ ...member, account_disabled: true });
     wrap(<MemberAccountAccessDialog workspaceId="w1" member={member} onClose={close} />);

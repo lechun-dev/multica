@@ -1427,9 +1427,28 @@
     "no_access": "No access",
     "inherited_owner": "Inherited from workspace owner",
     "read_only_hint": "Only workspace owners or project owners can change roles",
-    "roles": { "owner": "Owner", "admin": "Admin", "manager": "Project manager", "member": "Member", "viewer": "Viewer" },
-    "permissions": { "project.view": "View project", "project.edit": "Edit project", "project.issue.create": "Create issues", "project.issue.comment": "Comment on issues", "project.issue.manage": "Manage issues", "project.issue.archive": "Archive issues", "project.agent.use": "Use agents", "project.member.manage": "Manage members", "project.settings.manage": "Manage project settings" },
-    "sources": { "workspace_role": "Workspace role", "project_role": "Project role" }
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "manager": "Project manager",
+      "member": "Member",
+      "viewer": "Viewer"
+    },
+    "permissions": {
+      "project.view": "View project",
+      "project.edit": "Edit project",
+      "project.issue.create": "Create issues",
+      "project.issue.comment": "Comment on issues",
+      "project.issue.manage": "Manage issues",
+      "project.issue.archive": "Archive issues",
+      "project.agent.use": "Use agents",
+      "project.member.manage": "Manage members",
+      "project.settings.manage": "Manage project settings"
+    },
+    "sources": {
+      "workspace_role": "Workspace role",
+      "project_role": "Project role"
+    }
   },
   "permission_roles": {
     "title": "Permission roles",
@@ -1517,7 +1536,17 @@
     "sync_departures_skipped": "Departure records skipped: {{count}} (active, unmatched or protected)",
     "sync_departures_incomplete": "Directory synced, but departure verification failed. No accounts were disabled from this check. Check the DingTalk application’s departure-record permissions and server logs.",
     "sync_departures_owner_only": "Only the directory was synced. Automatic account suspension requires a workspace owner. Self, owner and cross-workspace protections still apply.",
-    "sync_departures_not_checked": "The server did not verify departures. No accounts were automatically disabled."
+    "sync_departures_not_checked": "The server did not verify departures. No accounts were automatically disabled.",
+    "manager_label": "Direct manager: {{name}}",
+    "manager_unset": "No manager set",
+    "manager_unlinked": "Manager not linked to this workspace",
+    "manager_inactive": "Manager account disabled",
+    "manager_not_synced": "Manager not synced",
+    "manager_failed": "Manager read failed; showing last successful result when available",
+    "manager_last_synced": "Last successful sync: {{time}}",
+    "sync_managers_synced": "Managers synced: {{count}}",
+    "sync_managers_failed": "Manager reads failed: {{count}}",
+    "sync_managers_incomplete": "Some manager details could not be read. Check app permissions and directory visibility, then retry."
   },
   "members": {
     "search_placeholder": "Search by name or email",
@@ -1622,5 +1651,46 @@
     "status_loading": "Checking...",
     "status_unknown": "Status unavailable",
     "channel_hint": "Chat with agents and create issues from {{channel}}."
+  },
+  "member_handover": {
+    "action": "Hand over work",
+    "title": "Open work permissions for {{name}}",
+    "scope": "Open management access to unfinished work in this workspace. Private agents and computer access are excluded.",
+    "recipient": "Recipient",
+    "select_recipient": "Select an active workspace member",
+    "no_recipients": "No available recipient in this workspace.",
+    "loading": "Preparing preview...",
+    "preview_failed": "Could not prepare the preview. Refresh and try again.",
+    "execute_failed": "Could not open permissions. Refresh the preview and retry.",
+    "expired": "This preview expired. Refresh it before confirming.",
+    "empty": "No eligible unfinished work.",
+    "projects": "Projects ({{count}})",
+    "issues": "Issues ({{count}})",
+    "grant": "Grant {{role}} access",
+    "reassign": "Reassign responsibility",
+    "consequence": "Project leads and task assignees stay unchanged. The receiver can distribute the work using existing controls. A checklist is created and only the receiver is notified, including receivers with the owner role.",
+    "refresh": "Refresh preview",
+    "submitting": "Opening permissions...",
+    "confirm": "Open permissions",
+    "automation": {
+      "pending": "Permissions pending",
+      "failed": "Permission opening failed",
+      "completed": "Permissions opened",
+      "no_work": "No remaining work",
+      "unknown": "Handover status unavailable",
+      "manager_not_synced": "Manager has not been synced",
+      "manager_unset": "No direct manager set",
+      "manager_unlinked": "Manager has no workspace account",
+      "manager_inactive": "Manager is inactive",
+      "people_unavailable": "Account or recipient unavailable; select a receiver manually",
+      "source_not_manageable": "Owner cannot manage this account across all workspaces",
+      "execution_failed": "Permission opening failed; background processing will retry",
+      "notification_pending": "Mission notification awaiting routing",
+      "notification_staged": "Queued for Mission delivery",
+      "notification_delivered": "Mission delivered",
+      "notification_failed": "Mission delivery failed; contact support to investigate",
+      "attention": "Needs attention",
+      "manager_read_failed": "Manager lookup failed; verify the relationship before retrying"
+    }
   }
 }

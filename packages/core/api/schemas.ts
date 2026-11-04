@@ -3504,7 +3504,16 @@ export const EMPTY_SHARE_LINK_INFO: ShareLinkInfo = {
   role: "member",
 };
 
+export const MemberHandoverStatusSchema = z.object({
+  status: z.enum(["pending", "failed", "completed", "no_work", "unknown"]).catch("unknown"),
+  reason: z.string().catch(""),
+  recipient_name: z.string().catch(""),
+  attempted_at: z.string().nullable().catch(null),
+  notification_status: z.enum(["pending", "staged", "delivered", "failed", ""]).catch(""),
+});
+
 export const MemberWithUserSchema = z.object({
+  handover: MemberHandoverStatusSchema.optional().catch(undefined),
   id: z.string(),
   workspace_id: z.string(),
   user_id: z.string(),
@@ -3519,6 +3528,33 @@ export const MemberWithUserSchema = z.object({
 }).loose();
 
 export const MembersWithUserSchema = z.array(MemberWithUserSchema);
+
+const HandoverResourceSchema = z.object({
+  id: z.uuid(),
+  title: z.string(),
+  project_id: z.union([z.uuid(), z.literal("")]),
+  role: z.enum(["owner", "manager", "member"]),
+  reassign: z.boolean(),
+  version: z.string().min(1),
+});
+
+export const MemberHandoverPreviewSchema = z.object({
+  preview_id: z.union([z.uuid(), z.literal("")]),
+  source_user_id: z.uuid(),
+  recipient_user_id: z.union([z.uuid(), z.literal("")]),
+  manager_user_id: z.union([z.uuid(), z.literal("")]),
+  manager_name: z.string(),
+  manager_status: z.enum(["not_synced", "unset", "unlinked", "inactive", "ready"]),
+  manager_sync_status: z.enum(["not_synced", "complete", "failed"]),
+  manager_successful_at: z.iso.datetime({ offset: true }).optional(),
+  projects: z.array(HandoverResourceSchema.extend({ role: z.enum(["owner", "manager"]) })),
+  issues: z.array(HandoverResourceSchema),
+  expires_at: z.iso.datetime({ offset: true }).optional(),
+  completed: z.boolean(),
+}).refine((p) => !p.recipient_user_id || p.recipient_user_id !== p.source_user_id)
+  .refine((p) => !p.preview_id || (!!p.recipient_user_id && !!p.expires_at && p.projects.length + p.issues.length > 0))
+  .refine((p) => !p.completed || !!p.preview_id);
+export type MemberHandoverPreview = z.infer<typeof MemberHandoverPreviewSchema>;
 
 export const ProjectMemberSchema = z.object({
   project_id: z.string(),
@@ -3757,6 +3793,12 @@ export const ProjectAuthorizationOrganizationMemberSchema = z.object({
   avatar_url: z.string().optional(),
   workspace_role: z.string().default("member"),
   has_logged_in: z.boolean().optional().default(false),
+  manager_user_id: z.string().default(""),
+  manager_name: z.string().default(""),
+  manager_status: z.enum(["not_synced", "unset", "unlinked", "inactive", "ready"]).catch("not_synced").default("not_synced"),
+  manager_sync_status: z.enum(["not_synced", "complete", "failed"]).catch("failed").default("not_synced"),
+  manager_successful_at: z.string().optional(),
+  manager_attempted_at: z.string().optional(),
 }).loose();
 
 export const ProjectAuthorizationOrganizationsResponseSchema = z.object({
@@ -3786,6 +3828,8 @@ export const ProjectAuthorizationImportResultSchema = z.object({
 export type ProjectAuthorizationImportResult = z.infer<typeof ProjectAuthorizationImportResultSchema>;
 
 export const ProjectAuthorizationDingTalkSyncResultSchema = z.object({
+  managers_synced: z.number().int().nonnegative().default(0),
+  managers_failed: z.number().int().nonnegative().default(0),
   organizations_created: z.number().default(0),
   organizations_updated: z.number().default(0),
   organizations_disabled: z.number().default(0),

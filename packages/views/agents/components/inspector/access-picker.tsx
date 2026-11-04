@@ -9,11 +9,12 @@ import type {
   AgentVisibility,
   MemberWithUser,
 } from "@multica/core/types";
-import { effectiveAccessScope } from "@multica/core/agents";
+import { effectiveAccessScope, isAgentAccessExpansion } from "@multica/core/agents";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../../common/actor-avatar";
 import { useT } from "../../../i18n";
+import { useAgentSharingConfirmation } from "../use-agent-sharing-confirmation";
 
 export type AccessChange = {
   permission_mode: AgentPermissionMode;
@@ -40,6 +41,7 @@ function selectedTargetIds(
  * owner explicitly saves the complete selection.
  */
 export function AccessPicker({
+  agentName,
   permissionMode,
   invocationTargets,
   visibility: _visibility,
@@ -52,6 +54,7 @@ export function AccessPicker({
   onChange,
   hideFooter = false,
 }: {
+  agentName?: string;
   permissionMode: AgentPermissionMode;
   invocationTargets: AgentInvocationTarget[] | undefined;
   visibility: AgentVisibility;
@@ -72,6 +75,7 @@ export function AccessPicker({
 }) {
   const { t } = useT("agents");
   const { t: tc } = useT("common");
+  const { confirmSharing, sharingConfirmation } = useAgentSharingConfirmation();
   // Centralized derivation (MUL-3963): map canonical scope to picker's
   // local draft key (private / workspace / members).
   const canonical = effectiveAccessScope(permissionMode, invocationTargets);
@@ -196,7 +200,12 @@ export function AccessPicker({
     if (!onChange || saving || !draftChange) return;
     setSaving(true);
     try {
-      await onChange(draftChange);
+      // Capture the exact proposed grants before awaiting acknowledgement.
+      const change = draftChange;
+      if (isAgentAccessExpansion({ permission_mode: permissionMode, invocation_targets: invocationTargets }, change)) {
+        if (!(await confirmSharing({ names: [agentName ?? t(($) => $.access.section_title)], targets: change.invocation_targets, members }))) return;
+      }
+      await onChange(change);
     } finally {
       setSaving(false);
     }
@@ -234,6 +243,7 @@ export function AccessPicker({
 
   return (
     <fieldset>
+      {sharingConfirmation}
       <legend className="sr-only">{t(($) => $.access.tooltip)}</legend>
 
       <div className="divide-y divide-surface-border">

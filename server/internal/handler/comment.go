@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -3560,6 +3561,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	var comment db.Comment
 	var issueRevision int64
+	var previousContent string
 	// 2026-09-05 coder(lq): Mentions in comments are task-scoped grants for
 	// both project-bound and projectless tasks. Do not gate reconciliation on a
 	// project ID; the projectless adapter persists to its dedicated ACL table.
@@ -3583,6 +3585,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			comment = updated.Comment()
 			issueRevision = updated.IssueRevision
+			previousContent = updated.PreviousContent
 		}
 		if err == nil && oldContent != req.Content && strictContentEdit {
 			cancelled, err = qtx.CancelAgentTasksByTriggerComment(r.Context(), existing.ID)
@@ -3624,6 +3627,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			comment = updated.Comment()
 			issueRevision = updated.IssueRevision
+			previousContent = updated.PreviousContent
 		}
 	}
 	if err != nil {
@@ -3689,7 +3693,11 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	if issueRevision > 0 {
 		eventPayload["issue_revision"] = issueRevision
 	}
-	h.publish(protocol.EventCommentUpdated, workspaceID, actorType, actorID, eventPayload)
+	h.Bus.Publish(events.Event{
+		Type: protocol.EventCommentUpdated, WorkspaceID: workspaceID,
+		ActorType: actorType, ActorID: actorID, Payload: eventPayload,
+		PreviousCommentContent: &previousContent,
+	})
 
 	// The broadcast above intentionally omits trigger_outcomes — it is the
 	// editor's private feedback, not shared timeline state (MUL-4525 §2).

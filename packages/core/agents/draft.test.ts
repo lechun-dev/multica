@@ -73,7 +73,7 @@ const sourceAgent = (overrides: Partial<Agent> = {}): Agent =>
   }) as Agent;
 
 describe("duplicate access", () => {
-  it("preserves scoped member and team grants when duplicating an agent", () => {
+  it("clears scoped member and team grants when duplicating an agent", () => {
     const access = deriveDuplicateAccess({
       permission_mode: "public_to",
       invocation_targets: [
@@ -86,20 +86,17 @@ describe("duplicate access", () => {
       ...access,
     };
 
-    expect(access.permissionScope).toBe("members");
-    expect(buildInvocationTargets(duplicateDraft)).toEqual([
-      { target_type: "member", target_id: "member-1" },
-      { target_type: "team", target_id: "team-1" },
-    ]);
+    expect(access.permissionScope).toBe("private");
+    expect(buildInvocationTargets(duplicateDraft)).toEqual([]);
   });
 
-  it("keeps workspace-wide duplicate access workspace-wide", () => {
+  it("makes a workspace-shared duplicate private", () => {
     expect(
       deriveDuplicateAccess({
         permission_mode: "public_to",
         invocation_targets: [{ target_type: "workspace", target_id: null }],
       }).permissionScope,
-    ).toBe("workspace");
+    ).toBe("private");
   });
 });
 

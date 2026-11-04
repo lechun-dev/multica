@@ -168,9 +168,8 @@ func (f *Fixture) Member(t TB, workspaceID, userID, role string, over ...Cols) s
 
 // Issue inserts an issue owned by the fixture's workspace and user.
 //
-// number is derived from the workspace's existing issues rather than fixed, so
-// two issues built by the same test do not collide on the workspace's issue
-// numbering.
+// Issue numbers and the workspace counter advance together under the same row
+// lock used by application creates. Explicit numbers never rewind the counter.
 func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
 	t.Helper()
 	cols := merge(Cols{
@@ -182,13 +181,42 @@ func (f *Fixture) Issue(t TB, title string, over ...Cols) string {
 		"creator_id":   f.UserID,
 		"position":     0,
 	}, over)
-	if _, ok := cols["number"]; !ok {
-		workspaceID, _ := cols["workspace_id"].(string)
-		cols["number"] = Raw(fmt.Sprintf(
-			"(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = %s)",
-			quoteLiteral(workspaceID)))
+	ctx := context.Background()
+	tx, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("setup: begin issue fixture: %v", err)
 	}
-	return f.Insert(t, "issue", cols)
+	defer tx.Rollback(ctx)
+
+	var counter int32
+	if err := tx.QueryRow(ctx, `SELECT issue_counter FROM workspace WHERE id = $1 FOR UPDATE`, cols["workspace_id"]).Scan(&counter); err != nil {
+		t.Fatalf("setup: lock issue workspace: %v", err)
+	}
+	if _, ok := cols["number"]; !ok {
+		// Some fixtures insert issue rows directly, without advancing the counter.
+		var number int32
+		if err := tx.QueryRow(ctx, `SELECT GREATEST($1::integer, COALESCE(MAX(number), 0)) + 1 FROM issue WHERE workspace_id = $2`, counter, cols["workspace_id"]).Scan(&number); err != nil {
+			t.Fatalf("setup: allocate issue fixture number: %v", err)
+		}
+		cols["number"] = number
+	}
+
+	names, placeholders, args := compile(cols)
+	sql := fmt.Sprintf("INSERT INTO issue (%s) VALUES (%s) RETURNING id, number",
+		strings.Join(names, ", "), strings.Join(placeholders, ", "))
+	var id string
+	var number int32
+	if err := tx.QueryRow(ctx, sql, args...).Scan(&id, &number); err != nil {
+		t.Fatalf("setup: insert issue fixture: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE workspace SET issue_counter = GREATEST(issue_counter, $2) WHERE id = $1`, cols["workspace_id"], number); err != nil {
+		t.Fatalf("setup: advance issue fixture counter: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("setup: commit issue fixture: %v", err)
+	}
+	f.deleteOnCleanup(t, "issue", id)
+	return id
 }
 
 // Comment inserts a comment on issueID.
@@ -350,8 +378,4 @@ func merge(base Cols, over []Cols) Cols {
 // table, is one — survive as table and column names.
 func quoteIdent(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-}
-
-func quoteLiteral(s string) string {
-	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
 }

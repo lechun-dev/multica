@@ -75,7 +75,7 @@ func TestClaimTaskChatCompletePointerSkipsSessionFallbackQuery(t *testing.T) {
 		"role":            "user",
 		"content":         "keep the direct pointer",
 	})
-	dbfx.Task(t, agentID, testutil.Cols{
+	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id":      runtimeID,
 		"chat_session_id": chatSessionID,
 		"priority":        1000,
@@ -147,7 +147,7 @@ func TestClaimTaskChatInputLoadFailureSkipsResumeQueries(t *testing.T) {
 		"title":      "input failure skips resume history",
 		"runtime_id": runtimeID,
 	})
-	taskID := dbfx.Task(t, agentID, testutil.Cols{
+	taskID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
 		"runtime_id":      runtimeID,
 		"chat_session_id": chatSessionID,
 		"priority":        1000,

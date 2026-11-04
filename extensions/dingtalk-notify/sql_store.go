@@ -128,6 +128,10 @@ func (s *SQLStore) MarkDelivered(ctx context.Context, id string, at time.Time) e
 	return s.updateStatus(ctx, id, StatusDelivered, at, 0, "", nil)
 }
 
+func (s *SQLStore) MarkSkipped(ctx context.Context, id string, at time.Time, reason string) error {
+	return s.updateStatus(ctx, id, StatusSkipped, at, 0, reason, nil)
+}
+
 func (s *SQLStore) MarkRetry(ctx context.Context, id string, next time.Time, attempts int, reason string) error {
 	return s.updateStatus(ctx, id, StatusPending, time.Now().UTC(), attempts, reason, &next)
 }

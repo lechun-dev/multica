@@ -137,11 +137,11 @@ func TestAgentCopySameRuntimeCopiesPortableFields(t *testing.T) {
 	if gotBody["service_tier"] != "priority" {
 		t.Errorf("service_tier = %v", gotBody["service_tier"])
 	}
-	// Invocation permission is copied verbatim.
-	if gotBody["permission_mode"] != "public_to" {
+	// Copies never inherit source sharing.
+	if gotBody["permission_mode"] != "private" {
 		t.Errorf("permission_mode = %v", gotBody["permission_mode"])
 	}
-	if !reflect.DeepEqual(gotBody["invocation_targets"], []any{map[string]any{"target_type": "workspace"}}) {
+	if !reflect.DeepEqual(gotBody["invocation_targets"], []any{}) {
 		t.Errorf("invocation_targets = %v", gotBody["invocation_targets"])
 	}
 	// Skills bind in the same create request.

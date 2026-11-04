@@ -6,7 +6,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 var (
@@ -192,6 +195,107 @@ func TestIssueNumbersDoNotCollide(t *testing.T) {
 	f.QueryRow(t, `SELECT number FROM issue WHERE id = $1`, second).Scan(&b)
 	if a == b {
 		t.Fatalf("both issues took number %d", a)
+	}
+}
+
+func issueCounterFixture(t *testing.T) *Fixture {
+	t.Helper()
+	f := newFixture(t)
+	ws := f.Workspace(t, "Issue counter", "fixture-counter-"+uuid.NewString())
+	return New(f.Pool, ws, f.UserID)
+}
+
+// createApplicationIssue uses the same counter and insert queries as ordinary
+// creates and handover checklists, without going through the fixture builder.
+func createApplicationIssue(t *testing.T, f *Fixture) int32 {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	var workspaceID, creatorID pgtype.UUID
+	if err := workspaceID.Scan(f.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := creatorID.Scan(f.UserID); err != nil {
+		t.Fatal(err)
+	}
+	q := db.New(tx)
+	number, err := q.IncrementIssueCounter(ctx, workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := q.CreateIssue(ctx, db.CreateIssueParams{
+		WorkspaceID: workspaceID, Title: "Application issue", Status: "todo",
+		Priority: "none", CreatorType: "member", CreatorID: creatorID, Number: number,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.deleteOnCleanup(t, "issue", uuid.UUID(issue.ID.Bytes).String())
+	return issue.Number
+}
+
+func TestIssueFixturesShareApplicationCounter(t *testing.T) {
+	f := issueCounterFixture(t)
+	f.Issue(t, "Fixture before checklist")
+	if number := createApplicationIssue(t, f); number != 2 {
+		t.Fatalf("application issue number = %d, want 2", number)
+	}
+	last := f.Issue(t, "Fixture after checklist")
+	var number, counter int32
+	f.QueryRow(t, `SELECT number FROM issue WHERE id = $1`, last).Scan(&number)
+	f.QueryRow(t, `SELECT issue_counter FROM workspace WHERE id = $1`, f.WorkspaceID).Scan(&counter)
+	if number != 3 || counter != 3 {
+		t.Fatalf("fixture number/counter = %d/%d, want 3/3", number, counter)
+	}
+}
+
+func TestIssueFixtureExplicitNumbersNeverRewindCounter(t *testing.T) {
+	f := issueCounterFixture(t)
+	f.Issue(t, "Higher explicit number", Cols{"number": 100})
+	f.Issue(t, "Lower explicit number", Cols{"number": Raw("50")})
+	if number := createApplicationIssue(t, f); number != 101 {
+		t.Fatalf("application issue number = %d, want 101", number)
+	}
+}
+
+func TestIssueFixturesSerializeWithApplicationCreates(t *testing.T) {
+	f := issueCounterFixture(t)
+	const workers = 8
+	numbers := make(chan int32, workers)
+	t.Run("concurrent creates", func(t *testing.T) {
+		for i := range workers {
+			t.Run(fmt.Sprintf("create-%d", i), func(t *testing.T) {
+				t.Parallel()
+				if i%2 == 0 {
+					numbers <- createApplicationIssue(t, f)
+					return
+				}
+				id := f.Issue(t, "Concurrent fixture")
+				var number int32
+				f.QueryRow(t, `SELECT number FROM issue WHERE id = $1`, id).Scan(&number)
+				numbers <- number
+			})
+		}
+	})
+	close(numbers)
+	seen := make(map[int32]bool)
+	for number := range numbers {
+		if seen[number] {
+			t.Fatalf("duplicate issue number %d", number)
+		}
+		seen[number] = true
+	}
+	var counter int32
+	f.QueryRow(t, `SELECT issue_counter FROM workspace WHERE id = $1`, f.WorkspaceID).Scan(&counter)
+	if len(seen) != workers || counter != workers {
+		t.Fatalf("unique numbers/counter = %d/%d, want %d/%d", len(seen), counter, workers, workers)
 	}
 }
 
