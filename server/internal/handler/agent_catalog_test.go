@@ -1,0 +1,176 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestListOwnerAgentCatalog(t *testing.T) {
+	agentID, agentOwnerID, otherID := privateAgentTestFixture(t)
+	ctx := context.Background()
+	const path = "/api/agents/catalog"
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET instructions = 'private prompt', archived_at = now() WHERE id = $1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	testHandler.ListOwnerAgentCatalog(w, newRequest("GET", path, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("workspace owner: got %d: %s", w.Code, w.Body.String())
+	}
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected only the inaccessible private agent, got %s", w.Body.String())
+	}
+	entry := entries[0]
+	allowed := []string{"id", "name", "owner_id", "created_at", "archived_at", "access_scope"}
+	if len(entry) != len(allowed) {
+		t.Fatalf("unexpected catalog fields: %v", entry)
+	}
+	for _, field := range allowed {
+		if _, ok := entry[field]; !ok {
+			t.Errorf("missing %s", field)
+		}
+	}
+	if string(entry["id"]) != `"`+agentID+`"` || string(entry["owner_id"]) != `"`+agentOwnerID+`"` ||
+		string(entry["archived_at"]) == "null" || string(entry["access_scope"]) != `"owner-only"` {
+		t.Fatalf("unexpected catalog metadata: %s", w.Body.String())
+	}
+	for _, tc := range []struct {
+		method, suffix string
+		handler        http.HandlerFunc
+	}{
+		{"GET", "", testHandler.GetAgent},
+		{"PUT", "", testHandler.UpdateAgent},
+		{"POST", "/restore", testHandler.RestoreAgent},
+		{"GET", "/env", testHandler.GetAgentEnv},
+		{"GET", "/tasks", testHandler.ListAgentTasks},
+	} {
+		w := httptest.NewRecorder()
+		url := "/api/agents/" + agentID + tc.suffix
+		tc.handler(w, withURLParam(newRequest(tc.method, url, nil), "id", agentID))
+		if w.Code != http.StatusForbidden {
+			t.Errorf("workspace owner: %s %s: expected 403, got %d: %s", tc.method, url, w.Code, w.Body.String())
+		}
+	}
+
+	denied := func(label string, req *http.Request, want int) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.ListOwnerAgentCatalog(w, req)
+		if w.Code != want {
+			t.Fatalf("%s: expected %d, got %d: %s", label, want, w.Code, w.Body.String())
+		}
+	}
+	denied("agent owner without workspace ownership", newRequestAs(agentOwnerID, "GET", path, nil), http.StatusForbidden)
+	denied("member", newRequestAs(otherID, "GET", path, nil), http.StatusForbidden)
+	if _, err := testPool.Exec(ctx, `UPDATE member SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, otherID); err != nil {
+		t.Fatal(err)
+	}
+	denied("admin", newRequestAs(otherID, "GET", path, nil), http.StatusForbidden)
+	taskReq := newRequest("GET", path, nil)
+	taskReq.Header.Set("X-Actor-Source", "task_token")
+	taskReq.Header.Set("X-Agent-ID", agentID)
+	denied("task token bound to workspace owner", taskReq, http.StatusForbidden)
+	foreignReq := newRequest("GET", path+"?workspace_id=00000000-0000-0000-0000-000000000001", nil)
+	foreignReq.Header.Del("X-Workspace-ID")
+	denied("non-member workspace", foreignReq, http.StatusNotFound)
+}
+
+func TestGetOwnerAgentDetail(t *testing.T) {
+	agentID, _, memberID := privateAgentTestFixture(t)
+	ctx := context.Background()
+	path := "/api/agents/catalog/" + agentID
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET instructions = 'private prompt', model = 'test-model', thinking_level = 'high', max_concurrent_tasks = 6 WHERE id = $1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	request := func(req *http.Request, id string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.GetOwnerAgentDetail(w, withURLParam(req, "id", id))
+		if w.Code != want {
+			t.Fatalf("expected %d, got %d: %s", want, w.Code, w.Body.String())
+		}
+		return w
+	}
+	w := request(newRequest("GET", path, nil), agentID, http.StatusOK)
+	if got := w.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Errorf("unexpected Cache-Control: %q", got)
+	}
+	var detail map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	allowed := []string{"id", "name", "owner_id", "created_at", "archived_at", "access_scope", "description", "updated_at", "model", "thinking_level", "max_concurrent_tasks", "runtime_bound"}
+	if len(detail) != len(allowed) {
+		t.Fatalf("unexpected detail fields: %v", detail)
+	}
+	for _, field := range allowed {
+		if _, ok := detail[field]; !ok {
+			t.Errorf("missing %s", field)
+		}
+	}
+	for key, want := range map[string]string{
+		"id": `"` + agentID + `"`, "access_scope": `"owner-only"`, "model": `"test-model"`,
+		"thinking_level": `"high"`, "max_concurrent_tasks": `6`, "runtime_bound": `true`,
+	} {
+		if got := string(detail[key]); got != want {
+			t.Errorf("%s: expected %s, got %s", key, want, got)
+		}
+	}
+	if canMemberInvoke(t, agentID, testUserID) {
+		t.Error("catalog access must not grant invocation")
+	}
+	request(newRequestAs(memberID, "GET", path, nil), agentID, http.StatusForbidden)
+	if _, err := testPool.Exec(ctx, `UPDATE member SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	request(newRequestAs(memberID, "GET", path, nil), agentID, http.StatusForbidden)
+	taskReq := newRequest("GET", path, nil)
+	taskReq.Header.Set("X-Actor-Source", "task_token")
+	taskReq.Header.Set("X-Agent-ID", agentID)
+	request(taskReq, agentID, http.StatusForbidden)
+
+	otherWorkspace := dbfx.Workspace(t, "Other agent catalog workspace", "other-agent-catalog")
+	dbfx.Member(t, otherWorkspace, testUserID, "owner")
+	crossWorkspaceReq := newRequest("GET", path, nil)
+	crossWorkspaceReq.Header.Set("X-Workspace-ID", otherWorkspace)
+	request(crossWorkspaceReq, agentID, http.StatusNotFound)
+}
+
+func TestWorkspaceOwnerCanInvokeSharedAgentButCannotEditIt(t *testing.T) {
+	agentID, agentOwnerID, _ := privateAgentTestFixture(t)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET permission_mode = 'public_to' WHERE id = $1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_invocation_target (agent_id, target_type, target_id) VALUES ($1, 'workspace', $2)`, agentID, testWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if !canMemberInvoke(t, agentID, testUserID) {
+		t.Fatal("workspace sharing should still allow invocation")
+	}
+	path := "/api/agents/" + agentID
+	body := map[string]string{"description": "updated by the agent owner"}
+	check := func(req *http.Request, handler http.HandlerFunc, want int) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler(w, withURLParam(req, "id", agentID))
+		if w.Code != want {
+			t.Errorf("%s %s: expected %d, got %d: %s", req.Method, req.URL, want, w.Code, w.Body.String())
+		}
+	}
+	check(newRequest("GET", path, nil), testHandler.GetAgent, http.StatusOK)
+	check(newRequest("PUT", path, body), testHandler.UpdateAgent, http.StatusForbidden)
+	check(newRequest("DELETE", path, nil), testHandler.ArchiveAgent, http.StatusForbidden)
+	check(newRequest("GET", path+"/env", nil), testHandler.GetAgentEnv, http.StatusForbidden)
+	check(newRequest("PUT", path+"/env", nil), testHandler.UpdateAgentEnv, http.StatusForbidden)
+	check(newRequest("POST", path+"/mcp-servers", nil), testHandler.AddAgentMcpServer, http.StatusForbidden)
+	check(newRequestAs(agentOwnerID, "PUT", path, body), testHandler.UpdateAgent, http.StatusOK)
+}

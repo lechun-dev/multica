@@ -80,6 +80,7 @@
     "access": "Access"
   },
   "row": {
+    "active": "Active",
     "you": "You",
     "archived": "Archived",
     "needs_runtime": "Needs a runtime",
@@ -137,6 +138,8 @@
     "archive_dialog_confirm": "Archive"
   },
   "detail": {
+    "catalog_read_only": "Read-only. You can’t edit this agent.",
+    "runtime_bound": "Runtime bound",
     "back_to_agents": "Agents",
     "back_to_agents_full": "Back to agents",
     "not_found_title": "Agent not found",

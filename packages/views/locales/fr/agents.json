@@ -80,6 +80,7 @@
     "access": "Accès"
   },
   "row": {
+    "active": "Actif",
     "you": "Vous",
     "archived": "Archivé",
     "needs_runtime": "Runtime requis",
@@ -137,6 +138,8 @@
     "archive_dialog_confirm": "Archiver"
   },
   "detail": {
+    "catalog_read_only": "Lecture seule. Vous ne pouvez pas modifier cet agent.",
+    "runtime_bound": "Runtime associé",
     "back_to_agents": "Agents",
     "back_to_agents_full": "Retour aux agents",
     "not_found_title": "Agent introuvable",

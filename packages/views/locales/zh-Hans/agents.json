@@ -78,6 +78,7 @@
     "access": "访问权限"
   },
   "row": {
+    "active": "未归档",
     "you": "你",
     "archived": "已归档",
     "needs_runtime": "需绑定运行时",
@@ -128,6 +129,8 @@
     "archive_dialog_confirm": "归档"
   },
   "detail": {
+    "catalog_read_only": "只读。你无法编辑此智能体。",
+    "runtime_bound": "已绑定运行环境",
     "back_to_agents": "智能体",
     "back_to_agents_full": "返回智能体列表",
     "not_found_title": "未找到该智能体",

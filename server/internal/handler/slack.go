@@ -117,12 +117,7 @@ func (h *Handler) RegisterSlackBYO(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Ownership pre-check at the boundary so a wrong agent_id is a clear 404.
-	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          agentUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+	if !h.requireAgentIntegrationManager(w, r, wsUUID, agentUUID, false) {
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
@@ -198,12 +193,16 @@ func (h *Handler) RevokeSlackInstallation(w http.ResponseWriter, r *http.Request
 	}
 	// Workspace-scoped lookup so one workspace cannot revoke another's
 	// installation by guessing the UUID.
-	if _, err := h.SlackInstall.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
+	inst, err := h.SlackInstall.GetInWorkspace(r.Context(), instUUID, wsUUID)
+	if err != nil {
 		if errors.Is(err, slack.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "slack installation not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load installation")
+		return
+	}
+	if !h.requireAgentIntegrationManager(w, r, wsUUID, inst.AgentID, true) {
 		return
 	}
 	if err := h.SlackInstall.Revoke(r.Context(), instUUID); err != nil {

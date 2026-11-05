@@ -73,6 +73,25 @@ export function agentDetailOptions(wsId: string, agentId: string) {
   });
 }
 
+/** Owner-facing display metadata only. Keep out of the shared Agent cache. */
+export function ownerAgentCatalogOptions(wsId: string, ownerId: string | undefined) {
+  return queryOptions({
+    queryKey: [...workspaceKeys.agents(wsId), "owner-catalog", ownerId] as const,
+    queryFn: () => api.listOwnerAgentCatalog(wsId),
+    enabled: !!wsId && !!ownerId,
+    retry: false,
+  });
+}
+
+export function ownerAgentDetailOptions(wsId: string, agentId: string, ownerId: string | undefined) {
+  return queryOptions({
+    queryKey: [...workspaceKeys.agents(wsId), "owner-catalog", ownerId, agentId] as const,
+    queryFn: () => api.getOwnerAgentDetail(wsId, agentId),
+    enabled: !!wsId && !!agentId && !!ownerId,
+    retry: false,
+  });
+}
+
 /**
  * Makes an authoritative agent response immediately visible to both agent
  * detail and list consumers. A cold list stays cold so one agent is never

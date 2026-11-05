@@ -1,7 +1,8 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
+import type { OwnerAgentCatalogEntry } from "@multica/core/api/schemas";
 import type { AgentActivity } from "@multica/core/agents";
 import { renderWithI18n } from "../../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
@@ -19,6 +20,9 @@ import { AgentsPage } from "./agents-page";
 const mocks = vi.hoisted(() => ({
   agents: [] as Agent[],
   agentsLoading: false,
+  role: "member",
+  catalog: [] as OwnerAgentCatalogEntry[],
+  catalogError: null as Error | null,
   runCounts: [] as Array<{ agent_id: string; run_count: number }>,
   runCountsPending: false,
   activity: {
@@ -64,6 +68,12 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (key === "agent-run-counts") {
       return { data: mocks.runCounts, isPending: mocks.runCountsPending };
+    }
+    if (key === "members") {
+      return { data: [{ user_id: "user-1", role: mocks.role }] };
+    }
+    if (key === "owner-catalog") {
+      return { data: mocks.catalog, error: mocks.catalogError };
     }
     return { data: [], isLoading: false, isPending: false };
   },
@@ -135,6 +145,7 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
+  ownerAgentCatalogOptions: () => ({ queryKey: ["owner-catalog"] }),
   workspaceKeys: { agents: (wsId: string) => ["agents", wsId] },
 }));
 
@@ -145,9 +156,11 @@ vi.mock("@multica/core/runtimes", () => ({
 // View-layer children with heavy / portal deps — stub to keep the test focused
 // on the gate, not on avatars, row menus, the toolbar, or tooltip portals.
 vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
-vi.mock("./agent-row-actions", () => ({ AgentRowActions: () => null }));
+vi.mock("./agent-row-actions", () => ({ AgentRowActions: () => <button>Row actions</button> }));
 vi.mock("./agent-list-toolbar", () => ({
-  AgentListToolbar: () => <div data-testid="agent-list-toolbar" />,
+  AgentListToolbar: ({ scopeCounts }: { scopeCounts: Record<string, number> }) => (
+    <div data-testid="agent-list-toolbar">{JSON.stringify(scopeCounts)}</div>
+  ),
   countActiveFilterDimensions: () => 0,
 }));
 vi.mock("../presence", () => ({ availabilityConfig: {} }));
@@ -220,11 +233,13 @@ function makeAdapter(
 }
 
 function renderPage() {
-  renderWithI18n(
-    <NavigationProvider value={makeAdapter()}>
+  const adapter = makeAdapter();
+  const view = renderWithI18n(
+    <NavigationProvider value={adapter}>
       <AgentsPage />
     </NavigationProvider>,
   );
+  return { ...view, adapter };
 }
 
 /** Beta before Alpha in document order? */
@@ -239,6 +254,9 @@ function betaPrecedesAlpha(): boolean {
 beforeEach(() => {
   mocks.agents = [ALPHA, BETA];
   mocks.agentsLoading = false;
+  mocks.role = "member";
+  mocks.catalog = [];
+  mocks.catalogError = null;
   mocks.runCounts = [];
   mocks.runCountsPending = false;
   mocks.activity = { byAgent: new Map(), loading: false };
@@ -254,6 +272,51 @@ beforeEach(() => {
     models: [],
     access: [],
   };
+});
+
+describe("AgentsPage owner catalog", () => {
+  const entry: OwnerAgentCatalogEntry = {
+    id: "private-agent",
+    name: "Private agent",
+    owner_id: "user-2",
+    archived_at: null,
+    created_at: "2026-06-01T00:00:00Z",
+    access_scope: "owner-only",
+  };
+
+  it("adds read-only entries to All with the existing detail link and no actions or selection", () => {
+    mocks.role = "owner";
+    mocks.catalog = [entry, { ...entry, id: "archived", archived_at: entry.created_at }];
+    const { adapter } = renderPage();
+    const row = screen.getByRole("row", { name: /Private agent/ });
+    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
+    fireEvent.click(row);
+    expect(adapter.push).toHaveBeenCalledWith("/test-workspace/agents/private-agent");
+    expect(screen.getByTestId("agent-list-toolbar")).toHaveTextContent('{"mine":2,"all":3,"archived":1}');
+  });
+
+  it.each(["mine", "archived"])("honors the %s scope", (scope) => {
+    mocks.role = "owner";
+    mocks.viewState.scope = scope;
+    mocks.catalog = [entry, { ...entry, id: "archived", name: "Archived private", archived_at: entry.created_at }];
+    renderPage();
+    expect(screen.queryByText("Private agent")).not.toBeInTheDocument();
+    if (scope === "archived") {
+      expect(screen.getByText("Archived private")).toBeInTheDocument();
+    } else {
+      expect(screen.queryByText("Archived private")).not.toBeInTheDocument();
+    }
+  });
+
+  it.each(["member", "admin", "owner"])("hides cached catalog results for %s when the request is denied", (role) => {
+    mocks.role = role;
+    mocks.catalog = [entry];
+    if (role === "owner") mocks.catalogError = new Error("Forbidden");
+    renderPage();
+    expect(screen.queryByText("Private agent")).not.toBeInTheDocument();
+    expect(screen.getByText("Alpha Agent")).toBeInTheDocument();
+  });
 });
 
 describe("AgentsPage listReady gate", () => {

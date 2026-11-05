@@ -58,6 +58,7 @@ const currentUserRef = vi.hoisted(() => ({
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockModalOpen = vi.hoisted(() => vi.fn());
 const mockGetAgent = vi.hoisted(() => vi.fn());
+const mockOwnerDetail = vi.hoisted(() => vi.fn());
 const mockUpdateAgent = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
@@ -102,6 +103,11 @@ vi.mock("@multica/core/workspace/queries", () => ({
       membersPendingRef.current
         ? new Promise(() => {})
         : Promise.resolve(membersRef.current),
+  }),
+  ownerAgentDetailOptions: (wsId: string, agentId: string, ownerId?: string) => ({
+    queryKey: ["owner-detail", wsId, ownerId, agentId],
+    queryFn: () => mockOwnerDetail(wsId, agentId),
+    enabled: !!ownerId,
   }),
   workspaceKeys: {
     agents: (wsId: string) => ["agents", wsId],
@@ -217,7 +223,73 @@ beforeEach(() => {
   membersPendingRef.current = false;
   agentsRef.current = [baseAgent];
   mockGetAgent.mockRejectedValue(new ApiError("not found", 404, "Not Found"));
+  mockOwnerDetail.mockResolvedValue(null);
   mockUpdateAgent.mockResolvedValue({ ...baseAgent, model: "new-model" });
+});
+
+describe("AgentDetailPage Owner inspection", () => {
+  const projection = {
+    id: baseAgent.id,
+    name: baseAgent.name,
+    owner_id: baseAgent.owner_id,
+    access_scope: "owner-only",
+    archived_at: null,
+    created_at: baseAgent.created_at,
+    updated_at: baseAgent.updated_at,
+    description: "Agent for weekly reports",
+    model: "gpt-6",
+    thinking_level: "high",
+    max_concurrent_tasks: 6,
+    runtime_bound: true,
+  };
+
+  beforeEach(() => {
+    membersRef.current = [{ user_id: "user-1", role: "owner" }, { user_id: "user-2", name: "Agent owner" }];
+  });
+
+  it("shows the private agent's safe configuration without editing or invocation", async () => {
+    agentsRef.current = [];
+    mockOwnerDetail.mockResolvedValue(projection);
+    const { queryClient } = renderPage();
+
+    expect(await screen.findByRole("heading", { name: baseAgent.name })).toBeInTheDocument();
+    for (const value of ["Agent owner", "Agent for weekly reports", "gpt-6", "high", "6", "Owner only", "Runtime bound"]) {
+      expect(screen.getByText(value)).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: /assign work|update model|agent actions/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "DM" })).not.toBeInTheDocument();
+    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(["agents", "ws-1", "detail", "agent-1"])).toBeUndefined();
+    expect(queryClient.getQueryData(["agents", "ws-1"])).toEqual([]);
+  });
+
+  it("keeps existing shared invocation and hides editing for another person's agent", async () => {
+    mockOwnerDetail.mockResolvedValue({ ...projection, access_scope: "workspace" });
+    renderPage();
+
+    expect(await screen.findByText("Read-only. You can’t edit this agent.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Assign work" }));
+    expect(mockModalOpen).toHaveBeenCalledWith("quick-create-issue", { agent_id: baseAgent.id });
+    expect(screen.queryByRole("button", { name: /update model|agent actions/i })).not.toBeInTheDocument();
+    expect(mockGetAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to regular detail when read-only access is refused", async () => {
+    mockOwnerDetail.mockRejectedValue(new ApiError("forbidden", 403, "Forbidden"));
+    renderPage();
+
+    expect(await screen.findByText(enAgents.detail.no_access_title)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /assign work|update model/i })).not.toBeInTheDocument();
+    expect(mockGetAgent).not.toHaveBeenCalled();
+  });
+
+  it("keeps the workspace Owner's editor for their own agent", async () => {
+    agentsRef.current = [{ ...baseAgent, owner_id: "user-1" }];
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "update model" })).toBeInTheDocument();
+    expect(mockOwnerDetail).not.toHaveBeenCalled();
+  });
 });
 
 describe("AgentDetailPage direct-detail fallback", () => {

@@ -159,7 +159,9 @@ export function AgentListToolbar({
       if (entry) entry.count += 1;
       else runtimeOptions.set(rt.id, { name: runtimeDisplayLabel(rt), count: 1 });
     }
-    const a = effectiveAccessScope(row.agent.permission_mode, row.agent.invocation_targets);
+    const a = "access_scope" in row.agent
+      ? row.agent.access_scope
+      : effectiveAccessScope(row.agent.permission_mode, row.agent.invocation_targets);
     accessCounts.set(a, (accessCounts.get(a) ?? 0) + 1);
   }
 
@@ -170,7 +172,7 @@ export function AgentListToolbar({
   for (const row of allRows) {
     const oid = row.agent.owner_id;
     if (oid) ownerCounts.set(oid, (ownerCounts.get(oid) ?? 0) + 1);
-    const model = row.agent.model;
+    const model = "model" in row.agent ? row.agent.model : null;
     if (model) modelCounts.set(model, (modelCounts.get(model) ?? 0) + 1);
   }
 

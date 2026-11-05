@@ -94,6 +94,28 @@ import type {
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
+const OwnerAgentCatalogEntrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  owner_id: z.string().nullable(),
+  archived_at: z.string().nullable(),
+  created_at: z.string(),
+  access_scope: z.enum(["owner-only", "specific-people"]),
+});
+export const OwnerAgentCatalogSchema = z.array(OwnerAgentCatalogEntrySchema);
+export type OwnerAgentCatalogEntry = z.infer<typeof OwnerAgentCatalogSchema>[number];
+
+export const OwnerAgentDetailSchema = OwnerAgentCatalogEntrySchema.extend({
+  access_scope: z.enum(["owner-only", "specific-people", "workspace"]),
+  description: z.string().default(""),
+  updated_at: z.string(),
+  model: z.string().default(""),
+  thinking_level: z.string().default(""),
+  max_concurrent_tasks: z.number().int().positive(),
+  runtime_bound: z.boolean(),
+});
+export type OwnerAgentDetail = z.infer<typeof OwnerAgentDetailSchema>;
+
 export const PluginConfigFieldSchema = z.object({
   key: z.string(),
   type: z.string().default("string"),

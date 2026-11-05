@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 
@@ -13,13 +14,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestCommentThreadQueuesMergeAndExecuteIndependently(t *testing.T) {
+func TestCommentThreadsQueueSeparatelyAndExecuteSerially(t *testing.T) {
 	ctx := context.Background()
 	runtimeID := dbfx.Runtime(t, "thread queue runtime", testutil.Cols{"metadata": testutil.Raw(`'{"capabilities":["issue-thread-concurrency-v1"]}'::jsonb`)})
 	agentID := dbfx.Agent(t, "thread queue agent", runtimeID, testutil.Cols{"max_concurrent_tasks": 2})
 	issueID := dbfx.Issue(t, "thread queue issue", testutil.Cols{"assignee_type": "agent", "assignee_id": agentID})
 	rootA := dbfx.Comment(t, issueID, "thread A")
-	rootB := dbfx.Comment(t, issueID, "thread B")
 	replyA := dbfx.Comment(t, issueID, "A supplement", testutil.Cols{"parent_id": rootA})
 	nestedA := dbfx.Comment(t, issueID, "A nested supplement", testutil.Cols{"parent_id": replyA})
 	t.Cleanup(func() { dbfx.Exec(t, "DELETE FROM agent_task_queue WHERE issue_id = $1", issueID) })
@@ -40,10 +40,27 @@ func TestCommentThreadQueuesMergeAndExecuteIndependently(t *testing.T) {
 		}
 	}
 	enqueue(rootA, false, DispatchQueued)
-	// Even a stale pending hint from another thread must not merge or defer B.
-	enqueue(rootB, true, DispatchQueued)
 	enqueue(replyA, true, DispatchCoalesced)
 	enqueue(nestedA, true, DispatchCoalesced)
+	claim := db.ClaimAgentTaskParams{AgentID: parseUUID(agentID), RuntimeID: parseUUID(runtimeID), PrepareLeaseSecs: 60, RuntimeStaleSecs: 120}
+	a, err := testHandler.Queries.ClaimAgentTask(ctx, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uuidToString(a.CommentThreadID) != rootA || uuidToString(a.TriggerCommentID) != nestedA || len(a.CoalescedCommentIds) != 2 {
+		t.Fatalf("wrong input batch for thread A: %+v", a)
+	}
+	dbfx.Exec(t, "UPDATE agent_task_queue SET status='running', started_at=now(), delivered_comment_ids=ARRAY[$2::uuid,$3::uuid,$4::uuid] WHERE id=$1", uuidToString(a.ID), rootA, replyA, nestedA)
+
+	// Post a second top-level @mention while the first execution is running.
+	var rootB CommentResponse
+	req := withURLParam(newRequest(http.MethodPost, "/api/issues/"+issueID+"/comments", map[string]any{
+		"content": fmt.Sprintf("[@Agent](mention://agent/%s) thread B", agentID),
+	}), "id", issueID)
+	testutil.Call(t, testHandler.CreateComment, req).Want(http.StatusCreated).JSON(&rootB)
+	if outcome := findCommentOutcome(t, rootB.TriggerOutcomes, agentID); outcome.Status != DispatchQueued {
+		t.Fatalf("second mention should enqueue a separate run: %+v", outcome)
+	}
 	tasks, err := testHandler.Queries.ListTasksByIssue(ctx, parseUUID(issueID))
 	if err != nil {
 		t.Fatal(err)
@@ -51,37 +68,19 @@ func TestCommentThreadQueuesMergeAndExecuteIndependently(t *testing.T) {
 	if len(tasks) != 2 {
 		t.Fatalf("got %d runs, want one per thread", len(tasks))
 	}
-	var a, b db.AgentTaskQueue
+	var b db.AgentTaskQueue
 	for _, task := range tasks {
-		switch uuidToString(task.CommentThreadID) {
-		case rootA:
-			a = task
-		case rootB:
+		if uuidToString(task.CommentThreadID) == rootB.ID {
 			b = task
-		default:
-			t.Fatalf("wrong thread scope: %s", uuidToString(task.CommentThreadID))
 		}
 	}
-	if uuidToString(a.TriggerCommentID) != nestedA || len(a.CoalescedCommentIds) != 2 || len(b.CoalescedCommentIds) != 0 {
-		t.Fatalf("wrong input batches: A=%+v B=%+v", a.TriggerCommentID, b.CoalescedCommentIds)
+	if !b.ID.Valid || uuidToString(b.TriggerCommentID) != rootB.ID || len(b.CoalescedCommentIds) != 0 {
+		t.Fatalf("wrong input batch for thread B: %+v", b)
 	}
-	claim := db.ClaimAgentTaskParams{AgentID: parseUUID(agentID), RuntimeID: parseUUID(runtimeID), PrepareLeaseSecs: 60, RuntimeStaleSecs: 120}
-	claimed, err := testHandler.Queries.ClaimAgentTask(ctx, claim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if claimed.ID != a.ID {
-		t.Fatal("oldest thread should execute first")
-	}
-	if other, err := testHandler.Queries.ClaimAgentTask(ctx, claim); err != nil || other.ID != b.ID {
-		t.Fatalf("independent thread B did not run concurrently: %v", err)
-	}
-	// A new instruction after execution starts belongs to a successor run.
-	dbfx.Exec(t, "UPDATE agent_task_queue SET status='running', started_at=now(), delivered_comment_ids=ARRAY[$2::uuid,$3::uuid,$4::uuid] WHERE id=$1", uuidToString(a.ID), rootA, replyA, nestedA)
 	followupA := dbfx.Comment(t, issueID, "A follow-up", testutil.Cols{"parent_id": rootA})
 	enqueue(followupA, false, DispatchQueued)
 	if _, err := testHandler.Queries.ClaimAgentTask(ctx, claim); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("same-thread follow-up must wait for A: %v", err)
+		t.Fatalf("both same-issue successors must wait for A: %v", err)
 	}
 	dbfx.Exec(t, "UPDATE agent_task_queue SET status='completed', completed_at=now() WHERE id=$1", uuidToString(a.ID))
 	completed, err := testHandler.Queries.GetAgentTask(ctx, a.ID)
@@ -95,6 +94,9 @@ func TestCommentThreadQueuesMergeAndExecuteIndependently(t *testing.T) {
 	}
 	if len(tasks) != 3 {
 		t.Fatalf("completion duplicated another thread: got %d tasks", len(tasks))
+	}
+	if other, err := testHandler.Queries.ClaimAgentTask(ctx, claim); err != nil || other.ID != b.ID {
+		t.Fatalf("thread B should be next after A completes: %s / %v", uuidToString(other.ID), err)
 	}
 	// A row-specific rerun replaces only A's pending successor.
 	rerun, err := testHandler.TaskService.RerunIssue(ctx, issue.ID, a.ID, pgtype.UUID{}, parseUUID(testUserID), nil)
@@ -117,22 +119,25 @@ func TestCommentThreadQueuesMergeAndExecuteIndependently(t *testing.T) {
 	}
 }
 
-func TestIssueThreadClaimsShareConfiguredAgentCapacity(t *testing.T) {
+func TestIssueClaimsShareConfiguredAgentCapacity(t *testing.T) {
 	for _, capacity := range []int{1, 2, 6} {
 		t.Run(fmt.Sprintf("capacity_%d", capacity), func(t *testing.T) {
 			ctx := context.Background()
 			rt := dbfx.Runtime(t, "parallel runtime", testutil.Cols{"metadata": testutil.Raw(`'{"capabilities":["issue-thread-concurrency-v1"]}'::jsonb`)})
 			agent := dbfx.Agent(t, "parallel agent", rt, testutil.Cols{"max_concurrent_tasks": capacity})
-			issues := []string{dbfx.Issue(t, "parallel A"), dbfx.Issue(t, "parallel B")}
-			for n := range 12 {
-				issue := issues[n%2]
+			for n := range capacity + 1 {
+				issue := dbfx.Issue(t, fmt.Sprintf("parallel issue %d", n))
 				root := dbfx.Comment(t, issue, fmt.Sprintf("independent instruction %d", n))
 				dbfx.Task(t, agent, testutil.Cols{"runtime_id": rt, "issue_id": issue, "trigger_comment_id": root})
+				if n == 0 {
+					second := dbfx.Comment(t, issue, "second thread in first issue")
+					dbfx.Task(t, agent, testutil.Cols{"runtime_id": rt, "issue_id": issue, "trigger_comment_id": second})
+				}
 			}
 			var wg sync.WaitGroup
 			start := make(chan struct{})
-			errs := make(chan error, 12)
-			for range 12 {
+			errs := make(chan error, capacity+1)
+			for range capacity + 1 {
 				wg.Go(func() {
 					<-start
 					_, err := testHandler.TaskService.ClaimTask(ctx, parseUUID(agent))
@@ -150,7 +155,10 @@ func TestIssueThreadClaimsShareConfiguredAgentCapacity(t *testing.T) {
 			if got := dbfx.Count(t, "SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND status='dispatched'", agent); got != capacity {
 				t.Fatalf("active runs = %d, configured capacity = %d", got, capacity)
 			}
-			// Free one slot; exactly one queued thread may refill it.
+			if got := dbfx.Count(t, "SELECT count(DISTINCT issue_id) FROM agent_task_queue WHERE agent_id=$1 AND status='dispatched'", agent); got != capacity {
+				t.Fatalf("active runs should span %d distinct issues, got %d", capacity, got)
+			}
+			// Free one slot; exactly one queued issue may refill it.
 			dbfx.Exec(t, "UPDATE agent_task_queue SET status='completed', completed_at=now() WHERE id=(SELECT id FROM agent_task_queue WHERE agent_id=$1 AND status='dispatched' LIMIT 1)", agent)
 			if task, err := testHandler.TaskService.ClaimTask(ctx, parseUUID(agent)); err != nil || task == nil {
 				t.Fatalf("released capacity did not refill: %v", err)
@@ -162,57 +170,23 @@ func TestIssueThreadClaimsShareConfiguredAgentCapacity(t *testing.T) {
 	}
 }
 
-func TestIssueThreadClaimsRetainConservativeFences(t *testing.T) {
-	for _, tc := range []struct {
-		name                                   string
-		legacy, activeNull, queuedNull         bool
-		activeWakeup, queuedWakeup, sameThread bool
-	}{
-		{name: "legacy_runtime", legacy: true},
-		{name: "unscoped_active", activeNull: true},
-		{name: "unscoped_queued", queuedNull: true},
-		{name: "active_wakeup", activeWakeup: true},
-		{name: "queued_wakeup", queuedWakeup: true},
-		{name: "same_thread", sameThread: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestIssueClaimsSkipBlockedQueueHead(t *testing.T) {
+	for _, status := range []string{"dispatched", "running", "waiting_local_directory"} {
+		t.Run(status, func(t *testing.T) {
 			ctx := context.Background()
-			metadata := testutil.Raw(`'{"capabilities":["issue-thread-concurrency-v1"]}'::jsonb`)
-			if tc.legacy {
-				metadata = testutil.Raw(`'{}'::jsonb`)
-			}
-			rt := dbfx.Runtime(t, "fenced runtime", testutil.Cols{"metadata": metadata})
+			rt := dbfx.Runtime(t, "fenced runtime", testutil.Cols{"metadata": testutil.Raw(`'{"capabilities":["issue-thread-concurrency-v1"]}'::jsonb`)})
 			agent := dbfx.Agent(t, "fenced agent", rt, testutil.Cols{"max_concurrent_tasks": 6})
 			issue := dbfx.Issue(t, "fenced issue")
 			a, b := dbfx.Comment(t, issue, "A"), dbfx.Comment(t, issue, "B")
-			active := testutil.Cols{"runtime_id": rt, "issue_id": issue, "status": "running", "trigger_comment_id": a}
-			queued := testutil.Cols{"runtime_id": rt, "issue_id": issue, "trigger_comment_id": b}
-			if tc.sameThread {
-				queued["trigger_comment_id"] = dbfx.Comment(t, issue, "reply", testutil.Cols{"parent_id": a})
-			}
-			if tc.activeNull {
-				delete(active, "trigger_comment_id")
-			}
-			if tc.queuedNull {
-				delete(queued, "trigger_comment_id")
-			}
-			wakeup := testutil.Raw(`'{"wakeup_id":"11111111-1111-4111-8111-111111111111"}'::jsonb`)
-			if tc.activeWakeup {
-				active["context"] = wakeup
-			}
-			if tc.queuedWakeup {
-				queued["context"] = wakeup
-			}
-			dbfx.Task(t, agent, active)
-			dbfx.Task(t, agent, queued)
-			if task, err := testHandler.TaskService.ClaimTask(ctx, parseUUID(agent)); err != nil || task != nil {
-				t.Fatalf("issue fence bypassed: task=%v err=%v", task, err)
-			}
-			// The conservative fence is issue-scoped, not agent-wide.
+			dbfx.Task(t, agent, testutil.Cols{"runtime_id": rt, "issue_id": issue, "status": status, "trigger_comment_id": a})
+			blocked := dbfx.Task(t, agent, testutil.Cols{"runtime_id": rt, "issue_id": issue, "trigger_comment_id": b})
 			otherIssue := dbfx.Issue(t, "unrelated issue")
 			other := dbfx.Task(t, agent, testutil.Cols{"runtime_id": rt, "issue_id": otherIssue})
 			if task, err := testHandler.TaskService.ClaimTask(ctx, parseUUID(agent)); err != nil || task == nil || uuidToString(task.ID) != other {
-				t.Fatalf("fence blocked another issue: task=%v err=%v", task, err)
+				t.Fatalf("expected other issue %s to bypass blocked run %s: task=%v err=%v", other, blocked, task, err)
+			}
+			if task, err := testHandler.TaskService.ClaimTask(ctx, parseUUID(agent)); err != nil || task != nil {
+				t.Fatalf("issue fence bypassed: task=%v err=%v", task, err)
 			}
 		})
 	}
