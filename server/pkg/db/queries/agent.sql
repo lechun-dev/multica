@@ -840,10 +840,9 @@ WHERE atq.id = $1 AND a.workspace_id = $2;
 
 -- name: ClaimAgentTask :one
 -- Claims the next queued task for an agent on one healthy runtime, enforcing
--- per-(issue, agent, comment thread) serialization. Independent threads share
--- the agent's configured total capacity (enforced by TaskService's agent lock).
--- Unscoped/legacy rows and wakeups retain the issue fence. Older runtimes also
--- retain that fence until they advertise isolated thread sessions.
+-- per-(issue, agent) serialization across all comment threads. A blocked issue
+-- does not prevent other issues from using the agent's configured capacity
+-- (enforced by TaskService's agent lock).
 -- Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
 -- Quick-create tasks have no issue / chat / autopilot link, so they serialize on
 -- "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
@@ -890,20 +889,7 @@ WHERE id = (
           WHERE active.agent_id = atq.agent_id
             AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
             AND (
-              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id
-                AND (
-                  atq.comment_thread_id IS NULL
-                  OR active.comment_thread_id IS NULL
-                  OR active.comment_thread_id = atq.comment_thread_id
-                  -- Wakeup scheduling IDs are not conversation thread IDs.
-                  OR atq.context->>'wakeup_id' IS NOT NULL
-                  OR active.context->>'wakeup_id' IS NOT NULL
-                  OR NOT EXISTS (
-                    SELECT 1 FROM agent_runtime r
-                    WHERE r.id = atq.runtime_id
-                      AND r.metadata->'capabilities' ? 'issue-thread-concurrency-v1'
-                  )
-                ))
+              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL

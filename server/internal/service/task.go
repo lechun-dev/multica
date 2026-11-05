@@ -5794,7 +5794,7 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 	// A running / waiting_local_directory task is deliberately left alone: an
 	// agent is executing in it. Neither status appears in that unique index, so
 	// the enqueue below inserts a queued row BEHIND the active one, and
-	// ClaimAgentTask's per-(issue, agent, thread) serialization holds it until the
+	// ClaimAgentTask's per-(issue, agent) serialization holds it until the
 	// active run reaches a terminal state. Rerun used to cancel these too, so
 	// asking an agent for another pass silently killed the pass it was still
 	// working on; interrupting an in-flight run is what CancelTask /
