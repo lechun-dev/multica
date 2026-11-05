@@ -462,6 +462,8 @@
     "mark_done_tooltip": "标记为已完成",
     "archive_tooltip": "归档",
     "pin_tooltip": "固定到侧边栏",
+    "refresh_task": "刷新任务",
+    "refresh_task_failed": "刷新失败，请重试。",
     "unpin_tooltip": "从侧边栏取消固定",
     "thread_nav_label": "快速跳转到讨论",
     "thread_nav_resolved_label": "{{title}}（已解决）",

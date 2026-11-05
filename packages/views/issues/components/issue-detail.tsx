@@ -86,6 +86,7 @@ import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { SubIssuesAgentWorkingChip } from "./sub-issues-agent-working-chip";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { IssueAccessGrantsDialog } from "./issue-access-grants-dialog";
+import { IssueRefreshButton } from "./issue-refresh-button";
 import { LocalDirectoryHint } from "../../projects/components/local-directory-hint";
 import { useNewRunIds } from "./use-run-comment-motion";
 import { AgentRunComment, CommentCard } from "./comment-card";
@@ -3007,6 +3008,12 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
                 <TooltipContent side="bottom">{doneActionHint ?? t(($) => $.detail.archive_tooltip)}</TooltipContent>
               </Tooltip>
             )}
+            <IssueRefreshButton
+              key={`${wsId}:${id}`}
+              workspaceId={wsId}
+              issueId={id}
+              includeWorkspaceOwned={includeWorkspaceOwned}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "../api";
 import type { Issue } from "../types";
 import { issueDetailOptions, issueKeys } from "./queries";
 
@@ -99,7 +100,12 @@ export function useCanonicalIssue(
   // data": a failed resolution must present as terminally not-found, never as
   // still-resolving, or the caller flips back to a loading frame and the
   // remount loop described on `notFound` starts.
-  const failed = (resolveEnabled && resolve.isError) || (isUuid && detail.isError);
+  // Keep an already-open UUID route mounted through a transient refresh error.
+  // A denied or deleted task must still supersede the cached detail.
+  const detailUnavailable = detail.error instanceof ApiError &&
+    (detail.error.status === 403 || detail.error.status === 404);
+  const failed = (resolveEnabled && resolve.isError) ||
+    (isUuid && detail.isError && (!detail.data || detailUnavailable));
 
   return {
     canonicalId,

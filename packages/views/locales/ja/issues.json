@@ -464,6 +464,8 @@
     "mark_done_tooltip": "完了にする",
     "archive_tooltip": "アーカイブ",
     "pin_tooltip": "サイドバーにピン留め",
+    "refresh_task": "タスクを更新",
+    "refresh_task_failed": "タスクを更新できませんでした。もう一度お試しください。",
     "unpin_tooltip": "サイドバーのピン留めを解除",
     "thread_nav_label": "スレッドへ移動",
     "thread_nav_resolved_label": "{{title}}（解決済み）",

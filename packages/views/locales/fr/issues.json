@@ -440,6 +440,8 @@
     "mark_done_tooltip": "Marquer comme terminé",
     "archive_tooltip": "Archiver",
     "pin_tooltip": "Épingler à la barre latérale",
+    "refresh_task": "Actualiser la tâche",
+    "refresh_task_failed": "Impossible d’actualiser la tâche. Réessayez.",
     "unpin_tooltip": "Détacher de la barre latérale",
     "thread_nav_label": "Aller au fil de commentaires",
     "thread_nav_resolved_label": "{{title}} (résolu)",

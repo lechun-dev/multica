@@ -2,10 +2,10 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { setApiInstance } from "../api";
+import { ApiError, setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { Issue } from "../types";
 import { createQueryClient } from "../query-client";
@@ -168,6 +168,29 @@ describe("useCanonicalIssue", () => {
     expect(result.current.canonicalId).toBe(ISSUE_UUID);
     expect(result.current.issue).toBeUndefined();
     expect(result.current.isResolving).toBe(false);
+  });
+
+  it.each([
+    { failure: "a network error", error: new Error("Network unavailable"), notFound: false },
+    { failure: "a permission denial", error: new ApiError("Forbidden", 403, "Forbidden"), notFound: true },
+    { failure: "a missing task", error: new ApiError("Not found", 404, "Not Found"), notFound: true },
+  ])("handles $failure when refreshing a loaded UUID route", async ({ error, notFound }) => {
+    const queryKey = issueKeys.detail("ws-1", ISSUE_UUID);
+    qc.setQueryDefaults(queryKey, { retry: false });
+    const { result, rerender } = renderHook(() => useCanonicalIssue("ws-1", ISSUE_UUID), {
+      wrapper: createWrapper(qc),
+    });
+    await waitFor(() => expect(result.current.issue).toEqual(issue));
+
+    getIssue.mockRejectedValueOnce(error);
+    await act(async () => {
+      await qc.refetchQueries({ queryKey, exact: true });
+    });
+
+    expect(qc.getQueryState(queryKey)?.error).toBe(error);
+    rerender();
+    expect(result.current.notFound).toBe(notFound);
+    if (!notFound) expect(result.current.issue).toEqual(issue);
   });
 
   // Regression: a failed resolution used to present as "not resolving, no id",

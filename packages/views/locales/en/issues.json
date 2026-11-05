@@ -469,6 +469,8 @@
     "mark_done_tooltip": "Mark as done",
     "archive_tooltip": "Archive",
     "pin_tooltip": "Pin to sidebar",
+    "refresh_task": "Refresh task",
+    "refresh_task_failed": "Couldn't refresh the task. Try again.",
     "unpin_tooltip": "Unpin from sidebar",
     "thread_nav_label": "Jump to comment thread",
     "thread_nav_resolved_label": "{{title}} (resolved)",

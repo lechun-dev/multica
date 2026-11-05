@@ -328,6 +328,7 @@ const mockApiObj = vi.hoisted(() => ({
   addIssueReaction: vi.fn(),
   removeIssueReaction: vi.fn(),
   listAttachments: vi.fn().mockResolvedValue([]),
+  listLabelsForIssue: vi.fn().mockResolvedValue({ labels: [] }),
   addCommentReaction: vi.fn(),
   removeCommentReaction: vi.fn(),
   listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
@@ -783,6 +784,58 @@ describe("IssueDetail (shared)", () => {
     // Reset project mock — individual tests override per case. Default fixture
     // has project_id: null so getProject is not invoked.
     mockApiObj.getProject.mockReset();
+  });
+
+  it("refreshes the task and timeline in place without clearing the comment draft", async () => {
+    const { container } = renderIssueDetail();
+    await screen.findByText("Started working on this");
+    const refresh = screen.getByRole("button", { name: "Refresh task" });
+    const composerLabel = enIssues.comment.leave_comment_placeholder;
+    fireEvent.click(screen.getByRole("button", { name: composerLabel }));
+    const composer = await screen.findByPlaceholderText(composerLabel);
+    fireEvent.change(composer, { target: { value: "Unsent comment" } });
+    const scrollRoot = container.querySelector<HTMLElement>("[data-tab-scroll-root]")!;
+    scrollRoot.scrollTop = 150;
+
+    mockApiObj.getIssue.mockResolvedValue({ ...mockIssue, title: "Updated by someone else" });
+    let resolveTimeline!: (entries: TimelineEntry[]) => void;
+    mockApiObj.listTimeline.mockReturnValueOnce(new Promise<TimelineEntry[]>((resolve) => {
+      resolveTimeline = resolve;
+    }));
+    mockApiObj.listTimeline.mockClear();
+    fireEvent.click(refresh);
+    expect(refresh).toBeDisabled();
+    fireEvent.click(refresh);
+    expect(mockApiObj.listTimeline).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("link", { name: "TES-1 Updated by someone else" })).toBeVisible();
+    expect(refresh).toBeDisabled();
+
+    await act(async () => resolveTimeline([
+      ...mockTimeline,
+      { ...mockTimeline[0]!, id: "new-comment", content: "Comment added elsewhere" },
+    ]));
+    expect(await screen.findByText("Comment added elsewhere")).toBeVisible();
+    expect(refresh).toBeEnabled();
+    expect(screen.getByDisplayValue("Unsent comment")).toBe(composer);
+    expect(scrollRoot.scrollTop).toBe(150);
+    expect(mockApiObj.createComment).not.toHaveBeenCalled();
+  });
+
+  it("keeps loaded task content visible when refresh fails and allows retry", async () => {
+    renderIssueDetail();
+    await screen.findByText("Started working on this");
+    const refresh = screen.getByRole("button", { name: "Refresh task" });
+
+    mockApiObj.getIssue.mockRejectedValueOnce(new Error("Network unavailable"));
+    fireEvent.click(refresh);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't refresh the task. Try again."));
+    expect(screen.getByRole("link", { name: "TES-1 Implement authentication" })).toBeVisible();
+    expect(refresh).toBeEnabled();
+
+    mockApiObj.getIssue.mockResolvedValue({ ...mockIssue, title: "Refreshed on retry" });
+    fireEvent.click(refresh);
+    expect(await screen.findByRole("link", { name: "TES-1 Refreshed on retry" })).toBeVisible();
+    expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
   it("opens source-context creation from both a root comment and a reply", async () => {
