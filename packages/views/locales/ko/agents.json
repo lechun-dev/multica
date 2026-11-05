@@ -78,6 +78,7 @@
     "access": "접근 권한"
   },
   "row": {
+    "active": "보관되지 않음",
     "you": "나",
     "archived": "보관됨",
     "needs_runtime": "런타임 필요",
@@ -128,6 +129,8 @@
     "archive_dialog_confirm": "보관"
   },
   "detail": {
+    "catalog_read_only": "읽기 전용입니다. 이 에이전트를 수정할 수 없습니다.",
+    "runtime_bound": "런타임 연결됨",
     "back_to_agents": "에이전트",
     "back_to_agents_full": "에이전트로 돌아가기",
     "not_found_title": "에이전트를 찾을 수 없습니다",

@@ -2296,6 +2296,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Agents
 			r.Route("/api/agents", func(r chi.Router) {
 				r.Get("/", h.ListAgents)
+				r.Get("/catalog", h.ListOwnerAgentCatalog)
+				r.Get("/catalog/{id}", h.GetOwnerAgentDetail)
 				r.Post("/", h.CreateAgent)
 				// The workspace's built-in Chief of Staff. Server-owned: the
 				// caller supplies only a runtime and a language, so a client
@@ -2327,9 +2329,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/mcp-servers", h.AddAgentMcpServer)
 					r.Put("/mcp-servers/{serverId}/enabled", h.SetAgentMcpServerEnabled)
 					r.Delete("/mcp-servers/{serverId}", h.RemoveAgentMcpServer)
-					// Dedicated env-management endpoint. Admits the agent
-					// owner or a workspace owner/admin; agent actors are
-					// denied. Every reveal / write is audited to
+					// Dedicated env-management endpoint. Requires agent
+					// management access and denies agent actors.
+					// Every reveal / write is audited to
 					// activity_log. See MUL-2600, MUL-5438 and
 					// internal/handler/agent_env.go.
 					r.Get("/env", h.GetAgentEnv)

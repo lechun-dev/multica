@@ -347,8 +347,7 @@ func (h *Handler) ListAgentMcpServers(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireAgentMcpWriter resolves the agent and enforces who may change its
-// bindings. Same rule as the agent's own mcp_config: the agent owner or a
-// workspace owner/admin, never an agent actor.
+// bindings. Same rule as the agent's own mcp_config, never an agent actor.
 func (h *Handler) requireAgentMcpWriter(w http.ResponseWriter, r *http.Request) (db.Agent, bool) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {

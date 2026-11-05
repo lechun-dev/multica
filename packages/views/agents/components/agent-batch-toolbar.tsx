@@ -26,7 +26,7 @@ import {
 import { Archive, ArchiveRestore, Loader2, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { AccessPicker, type AccessChange } from "./inspector/access-picker";
-import type { AgentListRow } from "./agents-page";
+import type { ActionableAgentListRow } from "./agents-page";
 
 /**
  * Floating batch-toolbar for the agents list page. Renders archive/restore
@@ -44,7 +44,7 @@ export function AgentBatchToolbar({
   currentUserId,
   onClear,
 }: {
-  rows: AgentListRow[];
+  rows: ActionableAgentListRow[];
   members: MemberWithUser[];
   currentUserId: string | null;
   onClear: () => void;
@@ -117,7 +117,7 @@ export function AgentBatchToolbar({
 
   const runBatch = async (
     fn: (id: string) => Promise<unknown>,
-    targets: AgentListRow[],
+    targets: ActionableAgentListRow[],
     clearOnFailure = true,
   ): Promise<{ succeeded: number; failed: number }> => {
     setBusy(true);

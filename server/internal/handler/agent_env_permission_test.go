@@ -179,10 +179,9 @@ func TestAgentEnv_UnrelatedMemberForbidden(t *testing.T) {
 	}
 }
 
-// TestAgentEnv_WorkspaceRolesUnchanged pins the pre-existing behavior the
-// fix must not regress: workspace owner and admin keep full access to any
-// agent's env, including agents they do not own.
-func TestAgentEnv_WorkspaceRolesUnchanged(t *testing.T) {
+// TestAgentEnv_WorkspaceOwnerCannotRevealOtherAgentEnv distinguishes
+// workspace Owner inspection from the existing shared-agent admin rule.
+func TestAgentEnv_WorkspaceOwnerCannotRevealOtherAgentEnv(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -198,12 +197,15 @@ func TestAgentEnv_WorkspaceRolesUnchanged(t *testing.T) {
 	}
 
 	// testUserID is the workspace owner and does NOT own this agent.
-	for _, actorID := range []string{testUserID, adminID} {
-		req := withURLParam(newRequestAs(actorID, http.MethodGet, "/api/agents/"+agentID+"/env", nil), "id", agentID)
+	for _, tc := range []struct {
+		actorID string
+		status  int
+	}{{testUserID, http.StatusForbidden}, {adminID, http.StatusOK}} {
+		req := withURLParam(newRequestAs(tc.actorID, http.MethodGet, "/api/agents/"+agentID+"/env", nil), "id", agentID)
 		w := httptest.NewRecorder()
 		testHandler.GetAgentEnv(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("GetAgentEnv as %s: expected 200, got %d: %s", actorID, w.Code, w.Body.String())
+		if w.Code != tc.status {
+			t.Fatalf("GetAgentEnv as %s: expected %d, got %d: %s", tc.actorID, tc.status, w.Code, w.Body.String())
 		}
 	}
 }

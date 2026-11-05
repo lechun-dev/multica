@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -151,11 +150,7 @@ func (h *Handler) RegisterWecomBYO(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          agentUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+	if !h.requireAgentIntegrationManager(w, r, wsUUID, agentUUID, false) {
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
@@ -284,12 +279,16 @@ func (h *Handler) RevokeWecomInstallation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if _, err := svc.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
+	inst, err := svc.GetInWorkspace(r.Context(), instUUID, wsUUID)
+	if err != nil {
 		if errors.Is(err, wecom.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "wecom installation not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load installation")
+		return
+	}
+	if !h.requireAgentIntegrationManager(w, r, wsUUID, inst.AgentID, true) {
 		return
 	}
 	if err := svc.Revoke(r.Context(), instUUID); err != nil {

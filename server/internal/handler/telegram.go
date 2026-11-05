@@ -110,12 +110,7 @@ func (h *Handler) RegisterTelegramBot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Ownership pre-check at the boundary so a wrong agent_id is a clear 404.
-	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          agentUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+	if !h.requireAgentIntegrationManager(w, r, wsUUID, agentUUID, false) {
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
@@ -185,12 +180,16 @@ func (h *Handler) RevokeTelegramInstallation(w http.ResponseWriter, r *http.Requ
 	}
 	// Workspace-scoped lookup so one workspace cannot revoke another's
 	// installation by guessing the UUID.
-	if _, err := h.TelegramInstall.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
+	inst, err := h.TelegramInstall.GetInWorkspace(r.Context(), instUUID, wsUUID)
+	if err != nil {
 		if errors.Is(err, telegram.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "telegram installation not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load installation")
+		return
+	}
+	if !h.requireAgentIntegrationManager(w, r, wsUUID, inst.AgentID, true) {
 		return
 	}
 	if err := h.TelegramInstall.Revoke(r.Context(), instUUID); err != nil {

@@ -70,6 +70,7 @@
     "access": "アクセス"
   },
   "row": {
+    "active": "未アーカイブ",
     "you": "あなた",
     "archived": "アーカイブ済み",
     "needs_runtime": "ランタイム未設定",
@@ -120,6 +121,8 @@
     "archive_dialog_confirm": "アーカイブ"
   },
   "detail": {
+    "catalog_read_only": "読み取り専用です。このエージェントは編集できません。",
+    "runtime_bound": "ランタイム設定済み",
     "back_to_agents": "エージェント",
     "back_to_agents_full": "エージェントに戻る",
     "not_found_title": "エージェントが見つかりません",

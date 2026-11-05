@@ -20,6 +20,7 @@ import type {
   AgentRuntime,
   UpdateAgentRequest,
 } from "@multica/core/types";
+import type { OwnerAgentDetail } from "@multica/core/api/schemas";
 import {
   type AgentPresenceDetail,
   isAgentRuntimeBound,
@@ -35,6 +36,7 @@ import {
   agentListOptions,
   cacheAgentResponse,
   memberListOptions,
+  ownerAgentDetailOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
@@ -63,6 +65,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
+import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
@@ -85,45 +88,50 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     refetch: refetchAgents,
   } = useQuery(agentListOptions(wsId));
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-
-  // Single workspace-level presence pass; this page just reads its slot.
-  // The hook owns the 30s tick so the failed-window auto-clears here too.
-  const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
-
+  const { data: members = [], error: membersError, isLoading: membersLoading } = useQuery(memberListOptions(wsId));
+  const isWorkspaceOwner = !membersError && !!currentUser &&
+    members.some((member) => member.user_id === currentUser.id && member.role === "owner");
   const listAgent = agents.find((a) => a.id === agentId) ?? null;
 
-  // The list remains the zero-request common path. When it has settled
-  // without the requested agent, use the canonical detail query to resolve
-  // direct links and distinguish 403/404 from transient failures. Creation
-  // hydrates this same key, so a newly-created agent renders immediately.
+  // Use the restricted profile for another person's agent even if it is
+  // visible in the ordinary list through an existing sharing grant.
+  const shouldLoadOwnerDetail = isWorkspaceOwner && !agentsLoading && listAgent?.owner_id !== currentUser.id;
+  const ownerQuery = useQuery(ownerAgentDetailOptions(wsId, agentId, shouldLoadOwnerDetail ? currentUser.id : undefined));
+  const ownerProjection = shouldLoadOwnerDetail && !ownerQuery.error ? ownerQuery.data : null;
+  const useOwnerDetail = shouldLoadOwnerDetail && ownerProjection?.owner_id !== currentUser?.id;
+  const ownerDetail = useOwnerDetail ? ownerProjection : null;
+
+  // Single workspace-level presence pass; this page just reads its slot.
+  const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
+
+  // Ordinary direct links use the canonical query after both the list and
+  // membership have resolved. Keep Owner projections out of that cache.
   const detailQuery = useQuery({
     ...agentDetailOptions(wsId, agentId),
-    enabled: !agentsLoading && !listAgent && !!agentId,
+    enabled: !agentsLoading && !membersLoading && !listAgent && !useOwnerDetail && !!agentId,
   });
-  const detailError = detailQuery.error;
+  const activeQuery = useOwnerDetail ? ownerQuery : detailQuery;
+  const detailError = activeQuery.error;
   const isForbidden =
     detailError instanceof ApiError && detailError.status === 403;
   const isNotFound =
     detailError instanceof ApiError && detailError.status === 404;
-  // TanStack intentionally keeps successful data when a refetch fails. Do not
-  // let that stale snapshot mask a later 403/404 after access is revoked or the
-  // agent is deleted, but preserve it through transient network failures. A
-  // still-visible list response remains authoritative in either case.
-  const agent =
-    listAgent ?? (isForbidden || isNotFound ? null : detailQuery.data) ?? null;
+  // A failed refetch can retain stale data. Do not use it after revocation.
+  const agent = useOwnerDetail
+    ? null
+    : listAgent ?? (isForbidden || isNotFound ? null : detailQuery.data) ?? null;
+  const displayAgent = ownerDetail ?? agent;
   const presence: AgentPresenceDetail | null =
     agent ? presenceMap.get(agent.id) ?? null : null;
 
-  // Permission hook MUST be called unconditionally — its `agent | null`
-  // signature handles the not-found / loading case internally so the early
-  // returns below don't violate the rules of hooks. Backend gates archive
-  // and restore identically to edit, so a single `canEdit` covers them all.
+  // The read-only projection never grants invocation. Only pass an ordinary
+  // visible agent to the permission hook for existing shared invocation.
+  const invocationAgent = ownerDetail && ownerDetail.access_scope !== "owner-only" ? listAgent : agent;
   const {
     canAssign,
     canEdit,
     isLoading: permissionsLoading,
-  } = useAgentPermissions(agent, wsId);
+  } = useAgentPermissions(invocationAgent, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -221,13 +229,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     }
   };
 
-  // --- Loading ---
-  if (!agent && (agentsLoading || detailQuery.isPending)) {
+  if (!displayAgent && (agentsLoading || membersLoading || (agentId && activeQuery.isPending))) {
     return <DetailLoadingSkeleton />;
   }
 
   // --- No permission (private agent the caller is not in allowed_principals for) ---
-  if (!agent && isForbidden) {
+  if (!displayAgent && isForbidden) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
         <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
@@ -252,7 +259,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   }
 
   // --- Not found / error ---
-  if (!agent) {
+  if (!displayAgent) {
     const loadError = detailError ?? agentsError;
     return (
       <div className="flex flex-1 min-h-0 flex-col">
@@ -279,7 +286,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
               variant="outline"
               size="sm"
               onClick={() => {
-                void Promise.all([refetchAgents(), detailQuery.refetch()]);
+                void Promise.all([refetchAgents(), activeQuery.refetch()]);
               }}
             >
               {t(($) => $.detail.try_again)}
@@ -297,14 +304,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     );
   }
 
-  const isArchived = !!agent.archived_at;
-  const runtimeBound = isAgentRuntimeBound(agent);
-  const runtime = runtimeBound
+  const isArchived = !!displayAgent.archived_at;
+  const runtimeBound = ownerDetail?.runtime_bound ?? (agent !== null && isAgentRuntimeBound(agent));
+  const runtime = agent && runtimeBound
     ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
     : null;
-  const owner = agent.owner_id
-    ? members.find((m) => m.user_id === agent.owner_id) ?? null
-    : null;
+  const owner = members.find((m) => m.user_id === displayAgent.owner_id) ?? null;
 
   // Chat shares the invocation gate with assignment (MUL-3963): starting a
   // chat triggers agent runs. The button stays visible either way — a denied
@@ -336,26 +341,49 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     }
     useModalStore
       .getState()
-      .open("quick-create-issue", { agent_id: agent.id });
+      .open("quick-create-issue", { agent_id: displayAgent.id });
   };
 
+  const header = (
+    <DetailHeader
+      agent={displayAgent}
+      runtime={runtime}
+      presence={presence}
+      backHref={paths.agents()}
+      canAssign={canAssign.allowed}
+      canArchive={!!agent && canEdit.allowed}
+      showDm={!ownerDetail || canAssign.allowed}
+      dmPending={permissionsLoading}
+      dmHref={`${paths.chat()}?agent=${displayAgent.id}`}
+      onDm={handleDm}
+      onAssign={handleAssign}
+      onArchive={agent && !agent.system_key ? () => setConfirmArchive(true) : undefined}
+    />
+  );
+
+  if (ownerDetail) {
+    return (
+      <div className="flex flex-1 min-h-0 flex-col">
+        {header}
+        <div className="min-h-0 flex-1 overflow-auto">
+          <div className={cn(PAGE_RAIL, PAGE_GUTTER, "space-y-4 py-4 sm:py-6")}>
+            <p className="flex items-center gap-1.5 text-caption text-muted-foreground">
+              <Lock className="size-3.5 shrink-0" aria-hidden="true" />
+              {t(($) => $.detail.catalog_read_only)}
+            </p>
+            <AgentOverviewSummary agent={ownerDetail} owner={owner} runtime={null} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!agent) return null;
+
+  const canShowOverview = agent.owner_id === currentUser?.id || (!membersLoading && !membersError);
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      <DetailHeader
-        agent={agent}
-        runtime={runtime}
-        presence={presence}
-        backHref={paths.agents()}
-        canAssign={canAssign.allowed}
-        canArchive={canEdit.allowed}
-        dmPending={permissionsLoading}
-        dmHref={`${paths.chat()}?agent=${agent.id}`}
-        onDm={handleDm}
-        onAssign={handleAssign}
-        onArchive={
-          agent.system_key ? undefined : () => setConfirmArchive(true)
-        }
-      />
+      {header}
 
       {!canEdit.allowed && (
         <div className={cn(PAGE_RAIL, PAGE_GUTTER, "pt-3")}>
@@ -410,18 +438,20 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       )}
 
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        <AgentOverviewPane
-          agent={agent}
-          runtime={runtime}
-          owner={owner}
-          runtimes={runtimes}
-          members={members}
-          onUpdate={handleUpdate}
-          currentUserId={currentUser?.id ?? null}
-          canEdit={canEdit.allowed}
-          navIntent={tabNavIntent}
-          onNavIntentHandled={() => setTabNavIntent(null)}
-        />
+        {canShowOverview && (
+          <AgentOverviewPane
+            agent={agent}
+            runtime={runtime}
+            owner={owner}
+            runtimes={runtimes}
+            members={members}
+            onUpdate={handleUpdate}
+            currentUserId={currentUser?.id ?? null}
+            canEdit={canEdit.allowed}
+            navIntent={tabNavIntent}
+            onNavIntentHandled={() => setTabNavIntent(null)}
+          />
+        )}
       </div>
 
       {confirmArchive && (
@@ -477,18 +507,20 @@ function DetailHeader({
   backHref,
   canAssign,
   canArchive,
+  showDm,
   dmPending,
   dmHref,
   onDm,
   onAssign,
   onArchive,
 }: {
-  agent: Agent;
+  agent: Agent | OwnerAgentDetail;
   runtime: AgentRuntime | null;
   presence: AgentPresenceDetail | null;
   backHref: string;
   canAssign: boolean;
   canArchive: boolean;
+  showDm: boolean;
   dmPending: boolean;
   dmHref: string;
   /** Runs before the link navigates; calls preventDefault when a gate denies
@@ -540,30 +572,32 @@ function DetailHeader({
                 {agent.description ||
                   t(($) => $.inspector.no_description_placeholder)}
               </ExpandableDescription>
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
-                <span className="inline-flex min-w-0 items-center gap-1.5">
-                  <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{agent.model || t(($) => $.pickers.model_default)}</span>
-                </span>
-                <span className="inline-flex min-w-0 items-center gap-1.5">
-                  <Server className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">
-                    {runtime
-                      ? runtimeDisplayLabel(runtime)
-                      : t(($) => $.pickers.runtime_none)}
+              {!("access_scope" in agent) && (
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{agent.model || t(($) => $.pickers.model_default)}</span>
                   </span>
-                </span>
-                <VisibilityBadge value={agent.visibility} />
-                <span className="inline-flex items-center gap-1.5">
-                  <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t(($) => $.detail.updated, { when: timeAgo(agent.updated_at) })}
-                </span>
-              </div>
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <Server className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">
+                      {runtime
+                        ? runtimeDisplayLabel(runtime)
+                        : t(($) => $.pickers.runtime_none)}
+                    </span>
+                  </span>
+                  <VisibilityBadge value={agent.visibility} />
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t(($) => $.detail.updated, { when: timeAgo(agent.updated_at) })}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-2 self-end lg:self-start">
-            {!isArchived && (
+            {!isArchived && showDm && (
               <Button
                 variant="outline"
                 size="sm"

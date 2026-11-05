@@ -15,6 +15,8 @@ import {
   EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
   AgentTaskListSchema,
+  OwnerAgentCatalogSchema,
+  OwnerAgentDetailSchema,
   TaskMessageListSchema,
   AutopilotQuotaUsageSchema,
   AutopilotRunSchema,
@@ -67,6 +69,48 @@ import {
   EMPTY_PLUGIN_INSTALLATION_LIST,
   EMPTY_PLUGIN_PREVIEW,
 } from "./schemas";
+
+describe("OwnerAgentCatalogSchema", () => {
+  const entry = {
+    id: "agent-1",
+    name: "Private agent",
+    owner_id: "user-2",
+    archived_at: null,
+    created_at: "2026-06-01T00:00:00Z",
+    access_scope: "owner-only",
+  };
+
+  it("keeps only the display fields", () => {
+    expect(OwnerAgentCatalogSchema.parse([{ ...entry, instructions: "secret" }])).toEqual([entry]);
+  });
+
+  it("parses the Owner detail allowlist and drops sensitive or runnable settings", () => {
+    const detail = {
+      ...entry,
+      access_scope: "workspace",
+      description: "Writes reports",
+      updated_at: entry.created_at,
+      model: "codex",
+      thinking_level: "high",
+      max_concurrent_tasks: 6,
+      runtime_bound: true,
+    };
+    expect(OwnerAgentDetailSchema.parse({
+      ...detail,
+      instructions: "secret",
+      mcp_config: { headers: { authorization: "secret" } },
+      custom_args: ["secret"],
+      runtime_id: "runtime-1",
+      invocation_targets: [{ target_type: "workspace" }],
+    })).toEqual(detail);
+    expect(OwnerAgentDetailSchema.safeParse({ ...detail, max_concurrent_tasks: 0 }).success).toBe(false);
+  });
+
+  it("rejects entries without an ID or with an invalid scope", () => {
+    expect(OwnerAgentCatalogSchema.safeParse([{ ...entry, id: undefined }]).success).toBe(false);
+    expect(OwnerAgentCatalogSchema.safeParse([{ ...entry, access_scope: "unexpected" }]).success).toBe(false);
+  });
+});
 import { IssueViewSchema, IssueViewListSchema } from "./schemas";
 import {
   ListIssueStatusesResponseSchema,

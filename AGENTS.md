@@ -62,7 +62,7 @@ Root frontend commands and `make check` do not verify mobile. Docs-only changes 
 
 ## API Compatibility
 
-- Private agents are accessible only to their human owner (including delegated calls on that owner's behalf); workspace owner/admin roles do not grant access. Human agent visibility is also invocation authority; do not add an independent invoke-only ACL or UI. Delegated calls use the human originator's visibility, not the immediate agent actor's inspection access. Task Member includes AgentUse; Task Viewer remains read-only.
+- Private agents are accessible only to their human owner (including delegated calls on that owner's behalf); workspace owner/admin roles do not grant full detail, mutation, or invocation access. A human workspace owner can inspect a restricted read-only catalog and detail for other members’ agents, even when they are private. Those responses must never feed normal agent caches or action pickers. Workspace ownership does not grant write access to another member’s agent; existing shared invocation grants are independent of the catalog. Ordinary human agent visibility is also invocation authority; do not add an independent invoke-only ACL or UI. Delegated calls use the human originator's visibility, not the immediate agent actor's inspection access. Task Member includes AgentUse; Task Viewer remains read-only.
 
 Installed desktop clients may talk to newer backends. Preserve response compatibility at the API boundary.
 

@@ -108,10 +108,9 @@ describe("canEditAgent", () => {
       true,
     );
   });
-  it("allows workspace owner", () => {
-    expect(canEditAgent(agent, { userId: BOB, role: "owner" }).allowed).toBe(
-      true,
-    );
+  it("denies the workspace owner when someone else owns the agent", () => {
+    expect(canEditAgent(agent, { userId: BOB, role: "owner" }).allowed).toBe(false);
+    expect(canEditAgent(agent, { userId: ALICE, role: "owner" }).allowed).toBe(true);
   });
   it("allows workspace admin", () => {
     expect(canEditAgent(agent, { userId: BOB, role: "admin" }).allowed).toBe(

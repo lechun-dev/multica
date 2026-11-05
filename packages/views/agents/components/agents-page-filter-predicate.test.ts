@@ -7,12 +7,12 @@ import {
   EMPTY_AGENT_FILTERS,
   type AgentListFilters,
 } from "@multica/core/agents/stores";
-import { rowMatchesFilters, type AgentListRow } from "./agents-page";
+import { rowMatchesFilters, type ActionableAgentListRow } from "./agents-page";
 
 function makeRow(
-  overrides: Partial<AgentListRow["agent"]> = {},
-  rowOverrides: Partial<AgentListRow> = {},
-): AgentListRow {
+  overrides: Partial<ActionableAgentListRow["agent"]> = {},
+  rowOverrides: Partial<ActionableAgentListRow> = {},
+): ActionableAgentListRow {
   return {
     agent: {
       id: "agent-1",
@@ -148,11 +148,11 @@ describe("rowMatchesFilters — access dimension", () => {
   it("access + availability filter: both must pass (AND)", () => {
     const onlineAgent = makeRow(
       { permission_mode: "public_to", invocation_targets: [{ target_type: 'workspace', target_id: '' }] },
-      { presence: { availability: "online" } as AgentListRow["presence"] },
+      { presence: { availability: "online" } as ActionableAgentListRow["presence"] },
     );
     const offlineAgent = makeRow(
       { permission_mode: "public_to", invocation_targets: [{ target_type: 'workspace', target_id: '' }] },
-      { presence: { availability: "offline" } as AgentListRow["presence"] },
+      { presence: { availability: "offline" } as ActionableAgentListRow["presence"] },
     );
     const filters: AgentListFilters = {
       ...noFilters,
@@ -183,7 +183,7 @@ describe("rowMatchesFilters — access dimension", () => {
     // The column and the filter share one derivation — guard against drift.
     const cases: Array<{
       label: string;
-      row: AgentListRow;
+      row: ActionableAgentListRow;
       expected: "workspace" | "specific-people" | "owner-only";
     }> = [
       {

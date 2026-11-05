@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -1738,17 +1739,10 @@ func workspaceAlwaysRedactSecrets(settings []byte) bool {
 	return s.AlwaysRedactEnv
 }
 
-// canViewAgentSecrets checks whether the requesting user is allowed to
-// see the agent's secret-bearing fields (currently `mcp_config`). Only
-// the agent owner or workspace owner/admin qualify; for everyone else
-// the response is redacted. `custom_env` is no longer part of an agent
-// resource response (see MUL-2600), so this predicate is shared only by
-// the remaining mcp_config redaction path.
+// canViewAgentSecrets governs mcp_config after ordinary visibility is checked.
+// A workspace Owner's read-only access never grants access to these secrets.
 func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool {
-	if roleAllowed(memberRole, "owner", "admin") {
-		return true
-	}
-	return uuidToString(agent.OwnerID) == userID
+	return canManageAgentAsMember(agent, userID, memberRole)
 }
 
 // broadcastAgentResponse strips secret-bearing fields from an
@@ -1869,22 +1863,45 @@ func redactAgentResponseForActor(resp *AgentResponse, actorType string) {
 	}
 }
 
-// canManageAgent checks whether the current user can update or archive an agent.
-// Only the agent owner or workspace owner/admin can manage any agent,
-// regardless of whether it is public or private.
+func canManageAgentAsMember(agent db.Agent, userID, role string) bool {
+	return (userID != "" && uuidToString(agent.OwnerID) == userID) ||
+		(role == "admin" && agent.PermissionMode == permissionModePublicTo)
+}
+
+// canManageAgent checks write access after ordinary agent visibility is checked.
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
 	wsID := uuidToString(agent.WorkspaceID)
 	member, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
 	if !ok {
 		return false
 	}
-	isAdmin := roleAllowed(member.Role, "owner", "admin")
-	isAgentOwner := requestUserID(r) != "" && uuidToString(agent.OwnerID) == requestUserID(r)
-	if !isAgentOwner && (!isAdmin || agent.PermissionMode != "public_to") {
-		writeError(w, http.StatusForbidden, "only the agent owner can manage this agent")
+	if !canManageAgentAsMember(agent, requestUserID(r), member.Role) {
+		writeError(w, http.StatusForbidden, "you do not have permission to manage this agent")
 		return false
 	}
 	return true
+}
+
+// requireAgentIntegrationManager applies the agent write gate to channel
+// mutations that enter through workspace settings. An orphan installation
+// can still be revoked by a workspace administrator.
+func (h *Handler) requireAgentIntegrationManager(w http.ResponseWriter, r *http.Request, workspaceID, agentID pgtype.UUID, allowOrphanRevoke bool) bool {
+	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID: agentID, WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if allowOrphanRevoke {
+			_, ok := h.requireWorkspaceRole(w, r, uuidToString(workspaceID), "agent not found", "owner", "admin")
+			return ok
+		}
+		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+		return false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent")
+		return false
+	}
+	return h.canManageAgent(w, r, agent)
 }
 
 func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
@@ -1909,8 +1926,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// `omitempty` field would do) was the pre-PR behaviour and led to
 	// users believing they had rotated a secret when the value was
 	// actually unchanged. env values move only through `PUT
-	// /api/agents/{id}/env` — that endpoint admits the agent owner or a
-	// workspace owner/admin, denies agent actors, and writes a queryable
+	// /api/agents/{id}/env` — that endpoint requires agent management
+	// access, denies agent actors, and writes a queryable
 	// audit row.
 	if _, ok := rawFields["custom_env"]; ok {
 		writeError(w, http.StatusBadRequest, "custom_env is no longer accepted on this endpoint; use PUT /api/agents/{id}/env (or `multica agent env set`)")
@@ -2704,8 +2721,7 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 
 // CancelAgentTasks bulk-cancels every active task (queued/dispatched/running)
 // belonging to an agent. Powers the agents-list "Cancel all tasks" row
-// action. Same permission gate as archive (canManageAgent — owner or
-// workspace admin/owner). Each cancelled row triggers a task:cancelled WS
+// action. Each cancelled row triggers a task:cancelled WS
 // event so connected clients clear their live cards immediately.
 //
 // Note: a `running` task on the daemon side won't actually halt for up to
@@ -2740,6 +2756,10 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		isAdmin := roleAllowed(member.Role, "owner", "admin")
 		isAgentOwner := uuidToString(agent.OwnerID) == requestUserID(r)
+		if member.Role == "owner" && !isAgentOwner {
+			writeError(w, http.StatusForbidden, "you do not have permission to manage this agent")
+			return
+		}
 		if !isAdmin && !isAgentOwner {
 			actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
 			if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, uuidToString(agent.WorkspaceID)) {

@@ -275,6 +275,10 @@ import {
   RuntimeProfileSchema,
   RuntimeProfileListSchema,
   AgentTaskListSchema,
+  OwnerAgentCatalogSchema,
+  type OwnerAgentCatalogEntry,
+  OwnerAgentDetailSchema,
+  type OwnerAgentDetail,
   AgentActivityBucketListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
@@ -1864,6 +1868,22 @@ export class ApiClient {
 
   async getAgent(id: string): Promise<Agent> {
     return this.fetch(`/api/agents/${id}`);
+  }
+
+  async listOwnerAgentCatalog(workspaceId: string): Promise<OwnerAgentCatalogEntry[]> {
+    const search = new URLSearchParams({ workspace_id: workspaceId });
+    const raw = await this.fetch<unknown>(`/api/agents/catalog?${search}`);
+    return parseWithFallback(raw, OwnerAgentCatalogSchema, [], {
+      endpoint: "GET /api/agents/catalog",
+    });
+  }
+
+  async getOwnerAgentDetail(workspaceId: string, id: string): Promise<OwnerAgentDetail | null> {
+    const search = new URLSearchParams({ workspace_id: workspaceId });
+    const raw = await this.fetch<unknown>(`/api/agents/catalog/${encodeURIComponent(id)}?${search}`);
+    return parseWithFallback(raw, OwnerAgentDetailSchema, null, {
+      endpoint: "GET /api/agents/catalog/{id}",
+    });
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {

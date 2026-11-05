@@ -61,16 +61,8 @@ type UpdateAgentEnvRequest struct {
 //     that motivated MUL-2600: an agent running in the workspace cannot
 //     use its host's owner credentials to reveal another agent's
 //     secrets.
-//  2. The member must be a workspace owner/admin, or the agent's own
-//     human owner (MUL-5438).
-//
-// Rule 2 used to be workspace-role-only, which made env the single
-// endpoint in the agent permission model that ignored agent ownership:
-// canManageAgent already lets the owner update/archive/restore, and
-// canViewAgentSecrets already lets the owner read mcp_config. The
-// asymmetry was worst on create — POST /api/agents accepts custom_env
-// from any member — so a member could write secrets into their own
-// agent and then never read or rotate them.
+//  2. The member must have agent management access. A workspace Owner
+//     cannot reveal or rotate secrets on another person's agent.
 //
 // Returns the loaded agent and the authenticated member on success.
 // All non-2xx branches write their own response and return ok=false.
@@ -99,7 +91,7 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 		return db.Agent{}, db.Member{}, false
 	}
 	if !canManageAgentEnv(agent, member) {
-		writeError(w, http.StatusForbidden, "only the agent owner or a workspace owner/admin can manage this agent's env")
+		writeError(w, http.StatusForbidden, "you do not have permission to manage this agent's environment")
 		return db.Agent{}, db.Member{}, false
 	}
 
@@ -119,11 +111,7 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 // lookup succeeded, and the empty-owner guard below closes the case
 // from the other side as well.
 func canManageAgentEnv(agent db.Agent, member db.Member) bool {
-	if agent.PermissionMode == "public_to" && roleAllowed(member.Role, "owner", "admin") {
-		return true
-	}
-	ownerID := uuidToString(agent.OwnerID)
-	return ownerID != "" && ownerID == uuidToString(member.UserID)
+	return canManageAgentAsMember(agent, uuidToString(member.UserID), member.Role)
 }
 
 // GetAgentEnv returns the plaintext custom_env map for a single agent

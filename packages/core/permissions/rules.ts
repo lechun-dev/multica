@@ -26,15 +26,15 @@ const isAdminLike = (role: MemberRole | null) =>
 
 /**
  * Update / archive / restore agent fields. The backend gates archive and
- * restore identically to edit (`server/internal/handler/agent.go:519-535`),
+ * restore identically to edit (`canManageAgent` on the server),
  * so callers can use `canEditAgent` for all three.
  */
 export function canEditAgent(agent: Agent, ctx: PermissionContext): Decision {
   if (ctx.userId === null) {
     return deny("not_authenticated", "Sign in to edit this agent.");
   }
-  if (isAdminLike(ctx.role)) return ALLOW;
   if (agent.owner_id !== null && agent.owner_id === ctx.userId) return ALLOW;
+  if (ctx.role === "admin" && agent.permission_mode === "public_to") return ALLOW;
   return deny(
     "not_resource_owner",
     "Only the agent owner and workspace admins can edit this agent.",

@@ -14,6 +14,7 @@ import type {
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
+import type { OwnerAgentCatalogEntry } from "@multica/core/api/schemas";
 import {
   type AgentActivity,
   agentRunCounts30dOptions,
@@ -35,10 +36,12 @@ import {
 } from "@multica/core/agents/stores";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { canEditAgent } from "@multica/core/permissions";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
   memberListOptions,
+  ownerAgentCatalogOptions,
 } from "@multica/core/workspace/queries";
 import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
 import { Button } from "@multica/ui/components/ui/button";
@@ -139,7 +142,7 @@ function columnTrackVars(
 }
 
 export interface AgentListRow {
-  agent: Agent;
+  agent: Agent | OwnerAgentCatalogEntry;
   runtime: AgentRuntime | null;
   presence: AgentPresenceDetail | null;
   activity: AgentActivity | null;
@@ -149,6 +152,12 @@ export interface AgentListRow {
   owner: MemberWithUser | null;
   isOwnedByMe: boolean;
   canManage: boolean;
+}
+
+export type ActionableAgentListRow = AgentListRow & { agent: Agent };
+
+function isActionableRow(row: AgentListRow): row is ActionableAgentListRow {
+  return !("access_scope" in row.agent);
 }
 
 // Most recent activity bucket with runs, as "days ago" (0 = today).
@@ -166,11 +175,12 @@ function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
 function matchesAgentSearch(row: AgentListRow, query: string): boolean {
   if (!query) return true;
   const { agent } = row;
+  const description = "description" in agent ? agent.description : "";
   return (
     agent.name.toLowerCase().includes(query) ||
     matchesPinyin(agent.name, query) ||
-    (agent.description?.toLowerCase().includes(query) ?? false) ||
-    (agent.description ? matchesPinyin(agent.description, query) : false)
+    (description?.toLowerCase().includes(query) ?? false) ||
+    (description ? matchesPinyin(description, query) : false)
   );
 }
 
@@ -195,7 +205,7 @@ export function rowMatchesFilters(
   }
   if (
     filters.runtimes.length > 0 &&
-    !filters.runtimes.includes(row.agent.runtime_id)
+    (!isActionableRow(row) || !filters.runtimes.includes(row.agent.runtime_id))
   ) {
     return false;
   }
@@ -207,18 +217,13 @@ export function rowMatchesFilters(
   }
   if (
     filters.models.length > 0 &&
-    !filters.models.includes(row.agent.model)
+    (!isActionableRow(row) || !filters.models.includes(row.agent.model))
   ) {
     return false;
   }
   if (
     filters.access.length > 0 &&
-    !filters.access.includes(
-      effectiveAccessScope(
-        row.agent.permission_mode,
-        row.agent.invocation_targets,
-      ),
-    )
+    !filters.access.includes(agentListAccessScope(row.agent))
   ) {
     return false;
   }
@@ -369,16 +374,23 @@ function NameCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
   const { agent, isOwnedByMe } = row;
   const isArchived = !!agent.archived_at;
-  const isPrivate = agent.visibility === "private";
+  const isCatalogEntry = "access_scope" in agent;
+  const isPrivate = isCatalogEntry ? agent.access_scope === "owner-only" : agent.visibility === "private";
   return (
     <ListGridCell className="gap-3">
-      <ActorAvatar
-        actorType="agent"
-        actorId={agent.id}
-        size="lg"
-        className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
-        showStatusDot
-      />
+      {isCatalogEntry ? (
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Bot className="size-4" aria-hidden="true" />
+        </span>
+      ) : (
+        <ActorAvatar
+          actorType="agent"
+          actorId={agent.id}
+          size="lg"
+          className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
+          showStatusDot
+        />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -404,7 +416,7 @@ function NameCell({ row }: { row: AgentListRow }) {
             </span>
           )}
         </div>
-        {agent.description ? (
+        {!isCatalogEntry && agent.description ? (
           <div className="mt-0.5 truncate text-caption text-muted-foreground">
             {agent.description}
           </div>
@@ -425,6 +437,13 @@ function StatusCell({ row }: { row: AgentListRow }) {
         <span className="text-caption text-muted-foreground">
           {t(($) => $.row.archived)}
         </span>
+      </ListGridCell>
+    );
+  }
+  if ("access_scope" in agent) {
+    return (
+      <ListGridCell>
+        <span className="text-caption text-muted-foreground">{t(($) => $.row.active)}</span>
       </ListGridCell>
     );
   }
@@ -488,16 +507,15 @@ function OwnerCell({ row }: { row: AgentListRow }) {
 // Effective access scope derived from permission_mode + invocation_targets
 // (not the lossy derived `visibility`). Text label, not icon-only, so screen
 // readers announce the scope.
+function agentListAccessScope(agent: AgentListRow["agent"]) {
+  return "access_scope" in agent
+    ? agent.access_scope
+    : effectiveAccessScope(agent.permission_mode, agent.invocation_targets);
+}
+
 export function AccessCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
-  const scope = useMemo(
-    () =>
-      effectiveAccessScope(
-        row.agent.permission_mode,
-        row.agent.invocation_targets,
-      ),
-    [row.agent.permission_mode, row.agent.invocation_targets],
-  );
+  const scope = agentListAccessScope(row.agent);
   const label = t(($) =>
     scope === "workspace"
       ? $.access.scope_labels.workspace
@@ -516,7 +534,7 @@ export function AccessCell({ row }: { row: AgentListRow }) {
 
 function RuntimeCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
-  if (!isAgentRuntimeBound(row.agent)) {
+  if (isActionableRow(row) && !isAgentRuntimeBound(row.agent)) {
     return (
       <ListGridCell className="hidden @2xl:flex">
         <span className="truncate text-caption text-amber-600 dark:text-amber-400">
@@ -554,7 +572,7 @@ function LastActiveCell({ row }: { row: AgentListRow }) {
     <ListGridCell className="hidden @2xl:flex">
       {days === null ? (
         <span className="truncate text-caption text-muted-foreground">
-          {row.agent.archived_at ? "—" : t(($) => $.last_active.none)}
+          {row.agent.archived_at || !isActionableRow(row) ? "—" : t(($) => $.last_active.none)}
         </span>
       ) : (
         <span className="whitespace-nowrap text-caption tabular-nums text-muted-foreground">
@@ -585,7 +603,7 @@ function AgentListHeader({
   onSort: (field: AgentSortField) => void;
   allSelected: boolean;
   someSelected: boolean;
-  onToggleAll: () => void;
+  onToggleAll?: () => void;
   isColVisible: (key: AgentColumnKey) => boolean;
 }) {
   const { t } = useT("agents");
@@ -595,7 +613,7 @@ function AgentListHeader({
   return (
     <ListGridHeader>
       <div className="hidden items-center justify-center @2xl:flex">
-        <button
+        {onToggleAll && <button
           type="button"
           aria-pressed={allSelected}
           onClick={onToggleAll}
@@ -611,7 +629,7 @@ function AgentListHeader({
             tabIndex={-1}
             className="pointer-events-none"
           />
-        </button>
+        </button>}
       </div>
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.columns.agent)}
@@ -784,7 +802,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const { data: runtimes = [] } = useQuery(
     runtimeListOptions(wsId),
   );
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: members = [], error: membersError } = useQuery(memberListOptions(wsId));
+  const workspaceRole = membersError ? null : members.find((member) => member.user_id === currentUser?.id)?.role ?? null;
+  const isWorkspaceOwner = workspaceRole === "owner";
+  const catalogQuery = useQuery(ownerAgentCatalogOptions(wsId, isWorkspaceOwner ? currentUser?.id : undefined));
+  const catalog = isWorkspaceOwner && !catalogQuery.error ? catalogQuery.data : undefined;
   const { data: runCountsRaw = [], isPending: runCountsPending } = useQuery(
     agentRunCounts30dOptions(wsId),
   );
@@ -841,11 +863,12 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return m;
   }, [members]);
 
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const me = members.find((m) => m.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
-  }, [members, currentUser]);
+  const displayedAgents = useMemo(() => {
+    if (!catalog?.length) return agents;
+    const catalogIds = new Set(catalog.map((entry) => entry.id));
+    // The latest catalog can revoke a previously cached full response.
+    return [...agents.filter((agent) => !catalogIds.has(agent.id)), ...catalog];
+  }, [agents, catalog]);
 
   // Scope counts come from the FULL set (filters never affect them).
   // Archived ignores the ownership lens (see the view store comment).
@@ -853,7 +876,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     let mine = 0;
     let all = 0;
     let archived = 0;
-    for (const a of agents) {
+    for (const a of displayedAgents) {
       if (a.archived_at) {
         archived++;
         continue;
@@ -862,13 +885,13 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       if (currentUser && a.owner_id === currentUser.id) mine++;
     }
     return { mine, all, archived };
-  }, [agents, currentUser]);
+  }, [displayedAgents, currentUser]);
 
   // Rows within the current scope, unfiltered, fully assembled — the
   // toolbar's option lists and the "n / total" denominator derive from
   // this; cells never pull their own queries.
   const scopeRows = useMemo<AgentListRow[]>(() => {
-    const inScope = agents.filter((a) => {
+    const inScope = displayedAgents.filter((a) => {
       if (scope === "archived") return !!a.archived_at;
       if (a.archived_at) return false;
       if (scope === "mine") {
@@ -877,6 +900,19 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       return true;
     });
     return inScope.map((agent) => {
+      if ("access_scope" in agent) {
+        return {
+          agent,
+          runtime: null,
+          presence: null,
+          activity: null,
+          runCount: 0,
+          lastActiveDays: null,
+          owner: agent.owner_id ? membersById.get(agent.owner_id) ?? null : null,
+          isOwnedByMe: false,
+          canManage: false,
+        };
+      }
       const isOwner = !!currentUser?.id && agent.owner_id === currentUser.id;
       const activity = activityMap.get(agent.id) ?? null;
       return {
@@ -888,11 +924,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         lastActiveDays: lastActiveDaysAgo(activity),
         owner: agent.owner_id ? membersById.get(agent.owner_id) ?? null : null,
         isOwnedByMe: isOwner,
-        canManage: isWorkspaceAdmin || isOwner,
+        canManage: canEditAgent(agent, { userId: currentUser?.id ?? null, role: workspaceRole }).allowed,
       };
     });
   }, [
-    agents,
+    displayedAgents,
     scope,
     currentUser,
     runtimesById,
@@ -900,7 +936,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     presenceMap,
     activityMap,
     runCountsById,
-    isWorkspaceAdmin,
+    workspaceRole,
   ]);
 
   // Visible rows: local search + filters, then sort.
@@ -978,12 +1014,13 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     [paths],
   );
 
-  const selectedRows = rows.filter((row) => selectedIds.has(row.agent.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const selectableRows = rows.filter(isActionableRow);
+  const selectedRows = selectableRows.filter((row) => selectedIds.has(row.agent.id));
+  const allSelected = selectableRows.length > 0 && selectedRows.length === selectableRows.length;
   const someSelected = selectedRows.length > 0 && !allSelected;
   const handleToggleAll = () => {
     setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.agent.id)),
+      allSelected ? new Set() : new Set(selectableRows.map((r) => r.agent.id)),
     );
   };
 
@@ -1007,8 +1044,9 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     );
   }
 
-  const totalCount = agents.filter((a) => !a.archived_at).length;
-  const showEmpty = !isLoading && agents.length === 0;
+  const totalCount = scopeCounts.all;
+  const waitingForCatalog = isWorkspaceOwner && catalogQuery.isLoading && scope !== "mine";
+  const showEmpty = !isLoading && displayedAgents.length === 0;
 
   // The active sort field / availability filter reads columns that arrive in
   // separate queries from the main agent list (activity → lastActiveDays,
@@ -1040,7 +1078,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         onCreate={() => navigation.push(paths.newAgent())}
       />
 
-      {isLoading || (!showEmpty && !listReady) ? (
+      {isLoading || waitingForCatalog || (!showEmpty && !listReady) ? (
         <div className="flex-1 overflow-y-auto @container">
           <LoadingSkeleton />
         </div>
@@ -1083,7 +1121,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                 onSort={handleSort}
                 allSelected={allSelected}
                 someSelected={someSelected}
-                onToggleAll={handleToggleAll}
+                onToggleAll={selectableRows.length ? handleToggleAll : undefined}
                 isColVisible={isColVisible}
               />
               <ListGridBody
@@ -1101,18 +1139,21 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                 {virtualItems.map((vi) => {
                   const row = rows[vi.index];
                   if (!row) return null;
+                  const actionable = isActionableRow(row);
                   return (
                     <ListGridRow
                       key={row.agent.id}
                       className={`h-16 cursor-pointer ${
-                        selectedIds.has(row.agent.id) ? "bg-accent/30" : ""
+                        actionable && selectedIds.has(row.agent.id) ? "bg-accent/30" : ""
                       }`}
                       {...rowLink(paths.agentDetail(row.agent.id), row.agent.name)}
                     >
-                      <CheckboxCell
-                        checked={selectedIds.has(row.agent.id)}
-                        onToggle={() => toggleSelected(row.agent.id)}
-                      />
+                      {actionable ? (
+                        <CheckboxCell
+                          checked={selectedIds.has(row.agent.id)}
+                          onToggle={() => toggleSelected(row.agent.id)}
+                        />
+                      ) : <ListGridCell className="hidden px-0 @2xl:flex" />}
                       <NameCell row={row} />
                       {isColVisible("status") ? (
                         <StatusCell row={row} />
@@ -1141,7 +1182,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       )}
                       {isColVisible("runs") ? (
                         <ListGridCell className="hidden justify-end font-mono text-caption tabular-nums text-muted-foreground @2xl:flex">
-                          {row.runCount.toLocaleString(locale)}
+                          {actionable ? row.runCount.toLocaleString(locale) : "—"}
                         </ListGridCell>
                       ) : (
                         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -1149,7 +1190,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       {isColVisible("model") ? (
                         <ListGridCell className="hidden @2xl:flex">
                           <span className="min-w-0 truncate text-caption text-muted-foreground">
-                            {row.agent.model || "—"}
+                            {(actionable && row.agent.model) || "—"}
                           </span>
                         </ListGridCell>
                       ) : (
@@ -1165,7 +1206,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                         <ListGridCell className="hidden px-0 @2xl:flex" />
                       )}
                       <ListGridCell className="justify-end px-0">
-                        <span
+                        {actionable && <span
                           onClick={(e) => e.stopPropagation()}
                           className="flex items-center"
                         >
@@ -1175,7 +1216,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                             canManage={row.canManage}
                             duplicateHref={duplicateHref(row.agent)}
                           />
-                        </span>
+                        </span>}
                       </ListGridCell>
                     </ListGridRow>
                   );
