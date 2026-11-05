@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
@@ -530,7 +531,7 @@ func notifyIssueSubscribers(
 }
 
 // notifyDirect creates an inbox item for a specific recipient. Skips if the
-// recipient is the actor. Publishes an inbox:new event on success.
+// recipient is the actor. Publishes an inbox:new event and returns true on success.
 func notifyDirect(
 	ctx context.Context,
 	queries *db.Queries,
@@ -547,20 +548,20 @@ func notifyDirect(
 	body string,
 	details []byte,
 	canViewIssue issueViewAuthorizer,
-) {
+) bool {
 	// Skip if recipient is the actor
 	if recipientID == e.ActorID {
-		return
+		return false
 	}
 
 	// Check notification preferences for member recipients.
 	if recipientType == "member" {
 		prefs := loadUserPrefs(ctx, queries, workspaceID, []string{recipientID})
 		if p, ok := prefs[recipientID]; ok && isNotifMuted(p, notifType) {
-			return
+			return false
 		}
 		if !canDeliverIssueNotification(ctx, canViewIssue, workspaceID, recipientID, issueID, notifType) {
-			return
+			return false
 		}
 	}
 
@@ -581,7 +582,7 @@ func notifyDirect(
 	if err != nil {
 		slog.Error("direct notification creation failed",
 			"issue_id", issueID, "recipient_id", recipientID, "type", notifType, "error", err)
-		return
+		return false
 	}
 
 	resp := inboxItemToResponse(item)
@@ -593,6 +594,7 @@ func notifyDirect(
 		ActorID:     e.ActorID,
 		Payload:     map[string]any{"item": resp},
 	})
+	return true
 }
 
 // mentionDetails adds the mention expansion source without dropping existing
@@ -748,7 +750,7 @@ func notifyMentionedMembers(
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canViewIssue issueViewAuthorizer) {
+func registerNotificationListeners(bus *events.Bus, queries *db.Queries, pool *pgxpool.Pool, canViewIssue issueViewAuthorizer) {
 	ctx := context.Background()
 
 	// issue:created — Direct notification to assignee if assignee != actor
@@ -778,6 +780,9 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 				canViewIssue,
 			)
 		}
+		if ownerID, delivered := notifyAssignedAgentOwner(ctx, bus, queries, pool, e, issue, canViewIssue); delivered {
+			skip[ownerID] = true
+		}
 
 		// Notify @mentions in description
 		if issue.Description != nil && *issue.Description != "" {
@@ -803,6 +808,7 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 		prevAssigneeType, _ := payload["prev_assignee_type"].(*string)
 		prevAssigneeID, _ := payload["prev_assignee_id"].(*string)
 		prevDescription, _ := payload["prev_description"].(*string)
+		agentOwnerID, agentOwnerNotified := "", false
 
 		if assigneeChanged {
 			// Build structured details for assignee change.
@@ -841,11 +847,12 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 					canViewIssue,
 				)
 			}
+			agentOwnerID, agentOwnerNotified = notifyAssignedAgentOwner(ctx, bus, queries, pool, e, issue, canViewIssue)
 
 			// Direct: notify only a previous member assignee about unassignment.
 			// This is intentionally narrower than isAssignmentRecipientType: agents
 			// do not receive unassigned notifications.
-			if prevAssigneeType != nil && prevAssigneeID != nil && *prevAssigneeType == "member" {
+			if prevAssigneeType != nil && prevAssigneeID != nil && *prevAssigneeType == "member" && (!agentOwnerNotified || *prevAssigneeID != agentOwnerID) {
 				notifyDirect(ctx, queries, bus,
 					"member", *prevAssigneeID,
 					e.WorkspaceID, e, issue.ID, issue.Status,
@@ -865,6 +872,9 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 			}
 			if issue.AssigneeID != nil {
 				exclude[*issue.AssigneeID] = true
+			}
+			if agentOwnerNotified {
+				exclude[agentOwnerID] = true
 			}
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
 				exclude, "assignee_changed", "info",
@@ -973,6 +983,9 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries, canView
 					}
 				}
 				skip := map[string]bool{e.ActorID: true}
+				if agentOwnerNotified {
+					skip[agentOwnerID] = true
+				}
 				notifyMentionedMembers(bus, queries, e, added, issue.ID, issue.Title, issue.Status,
 					issue.Title, skip, emptyDetails, canViewIssue)
 			}

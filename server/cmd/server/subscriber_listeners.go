@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -201,6 +202,10 @@ func subscribeDelegatedHuman(bus *events.Bus, pool *pgxpool.Pool, queries *db.Qu
 		return
 	}
 
+	addMemberSubscriberRespectingOptOut(ctx, bus, pool, queries, workspaceID, issueID, human, reason)
+}
+
+func addMemberSubscriberRespectingOptOut(ctx context.Context, bus *events.Bus, pool *pgxpool.Pool, queries *db.Queries, workspaceID, issueID string, human pgtype.UUID, reason string) {
 	// Two conditions decide whether this subscription may exist, and BOTH can
 	// be invalidated by a concurrent request between a check and the write:
 	//
@@ -219,7 +224,7 @@ func subscribeDelegatedHuman(bus *events.Bus, pool *pgxpool.Pool, queries *db.Qu
 	// protect (MUL-5483 review round 7).
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		slog.Error("delegated subscribe: begin failed", "issue_id", issueID, "error", err)
+		slog.Error("member auto-subscribe: begin failed", "issue_id", issueID, "reason", reason, "error", err)
 		return
 	}
 	defer tx.Rollback(ctx)
@@ -229,22 +234,22 @@ func subscribeDelegatedHuman(bus *events.Bus, pool *pgxpool.Pool, queries *db.Qu
 		WorkspaceID: parseUUID(workspaceID),
 		UserID:      human,
 	}); err != nil {
-		slog.Error("delegated subscribe: lock failed", "issue_id", issueID, "error", err)
+		slog.Error("member auto-subscribe: lock failed", "issue_id", issueID, "reason", reason, "error", err)
 		return
 	}
 
 	affected, err := qtx.AddDelegatedSubscriber(ctx, db.AddDelegatedSubscriberParams{
-		IssueID:     issueUUID,
+		IssueID:     parseUUID(issueID),
 		UserID:      human,
 		Reason:      reason,
 		WorkspaceID: parseUUID(workspaceID),
 	})
 	if err != nil {
-		slog.Error("delegated subscribe: insert failed", "issue_id", issueID, "error", err)
+		slog.Error("member auto-subscribe: insert failed", "issue_id", issueID, "reason", reason, "error", err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		slog.Error("delegated subscribe: commit failed", "issue_id", issueID, "error", err)
+		slog.Error("member auto-subscribe: commit failed", "issue_id", issueID, "reason", reason, "error", err)
 		return
 	}
 

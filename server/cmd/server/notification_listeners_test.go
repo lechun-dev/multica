@@ -74,7 +74,7 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	t.Helper()
 	bus := events.New()
 	registerSubscriberListeners(bus, testPool)
-	registerNotificationListeners(bus, queries, nil)
+	registerNotificationListeners(bus, queries, testPool, nil)
 	return bus
 }
 
@@ -1181,7 +1181,7 @@ func TestNotification_ParentBubble_InaccessibleTargetSuppressed(t *testing.T) {
 	addTestSubscriber(t, childID, "member", directSubID, "manual")
 	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
 
-	registerNotificationListeners(bus, queries, func(_ context.Context, workspaceID, userID, issueID string) (bool, error) {
+	registerNotificationListeners(bus, queries, testPool, func(_ context.Context, workspaceID, userID, issueID string) (bool, error) {
 		if workspaceID != testWorkspaceID {
 			t.Fatalf("expected workspace_id=%s, got %s", testWorkspaceID, workspaceID)
 		}

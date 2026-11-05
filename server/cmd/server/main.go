@@ -660,7 +660,7 @@ func main() {
 	// 2026-09-10 coder(lq): Authorize the exact target issue before creating an
 	// inbox row or WebSocket event. This is especially important when a child
 	// status change bubbles through the parent issue's subscriber list.
-	registerNotificationListeners(bus, queries, h.CanMemberViewIssue)
+	registerNotificationListeners(bus, queries, pool, h.CanMemberViewIssue)
 
 	srv := newMainHTTPServer(":"+port, r)
 	profilingServer := profiling.NewServer()
