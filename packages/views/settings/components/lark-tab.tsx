@@ -293,6 +293,7 @@ export function LarkAgentBindButton({
   agentName,
   agentOwnerId,
   className,
+  readOnly = false,
   onShowConnectedDetails,
 }: {
   agentId: string;
@@ -306,6 +307,7 @@ export function LarkAgentBindButton({
    */
   agentOwnerId?: string | null;
   className?: string;
+  readOnly?: boolean;
   /**
    * When set, the connected state renders as a compact read-only status
    * row that invokes this callback on click instead of the full badge with
@@ -368,7 +370,7 @@ export function LarkAgentBindButton({
         className={className}
       />
     ) : (
-      <LarkAgentBotConnectedBadge installation={existing} className={className} />
+      <LarkAgentBotConnectedBadge installation={existing} className={className} readOnly={readOnly} />
     );
   }
 
@@ -397,7 +399,7 @@ export function LarkAgentBindButton({
           variant="outline"
           size="sm"
           onClick={() => setDialogRegion("feishu")}
-          disabled={!agentId}
+          disabled={readOnly || !agentId}
           title={
             agentName
               ? t(($) => $.lark.bind_button_feishu_title, { agent: agentName })
@@ -416,7 +418,7 @@ export function LarkAgentBindButton({
             variant="outline"
             size="sm"
             onClick={() => setDialogRegion("lark")}
-            disabled={!agentId}
+            disabled={readOnly || !agentId}
             title={
               agentName
                 ? t(($) => $.lark.bind_button_lark_title, { agent: agentName })
@@ -429,7 +431,7 @@ export function LarkAgentBindButton({
           </Button>
         )}
       </div>
-      {dialogRegion && (
+      {!readOnly && dialogRegion && (
         <LarkInstallDialog
           wsId={wsId}
           agentId={agentId}
@@ -510,9 +512,11 @@ function larkDevConsoleHost(region?: string): string {
 function LarkAgentBotConnectedBadge({
   installation,
   className,
+  readOnly = false,
 }: {
   installation: LarkInstallation;
   className?: string;
+  readOnly?: boolean;
 }) {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -523,7 +527,7 @@ function LarkAgentBotConnectedBadge({
   const [disconnecting, setDisconnecting] = useState(false);
 
   async function handleDisconnect() {
-    if (disconnecting) return;
+    if (readOnly || disconnecting) return;
     setDisconnecting(true);
     try {
       await api.deleteLarkInstallation(wsId, installation.id);
@@ -571,7 +575,7 @@ function LarkAgentBotConnectedBadge({
           variant="destructive"
           size="sm"
           onClick={() => setConfirmOpen(true)}
-          disabled={disconnecting}
+          disabled={readOnly || disconnecting}
           title={t(($) => $.lark.agent_bot_disconnect_tooltip)}
           aria-label={t(($) => $.lark.disconnect)}
           data-testid="lark-agent-bot-disconnect"
@@ -588,7 +592,8 @@ function LarkAgentBotConnectedBadge({
           with the primary connect/disconnect intents. Region-aware tooltip
           keeps the Feishu vs Lark distinction this branch introduced. */}
       <a
-        href={manageHref}
+        href={readOnly ? undefined : manageHref}
+        aria-disabled={readOnly || undefined}
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1 text-caption text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
@@ -605,7 +610,7 @@ function LarkAgentBotConnectedBadge({
       </a>
 
       <AlertDialog
-        open={confirmOpen}
+        open={!readOnly && confirmOpen}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setConfirmOpen(false);
         }}
@@ -620,12 +625,12 @@ function LarkAgentBotConnectedBadge({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
+            <AlertDialogCancel disabled={readOnly || disconnecting}>
               {t(($) => $.lark.disconnect_confirm_cancel)}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDisconnect}
-              disabled={disconnecting}
+              disabled={readOnly || disconnecting}
             >
               {disconnecting
                 ? t(($) => $.lark.disconnecting)

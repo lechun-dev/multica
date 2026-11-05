@@ -198,22 +198,14 @@ export function AgentOverviewPane({
     const showMcp = runtime
       ? providerSupportsMcpConfig(runtime.provider)
       : true;
-    const showComposioMcp =
-      composioMCPAppsEnabled &&
-      !!currentUserId &&
-      !!agent.owner_id &&
-      agent.owner_id === currentUserId;
-
     return CAPABILITY_TABS.filter((tab) => {
       if (tab.id === "mcp_config") return showMcp;
-      if (tab.id === "composio_mcp") return showComposioMcp;
+      if (tab.id === "composio_mcp") return composioMCPAppsEnabled;
       if (tab.id === "integrations") return integrationsConfigured;
       return true;
     });
   }, [
-    agent.owner_id,
     composioMCPAppsEnabled,
-    currentUserId,
     integrationsConfigured,
     runtime,
   ]);
@@ -221,16 +213,10 @@ export function AgentOverviewPane({
   const visibleSettingsTabs = useMemo(
     () =>
       SETTINGS_TABS.filter((tab) => {
-        // Env is the only settings tab backed by a secret-bearing endpoint.
-        // GET/PUT /api/agents/{id}/env admits the agent owner or a workspace
-        // owner/admin (MUL-5438) — the same rule `canEdit` encodes — so
-        // showing the tab to anyone else guarantees a 403 on "Reveal & edit".
-        // The server stays the boundary; this only removes a dead entry point.
-        if (tab.id === "env") return canEdit;
         if (tab.id === "runtime_config") return runtime?.provider === "openclaw";
         return true;
       }),
-    [canEdit, runtime?.provider],
+    [runtime?.provider],
   );
 
   const visibleViews = useMemo(
@@ -384,11 +370,12 @@ export function AgentOverviewPane({
             className={cn(PAGE_RAIL, PAGE_GUTTER, "py-4 sm:py-6")}
           >
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <ActivityTab agent={agent} showPerformance={false} />
+              <ActivityTab agent={agent} showPerformance={false} readOnly={!canEdit} viewerId={currentUserId ?? undefined} />
               <AgentOverviewSummary
                 agent={agent}
                 runtime={runtime}
                 owner={owner}
+                viewerId={currentUserId ?? undefined}
               />
             </div>
           </div>
@@ -396,7 +383,7 @@ export function AgentOverviewPane({
 
         {effectiveView === "work" && (
           <div className={cn(PAGE_RAIL, "flex min-h-[620px] flex-col")}>
-            <ActorIssuesPanel actorType="agent" actorId={agent.id} />
+            <ActorIssuesPanel actorType="agent" actorId={agent.id} readOnly={!canEdit} />
           </div>
         )}
 
@@ -451,6 +438,7 @@ export function AgentOverviewPane({
                   {effectiveView === "instructions" && (
                     <InstructionsTab
                       agent={agent}
+                      canEdit={canEdit}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
                     />
@@ -474,10 +462,10 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "composio_mcp" && (
-                    <AgentMcpTab agent={agent} />
+                    <AgentMcpTab agent={agent} canEdit={canEdit} />
                   )}
                   {effectiveView === "integrations" && (
-                    <IntegrationsTab agent={agent} />
+                    <IntegrationsTab agent={agent} readOnly={!canEdit} />
                   )}
                   {effectiveView === "general" && (
                     <AgentDetailInspector
@@ -500,12 +488,13 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "env" && (
-                    <EnvTab agent={agent} onDirtyChange={setActiveDirty} />
+                    <EnvTab agent={agent} canEdit={canEdit} onDirtyChange={setActiveDirty} />
                   )}
                   {effectiveView === "custom_args" && (
                     <CustomArgsTab
                       agent={agent}
                       runtimeDevice={runtime ?? undefined}
+                      canEdit={canEdit}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
                     />
@@ -513,6 +502,7 @@ export function AgentOverviewPane({
                   {effectiveView === "runtime_config" && (
                     <RuntimeConfigTab
                       agent={agent}
+                      canEdit={canEdit}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
                     />

@@ -321,7 +321,7 @@ func (h *Handler) DeleteWorkspaceMcpServer(w http.ResponseWriter, r *http.Reques
 // ListAgentMcpServers returns the workspace servers bound to this agent, with
 // each binding's toggle state.
 func (h *Handler) ListAgentMcpServers(w http.ResponseWriter, r *http.Request) {
-	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	agent, ok := h.loadAgentForProfile(w, r, chi.URLParam(r, "id"), true)
 	if !ok {
 		return
 	}
@@ -358,11 +358,10 @@ func (h *Handler) requireAgentMcpWriter(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusForbidden, "agents cannot modify MCP server assignments")
 		return db.Agent{}, false
 	}
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
+	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return db.Agent{}, false
 	}
-	if !canViewAgentSecrets(agent, requestUserID(r), member.Role) {
+	if !isAgentOwner(agent, requestUserID(r)) {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return db.Agent{}, false
 	}

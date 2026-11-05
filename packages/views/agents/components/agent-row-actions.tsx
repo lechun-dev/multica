@@ -42,7 +42,7 @@ interface AgentRowActionsProps {
   agent: Agent;
   presence: AgentPresenceDetail | null | undefined;
   // True when the current user can manage this agent (owner of agent or
-  // workspace admin/owner). Mirrors the back-end's canManageAgent check —
+  // workspace administrators cannot edit another member’s agent). Mirrors the back-end's canManageAgent check —
   // the server is still the source of truth, this only hides UI for ops
   // the user can't perform.
   canManage: boolean;

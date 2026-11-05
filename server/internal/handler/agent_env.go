@@ -99,9 +99,7 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 }
 
 // canManageAgentEnv is the pure half of the env authorization rule:
-// the human owner, or a workspace admin managing a shared agent. Mirrors
-// canManageAgent (update/archive) so a member who can manage an agent
-// can also rotate its secrets.
+// only the agent owner can read or rotate its secrets.
 //
 // The owner comparison deliberately runs against member.UserID rather
 // than requestUserID(r). agent.owner_id is nullable (migration 001) and
@@ -111,7 +109,7 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 // lookup succeeded, and the empty-owner guard below closes the case
 // from the other side as well.
 func canManageAgentEnv(agent db.Agent, member db.Member) bool {
-	return canManageAgentAsMember(agent, uuidToString(member.UserID), member.Role)
+	return isAgentOwner(agent, uuidToString(member.UserID))
 }
 
 // GetAgentEnv returns the plaintext custom_env map for a single agent

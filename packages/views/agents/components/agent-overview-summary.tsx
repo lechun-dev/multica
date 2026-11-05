@@ -6,7 +6,6 @@ import type {
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
-import type { OwnerAgentDetail } from "@multica/core/api/schemas";
 import { runtimeDisplayLabel } from "@multica/core/runtimes";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
@@ -14,9 +13,10 @@ import { VisibilityBadge } from "./visibility-badge";
 import { AgentPerformanceSummary } from "./tabs/activity-tab";
 
 interface AgentOverviewSummaryProps {
-  agent: Agent | OwnerAgentDetail;
+  agent: Agent;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
+  viewerId?: string;
 }
 
 /**
@@ -28,9 +28,9 @@ export function AgentOverviewSummary({
   agent,
   runtime,
   owner,
+  viewerId,
 }: AgentOverviewSummaryProps) {
   const { t } = useT("agents");
-  const readOnly = "access_scope" in agent;
   const runtimeOnline = runtime?.status === "online";
 
   return (
@@ -51,19 +51,9 @@ export function AgentOverviewSummary({
                 <span className="truncate text-foreground">{owner.name}</span>
               </span>
             </SummaryRow>
-          ) : readOnly ? (
-            <SummaryRow label={t(($) => $.inspector.prop_owner)}>
-              {agent.owner_id?.slice(0, 8) ?? "—"}
-            </SummaryRow>
           ) : null}
           <SummaryRow label={t(($) => $.overview.access)}>
-            {readOnly
-              ? t(($) => $.access.scope_labels[
-                  agent.access_scope === "owner-only"
-                    ? "owner_only"
-                    : agent.access_scope === "specific-people" ? "specific_people" : "workspace"
-                ])
-              : <VisibilityBadge value={agent.visibility} />}
+            <VisibilityBadge value={agent.visibility} />
           </SummaryRow>
           <SummaryRow label={t(($) => $.inspector.prop_runtime)}>
             <span className="flex min-w-0 items-center gap-1.5 text-foreground">
@@ -77,7 +67,7 @@ export function AgentOverviewSummary({
               <span className="truncate">
                 {runtime
                   ? runtimeDisplayLabel(runtime)
-                  : readOnly && agent.runtime_bound
+                  : agent.runtime_bound
                     ? t(($) => $.detail.runtime_bound)
                     : t(($) => $.pickers.runtime_none)}
               </span>
@@ -96,51 +86,37 @@ export function AgentOverviewSummary({
               {agent.max_concurrent_tasks}
             </span>
           </SummaryRow>
-          {readOnly && (
-            <>
-              <SummaryRow label={t(($) => $.inspector.prop_thinking)}>
-                {agent.thinking_level || t(($) => $.pickers.thinking_default)}
-              </SummaryRow>
-              <SummaryRow label={t(($) => $.columns.status)}>
-                {t(($) => agent.archived_at ? $.row.archived : $.row.active)}
-              </SummaryRow>
-            </>
-          )}
         </dl>
       </section>
 
-      {!readOnly && (
-        <>
-          <section className="mt-5 border-t pt-5">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-body font-medium">
-                {t(($) => $.inspector.section_skills)}
-              </h2>
-              <span className="font-mono text-caption tabular-nums text-muted-foreground">
-                {agent.skills.length}
+      <section className="mt-5 border-t pt-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-body font-medium">
+            {t(($) => $.inspector.section_skills)}
+          </h2>
+          <span className="font-mono text-caption tabular-nums text-muted-foreground">
+            {agent.skills.length}
+          </span>
+        </div>
+        {agent.skills.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {agent.skills.map((skill) => (
+              <span
+                key={skill.id}
+                className="max-w-full truncate rounded-md border border-surface-border bg-surface-hover px-2 py-1 text-caption text-muted-foreground"
+              >
+                {skill.name}
               </span>
-            </div>
-            {agent.skills.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {agent.skills.map((skill) => (
-                  <span
-                    key={skill.id}
-                    className="max-w-full truncate rounded-md border border-surface-border bg-surface-hover px-2 py-1 text-caption text-muted-foreground"
-                  >
-                    {skill.name}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-3 text-caption text-muted-foreground">
-                {t(($) => $.tab_body.skills.empty_title)}
-              </p>
-            )}
-          </section>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-caption text-muted-foreground">
+            {t(($) => $.tab_body.skills.empty_title)}
+          </p>
+        )}
+      </section>
 
-          <AgentPerformanceSummary agent={agent} />
-        </>
-      )}
+      <AgentPerformanceSummary agent={agent} viewerId={viewerId} />
     </aside>
   );
 }

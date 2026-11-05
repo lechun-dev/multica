@@ -45,6 +45,7 @@ function ListRowContent({
   containerStyle,
   containerProps,
   checkboxProps,
+  readOnly = false,
 }: {
   issue: Issue;
   childProgress?: ChildProgress;
@@ -53,11 +54,12 @@ function ListRowContent({
   containerRef?: Ref<HTMLDivElement>;
   containerStyle?: React.CSSProperties;
   containerProps?: Record<string, unknown>;
+  readOnly?: boolean;
   checkboxProps?: Pick<React.HTMLAttributes<HTMLDivElement>, "onClick" | "onMouseDown" | "onPointerDown">;
 }) {
   const locale = useLocale();
   const selection = useIssueSurfaceSelection();
-  const selected = selection.selectedIds.has(issue.id);
+  const selected = !readOnly && selection.selectedIds.has(issue.id);
   const toggle = selection.toggle;
   const p = useWorkspacePaths();
   const storeProperties = useViewStore((s) => s.cardProperties);
@@ -76,130 +78,133 @@ function ListRowContent({
   const showDueDate = storeProperties.dueDate && issue.due_date;
   const showLabels = storeProperties.labels && labels.length > 0;
 
-  return (
-    <IssueActionsContextMenu issue={issue}>
+  const row = (
+    <div
+      ref={containerRef}
+      data-slot="issue-list-row"
+      style={containerStyle}
+      {...containerProps}
+      className={`group/row flex h-[var(--issue-row-height)] items-center gap-2 px-4 text-body transition-colors ${
+        selected
+          ? "bg-surface-selected hover:not-data-[popup-open]:bg-surface-selected data-[popup-open]:bg-surface-selected"
+          : "hover:not-data-[popup-open]:bg-surface-hover data-[popup-open]:bg-surface-hover"
+      } ${isDragging ? "opacity-30" : ""}`}
+    >
       <div
-        ref={containerRef}
-        data-slot="issue-list-row"
-        style={containerStyle}
-        {...containerProps}
-        className={`group/row flex h-[var(--issue-row-height)] items-center gap-2 px-4 text-body transition-colors ${
-          selected
-            ? "bg-surface-selected hover:not-data-[popup-open]:bg-surface-selected data-[popup-open]:bg-surface-selected"
-            : "hover:not-data-[popup-open]:bg-surface-hover data-[popup-open]:bg-surface-hover"
-        } ${isDragging ? "opacity-30" : ""}`}
+        className="relative flex shrink-0 items-center justify-center w-4 h-4"
+        {...checkboxProps}
       >
-        <div
-          className="relative flex shrink-0 items-center justify-center w-4 h-4"
-          {...checkboxProps}
-        >
-          {storeProperties.priority && issue.priority !== "none" && (
-            <PriorityIcon
-              priority={issue.priority}
-              className={selected ? "hidden" : "group-hover/row:hidden"}
-            />
-          )}
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={() => toggle(issue.id)}
-            className={`absolute inset-0 cursor-pointer accent-primary ${
-              selected ? "" : "hidden group-hover/row:block"
-            }`}
+        {storeProperties.priority && issue.priority !== "none" && (
+          <PriorityIcon
+            priority={issue.priority}
+            className={selected ? "hidden" : "group-hover/row:hidden"}
           />
-        </div>
-        <AppLink
-          href={p.issueDetail(issue.id)}
-          newTabTitle={issue.identifier}
-          className={`flex flex-1 items-center gap-2 min-w-0 ${isDragging ? "pointer-events-none" : ""}`}
-        >
-          <span className="w-16 shrink-0 text-caption text-muted-foreground">
-            {issue.identifier}
-          </span>
-          <IssueAgentActivityIndicator issueId={issue.id} />
-
-          <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            <span className="truncate">{issue.title}</span>
-            {/* Keep custom names visible when this row appears outside a status section. */}
-            <CustomStatusChip status={issue.status} className="shrink-0" />
-            {showChildProgress && (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5">
-                <ProgressRing done={childProgress!.done} total={childProgress!.total} size={14} />
-                <span className="text-micro text-muted-foreground tabular-nums font-medium">
-                  {childProgress!.done}/{childProgress!.total}
-                </span>
-              </span>
-            )}
-            {showLabels && (
-              <span className="ml-1.5 hidden md:inline-flex shrink-0 items-center gap-1 max-w-[260px] overflow-hidden">
-                {labels.slice(0, 3).map((label) => (
-                  <LabelChip key={label.id} label={label} />
-                ))}
-                {labels.length > 3 && (
-                  <span className="text-micro text-muted-foreground">
-                    +{labels.length - 3}
-                  </span>
-                )}
-              </span>
-            )}
-            {cardCustomProperties.length > 0 && (
-              <span className="ml-1.5 hidden md:inline-flex shrink-0 items-center gap-1 max-w-[260px] overflow-hidden">
-                {cardCustomProperties.slice(0, 3).map((property) => (
-                  <span
-                    key={property.id}
-                    className="inline-flex max-w-[120px] items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground"
-                  >
-                    <PropertyIcon property={property} className="size-3 text-micro" />
-                    <CustomPropertyValueDisplay property={property} value={issue.properties?.[property.id]} />
-                  </span>
-                ))}
-              </span>
-            )}
-          </span>
-          {showProject && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground max-w-[140px]">
-              <ProjectIcon project={project} size="sm" />
-              <span className="truncate">{project!.title}</span>
-            </span>
-          )}
-          {showStartDate && (
-            <span className="shrink-0 text-caption text-muted-foreground">
-              {formatDate(issue.start_date!, locale)}
-            </span>
-          )}
-          {showDueDate && (
-            <span className="shrink-0 text-caption text-muted-foreground">
-              {formatDate(issue.due_date!, locale)}
-            </span>
-          )}
-          {showAssignee && (
-            <ActorAvatar
-              actorType={issue.assignee_type!}
-              actorId={issue.assignee_id!}
-              size="sm"
-              enableHoverCard
-            />
-          )}
-        </AppLink>
+        )}
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={readOnly}
+          onChange={() => toggle(issue.id)}
+          className={`absolute inset-0 cursor-pointer accent-primary ${
+            selected ? "" : "hidden group-hover/row:block"
+          }`}
+        />
       </div>
-    </IssueActionsContextMenu>
+      <AppLink
+        href={p.issueDetail(issue.id)}
+        newTabTitle={issue.identifier}
+        className={`flex flex-1 items-center gap-2 min-w-0 ${isDragging ? "pointer-events-none" : ""}`}
+      >
+        <span className="w-16 shrink-0 text-caption text-muted-foreground">
+          {issue.identifier}
+        </span>
+        <IssueAgentActivityIndicator issueId={issue.id} />
+
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span className="truncate">{issue.title}</span>
+          {/* Keep custom names visible when this row appears outside a status section. */}
+          <CustomStatusChip status={issue.status} className="shrink-0" />
+          {showChildProgress && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5">
+              <ProgressRing done={childProgress!.done} total={childProgress!.total} size={14} />
+              <span className="text-micro text-muted-foreground tabular-nums font-medium">
+                {childProgress!.done}/{childProgress!.total}
+              </span>
+            </span>
+          )}
+          {showLabels && (
+            <span className="ml-1.5 hidden md:inline-flex shrink-0 items-center gap-1 max-w-[260px] overflow-hidden">
+              {labels.slice(0, 3).map((label) => (
+                <LabelChip key={label.id} label={label} />
+              ))}
+              {labels.length > 3 && (
+                <span className="text-micro text-muted-foreground">
+                  +{labels.length - 3}
+                </span>
+              )}
+            </span>
+          )}
+          {cardCustomProperties.length > 0 && (
+            <span className="ml-1.5 hidden md:inline-flex shrink-0 items-center gap-1 max-w-[260px] overflow-hidden">
+              {cardCustomProperties.slice(0, 3).map((property) => (
+                <span
+                  key={property.id}
+                  className="inline-flex max-w-[120px] items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5 text-micro text-muted-foreground"
+                >
+                  <PropertyIcon property={property} className="size-3 text-micro" />
+                  <CustomPropertyValueDisplay property={property} value={issue.properties?.[property.id]} />
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+        {showProject && (
+          <span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground max-w-[140px]">
+            <ProjectIcon project={project} size="sm" />
+            <span className="truncate">{project!.title}</span>
+          </span>
+        )}
+        {showStartDate && (
+          <span className="shrink-0 text-caption text-muted-foreground">
+            {formatDate(issue.start_date!, locale)}
+          </span>
+        )}
+        {showDueDate && (
+          <span className="shrink-0 text-caption text-muted-foreground">
+            {formatDate(issue.due_date!, locale)}
+          </span>
+        )}
+        {showAssignee && (
+          <ActorAvatar
+            actorType={issue.assignee_type!}
+            actorId={issue.assignee_id!}
+            size="sm"
+            enableHoverCard
+          />
+        )}
+      </AppLink>
+    </div>
   );
+  return readOnly ? row : <IssueActionsContextMenu issue={issue}>{row}</IssueActionsContextMenu>;
 }
 
 export const ListRow = memo(function ListRow({
   issue,
   childProgress,
   project,
+  readOnly,
 }: {
   issue: Issue;
   childProgress?: ChildProgress;
   project?: Project;
+  readOnly?: boolean;
 }) {
   return (
     <ListRowContent
       issue={issue}
       childProgress={childProgress}
       project={project}
+      readOnly={readOnly}
     />
   );
 });

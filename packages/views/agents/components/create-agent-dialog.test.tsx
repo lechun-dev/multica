@@ -339,7 +339,7 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
     // New copy replaces the old one.
     expect(screen.getByRole("radio", { name: /^Only me/i })).toBeInTheDocument();
     expect(
-      screen.getByText("Only you can run this agent"),
+      screen.getByText("Only you can run this agent. The workspace owner can view its profile."),
     ).toBeInTheDocument();
     expect(screen.getByText("Entire workspace")).toBeInTheDocument();
     expect(screen.getByText("Specific people")).toBeInTheDocument();

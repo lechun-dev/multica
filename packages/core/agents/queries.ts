@@ -134,9 +134,11 @@ export const agentTasksKeys = {
 // the inspector's 7-day throughput stats and the Tasks tab list — shared so
 // they don't fetch twice. WS task events invalidate this via the existing
 // task-prefix invalidation in useRealtimeSync.
-export function agentTasksOptions(wsId: string, agentId: string, includeWorkspaceOwned = true) {
+export function agentTasksOptions(wsId: string, agentId: string, includeWorkspaceOwned = true, viewerId?: string) {
   return queryOptions({
-    queryKey: includeWorkspaceOwned
+    queryKey: viewerId
+      ? ([...agentTasksKeys.detail(wsId, agentId), { includeWorkspaceOwned, viewerId }] as const)
+      : includeWorkspaceOwned
       ? agentTasksKeys.detail(wsId, agentId)
       : ([...agentTasksKeys.detail(wsId, agentId), { includeWorkspaceOwned: false }] as const),
     queryFn: () => api.listAgentTasks(agentId, includeWorkspaceOwned),

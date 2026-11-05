@@ -8105,10 +8105,6 @@ func (s *TaskService) publishQuickCreateInbox(item db.InboxItem, workspaceID, ag
 
 // agentToMap builds a simple map for broadcasting agent status updates.
 func agentToMap(a db.Agent) map[string]any {
-	var rc any
-	if a.RuntimeConfig != nil {
-		json.Unmarshal(a.RuntimeConfig, &rc)
-	}
 	return map[string]any{
 		"id":                   util.UUIDToString(a.ID),
 		"workspace_id":         util.UUIDToString(a.WorkspaceID),
@@ -8117,7 +8113,7 @@ func agentToMap(a db.Agent) map[string]any {
 		"description":          a.Description,
 		"avatar_url":           util.TextToPtr(a.AvatarUrl),
 		"runtime_mode":         a.RuntimeMode,
-		"runtime_config":       rc,
+		"runtime_config":       map[string]any{},
 		"visibility":           a.Visibility,
 		"status":               a.Status,
 		"max_concurrent_tasks": a.MaxConcurrentTasks,

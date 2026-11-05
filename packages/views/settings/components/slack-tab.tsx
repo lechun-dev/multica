@@ -264,11 +264,13 @@ export function SlackAgentBindButton({
   agentId,
   agentName,
   className,
+  readOnly = false,
   onShowConnectedDetails,
 }: {
   agentId: string;
   agentName?: string;
   className?: string;
+  readOnly?: boolean;
   /**
    * When set, the connected state renders as a compact read-only status row
    * that invokes this callback on click instead of the full badge with inline
@@ -313,7 +315,7 @@ export function SlackAgentBindButton({
         className={className}
       />
     ) : (
-      <SlackAgentBotConnectedBadge installation={existing} className={className} />
+      <SlackAgentBotConnectedBadge installation={existing} className={className} readOnly={readOnly} />
     );
   }
 
@@ -327,6 +329,7 @@ export function SlackAgentBindButton({
   }
 
   async function handleSubmit() {
+    if (readOnly) return;
     const bot_token = botToken.trim();
     const app_token = appToken.trim();
     if (submitting || !agentId || !bot_token || !app_token) return;
@@ -361,7 +364,7 @@ export function SlackAgentBindButton({
         variant="outline"
         size="sm"
         onClick={() => setDialogOpen(true)}
-        disabled={!agentId}
+        disabled={readOnly || !agentId}
         title={
           agentName
             ? t(($) => $.slack.bind_button_title, { agent: agentName })
@@ -374,7 +377,7 @@ export function SlackAgentBindButton({
       </Button>
 
       <Dialog
-        open={dialogOpen}
+        open={!readOnly && dialogOpen}
         onOpenChange={(v) => (v ? setDialogOpen(true) : closeDialog())}
       >
         <DialogContent className="sm:max-w-lg" data-testid="slack-byo-dialog">
@@ -502,9 +505,11 @@ function SlackAgentBotStatusRow({
 function SlackAgentBotConnectedBadge({
   installation,
   className,
+  readOnly = false,
 }: {
   installation: SlackInstallation;
   className?: string;
+  readOnly?: boolean;
 }) {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -514,7 +519,7 @@ function SlackAgentBotConnectedBadge({
   const [disconnecting, setDisconnecting] = useState(false);
 
   async function handleDisconnect() {
-    if (disconnecting) return;
+    if (readOnly || disconnecting) return;
     setDisconnecting(true);
     try {
       await api.deleteSlackInstallation(wsId, installation.id);
@@ -544,7 +549,7 @@ function SlackAgentBotConnectedBadge({
           variant="destructive"
           size="sm"
           onClick={() => setConfirmOpen(true)}
-          disabled={disconnecting}
+          disabled={readOnly || disconnecting}
           title={t(($) => $.slack.agent_bot_disconnect_tooltip)}
           aria-label={t(($) => $.slack.disconnect)}
           data-testid="slack-agent-bot-disconnect"
@@ -559,6 +564,7 @@ function SlackAgentBotConnectedBadge({
       {installation.team_id && (
         <button
           type="button"
+          disabled={readOnly}
           onClick={() =>
             openExternal(`https://app.slack.com/client/${installation.team_id}`)
           }
@@ -571,7 +577,7 @@ function SlackAgentBotConnectedBadge({
       )}
 
       <AlertDialog
-        open={confirmOpen}
+        open={!readOnly && confirmOpen}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setConfirmOpen(false);
         }}
@@ -586,10 +592,10 @@ function SlackAgentBotConnectedBadge({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
+            <AlertDialogCancel disabled={readOnly || disconnecting}>
               {t(($) => $.slack.disconnect_confirm_cancel)}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
+            <AlertDialogAction onClick={handleDisconnect} disabled={readOnly || disconnecting}>
               {disconnecting
                 ? t(($) => $.slack.disconnecting)
                 : t(($) => $.slack.disconnect)}

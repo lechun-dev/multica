@@ -20,7 +20,6 @@ import type {
   AgentRuntime,
   UpdateAgentRequest,
 } from "@multica/core/types";
-import type { OwnerAgentDetail } from "@multica/core/api/schemas";
 import {
   type AgentPresenceDetail,
   isAgentRuntimeBound,
@@ -32,17 +31,14 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
-  agentDetailOptions,
-  agentListOptions,
+  agentProfileOptions,
   cacheAgentResponse,
   memberListOptions,
-  ownerAgentDetailOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
 import { useAgentPermissions } from "@multica/core/permissions";
 import { Button } from "@multica/ui/components/ui/button";
-import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
 import {
   Dialog,
   DialogContent,
@@ -65,7 +61,6 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
-import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
@@ -74,64 +69,41 @@ interface AgentDetailPageProps {
 }
 
 export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
-  const { t } = useT("agents");
   const wsId = useWorkspaceId();
+  const viewerId = useAuthStore((s) => s.user?.id);
+  return (
+    <AgentDetailContent
+      key={JSON.stringify([wsId, viewerId, agentId])}
+      agentId={agentId}
+      wsId={wsId}
+      viewerId={viewerId}
+    />
+  );
+}
+
+function AgentDetailContent({
+  agentId,
+  wsId,
+  viewerId,
+}: AgentDetailPageProps & { wsId: string; viewerId?: string }) {
+  const { t } = useT("agents");
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const qc = useQueryClient();
-  const currentUser = useAuthStore((s) => s.user);
 
-  const {
-    data: agents = [],
-    isLoading: agentsLoading,
-    error: agentsError,
-    refetch: refetchAgents,
-  } = useQuery(agentListOptions(wsId));
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
-  const { data: members = [], error: membersError, isLoading: membersLoading } = useQuery(memberListOptions(wsId));
-  const isWorkspaceOwner = !membersError && !!currentUser &&
-    members.some((member) => member.user_id === currentUser.id && member.role === "owner");
-  const listAgent = agents.find((a) => a.id === agentId) ?? null;
-
-  // Use the restricted profile for another person's agent even if it is
-  // visible in the ordinary list through an existing sharing grant.
-  const shouldLoadOwnerDetail = isWorkspaceOwner && !agentsLoading && listAgent?.owner_id !== currentUser.id;
-  const ownerQuery = useQuery(ownerAgentDetailOptions(wsId, agentId, shouldLoadOwnerDetail ? currentUser.id : undefined));
-  const ownerProjection = shouldLoadOwnerDetail && !ownerQuery.error ? ownerQuery.data : null;
-  const useOwnerDetail = shouldLoadOwnerDetail && ownerProjection?.owner_id !== currentUser?.id;
-  const ownerDetail = useOwnerDetail ? ownerProjection : null;
-
-  // Single workspace-level presence pass; this page just reads its slot.
+  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const profileOptions = agentProfileOptions(wsId, agentId, viewerId);
+  const profileQuery = useQuery(profileOptions);
+  const detailError = profileQuery.error;
+  const isForbidden = detailError instanceof ApiError && detailError.status === 403;
+  const isNotFound = detailError instanceof ApiError && detailError.status === 404;
+  // Cached profile data never bypasses the access check when opening a link.
+  const agent = profileQuery.isFetchedAfterMount && !detailError ? profileQuery.data : null;
+  const canEdit = !!agent && agent.owner_id === viewerId;
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
-
-  // Ordinary direct links use the canonical query after both the list and
-  // membership have resolved. Keep Owner projections out of that cache.
-  const detailQuery = useQuery({
-    ...agentDetailOptions(wsId, agentId),
-    enabled: !agentsLoading && !membersLoading && !listAgent && !useOwnerDetail && !!agentId,
-  });
-  const activeQuery = useOwnerDetail ? ownerQuery : detailQuery;
-  const detailError = activeQuery.error;
-  const isForbidden =
-    detailError instanceof ApiError && detailError.status === 403;
-  const isNotFound =
-    detailError instanceof ApiError && detailError.status === 404;
-  // A failed refetch can retain stale data. Do not use it after revocation.
-  const agent = useOwnerDetail
-    ? null
-    : listAgent ?? (isForbidden || isNotFound ? null : detailQuery.data) ?? null;
-  const displayAgent = ownerDetail ?? agent;
-  const presence: AgentPresenceDetail | null =
-    agent ? presenceMap.get(agent.id) ?? null : null;
-
-  // The read-only projection never grants invocation. Only pass an ordinary
-  // visible agent to the permission hook for existing shared invocation.
-  const invocationAgent = ownerDetail && ownerDetail.access_scope !== "owner-only" ? listAgent : agent;
-  const {
-    canAssign,
-    canEdit,
-    isLoading: permissionsLoading,
-  } = useAgentPermissions(invocationAgent, wsId);
+  const presence = agent ? presenceMap.get(agent.id) ?? null : null;
+  const { canAssign, isLoading: permissionsLoading } = useAgentPermissions(canEdit ? agent : null, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -140,6 +112,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const [tabNavIntent, setTabNavIntent] = useState<DetailTab | null>(null);
 
   const handleUpdate = async (id: string, data: Record<string, unknown>) => {
+    if (!canEdit || id !== agent.id) return;
     // Optimistic update: patch the matching agent in the cached list
     // BEFORE the network round-trip so the inspector picker chips flip to
     // the new value immediately on click. Without this, every inspector
@@ -158,7 +131,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         ? { ...data, runtime_bound: data.runtime_id.trim().length > 0 }
         : data;
     const queryKey = workspaceKeys.agents(wsId);
-    const detailQueryKey = workspaceKeys.agent(wsId, id);
+    const detailQueryKey = profileOptions.queryKey;
     const prevAgents = qc.getQueryData<Agent[]>(queryKey);
     const prevListAgent = prevAgents?.find((a) => a.id === id);
     const prevDetailAgent = qc.getQueryData<Agent>(detailQueryKey);
@@ -187,6 +160,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         id,
         data as UpdateAgentRequest,
       );
+      qc.setQueryData(detailQueryKey, updatedAgent);
       cacheAgentResponse(qc, wsId, updatedAgent, { insertIntoList: false });
       void qc.invalidateQueries({ queryKey });
       toast.success(t(($) => $.detail.agent_updated_toast));
@@ -210,6 +184,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   };
 
   const handleArchive = async (id: string) => {
+    if (!canEdit || id !== agent.id) return;
     try {
       await api.archiveAgent(id);
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
@@ -220,6 +195,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   };
 
   const handleRestore = async (id: string) => {
+    if (!canEdit || id !== agent.id) return;
     try {
       await api.restoreAgent(id);
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
@@ -229,12 +205,11 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     }
   };
 
-  if (!displayAgent && (agentsLoading || membersLoading || (agentId && activeQuery.isPending))) {
+  if (!agent && !detailError && (!viewerId || !profileQuery.isFetchedAfterMount)) {
     return <DetailLoadingSkeleton />;
   }
 
-  // --- No permission (private agent the caller is not in allowed_principals for) ---
-  if (!displayAgent && isForbidden) {
+  if (isForbidden) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
         <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
@@ -242,9 +217,6 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           <Lock className="h-8 w-8 text-muted-foreground" />
           <div>
             <p className="text-body font-medium">{t(($) => $.detail.no_access_title)}</p>
-            <p className="mt-1 text-caption text-muted-foreground">
-              {t(($) => $.detail.no_access_hint)}
-            </p>
           </div>
           <Button
             size="sm"
@@ -259,8 +231,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   }
 
   // --- Not found / error ---
-  if (!displayAgent) {
-    const loadError = detailError ?? agentsError;
+  if (!agent) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
         <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
@@ -275,8 +246,8 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             <p className="mt-1 text-caption text-muted-foreground">
               {isNotFound
                 ? t(($) => $.detail.not_found_default)
-                : loadError instanceof Error
-                  ? loadError.message
+                : detailError instanceof Error
+                  ? detailError.message
                   : t(($) => $.detail.load_failed_default)}
             </p>
           </div>
@@ -286,7 +257,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
               variant="outline"
               size="sm"
               onClick={() => {
-                void Promise.all([refetchAgents(), activeQuery.refetch()]);
+                void profileQuery.refetch();
               }}
             >
               {t(($) => $.detail.try_again)}
@@ -304,12 +275,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     );
   }
 
-  const isArchived = !!displayAgent.archived_at;
-  const runtimeBound = ownerDetail?.runtime_bound ?? (agent !== null && isAgentRuntimeBound(agent));
-  const runtime = agent && runtimeBound
+  const isArchived = !!agent.archived_at;
+  const runtimeBound = isAgentRuntimeBound(agent);
+  const runtime = runtimeBound
     ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
     : null;
-  const owner = members.find((m) => m.user_id === displayAgent.owner_id) ?? null;
+  const owner = members.find((m) => m.user_id === agent.owner_id) ?? null;
 
   // Chat shares the invocation gate with assignment (MUL-3963): starting a
   // chat triggers agent runs. The button stays visible either way — a denied
@@ -320,7 +291,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   // The control is a real link, so a failed gate has to cancel the navigation
   // AppLink would otherwise perform — preventDefault is that cancel.
   const handleDm = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (permissionsLoading) {
+    if (!canEdit || permissionsLoading) {
       e.preventDefault();
       return;
     }
@@ -335,65 +306,35 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     }
   };
   const handleAssign = () => {
+    if (!canEdit || !canAssign.allowed) return;
     if (!runtimeBound) {
       toast.error(t(($) => $.detail.runtime_required_toast));
       return;
     }
     useModalStore
       .getState()
-      .open("quick-create-issue", { agent_id: displayAgent.id });
+      .open("quick-create-issue", { agent_id: agent.id });
   };
 
   const header = (
     <DetailHeader
-      agent={displayAgent}
+      agent={agent}
       runtime={runtime}
       presence={presence}
       backHref={paths.agents()}
       canAssign={canAssign.allowed}
-      canArchive={!!agent && canEdit.allowed}
-      showDm={!ownerDetail || canAssign.allowed}
+      readOnly={!canEdit}
       dmPending={permissionsLoading}
-      dmHref={`${paths.chat()}?agent=${displayAgent.id}`}
+      dmHref={`${paths.chat()}?agent=${agent.id}`}
       onDm={handleDm}
       onAssign={handleAssign}
-      onArchive={agent && !agent.system_key ? () => setConfirmArchive(true) : undefined}
+      onArchive={!agent.system_key ? () => setConfirmArchive(true) : undefined}
     />
   );
 
-  if (ownerDetail) {
-    return (
-      <div className="flex flex-1 min-h-0 flex-col">
-        {header}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <div className={cn(PAGE_RAIL, PAGE_GUTTER, "space-y-4 py-4 sm:py-6")}>
-            <p className="flex items-center gap-1.5 text-caption text-muted-foreground">
-              <Lock className="size-3.5 shrink-0" aria-hidden="true" />
-              {t(($) => $.detail.catalog_read_only)}
-            </p>
-            <AgentOverviewSummary agent={ownerDetail} owner={owner} runtime={null} />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!agent) return null;
-
-  const canShowOverview = agent.owner_id === currentUser?.id || (!membersLoading && !membersError);
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       {header}
-
-      {!canEdit.allowed && (
-        <div className={cn(PAGE_RAIL, PAGE_GUTTER, "pt-3")}>
-          <CapabilityBanner
-            reason={canEdit.reason}
-            resource="agent"
-            ownerName={owner?.name}
-          />
-        </div>
-      )}
 
       {isArchived && (
         <div className="shrink-0 border-b bg-muted/50 py-2 text-caption text-muted-foreground">
@@ -402,16 +343,15 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             <span className="flex-1">
               {t(($) => $.detail.archived_banner)}
             </span>
-            {canEdit.allowed && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 text-caption"
-                onClick={() => handleRestore(agent.id)}
-              >
-                {t(($) => $.detail.restore)}
-              </Button>
-            )}
+            <Button
+              disabled={!canEdit}
+              variant="outline"
+              size="sm"
+              className="h-6 text-caption"
+              onClick={() => handleRestore(agent.id)}
+            >
+              {t(($) => $.detail.restore)}
+            </Button>
           </div>
         </div>
       )}
@@ -423,38 +363,35 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             <span className="flex-1">
               {t(($) => $.detail.runtime_required_banner)}
             </span>
-            {canEdit.allowed && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 border-amber-500/40 bg-background/70 text-caption"
-                onClick={() => setTabNavIntent("general")}
-              >
-                {t(($) => $.detail.bind_runtime)}
-              </Button>
-            )}
+            <Button
+              disabled={!canEdit}
+              variant="outline"
+              size="sm"
+              className="h-6 border-amber-500/40 bg-background/70 text-caption"
+              onClick={() => setTabNavIntent("general")}
+            >
+              {t(($) => $.detail.bind_runtime)}
+            </Button>
           </div>
         </div>
       )}
 
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        {canShowOverview && (
-          <AgentOverviewPane
-            agent={agent}
-            runtime={runtime}
-            owner={owner}
-            runtimes={runtimes}
-            members={members}
-            onUpdate={handleUpdate}
-            currentUserId={currentUser?.id ?? null}
-            canEdit={canEdit.allowed}
-            navIntent={tabNavIntent}
-            onNavIntentHandled={() => setTabNavIntent(null)}
-          />
-        )}
+        <AgentOverviewPane
+          agent={agent}
+          runtime={runtime}
+          owner={owner}
+          runtimes={runtimes}
+          members={members}
+          onUpdate={handleUpdate}
+          currentUserId={viewerId ?? null}
+          canEdit={canEdit}
+          navIntent={tabNavIntent}
+          onNavIntentHandled={() => setTabNavIntent(null)}
+        />
       </div>
 
-      {confirmArchive && (
+      {canEdit && confirmArchive && (
         <Dialog
           open
           onOpenChange={(v) => {
@@ -506,21 +443,19 @@ function DetailHeader({
   presence,
   backHref,
   canAssign,
-  canArchive,
-  showDm,
+  readOnly,
   dmPending,
   dmHref,
   onDm,
   onAssign,
   onArchive,
 }: {
-  agent: Agent | OwnerAgentDetail;
+  agent: Agent;
   runtime: AgentRuntime | null;
   presence: AgentPresenceDetail | null;
   backHref: string;
   canAssign: boolean;
-  canArchive: boolean;
-  showDm: boolean;
+  readOnly: boolean;
   dmPending: boolean;
   dmHref: string;
   /** Runs before the link navigates; calls preventDefault when a gate denies
@@ -557,6 +492,8 @@ function DetailHeader({
             <ActorAvatar
               actorType="agent"
               actorId={agent.id}
+              name={agent.name}
+              avatarUrl={agent.avatar_url}
               size="2xl"
               profileLink={false}
               className="ring-1 ring-border"
@@ -572,7 +509,6 @@ function DetailHeader({
                 {agent.description ||
                   t(($) => $.inspector.no_description_placeholder)}
               </ExpandableDescription>
-              {!("access_scope" in agent) && (
                 <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
                   <span className="inline-flex min-w-0 items-center gap-1.5">
                     <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -592,36 +528,36 @@ function DetailHeader({
                     {t(($) => $.detail.updated, { when: timeAgo(agent.updated_at) })}
                   </span>
                 </div>
-              )}
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-2 self-end lg:self-start">
-            {!isArchived && showDm && (
+            {!isArchived && (
               <Button
                 variant="outline"
                 size="sm"
-                disabled={dmPending}
+                disabled={readOnly || dmPending}
                 // An anchor never matches `:disabled`, so the base variant's
                 // `disabled:` rules never fire here — Base UI's data-disabled
                 // is what carries the dimmed, inert look.
                 className="data-disabled:pointer-events-none data-disabled:opacity-50"
-                render={<AppLink href={dmHref} onClick={onDm} />}
-                nativeButton={false}
+                render={readOnly ? undefined : <AppLink href={dmHref} onClick={onDm} />}
+                nativeButton={readOnly}
               >
                 <MessageSquare className="h-4 w-4" aria-hidden="true" />
                 {t(($) => $.detail.dm)}
               </Button>
             )}
-            {!isArchived && canAssign && (
-              <Button type="button" size="sm" onClick={onAssign}>
+            {!isArchived && (canAssign || readOnly) && (
+              <Button type="button" size="sm" disabled={readOnly} onClick={onAssign}>
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 {t(($) => $.detail.assign_work)}
               </Button>
             )}
-            {!isArchived && canArchive && hasMoreActions ? (
+            {!isArchived && hasMoreActions ? (
               <DropdownMenu>
                 <DropdownMenuTrigger
+                  disabled={readOnly}
                   render={<Button variant="ghost" size="icon-sm" />}
                   aria-label={t(($) => $.detail.more_actions_aria)}
                 >

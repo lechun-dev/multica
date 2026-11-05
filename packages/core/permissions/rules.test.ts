@@ -112,9 +112,9 @@ describe("canEditAgent", () => {
     expect(canEditAgent(agent, { userId: BOB, role: "owner" }).allowed).toBe(false);
     expect(canEditAgent(agent, { userId: ALICE, role: "owner" }).allowed).toBe(true);
   });
-  it("allows workspace admin", () => {
+  it("denies a workspace admin who does not own the agent", () => {
     expect(canEditAgent(agent, { userId: BOB, role: "admin" }).allowed).toBe(
-      true,
+      false,
     );
   });
   it("denies non-owner member", () => {
@@ -133,10 +133,10 @@ describe("canEditAgent", () => {
       canEditAgent(orphan, { userId: ALICE, role: "member" }).allowed,
     ).toBe(false);
   });
-  it("admin can still edit an orphan (owner_id null) agent", () => {
+  it("an admin cannot edit an agent without an owner", () => {
     const orphan = makeAgent({ owner_id: null });
     expect(canEditAgent(orphan, { userId: BOB, role: "admin" }).allowed).toBe(
-      true,
+      false,
     );
   });
 });

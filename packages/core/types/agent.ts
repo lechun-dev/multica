@@ -527,7 +527,7 @@ export interface Agent {
    * Coarse metadata signalling whether the agent has any custom env
    * vars configured, without exposing the keys or values. Reads of
    * the real map go through the dedicated `GET /api/agents/{id}/env`
-   * endpoint (agent owner or workspace owner/admin, audited). MUL-2600.
+   * endpoint (agent owner only, audited). MUL-2600.
    *
    * Optional in the type so older backends (pre-MUL-2600) that omit
    * the field don't crash the renderer; downstream code should treat
@@ -549,8 +549,8 @@ export interface Agent {
    * means no managed config; the daemon falls back to the CLI's own
    * default. MUL-2764.
    *
-   * When the caller can't see secrets (an agent actor, or a non-owner
-   * non-admin), the server replaces the value with `null` and sets
+   * When the caller can't see secrets (an agent actor or a human who
+   * doesn't own this agent), the server replaces the value with `null` and sets
    * `mcp_config_redacted` to true so the UI can render a "configured
    * but hidden" state without exposing potentially sensitive fields.
    */

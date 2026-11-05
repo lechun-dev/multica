@@ -394,7 +394,7 @@
     "access": {
       "label": "Access",
       "private_title": "Private",
-      "private_desc": "Only you can run this agent",
+      "private_desc": "Only you can run this agent. The workspace owner can view its profile.",
       "public_title": "Public",
       "public_desc": "Choose who can see this agent",
       "public_workspace_option": "Everyone in this workspace",
@@ -782,7 +782,7 @@
   },
   "access": {
     "section_title": "Visibility",
-    "tooltip": "Anyone who can see this agent can run it",
+    "tooltip": "Who can run this agent",
     "trigger_private": "Only me",
     "trigger_workspace": "Workspace",
     "scope_labels": {
@@ -794,9 +794,9 @@
     "trigger_members_empty": "Specific people",
     "trigger_team": "Team",
     "private_title": "Only me",
-    "private_desc": "Only you can run this agent",
+    "private_desc": "Only you can run this agent. The workspace owner can view its profile.",
     "shared_title": "Shared",
-    "shared_desc": "Choose who can see this agent",
+    "shared_desc": "Choose who can run this agent",
     "shared_target_required": "Select at least one person before saving.",
     "workspace_title": "Entire workspace",
     "workspace_desc": "All workspace members can run this agent",

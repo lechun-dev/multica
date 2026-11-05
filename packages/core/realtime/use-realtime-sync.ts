@@ -786,7 +786,13 @@ export function useRealtimeSync(
       },
       member: () => {
         const wsId = getCurrentWsId();
-        if (wsId) qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+        if (wsId) {
+          qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+          const viewerId = authStore.getState().user?.id;
+          if (viewerId) {
+            qc.invalidateQueries({ queryKey: workspaceKeys.agentProfiles(wsId, viewerId) });
+          }
+        }
       },
       // workspace:updated is handled by the specific handler below
       // (compares prefixes to decide whether to also invalidate issues).

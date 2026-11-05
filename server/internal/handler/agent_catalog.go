@@ -24,12 +24,13 @@ type ownerAgentCatalogEntry struct {
 
 type ownerAgentDetail struct {
 	ownerAgentCatalogEntry
-	Description        string `json:"description"`
-	UpdatedAt          string `json:"updated_at"`
-	Model              string `json:"model"`
-	ThinkingLevel      string `json:"thinking_level"`
-	MaxConcurrentTasks int32  `json:"max_concurrent_tasks"`
-	RuntimeBound       bool   `json:"runtime_bound"`
+	Description        string        `json:"description"`
+	UpdatedAt          string        `json:"updated_at"`
+	Model              string        `json:"model"`
+	ThinkingLevel      string        `json:"thinking_level"`
+	MaxConcurrentTasks int32         `json:"max_concurrent_tasks"`
+	RuntimeBound       bool          `json:"runtime_bound"`
+	Profile            AgentResponse `json:"profile"`
 }
 
 func (h *Handler) requireHumanAgentCatalogOwner(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
@@ -65,8 +66,7 @@ func agentCatalogEntry(agent db.Agent, targets []db.AgentInvocationTarget) owner
 	return entry
 }
 
-// GetOwnerAgentDetail provides only the fields needed by the read-only
-// profile. It does not use or alter the access gate for the regular agent API.
+// GetOwnerAgentDetail serves the read-only profile separately from invocation.
 func (h *Handler) GetOwnerAgentDetail(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	if !h.requireHumanAgentCatalogOwner(w, r, workspaceID) {
@@ -80,7 +80,7 @@ func (h *Handler) GetOwnerAgentDetail(w http.ResponseWriter, r *http.Request) {
 	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID: agentID, WorkspaceID: parseUUID(workspaceID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && agent.Kind != "user") {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
@@ -93,7 +93,20 @@ func (h *Handler) GetOwnerAgentDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")
 		return
 	}
+	profile := h.agentToResponse(agent)
+	applyInvocationTargetsToResponse(&profile, targets[profile.ID])
+	if err := h.attachAgentSkills(ctx, &profile, agent.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
+		return
+	}
+	// The raw MCP document can contain credentials in arbitrary provider
+	// fields. The separate binding inventory contains only names and status.
+	redactMcpConfig(&profile)
+	if !h.composioMCPAppsEnabled(ctx) {
+		suppressComposioToolkitAllowlist(&profile)
+	}
 	writeJSON(w, http.StatusOK, ownerAgentDetail{
+		Profile:                profile,
 		ownerAgentCatalogEntry: agentCatalogEntry(agent, targets[uuidToString(agent.ID)]),
 		Description:            agent.Description, UpdatedAt: timestampToString(agent.UpdatedAt),
 		Model: agent.Model.String, ThinkingLevel: agent.ThinkingLevel.String,

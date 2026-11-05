@@ -82,6 +82,7 @@ function ListViewImpl({
   projectId,
   onMoveIssue,
   onCreateIssue,
+  readOnly = false,
 }: {
   issues: Issue[];
   visibleStatuses: IssueStatus[];
@@ -91,6 +92,7 @@ function ListViewImpl({
   statusPagination: IssueStatusPagination;
   projectId?: string;
   onMoveIssue?: (issueId: string, updates: DragMoveUpdates, onSettled?: () => void) => void;
+  readOnly?: boolean;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
 }) {
   const listCollapsedStatuses = useViewStore(
@@ -404,6 +406,7 @@ function ListViewImpl({
               page={statusPagination[status] ?? EMPTY_STATUS_PAGE}
               projectId={projectId}
               onCreateIssue={onCreateIssue}
+              readOnly={readOnly}
               dragEnabled={dragEnabled}
               isExpanded={isExpanded}
               sortLabel={sortLabel}
@@ -472,6 +475,7 @@ function StatusAccordionItem({
   page,
   projectId,
   onCreateIssue,
+  readOnly,
   dragEnabled,
   isExpanded,
   sortLabel,
@@ -486,6 +490,7 @@ function StatusAccordionItem({
   page: IssueStatusPageState;
   projectId?: string;
   onCreateIssue?: (defaults: IssueCreateDefaults) => void;
+  readOnly: boolean;
   dragEnabled: boolean;
   isExpanded: boolean;
   sortLabel: string | null;
@@ -555,6 +560,7 @@ function StatusAccordionItem({
     ) : (
       <ListRow
         issue={issue}
+        readOnly={readOnly}
         childProgress={childProgressMap.get(issue.id)}
         project={
           issue.project_id ? projectMap?.get(issue.project_id) : undefined
@@ -606,9 +612,10 @@ function StatusAccordionItem({
         <div className="pl-3 flex items-center">
           <input
             type="checkbox"
-            checked={allSelected}
+            checked={!readOnly && allSelected}
+            disabled={readOnly}
             ref={(el) => {
-              if (el) el.indeterminate = someSelected && !allSelected;
+              if (el) el.indeterminate = !readOnly && someSelected && !allSelected;
             }}
             onChange={() => {
               if (allSelected) {
@@ -633,6 +640,7 @@ function StatusAccordionItem({
                 <Button
                   variant="ghost"
                   size="icon-sm"
+                  disabled={readOnly}
                   className="rounded-full text-muted-foreground opacity-0 group-hover/header:opacity-100 transition-opacity"
                   onClick={() => {
                     const defaults = {

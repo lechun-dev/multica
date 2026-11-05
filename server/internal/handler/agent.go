@@ -123,13 +123,9 @@ type AgentResponse struct {
 	// agent is allowed to mount as MCP at task dispatch — for ANY run that
 	// passes the agent's invocation permission, using the agent OWNER's
 	// Composio connection (MUL-3963; no longer gated on originator == owner).
-	// NULL or empty = no overlay. Like mcp_config, this is
-	// owner-only data: the slugs themselves are not secret, but the
-	// "this is what {agent owner} is willing to surface" view is — surfacing
-	// it cross-account is privacy-confusing UX and would let workspace
-	// members infer another member's integration footprint. Redacted to
-	// `nil` + `composio_toolkit_allowlist_redacted=true` for non-owners,
-	// mirroring the existing mcp_config redaction contract.
+	// NULL or empty = no overlay. The slugs appear in the agent owner's
+	// response and the workspace Owner's read-only profile. The invocation
+	// directory redacts them for other members.
 	ComposioToolkitAllowlist         []string               `json:"composio_toolkit_allowlist,omitempty"`
 	ComposioToolkitAllowlistRedacted bool                   `json:"composio_toolkit_allowlist_redacted,omitempty"`
 	OwnerID                          *string                `json:"owner_id"`
@@ -163,8 +159,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	// Compute env metadata WITHOUT exposing the values. We unmarshal here
 	// only to count keys; the map never reaches the response. A coarse
 	// has_custom_env / key_count is what the UI gets — to read the values
-	// the caller must hit GET /api/agents/{id}/env (agent owner or
-	// workspace owner/admin, audited).
+	// the caller must hit GET /api/agents/{id}/env (agent owner only, audited).
 	envKeyCount := 0
 	if a.CustomEnv != nil {
 		var customEnv map[string]string
@@ -1167,7 +1162,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// mcp_config still uses the workspace-level always-redact setting and
-	// the per-row owner/admin gate — secrets in MCP server configs follow
+	// the per-row agent owner gate — secrets in MCP server configs follow
 	// the same exposure rules as custom_env used to. custom_env itself is
 	// never serialized on agent resources anymore (MUL-2600); see the
 	// AgentResponse comment.
@@ -1210,18 +1205,14 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		// agent running under an owner's daemon could read other agents'
 		// MCP configs (which routinely embed third-party API tokens) — the
 		// same lateral-movement vector MUL-2600 closed for custom_env.
-		if actorType == "agent" || alwaysRedact || !canViewAgentSecrets(a, userID, member.Role) {
+		if actorType == "member" && !isAgentOwner(a, userID) {
+			redactAgentProfileFields(&resp)
+		}
+		if actorType == "agent" || alwaysRedact {
 			redactMcpConfig(&resp)
 		}
-		// composio_toolkit_allowlist is owner-only — not because the slugs
-		// are secret but because surfacing "what {owner} has opted into"
-		// across the workspace leaks the owner's integration footprint and
-		// confuses non-owners who cannot actually edit it. Workspace
-		// owner/admin do NOT bypass this gate (unlike mcp_config): the overlay
-		// uses the OWNER's connection and follows invocation permission
-		// (MUL-3963), so surfacing the slugs to admins gives them nothing
-		// actionable. Agent actors are also redacted (same A2A
-		// lateral-movement reasoning as mcp_config).
+		// Keep another owner's integration footprint out of the invocation
+		// directory, including for workspace Owners and agent actors.
 		if !h.composioMCPAppsEnabled(r.Context()) {
 			suppressComposioToolkitAllowlist(&resp)
 		} else if actorType == "agent" || uuidToString(a.OwnerID) != userID {
@@ -1234,22 +1225,13 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, id)
+	agent, ok := h.loadAgentForProfile(w, r, chi.URLParam(r, "id"), false)
 	if !ok {
 		return
 	}
-	// Private-agent gate: members must be in allowed_principals to view
-	// (and therefore navigate to) a private agent. The 403 lets the front-end
-	// render an explicit "no access" placeholder instead of a 404 — see
-	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	userID := requestUserID(r)
 	actorType, _ := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessAgentRequest(r, agent, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
-	}
 	resp := h.agentToResponse(agent)
 	viewerRole := ""
 	if member, ok := ctxMember(r.Context()); ok {
@@ -1287,10 +1269,6 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// Agent actors NEVER see mcp_config (see ListAgents for the rationale).
 	if actorType == "agent" || alwaysRedact {
 		redactMcpConfig(&resp)
-	} else if member, ok := ctxMember(r.Context()); ok {
-		if !canViewAgentSecrets(agent, userID, member.Role) {
-			redactMcpConfig(&resp)
-		}
 	}
 	// composio_toolkit_allowlist visibility is strictly owner-only (see
 	// ListAgents for the rationale). No workspace owner/admin bypass.
@@ -1672,7 +1650,7 @@ type UpdateAgentRequest struct {
 	RuntimeConfig        any                         `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
-	// the agent owner or a workspace owner/admin, denies agent actors,
+	// the agent owner, denies agent actors,
 	// and writes a persisted audit log entry. A `PUT /api/agents/{id}`
 	// body that carries
 	// `custom_env` is rejected with 400 in the handler below so a
@@ -1684,11 +1662,8 @@ type UpdateAgentRequest struct {
 	McpConfig  *json.RawMessage `json:"mcp_config"`
 	Visibility *string          `json:"visibility"`
 	// PermissionMode + InvocationTargets are the invocation-permission inputs
-	// (MUL-3963). Owner-only writes (like composio_toolkit_allowlist): a
-	// non-owner admin passing them is silently ignored, because the invoke
-	// gate is owner/allow-list based and an admin-authored allow-list would
-	// confuse the owner about who can run their agent. permission_mode is
-	// authoritative when present; otherwise legacy visibility is mapped.
+	// (MUL-3963). permission_mode is authoritative when present; otherwise
+	// legacy visibility is mapped.
 	PermissionMode     *string                     `json:"permission_mode"`
 	InvocationTargets  *[]AgentInvocationTargetDTO `json:"invocation_targets"`
 	Status             *string                     `json:"status"`
@@ -1739,10 +1714,22 @@ func workspaceAlwaysRedactSecrets(settings []byte) bool {
 	return s.AlwaysRedactEnv
 }
 
-// canViewAgentSecrets governs mcp_config after ordinary visibility is checked.
-// A workspace Owner's read-only access never grants access to these secrets.
-func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool {
-	return canManageAgentAsMember(agent, userID, memberRole)
+// redactAgentProfileFields keeps only the metadata needed by the invocation
+// directory and workspace events. Only authorized detail reads get the
+// agent's configuration.
+func redactAgentProfileFields(resp *AgentResponse) {
+	resp.Instructions = ""
+	resp.SystemInstructions = ""
+	resp.RuntimeConfig = map[string]any{}
+	resp.CustomArgs = []string{}
+	resp.Skills = []AgentSkillSummary{}
+	resp.DisabledRuntimeSkills = []DisabledRuntimeSkill{}
+	resp.ThinkingLevel = ""
+	resp.ServiceTier = ""
+	resp.HasCustomEnv = false
+	resp.CustomEnvKeyCount = 0
+	redactMcpConfig(resp)
+	redactComposioToolkitAllowlist(resp)
 }
 
 // broadcastAgentResponse strips secret-bearing fields from an
@@ -1763,15 +1750,7 @@ func canViewAgentSecrets(agent db.Agent, userID string, memberRole string) bool 
 // broadcast copy.
 func broadcastAgentResponse(resp AgentResponse) AgentResponse {
 	out := resp
-	redactMcpConfig(&out)
-	redactComposioToolkitAllowlist(&out)
-	// Belt-and-suspenders: agentToResponse already masks gateway.token on
-	// every read, so by the time a response reaches this broadcast helper
-	// the field is already "***". Re-mask anyway so a future refactor that
-	// bypasses agentToResponse (e.g. constructing AgentResponse from raw
-	// db.Agent in a new handler) cannot silently leak the token to every
-	// WebSocket subscriber on the workspace, agent processes included.
-	maskGatewayToken(out.RuntimeConfig)
+	redactAgentProfileFields(&out)
 	return out
 }
 
@@ -1790,7 +1769,7 @@ func redactMcpConfig(resp *AgentResponse) {
 // list itself is not secret, but the "what {agent owner} has opted into"
 // view leaks the owner's integration footprint across the workspace, which
 // is the same privacy concern that gates mcp_config visibility behind
-// owner-only canViewAgentSecrets. We surface a coarse `_redacted` flag so
+// owner-only access. We surface a coarse `_redacted` flag so
 // the front-end can render "Configured" without the contents (parity with
 // mcp_config_redacted). The clearing matters: the JSON `omitempty` only
 // drops nil slices, so reset to nil rather than `[]string{}`.
@@ -1863,19 +1842,18 @@ func redactAgentResponseForActor(resp *AgentResponse, actorType string) {
 	}
 }
 
-func canManageAgentAsMember(agent db.Agent, userID, role string) bool {
-	return (userID != "" && uuidToString(agent.OwnerID) == userID) ||
-		(role == "admin" && agent.PermissionMode == permissionModePublicTo)
+func isAgentOwner(agent db.Agent, userID string) bool {
+	return userID != "" && uuidToString(agent.OwnerID) == userID
 }
 
 // canManageAgent checks write access after ordinary agent visibility is checked.
 func (h *Handler) canManageAgent(w http.ResponseWriter, r *http.Request, agent db.Agent) bool {
 	wsID := uuidToString(agent.WorkspaceID)
-	member, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
+	_, ok := h.requireWorkspaceRole(w, r, wsID, "agent not found", "owner", "admin", "member")
 	if !ok {
 		return false
 	}
-	if !canManageAgentAsMember(agent, requestUserID(r), member.Role) {
+	if !isAgentOwner(agent, requestUserID(r)) {
 		writeError(w, http.StatusForbidden, "you do not have permission to manage this agent")
 		return false
 	}
@@ -2020,50 +1998,24 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		targetRuntimeID = runtime.ID
 		targetProvider = runtime.Provider
 	}
-	// Invocation permission (MUL-3963). OWNER-ONLY write: access is the one
-	// agent property a workspace admin may NOT change (only the owner decides
-	// who can run their agent — the overlay uses the owner's own Composio
-	// connection, so admin-authored access would be confusing and unsafe).
-	//
-	// Non-owner behaviour: a *real* change is rejected with 403 so the contract
-	// is explicit and matches the owner-only UI (the picker is read-only for
-	// non-owners). A no-op resubmit — an admin editing OTHER fields via a
-	// PATCH-as-PUT client that echoes the unchanged permission back — is
-	// tolerated (dropped) so it doesn't break legitimate admin edits.
+	// Resolve invocation targets only when the agent owner supplies access fields.
 	_, hasPermissionMode := rawFields["permission_mode"]
 	_, hasTargets := rawFields["invocation_targets"]
-	permissionTouched := hasPermissionMode || hasTargets || req.Visibility != nil
-	replacePermissionTargets := false
+	replacePermissionTargets := hasPermissionMode || hasTargets || req.Visibility != nil
 	var resolvedPerm resolvedPermission
-	if permissionTouched {
-		isAgentOwner := uuidToString(existing.OwnerID) == requestUserID(r)
-		if !isAgentOwner {
-			changed, permErr := h.permissionInputChangesAgent(r.Context(), existing, req, hasPermissionMode, hasTargets)
-			if permErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to evaluate invocation permission change")
-				return
-			}
-			if changed {
-				writeError(w, http.StatusForbidden, "only the agent owner can change access (permission_mode / invocation_targets)")
-				return
-			}
-			slog.Debug("update agent: non-owner permission fields matched current state; ignored",
-				append(logger.RequestAttrs(r), "agent_id", id)...)
-		} else {
-			var targetsDTO []AgentInvocationTargetDTO
-			if req.InvocationTargets != nil {
-				targetsDTO = *req.InvocationTargets
-			}
-			perm, _, permErr := parsePermissionInput(existing.WorkspaceID, req.PermissionMode, targetsDTO, hasPermissionMode, hasTargets, req.Visibility)
-			if permErr != nil {
-				writeError(w, http.StatusBadRequest, permErr.Error())
-				return
-			}
-			resolvedPerm = perm
-			replacePermissionTargets = true
-			params.PermissionMode = pgtype.Text{String: perm.mode, Valid: true}
-			params.Visibility = pgtype.Text{String: perm.legacyVisibility(), Valid: true}
+	if replacePermissionTargets {
+		var targetsDTO []AgentInvocationTargetDTO
+		if req.InvocationTargets != nil {
+			targetsDTO = *req.InvocationTargets
 		}
+		perm, _, permErr := parsePermissionInput(existing.WorkspaceID, req.PermissionMode, targetsDTO, hasPermissionMode, hasTargets, req.Visibility)
+		if permErr != nil {
+			writeError(w, http.StatusBadRequest, permErr.Error())
+			return
+		}
+		resolvedPerm = perm
+		params.PermissionMode = pgtype.Text{String: perm.mode, Valid: true}
+		params.Visibility = pgtype.Text{String: perm.legacyVisibility(), Valid: true}
 	}
 	if req.Status != nil {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
@@ -2236,17 +2188,6 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// composio_toolkit_allowlist handling (MUL-3869). Tri-state semantics
 	// mirror thinking_level (see above): omitted → no change, null →
 	// ClearAgentComposioToolkitAllowlist, slice → wholesale replace.
-	//
-	// Owner-only WRITE. The caller is already past canManageAgent, which lets
-	// workspace owner/admins through alongside the agent owner — but the
-	// Composio overlay uses the agent OWNER's connection (MUL-3963), so an
-	// admin editing someone else's allowlist would silently reshape what the
-	// OWNER exposes through their own connected apps, confusing the owner
-	// about what their agent surfaces. Keep it owner-only.
-	// Drop the field with a debug log instead of erroring so an over-eager
-	// UI that sends the whole agent payload back on every save (PATCH-as-PUT)
-	// keeps working — same "silent ignore" stance the issue calls out, and
-	// the same one mcp_config takes for the broader admin pattern.
 	shouldClearComposioAllowlist := false
 	if _, hasAllowlist := rawFields["composio_toolkit_allowlist"]; hasAllowlist {
 		isAgentOwner := uuidToString(existing.OwnerID) == requestUserID(r)
@@ -2379,10 +2320,6 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(updated.WorkspaceID))
 	h.publish(protocol.EventAgentStatus, uuidToString(updated.WorkspaceID), actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
-	// Workspace admins / non-owner members pass canManageAgent for legitimate
-	// admin actions (e.g. bulk reassigning agents off a leaving member's
-	// runtime), but they must not learn the agent owner's composio allowlist
-	// from the mutation response. See ListAgents/GetAgent for the same gate.
 	if !h.composioMCPAppsEnabled(r.Context()) {
 		suppressComposioToolkitAllowlist(&resp)
 	} else if uuidToString(updated.OwnerID) != userID {
@@ -2811,17 +2748,11 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, id)
+	agent, ok := h.loadAgentForProfile(w, r, id, true)
 	if !ok {
 		return
 	}
-	// Run history is part of the private-agent gate ("查看历史会话"). Same
-	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
-	if !h.canAccessAgentRequest(r, agent, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
-	}
 
 	includeUsage := false
 	switch raw := strings.TrimSpace(r.URL.Query().Get("include_usage")); raw {

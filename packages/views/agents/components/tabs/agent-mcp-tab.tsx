@@ -29,14 +29,9 @@ import { useT } from "../../../i18n";
  * surfaces the warning banner below: everyone who can invoke the agent can
  * drive these apps through it.
  *
- * Visibility is enforced by the parent (the tab entry isn't rendered unless
- * `agent.owner_id === viewer.id`), so this component assumes the owner. It
- * still renders a defensive "hidden" state if the server redacted the
- * allowlist, and reads the checked state straight from the agent prop so the
- * optimistic cache write in `useUpdateAgentAllowlist` flips each box
- * instantly.
+ * Other workspace owners see the saved selection without accessing connections.
  */
-export function AgentMcpTab({ agent }: { agent: Agent }) {
+export function AgentMcpTab({ agent, canEdit = true }: { agent: Agent; canEdit?: boolean }) {
   const { t } = useT("agents");
   const paths = useWorkspacePaths();
   const composioEnabled = useFeatureEnabled(COMPOSIO_MCP_APPS_FLAG, false);
@@ -44,7 +39,7 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
 
   const connectionsQuery = useQuery({
     ...composioConnectionsOptions(),
-    enabled: composioEnabled,
+    enabled: composioEnabled && canEdit,
   });
   const toolkitsQuery = useQuery({
     ...composioToolkitsOptions(),
@@ -80,6 +75,7 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
     [agent.composio_toolkit_allowlist],
   );
 
+  const slugs = canEdit ? activeSlugs : allowlist;
   const settingsHref = `${paths.settings()}?tab=integrations`;
 
   // Composio access warning (MUL-3963). Once an agent is shared, anyone who
@@ -101,6 +97,7 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
   }
 
   const handleToggle = (slug: string, checked: boolean) => {
+    if (!canEdit) return;
     const set = new Set(allowlist);
     if (checked) set.add(slug);
     else set.delete(slug);
@@ -148,30 +145,30 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
         </div>
       )}
 
-      {connectionsQuery.isLoading ? (
+      {canEdit && connectionsQuery.isLoading ? (
         <p className="text-body text-muted-foreground">
           {t(($) => $.tab_body.composio_mcp.loading)}
         </p>
-      ) : connectionsQuery.isError ? (
+      ) : canEdit && connectionsQuery.isError ? (
         <p className="text-body text-destructive">
           {t(($) => $.tab_body.composio_mcp.load_failed)}
         </p>
-      ) : activeSlugs.length === 0 ? (
+      ) : slugs.length === 0 ? (
         <div className="space-y-2 rounded-lg border border-dashed p-6 text-center">
           <p className="text-body font-medium">
             {t(($) => $.tab_body.composio_mcp.empty_title)}
           </p>
-          <AppLink
+          {canEdit && <AppLink
             href={settingsHref}
             className="inline-flex items-center gap-1.5 text-caption font-medium text-primary hover:underline"
           >
             <Plug className="h-3 w-3" />
             {t(($) => $.tab_body.composio_mcp.empty_link_to_settings)}
-          </AppLink>
+          </AppLink>}
         </div>
       ) : (
         <ul className="divide-y rounded-lg border">
-          {activeSlugs.map((slug) => {
+          {slugs.map((slug) => {
             const tk = toolkitBySlug.get(slug);
             const name = tk?.name || slug;
             const checked = allowlist.includes(slug);
@@ -181,12 +178,12 @@ export function AgentMcpTab({ agent }: { agent: Agent }) {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-body font-medium">{name}</p>
                   <p className="truncate text-micro uppercase tracking-wide text-emerald-600">
-                    {t(($) => $.tab_body.composio_mcp.connected)}
+                    {canEdit && t(($) => $.tab_body.composio_mcp.connected)}
                   </p>
                 </div>
                 <Checkbox
                   checked={checked}
-                  disabled={updateAllowlist.isPending}
+                  disabled={!canEdit || updateAllowlist.isPending}
                   onCheckedChange={(value) => handleToggle(slug, value === true)}
                   aria-label={t(($) => $.tab_body.composio_mcp.toggle_aria, {
                     toolkit: name,

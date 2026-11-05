@@ -79,10 +79,12 @@ function entriesToEnvMap(entries: EnvEntry[]): Record<string, string> {
 
 export function EnvTab({
   agent,
+  canEdit = true,
   onDirtyChange,
   onSaved,
 }: {
   agent: Agent;
+  canEdit?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
   // Notifier so the parent page can refresh its agent cache after a
   // successful PUT — the parent owns the `Agent` object the rest of
@@ -130,6 +132,7 @@ export function EnvTab({
   }, [hasUnsavedWork, onDirtyChange]);
 
   const handleReveal = useCallback(async () => {
+    if (!canEdit) return;
     setRevealing(true);
     try {
       const resp = await api.getAgentEnv(agent.id);
@@ -145,7 +148,7 @@ export function EnvTab({
     } finally {
       setRevealing(false);
     }
-  }, [agent.id, t]);
+  }, [agent.id, canEdit, t]);
 
   const addEnvEntry = () => {
     setRevealed((prev) => [
@@ -277,6 +280,7 @@ export function EnvTab({
   };
 
   const handleSave = async () => {
+    if (!canEdit) return;
     if (revealed === null) return;
     const keys = revealed.filter((e) => e.key.trim()).map((e) => e.key.trim());
     const uniqueKeys = new Set(keys);
@@ -322,7 +326,7 @@ export function EnvTab({
   // Pre-reveal state: show count + Reveal button. We never auto-fetch
   // on mount so a member just navigating between tabs doesn't trigger
   // an audit-log entry; the reveal must be intentional.
-  if (revealed === null) {
+  if (!canEdit || revealed === null) {
     return (
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-3">
@@ -343,7 +347,7 @@ export function EnvTab({
             type="button"
             variant="outline"
             size="sm"
-            disabled={revealing}
+            disabled={!canEdit || revealing}
             onClick={handleReveal}
             className="shrink-0"
           >

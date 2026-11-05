@@ -1190,6 +1190,43 @@ func (h *Handler) getIssuePrefix(ctx context.Context, workspaceID pgtype.UUID) s
 }
 
 func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agentID string) (db.Agent, bool) {
+	agent, ok := h.loadWorkspaceAgent(w, r, agentID)
+	if !ok {
+		return db.Agent{}, false
+	}
+	if !h.canAccessAgentRequest(r, agent, uuidToString(agent.WorkspaceID)) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return db.Agent{}, false
+	}
+	return agent, true
+}
+
+// loadAgentForProfile is for configuration and history reads, never invocation.
+func (h *Handler) loadAgentForProfile(w http.ResponseWriter, r *http.Request, id string, allowWorkspaceOwner bool) (db.Agent, bool) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	agent, ok := h.loadWorkspaceAgent(w, r, id)
+	if !ok {
+		return db.Agent{}, false
+	}
+	wsID, userID := uuidToString(agent.WorkspaceID), requestUserID(r)
+	actorType, _ := h.resolveActor(r, userID, wsID)
+	if actorType == "member" {
+		if isAgentOwner(agent, userID) {
+			return agent, true
+		}
+		if allowWorkspaceOwner {
+			if member, err := h.getWorkspaceMember(r.Context(), userID, wsID); err == nil && member.Role == "owner" {
+				return agent, true
+			}
+		}
+	} else if h.canAccessAgentRequest(r, agent, wsID) {
+		return agent, true
+	}
+	writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	return db.Agent{}, false
+}
+
+func (h *Handler) loadWorkspaceAgent(w http.ResponseWriter, r *http.Request, agentID string) (db.Agent, bool) {
 	if _, ok := requireUserID(w, r); !ok {
 		return db.Agent{}, false
 	}
@@ -1222,11 +1259,6 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 		return db.Agent{}, false
 	}
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
-		return db.Agent{}, false
-	}
-	actorType, actorID := h.agentAccessPrincipal(r, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return db.Agent{}, false
 	}
 	return agent, true

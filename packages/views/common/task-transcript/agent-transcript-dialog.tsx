@@ -53,7 +53,7 @@ import {
   type TranscriptFilterKey,
   type TranscriptSortDirection,
 } from "@multica/core/agents/stores";
-import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
+import type { AgentTask, AgentRuntime } from "@multica/core/types/agent";
 import { resolveWorkdirCopyTarget } from "@multica/core/issues";
 import { runtimeDisplayName, providerDisplayName } from "@multica/core/runtimes";
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
@@ -336,7 +336,7 @@ export function AgentTranscriptDialog({
   const [copied, showCopied] = useCopyFeedback();
   const [copiedWorkdir, showCopiedWorkdir] = useCopyFeedback();
   const [copiedBranch, showCopiedBranch] = useCopyFeedback();
-  const [agentInfo, setAgentInfo] = useState<Agent | null>(null);
+  const [directoryAgentName, setDirectoryAgentName] = useState("");
   const [runtimeInfo, setRuntimeInfo] = useState<AgentRuntime | null>(null);
   const workdirCopyTarget = useMemo(
     () => resolveWorkdirCopyTarget([task]),
@@ -625,9 +625,10 @@ export function AgentTranscriptDialog({
     if (!open) return;
     let cancelled = false;
 
-    if (task.agent_id) {
-      api.getAgent(task.agent_id).then((agent) => {
-        if (!cancelled) setAgentInfo(agent);
+    setDirectoryAgentName("");
+    if (task.agent_id && !agentName) {
+      api.listAgents({ include_archived: true }).then((agents) => {
+        if (!cancelled) setDirectoryAgentName(agents.find((agent) => agent.id === task.agent_id)?.name ?? "");
       }).catch(() => {});
     }
 
@@ -640,7 +641,7 @@ export function AgentTranscriptDialog({
     }
 
     return () => { cancelled = true; };
-  }, [open, task.agent_id, task.runtime_id]);
+  }, [open, agentName, task.agent_id, task.runtime_id]);
 
   // Elapsed time for live tasks
   useEffect(() => {
@@ -908,7 +909,7 @@ export function AgentTranscriptDialog({
                 </div>
               )}
               <span className="truncate font-medium text-body">
-                {agentName || agentInfo?.name || ""}
+                {agentName || directoryAgentName}
               </span>
             </div>
             {/* Provenance, one muted secondary unit set apart from the agent:

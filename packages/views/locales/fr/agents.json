@@ -396,7 +396,7 @@
     "access": {
       "label": "Accès",
       "private_title": "Privé",
-      "private_desc": "Vous seul pouvez lancer cet agent",
+      "private_desc": "Vous seul pouvez lancer cet agent. Le propriétaire de l’espace peut consulter sa fiche.",
       "public_title": "Public",
       "public_desc": "Choisissez qui peut voir cet agent",
       "public_workspace_option": "Tout le monde dans cet espace de travail",
@@ -784,7 +784,7 @@
   },
   "access": {
     "section_title": "Visibilité",
-    "tooltip": "Toute personne pouvant voir cet agent peut le lancer",
+    "tooltip": "Qui peut lancer cet agent",
     "trigger_private": "Moi uniquement",
     "trigger_workspace": "Espace de travail",
     "scope_labels": {
@@ -796,9 +796,9 @@
     "trigger_members_empty": "Personnes précises",
     "trigger_team": "Équipe",
     "private_title": "Moi uniquement",
-    "private_desc": "Vous seul pouvez lancer cet agent",
+    "private_desc": "Vous seul pouvez lancer cet agent. Le propriétaire de l’espace peut consulter sa fiche.",
     "shared_title": "Partagé",
-    "shared_desc": "Choisissez qui peut voir cet agent",
+    "shared_desc": "Choisissez qui peut lancer cet agent",
     "shared_target_required": "Sélectionnez au moins une personne avant d'enregistrer.",
     "workspace_title": "Tout l'espace de travail",
     "workspace_desc": "Tous les membres de l'espace de travail peuvent exécuter cet agent",

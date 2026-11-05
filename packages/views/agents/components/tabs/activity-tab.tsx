@@ -55,6 +55,8 @@ const RECENT_SKELETON_ROWS = 4;
 interface ActivityTabProps {
   agent: Agent;
   showPerformance?: boolean;
+  readOnly?: boolean;
+  viewerId?: string;
 }
 
 /**
@@ -70,22 +72,25 @@ interface ActivityTabProps {
  * the workspace 7d activity buckets for the trend), so opening this tab
  * adds no extra fetches once the page is hydrated.
  */
-export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps) {
+export function ActivityTab({ agent, showPerformance = true, readOnly = false, viewerId }: ActivityTabProps) {
   const wsId = useWorkspaceId();
   const { includeWorkspaceOwned, ready: visibilityReady } =
     useWorkspaceTaskVisibility();
 
   const { data: snapshot = [] } = useQuery({
     ...agentTaskSnapshotOptions(wsId, includeWorkspaceOwned),
-    enabled: visibilityReady,
+    enabled: visibilityReady && !readOnly,
   });
   // `isLoading` (pending + fetching, no cached data) is true only on the
   // very first fetch. Once the page has hydrated this cache elsewhere the
   // tab opens straight into data with no skeleton flash.
-  const { data: agentTasks = [], isLoading: isLoadingRecent } = useQuery({
-    ...agentTasksOptions(wsId, agent.id, includeWorkspaceOwned),
+  const tasksQuery = useQuery({
+    ...agentTasksOptions(wsId, agent.id, includeWorkspaceOwned, viewerId),
     enabled: visibilityReady,
   });
+  const agentTasks = tasksQuery.error ? [] : tasksQuery.data ?? [];
+  const isLoadingRecent = tasksQuery.isLoading;
+  const activeTaskSource = readOnly ? agentTasks : snapshot;
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
   const activity = activityMap.get(agent.id);
 
@@ -104,7 +109,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
       waiting_local_directory: 2,
       queued: 3,
     };
-    return snapshot
+    return activeTaskSource
       .filter(
         (t) =>
           t.agent_id === agent.id &&
@@ -119,7 +124,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
           (statusRank[a.status] ?? 99) - (statusRank[b.status] ?? 99) ||
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
-  }, [snapshot, agent.id]);
+  }, [activeTaskSource, agent.id]);
 
   // Most recent terminal tasks. Includes cancelled — users searching
   // "what just happened" want to see cancellations alongside completions
@@ -183,7 +188,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <NowSection tasks={activeTasks} issueMap={issueMap} agent={agent} />
+      <NowSection tasks={activeTasks} issueMap={issueMap} agent={agent} readOnly={readOnly} />
       {showPerformance && (
         <Last30dSection activity={activity} avgDurationMs={avgDurationMs} />
       )}
@@ -197,6 +202,7 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
         }
         issueMap={issueMap}
         agent={agent}
+        readOnly={readOnly}
       />
     </div>
   );
@@ -204,21 +210,21 @@ export function ActivityTab({ agent, showPerformance = true }: ActivityTabProps)
 
 /** Compact performance context for the Overview sidebar. Kept separate from
  * the work list so metrics never outrank current tasks or failures. */
-export function AgentPerformanceSummary({ agent }: { agent: Agent }) {
+export function AgentPerformanceSummary({ agent, viewerId }: { agent: Agent; viewerId?: string }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const { includeWorkspaceOwned, ready: visibilityReady } =
     useWorkspaceTaskVisibility();
-  const { data: agentTasks = [] } = useQuery({
-    ...agentTasksOptions(wsId, agent.id, includeWorkspaceOwned),
+  const tasksQuery = useQuery({
+    ...agentTasksOptions(wsId, agent.id, includeWorkspaceOwned, viewerId),
     enabled: visibilityReady,
   });
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
   const activity = activityMap.get(agent.id);
   const summary = summarizeActivityWindow(activity, 30);
   const avgDurationMs = useMemo(
-    () => deriveAvgDurationLast30d(agentTasks, Date.now()),
-    [agentTasks],
+    () => deriveAvgDurationLast30d(tasksQuery.error ? [] : tasksQuery.data ?? [], Date.now()),
+    [tasksQuery.data, tasksQuery.error],
   );
 
   return (
@@ -325,10 +331,12 @@ function NowSection({
   tasks,
   issueMap,
   agent,
+  readOnly,
 }: {
   tasks: AgentTask[];
   issueMap: Map<string, Issue>;
   agent: Agent;
+  readOnly: boolean;
 }) {
   const { t } = useT("agents");
   return (
@@ -348,6 +356,7 @@ function NowSection({
           issueMap={issueMap}
           timeMode="active"
           agent={agent}
+          readOnly={readOnly}
         />
       )}
     </Section>
@@ -437,6 +446,7 @@ function RecentWorkSection({
   onShowMore,
   issueMap,
   agent,
+  readOnly,
 }: {
   tasks: AgentTask[];
   totalCount: number;
@@ -445,6 +455,7 @@ function RecentWorkSection({
   onShowMore: () => void;
   issueMap: Map<string, Issue>;
   agent: Agent;
+  readOnly: boolean;
 }) {
   const { t } = useT("agents");
   // While the first fetch is in flight we have no counts to summarise, so
@@ -469,6 +480,7 @@ function RecentWorkSection({
             issueMap={issueMap}
             timeMode="completed"
             agent={agent}
+          readOnly={readOnly}
           />
           {hasMore && (
             <button
@@ -518,11 +530,13 @@ function TaskList({
   issueMap,
   timeMode,
   agent,
+  readOnly,
 }: {
   tasks: AgentTask[];
   issueMap: Map<string, Issue>;
   timeMode: "active" | "completed";
   agent: Agent;
+  readOnly: boolean;
 }) {
   return (
     <div
@@ -539,6 +553,7 @@ function TaskList({
           issueMap={issueMap}
           timeMode={timeMode}
           agent={agent}
+          readOnly={readOnly}
         />
       ))}
     </div>
@@ -550,11 +565,13 @@ function TaskRow({
   issueMap,
   timeMode,
   agent,
+  readOnly,
 }: {
   task: AgentTask;
   issueMap: Map<string, Issue>;
   timeMode: "active" | "completed";
   agent: Agent;
+  readOnly: boolean;
 }) {
   const { t } = useT("agents");
   const timeAgo = useTimeAgo();
@@ -577,7 +594,7 @@ function TaskRow({
       task.status === "running");
 
   const handleCancel = async () => {
-    if (cancelling) return;
+    if (readOnly || cancelling) return;
     setCancelling(true);
     try {
       await api.cancelTaskById(task.id);
@@ -787,7 +804,7 @@ function TaskRow({
                 <button
                   type="button"
                   onClick={handleCancel}
-                  disabled={cancelling}
+                  disabled={readOnly || cancelling}
                   aria-label={t(($) => $.tab_body.activity.cancel_task_aria)}
                 />
               }

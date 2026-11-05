@@ -1,5 +1,5 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import type { Agent, Squad, Workspace } from "../types";
 
 export const workspaceKeys = {
@@ -12,6 +12,8 @@ export const workspaceKeys = {
   agents: (wsId: string) => ["workspaces", wsId, "agents"] as const,
   agent: (wsId: string, agentId: string) =>
     ["workspaces", wsId, "agents", "detail", agentId] as const,
+  agentProfiles: (wsId: string, viewerId?: string) =>
+    ["workspaces", wsId, "agents", "profile", viewerId] as const,
   squads: (wsId: string) => ["workspaces", wsId, "squads"] as const,
   // Per-squad member status. Lives under the workspace key tree so
   // workspace switches naturally drop the cache, and so a broad
@@ -73,21 +75,41 @@ export function agentDetailOptions(wsId: string, agentId: string) {
   });
 }
 
+// Only a server-authorized response can populate the profile for this viewer.
+export function agentProfileOptions(wsId: string, agentId: string, viewerId?: string) {
+  return queryOptions({
+    queryKey: [...workspaceKeys.agentProfiles(wsId, viewerId), agentId] as const,
+    queryFn: async (): Promise<Agent> => {
+      try {
+        const agent = await api.getAgent(agentId);
+        if (agent.id === agentId && agent.workspace_id === wsId && agent.owner_id === viewerId) {
+          return agent;
+        }
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 403) throw error;
+      }
+      // The catalog endpoint verifies the exact workspace Owner role. Do not
+      // trust the invocation directory or cached membership for authorization.
+      const detail = await api.getOwnerAgentDetail(wsId, agentId);
+      if (!detail?.profile || detail.profile.id !== agentId || detail.profile.workspace_id !== wsId ||
+          detail.id !== agentId || detail.owner_id !== detail.profile.owner_id ||
+          detail.profile.owner_id === viewerId) {
+        throw new Error("Agent profile could not be loaded");
+      }
+      return detail.profile;
+    },
+    enabled: !!wsId && !!agentId && !!viewerId,
+    refetchOnMount: "always",
+    retry: false,
+  });
+}
+
 /** Owner-facing display metadata only. Keep out of the shared Agent cache. */
 export function ownerAgentCatalogOptions(wsId: string, ownerId: string | undefined) {
   return queryOptions({
     queryKey: [...workspaceKeys.agents(wsId), "owner-catalog", ownerId] as const,
     queryFn: () => api.listOwnerAgentCatalog(wsId),
     enabled: !!wsId && !!ownerId,
-    retry: false,
-  });
-}
-
-export function ownerAgentDetailOptions(wsId: string, agentId: string, ownerId: string | undefined) {
-  return queryOptions({
-    queryKey: [...workspaceKeys.agents(wsId), "owner-catalog", ownerId, agentId] as const,
-    queryFn: () => api.getOwnerAgentDetail(wsId, agentId),
-    enabled: !!wsId && !!agentId && !!ownerId,
     retry: false,
   });
 }

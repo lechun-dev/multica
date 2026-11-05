@@ -262,6 +262,7 @@ export function McpConfigTab({
   // Assignment writes return the agent's resulting list, so failures surface
   // as a toast and the cache re-syncs from the server rather than a guess.
   const runAssignmentAction = async (action: () => Promise<unknown>) => {
+    if (!canEdit) return;
     try {
       await action();
     } catch (error) {
@@ -318,17 +319,15 @@ export function McpConfigTab({
           <h3 className="text-body font-medium">
             {t(($) => $.tab_body.mcp_config.managed_title)}
           </h3>
-          {!redacted && canEdit && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={renamePending}
-              onClick={openAddDialog}
-            >
-              <Plus aria-hidden="true" />
-              {t(($) => $.tab_body.mcp_config.add_action)}
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canEdit || redacted || renamePending}
+            onClick={openAddDialog}
+          >
+            <Plus aria-hidden="true" />
+            {t(($) => $.tab_body.mcp_config.add_action)}
+          </Button>
         </div>
 
         {redacted ? (
@@ -360,8 +359,8 @@ export function McpConfigTab({
                     </Badge>
                   ) : undefined
                 }
-                canManage={canEdit}
-                actionsDisabled={renamePending}
+                canManage
+                actionsDisabled={!canEdit || renamePending}
                 rename={
                   renamingServer?.name === server.name
                     ? {
@@ -406,10 +405,10 @@ export function McpConfigTab({
           <h3 className="text-body font-medium">
             {t(($) => $.tab_body.mcp_config.workspace_title)}
           </h3>
-          {canEdit && availableServers.length > 0 && (
+          {availableServers.length > 0 && (
             <McpWorkspaceServerPicker
               servers={availableServers}
-              disabled={addServer.isPending}
+              disabled={!canEdit || addServer.isPending}
               onSelect={(serverId) => void handleAddWorkspaceServer(serverId)}
             />
           )}
@@ -611,32 +610,25 @@ function McpWorkspaceServerRow({
           {mcpTransportLabel(server.transport)}
         </p>
       </div>
-      {canEdit && (
-        <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground">
-          <Switch
-            checked={enabled}
-            disabled={busy}
-            onCheckedChange={onToggle}
-            aria-label={t(($) => $.tab_body.mcp_config.workspace_toggle_aria, {
-              name: server.name,
-            })}
-          />
-          <div className="mx-1 h-4 w-px bg-surface-border" aria-hidden="true" />
-          <McpRemoveButton
-            disabled={busy}
-            onClick={onRemove}
-            ariaLabel={t(($) => $.tab_body.mcp_config.workspace_remove_aria, {
-              name: server.name,
-            })}
-            tooltipLabel={t(($) => $.tab_body.mcp_config.workspace_remove_action)}
-          />
-        </div>
-      )}
-      {!canEdit && !enabled && (
-        <Badge variant="secondary">
-          {t(($) => $.tab_body.mcp_config.workspace_disabled_badge)}
-        </Badge>
-      )}
+      <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground">
+        <Switch
+          checked={enabled}
+          disabled={!canEdit || busy}
+          onCheckedChange={onToggle}
+          aria-label={t(($) => $.tab_body.mcp_config.workspace_toggle_aria, {
+            name: server.name,
+          })}
+        />
+        <div className="mx-1 h-4 w-px bg-surface-border" aria-hidden="true" />
+        <McpRemoveButton
+          disabled={!canEdit || busy}
+          onClick={onRemove}
+          ariaLabel={t(($) => $.tab_body.mcp_config.workspace_remove_aria, {
+            name: server.name,
+          })}
+          tooltipLabel={t(($) => $.tab_body.mcp_config.workspace_remove_action)}
+        />
+      </div>
     </li>
   );
 }

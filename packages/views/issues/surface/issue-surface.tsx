@@ -59,6 +59,7 @@ interface IssueSurfaceComponentProps extends IssueSurfaceProps {
   renderLoading?: (context: IssueSurfaceRenderContext) => ReactNode;
   clientFilter?: (issue: Issue) => boolean;
   showClientEmpty?: (context: IssueSurfaceRenderContext) => boolean;
+  readOnly?: boolean;
   batchToolbar?: "always" | "list" | "never";
   contentClassName?: string;
 }
@@ -88,6 +89,7 @@ export function IssueSurface({
   renderLoading,
   clientFilter,
   showClientEmpty,
+  readOnly,
   batchToolbar = "always",
   contentClassName,
 }: IssueSurfaceComponentProps) {
@@ -178,6 +180,7 @@ export function IssueSurface({
         renderLoading={renderLoading}
         clientFilter={clientFilter}
         showClientEmpty={showClientEmpty}
+        readOnly={readOnly}
         batchToolbar={batchToolbar}
         contentClassName={contentClassName}
       />
@@ -197,6 +200,7 @@ function IssueSurfaceContent({
   renderLoading,
   clientFilter,
   showClientEmpty,
+  readOnly = false,
   batchToolbar,
   contentClassName,
 }: Omit<IssueSurfaceComponentProps, "surfaceKey">) {
@@ -244,16 +248,16 @@ function IssueSurfaceContent({
   );
   const openCreateIssue = useCallback(
     (defaults?: IssueCreateDefaults) => {
-      controller.openCreateIssue(defaults);
+      if (!readOnly) controller.openCreateIssue(defaults);
     },
-    [controller],
+    [controller, readOnly],
   );
   const shouldShowClientEmpty =
     !!clientFilter &&
     issues.length === 0 &&
     (showClientEmpty ? showClientEmpty(renderContext) : true);
   const shouldShowBatchToolbar =
-    batchToolbar !== "never" &&
+    !readOnly && batchToolbar !== "never" &&
     (batchToolbar === "always" ||
       controller.viewMode === "list" ||
       controller.viewMode === "table");
@@ -369,7 +373,8 @@ function IssueSurfaceContent({
                 childProgressMap={controller.childProgressMap}
                 projectMap={controller.projectMap}
                 projectId={controller.projectId}
-                onMoveIssue={controller.moveIssue}
+                readOnly={readOnly}
+                onMoveIssue={readOnly ? undefined : controller.moveIssue}
                 onCreateIssue={openCreateIssue}
                 statusPagination={controller.statusPagination!}
               />

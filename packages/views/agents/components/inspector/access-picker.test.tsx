@@ -52,7 +52,7 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
   beforeEach(() => cleanup());
   afterEach(() => cleanup());
 
-  it("renders a static, non-interactive read-only state for non-owners", () => {
+  it("preserves the access choices and disables changes for a read-only viewer", () => {
     const targets: AgentInvocationTarget[] = [
       { target_type: "workspace", target_id: "ws-1" },
     ];
@@ -63,17 +63,11 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
       visibility: "workspace",
     });
 
-    // No clickable trigger — a non-owner can never open the picker.
-    expect(screen.queryByRole("button")).toBeNull();
-    // The current access is still shown…
-    expect(screen.getByTestId("access-readonly")).toBeInTheDocument();
-    expect(screen.getByText("Workspace")).toBeInTheDocument();
-    // …with the owner-only explanation surfaced as the accessible label.
-    expect(
-      screen.getByLabelText(
-        "Only the agent owner can change who can run this agent.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Entire workspace/i })).toBeChecked();
+    for (const choice of screen.getAllByRole("radio")) {
+      expect(choice).toBeDisabled();
+    }
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
   it("renders mutually exclusive access scopes for the owner", () => {
@@ -82,7 +76,7 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
       screen.getByRole("radio", { name: /^Only me/i }),
     ).toBeChecked();
     expect(
-      screen.getByText("Only you can run this agent"),
+      screen.getByText("Only you can run this agent. The workspace owner can view its profile."),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("radio", { name: /^Entire workspace/i }),
@@ -191,7 +185,8 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     ).not.toThrow();
     // No workspace target in the (empty) list ⇒ shows the "no members" state
     // rather than the workspace one, which is the safe degradation.
-    expect(screen.getByTestId("access-readonly")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Specific people/i })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
   it("cancel makes no write and the next attempt requires acknowledgement again", async () => {
     const { onChange } = renderPicker();

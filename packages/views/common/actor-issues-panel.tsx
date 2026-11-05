@@ -115,9 +115,11 @@ function ActorIssuesHeader({
 export function ActorIssuesPanel({
   actorType,
   actorId,
+  readOnly = false,
 }: {
   actorType: TaskActorType;
   actorId: string;
+  readOnly?: boolean;
 }) {
   const { t } = useT("issues");
   const scope = useStore(actorIssuesViewStore, (s) => s.scope);
@@ -138,7 +140,7 @@ export function ActorIssuesPanel({
     <IssueSurface
       scope={surfaceScope}
       modes={["list"]}
-      batchToolbar="always"
+      readOnly={readOnly}
       contentClassName="p-1"
       search={search}
       renderHeader={({ controller }) => (

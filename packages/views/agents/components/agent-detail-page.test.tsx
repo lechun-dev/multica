@@ -21,23 +21,23 @@ import {
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
-// The DM tests exercise the header action wiring plus the real permission
-// rules (via auth + member fixtures); the tabbed body and avatar/presence
-// widgets are irrelevant weight, so they're stubbed.
 vi.mock("./agent-overview-pane", () => ({
   AgentOverviewPane: ({
-    agent,
-    onUpdate,
+    agent, canEdit, onUpdate,
   }: {
     agent: Agent;
+    canEdit: boolean;
     onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   }) => (
-    <button
-      type="button"
-      onClick={() => void onUpdate(agent.id, { model: "new-model" })}
-    >
-      update model
-    </button>
+    <section aria-label="Agent settings">
+      <output aria-label="Current model">{agent.model}</output>
+      <button type="button" disabled={!canEdit} onClick={() => void onUpdate(agent.id, { model: "new-model" })}>
+        Save model
+      </button>
+      <button type="button" onClick={() => void onUpdate(agent.id, { model: "new-model" })}>
+        Attempt write
+      </button>
+    </section>
   ),
 }));
 vi.mock("../../common/actor-avatar", () => ({
@@ -47,7 +47,6 @@ vi.mock("./agent-presence-indicator", () => ({
   AgentPresenceIndicator: () => null,
 }));
 
-const agentsRef = vi.hoisted(() => ({ current: [] as unknown[] }));
 const membersRef = vi.hoisted(() => ({ current: [] as unknown[] }));
 // When set, the member query never resolves — the "membership still loading"
 // window in which the DM decision is undetermined.
@@ -69,34 +68,8 @@ vi.mock("@multica/core/agents", () => ({
     agent.runtime_bound !== false && agent.runtime_id.length > 0,
   useWorkspacePresenceMap: () => ({ byAgent: new Map() }),
 }));
-vi.mock("@multica/core/workspace/queries", () => ({
-  agentListOptions: (wsId: string) => ({
-    queryKey: ["agents", wsId],
-    queryFn: () => Promise.resolve(agentsRef.current),
-  }),
-  agentDetailOptions: (wsId: string, agentId: string) => ({
-    queryKey: ["agents", wsId, "detail", agentId],
-    queryFn: () => mockGetAgent(agentId),
-    enabled: !!wsId && !!agentId,
-    retry: false,
-  }),
-  cacheAgentResponse: (
-    queryClient: QueryClient,
-    wsId: string,
-    agent: Agent,
-    options: { insertIntoList?: boolean } = {},
-  ) => {
-    queryClient.setQueryData(["agents", wsId, "detail", agent.id], agent);
-    queryClient.setQueryData<Agent[]>(["agents", wsId], (current) =>
-      current?.some((item) => item.id === agent.id)
-        ? current.map((item) => (item.id === agent.id ? agent : item))
-        : current
-          ? options.insertIntoList === false
-            ? current
-            : [...current, agent]
-          : current,
-    );
-  },
+vi.mock("@multica/core/workspace/queries", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@multica/core/workspace/queries")>(),
   memberListOptions: (wsId: string) => ({
     queryKey: ["members", wsId],
     queryFn: () =>
@@ -104,20 +77,6 @@ vi.mock("@multica/core/workspace/queries", () => ({
         ? new Promise(() => {})
         : Promise.resolve(membersRef.current),
   }),
-  ownerAgentDetailOptions: (wsId: string, agentId: string, ownerId?: string) => ({
-    queryKey: ["owner-detail", wsId, ownerId, agentId],
-    queryFn: () => mockOwnerDetail(wsId, agentId),
-    enabled: !!ownerId,
-  }),
-  workspaceKeys: {
-    agents: (wsId: string) => ["agents", wsId],
-    agent: (wsId: string, agentId: string) => [
-      "agents",
-      wsId,
-      "detail",
-      agentId,
-    ],
-  },
 }));
 vi.mock("@multica/core/runtimes", () => ({
   runtimeListOptions: (wsId: string) => ({
@@ -155,7 +114,7 @@ vi.mock("@multica/core/api", () => {
     }
   }
   return {
-    api: { getAgent: mockGetAgent, updateAgent: mockUpdateAgent },
+    api: { getAgent: mockGetAgent, getOwnerAgentDetail: mockOwnerDetail, updateAgent: mockUpdateAgent },
     ApiError,
   };
 });
@@ -164,6 +123,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { AgentDetailPage } from "./agent-detail-page";
+import { agentProfileOptions, workspaceKeys } from "@multica/core/workspace/queries";
 
 const baseAgent: Agent = {
   id: "agent-1",
@@ -190,10 +150,23 @@ const baseAgent: Agent = {
   archived_by: null,
 };
 
-function renderPage() {
+const ownAgent = { ...baseAgent, owner_id: "user-1" };
+const privateAgent = {
+  ...baseAgent,
+  visibility: "private",
+  permission_mode: "private",
+  invocation_targets: [],
+  model: "private-model",
+} satisfies Agent;
+const forbidden = () => new ApiError("forbidden", 403, "Forbidden");
+const notFound = () => new ApiError("not found", 404, "Not Found");
+const profileKey = agentProfileOptions("ws-1", "agent-1", "user-1").queryKey;
+
+function renderPage(seed?: (client: QueryClient) => void) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  seed?.(queryClient);
   const push = vi.fn();
   const navigation: NavigationAdapter = {
     push,
@@ -204,356 +177,163 @@ function renderPage() {
     hash: "",
     getShareableUrl: (path) => path,
   };
-  const view = render(
+  const page = () => (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={queryClient}>
           <AgentDetailPage agentId="agent-1" />
         </QueryClientProvider>
       </NavigationProvider>
-    </I18nProvider>,
+    </I18nProvider>
   );
-  return { push, queryClient, ...view };
+  const view = render(page());
+  return { push, queryClient, ...view, refreshViewer: () => view.rerender(page()) };
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   currentUserRef.current = { id: "user-1" };
   membersRef.current = [{ user_id: "user-1", role: "member" }];
   membersPendingRef.current = false;
-  agentsRef.current = [baseAgent];
-  mockGetAgent.mockRejectedValue(new ApiError("not found", 404, "Not Found"));
-  mockOwnerDetail.mockResolvedValue(null);
-  mockUpdateAgent.mockResolvedValue({ ...baseAgent, model: "new-model" });
+  mockGetAgent.mockRejectedValue(forbidden());
+  mockOwnerDetail.mockRejectedValue(forbidden());
+  mockUpdateAgent.mockResolvedValue({ ...ownAgent, model: "new-model" });
 });
 
-describe("AgentDetailPage Owner inspection", () => {
-  const projection = {
-    id: baseAgent.id,
-    name: baseAgent.name,
-    owner_id: baseAgent.owner_id,
-    access_scope: "owner-only",
-    archived_at: null,
-    created_at: baseAgent.created_at,
-    updated_at: baseAgent.updated_at,
-    description: "Agent for weekly reports",
-    model: "gpt-6",
-    thinking_level: "high",
-    max_concurrent_tasks: 6,
-    runtime_bound: true,
-  };
-
-  beforeEach(() => {
-    membersRef.current = [{ user_id: "user-1", role: "owner" }, { user_id: "user-2", name: "Agent owner" }];
-  });
-
-  it("shows the private agent's safe configuration without editing or invocation", async () => {
-    agentsRef.current = [];
-    mockOwnerDetail.mockResolvedValue(projection);
-    const { queryClient } = renderPage();
-
-    expect(await screen.findByRole("heading", { name: baseAgent.name })).toBeInTheDocument();
-    for (const value of ["Agent owner", "Agent for weekly reports", "gpt-6", "high", "6", "Owner only", "Runtime bound"]) {
-      expect(screen.getByText(value)).toBeInTheDocument();
-    }
-    expect(screen.queryByRole("button", { name: /assign work|update model|agent actions/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "DM" })).not.toBeInTheDocument();
-    expect(mockGetAgent).not.toHaveBeenCalled();
-    expect(queryClient.getQueryData(["agents", "ws-1", "detail", "agent-1"])).toBeUndefined();
-    expect(queryClient.getQueryData(["agents", "ws-1"])).toEqual([]);
-  });
-
-  it("keeps existing shared invocation and hides editing for another person's agent", async () => {
-    mockOwnerDetail.mockResolvedValue({ ...projection, access_scope: "workspace" });
+describe("AgentDetailPage profile access", () => {
+  it.each(["member", "owner", "admin"])("lets a %s edit their own agent", async (role) => {
+    membersRef.current = [{ user_id: "user-1", role }];
+    mockGetAgent.mockResolvedValue(ownAgent);
     renderPage();
 
-    expect(await screen.findByText("Read-only. You can’t edit this agent.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Assign work" }));
-    expect(mockModalOpen).toHaveBeenCalledWith("quick-create-issue", { agent_id: baseAgent.id });
-    expect(screen.queryByRole("button", { name: /update model|agent actions/i })).not.toBeInTheDocument();
-    expect(mockGetAgent).not.toHaveBeenCalled();
-  });
-
-  it("does not fall back to regular detail when read-only access is refused", async () => {
-    mockOwnerDetail.mockRejectedValue(new ApiError("forbidden", 403, "Forbidden"));
-    renderPage();
-
-    expect(await screen.findByText(enAgents.detail.no_access_title)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /assign work|update model/i })).not.toBeInTheDocument();
-    expect(mockGetAgent).not.toHaveBeenCalled();
-  });
-
-  it("keeps the workspace Owner's editor for their own agent", async () => {
-    agentsRef.current = [{ ...baseAgent, owner_id: "user-1" }];
-    renderPage();
-
-    expect(await screen.findByRole("button", { name: "update model" })).toBeInTheDocument();
+    const save = await screen.findByRole("button", { name: "Save model" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent-1", { model: "new-model" });
     expect(mockOwnerDetail).not.toHaveBeenCalled();
   });
-});
 
-describe("AgentDetailPage direct-detail fallback", () => {
-  it("does not fetch detail when the workspace list already has the agent", async () => {
-    renderPage();
+  it("uses the same settings pane for a workspace Owner with controls disabled", async () => {
+    membersRef.current = [{ user_id: "user-1", role: "owner" }];
+    mockOwnerDetail.mockResolvedValue({
+      id: privateAgent.id, owner_id: privateAgent.owner_id, profile: privateAgent,
+    });
+    const { push, queryClient } = renderPage();
 
-    expect(
-      await screen.findByRole("button", { name: "Assign work" }),
-    ).toBeInTheDocument();
-    expect(mockGetAgent).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: privateAgent.name })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current model")).toHaveTextContent("private-model");
+    expect(screen.getByRole("button", { name: "Save model" })).toBeDisabled();
+    const dm = screen.getByRole("button", { name: "DM" });
+    expect(dm).toBeDisabled();
+    expect(dm).not.toHaveAttribute("href");
+    expect(screen.getByRole("button", { name: "Assign work" })).toBeDisabled();
+    expect(screen.getByLabelText("Agent actions")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Attempt write" }));
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
+    expect(mockModalOpen).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(workspaceKeys.agent("ws-1", "agent-1"))).toBeUndefined();
+    expect(queryClient.getQueryData(workspaceKeys.agents("ws-1"))).toBeUndefined();
   });
 
-  it("keeps the loading skeleton while the detail request is pending", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockImplementation(() => new Promise(() => {}));
+  it.each(["member", "admin"])("denies a %s with a shared invocation grant", async (role) => {
+    membersRef.current = [{ user_id: "user-1", role }];
+    mockGetAgent.mockResolvedValue(baseAgent);
+    renderPage((client) => client.setQueryData(workspaceKeys.agents("ws-1"), [baseAgent]));
 
-    const { container } = renderPage();
+    expect(await screen.findByText(enAgents.detail.no_access_title)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: baseAgent.name })).not.toBeInTheDocument();
+  });
+
+  it("does not show cached detail before the current link is authorized", async () => {
+    mockGetAgent.mockImplementation(() => new Promise(() => {}));
+    const { container } = renderPage((client) => client.setQueryData(profileKey, privateAgent));
 
     await waitFor(() => expect(mockGetAgent).toHaveBeenCalledWith("agent-1"));
-    expect(screen.queryByText("Agent not found")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: privateAgent.name })).not.toBeInTheDocument();
     expect(container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
   });
 
-  it("renders an agent returned by the detail endpoint", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockResolvedValue(baseAgent);
+  it("drops the previous viewer's profile immediately when switching accounts", async () => {
+    mockGetAgent.mockResolvedValueOnce(ownAgent);
+    const { refreshViewer } = renderPage();
+    await screen.findByRole("heading", { name: ownAgent.name });
 
-    renderPage();
+    currentUserRef.current = { id: "user-3" };
+    refreshViewer();
 
-    expect(
-      await screen.findByRole("button", { name: "Assign work" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Agent not found")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: ownAgent.name })).not.toBeInTheDocument();
+    expect(await screen.findByText(enAgents.detail.no_access_title)).toBeInTheDocument();
   });
 
-  it("shows not found only after the detail endpoint returns 404", async () => {
-    agentsRef.current = [];
-
-    renderPage();
-
-    expect(await screen.findByText("Agent not found")).toBeInTheDocument();
-  });
-
-  it("keeps 403 distinct from not found", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockRejectedValue(
-      new ApiError("forbidden", 403, "Forbidden"),
-    );
-
-    renderPage();
-
-    expect(
-      await screen.findByText("You don't have access to this agent"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("To use this agent, ask its owner to share it with you."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Agent not found")).not.toBeInTheDocument();
-  });
-
-  it("shows 404 when a successful detail refetch later reports deletion", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockResolvedValueOnce(baseAgent);
+  it("hides the Owner profile when permission is revoked on refetch", async () => {
+    mockOwnerDetail.mockResolvedValueOnce({
+      id: privateAgent.id, owner_id: privateAgent.owner_id, profile: privateAgent,
+    });
     const { queryClient } = renderPage();
-    await screen.findByRole("button", { name: "Assign work" });
+    await screen.findByRole("heading", { name: privateAgent.name });
 
-    mockGetAgent.mockRejectedValue(new ApiError("not found", 404, "Not Found"));
     await act(async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["agents", "ws-1", "detail", "agent-1"],
-        exact: true,
-      });
+      await queryClient.invalidateQueries({ queryKey: profileKey });
     });
 
-    expect(await screen.findByText("Agent not found")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Assign work" }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText(enAgents.detail.no_access_title)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Current model")).not.toBeInTheDocument();
   });
 
-  it("shows 403 when a successful detail refetch later loses access", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockResolvedValueOnce(baseAgent);
-    const { queryClient } = renderPage();
-    await screen.findByRole("button", { name: "Assign work" });
-
-    mockGetAgent.mockRejectedValue(
-      new ApiError("forbidden", 403, "Forbidden"),
-    );
-    await act(async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["agents", "ws-1", "detail", "agent-1"],
-        exact: true,
-      });
-    });
-
-    expect(
-      await screen.findByText("You don't have access to this agent"),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Assign work" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows a load failure instead of not found for transient errors", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockRejectedValue(new Error("Network request failed"));
-
+  it("shows not found after the API returns 404", async () => {
+    mockGetAgent.mockRejectedValue(notFound());
     renderPage();
-
-    expect(
-      await screen.findByText("Couldn't load this agent"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Network request failed")).toBeInTheDocument();
-    expect(screen.queryByText("Agent not found")).not.toBeInTheDocument();
+    expect(await screen.findByText(enAgents.detail.not_found_title)).toBeInTheDocument();
   });
 
-  it("keeps successful detail data visible through a transient refetch error", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockResolvedValueOnce(baseAgent);
-    const { queryClient } = renderPage();
-    await screen.findByRole("button", { name: "Assign work" });
-
-    mockGetAgent.mockRejectedValue(new Error("Network request failed"));
-    await act(async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["agents", "ws-1", "detail", "agent-1"],
-        exact: true,
-      });
-    });
-
-    expect(
-      screen.getByRole("button", { name: "Assign work" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Couldn't load this agent"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("optimistically updates a detail-only cache entry", async () => {
-    agentsRef.current = [];
-    mockGetAgent.mockResolvedValue(baseAgent);
+  it("optimistically updates the viewer's authorized profile", async () => {
+    mockGetAgent.mockResolvedValue(ownAgent);
     mockUpdateAgent.mockImplementation(() => new Promise(() => {}));
     const { queryClient } = renderPage();
-    await screen.findByRole("button", { name: "Assign work" });
 
-    fireEvent.click(screen.getByRole("button", { name: "update model" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save model" }));
 
-    expect(await screen.findByText("new-model")).toBeInTheDocument();
-    expect(
-      queryClient.getQueryData<Agent>([
-        "agents",
-        "ws-1",
-        "detail",
-        "agent-1",
-      ]),
-    ).toMatchObject({ model: "new-model" });
+    expect(await screen.findByText("new-model", { selector: "output" })).toBeInTheDocument();
+    expect(queryClient.getQueryData<Agent>(profileKey)).toMatchObject({ model: "new-model" });
   });
 });
 
-describe("AgentDetailPage DM button", () => {
-  it("navigates to the chat deep link when the user can chat with the agent", async () => {
+describe("AgentDetailPage own-agent actions", () => {
+  beforeEach(() => {
+    mockGetAgent.mockResolvedValue(ownAgent);
+  });
+
+  it("opens chat and lets the agent owner assign work", async () => {
     const { push } = renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "DM" }));
     expect(push).toHaveBeenCalledWith("/acme/chat?agent=agent-1");
-    expect(mockToastError).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Assign work" }));
+    expect(mockModalOpen).toHaveBeenCalledWith("quick-create-issue", { agent_id: ownAgent.id });
   });
 
-  it("shows a toast instead of navigating when the user lacks chat access", async () => {
-    // 2026-11-05 coder(lq): Simulate a stale cached agent after access is revoked.
-    // Even a workspace admin must not be able to start a chat from this state.
-    agentsRef.current = [
-      { ...baseAgent, permission_mode: "private", invocation_targets: [] },
-    ];
-    membersRef.current = [{ user_id: "user-1", role: "admin" }];
-    const { push } = renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "DM" }));
-    expect(mockToastError).toHaveBeenCalledWith(
-      "You don't have access to chat with this agent.",
-    );
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("disables DM while membership is resolving instead of toasting a false deny", async () => {
-    // Review P2: a pending member query collapses role to null, which the
-    // rules read as not_member — a legitimate public_to+workspace member
-    // would get a wrong "no access" toast. Undetermined must disable, not deny.
+  it("disables DM while membership is resolving", async () => {
     membersPendingRef.current = true;
     const { push } = renderPage();
-    // The control is an anchor now, so "disabled" is expressed the only way a
-    // link can express it: aria-disabled plus removal from the tab order.
     const dm = await screen.findByRole("button", { name: "DM" });
     expect(dm).toHaveAttribute("aria-disabled", "true");
-    expect(dm).toHaveAttribute("tabindex", "-1");
     fireEvent.click(dm);
-    expect(mockToastError).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("hides the DM button on an archived agent", async () => {
-    agentsRef.current = [
-      { ...baseAgent, archived_at: "2026-06-01T00:00:00Z" },
-    ];
+  it("shows the restore action on the archived profile", async () => {
+    mockGetAgent.mockResolvedValue({ ...ownAgent, archived_at: "2026-06-01T00:00:00Z" });
     renderPage();
-    // The archived banner is the signal the page has settled past loading.
-    await screen.findByText(/This agent is archived/);
+    expect(await screen.findByRole("button", { name: "Restore" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "DM" })).not.toBeInTheDocument();
   });
 
-  it("hides the more-actions trigger when no menu actions are available", async () => {
-    // The gate must survive a caller who genuinely CAN archive: an admin
-    // passes `canEditAgent`, so `canArchive` is true. The only thing keeping
-    // the menu empty is the system agent's undefined `onArchive`. Assert the
-    // real aria label (locale `detail.more_actions_aria` = "Agent actions"),
-    // so removing the `hasMoreActions` gate would render the empty shell and
-    // fail this test.
-    agentsRef.current = [
-      { ...baseAgent, system_key: "mika" },
-    ];
-    membersRef.current = [{ user_id: "user-1", role: "admin" }];
+  it("explains a missing runtime to the agent owner", async () => {
+    mockGetAgent.mockResolvedValue({ ...ownAgent, runtime_id: "", runtime_bound: false });
     renderPage();
-
-    await screen.findByRole("button", { name: "Assign work" });
-    expect(
-      screen.queryByLabelText("Agent actions"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("keeps the more-actions trigger for an editable non-system agent", async () => {
-    // Positive counterpart: an owner of a normal agent has a real archive
-    // action, so the menu trigger must still render. Guards the gate against
-    // over-hiding.
-    agentsRef.current = [{ ...baseAgent, owner_id: "user-1" }];
-    membersRef.current = [{ user_id: "user-1", role: "member" }];
-    renderPage();
-
-    await screen.findByRole("button", { name: "Assign work" });
-    expect(
-      screen.getByLabelText("Agent actions"),
-    ).toBeInTheDocument();
-  });
-
-  it("explains an unbound agent and blocks run actions without losing the profile", async () => {
-    agentsRef.current = [
-      {
-        ...baseAgent,
-        owner_id: "user-1",
-        runtime_id: "",
-        runtime_bound: false,
-      },
-    ];
-    renderPage();
-
-    expect(
-      await screen.findByText(/needs a runtime before it can run/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Bind runtime" }),
-    ).toBeInTheDocument();
-
+    expect(await screen.findByRole("button", { name: "Bind runtime" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "DM" }));
-    expect(mockToastError).toHaveBeenCalledWith(
-      "Bind a runtime before running this agent.",
-    );
-    expect(mockModalOpen).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Bind a runtime before running this agent.");
   });
 });

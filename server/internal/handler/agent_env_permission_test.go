@@ -187,7 +187,7 @@ func TestAgentEnv_WorkspaceOwnerCannotRevealOtherAgentEnv(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	agentID, _ := agentEnvOwnerFixture(t, "env-role-check-agent", "env-role-check-owner@multica.test")
+	agentID, agentOwnerID := agentEnvOwnerFixture(t, "env-role-check-agent", "env-role-check-owner@multica.test")
 
 	adminID := createPermissionTestMember(t, "env-admin@multica.test")
 	if _, err := testPool.Exec(ctx, `
@@ -200,7 +200,7 @@ func TestAgentEnv_WorkspaceOwnerCannotRevealOtherAgentEnv(t *testing.T) {
 	for _, tc := range []struct {
 		actorID string
 		status  int
-	}{{testUserID, http.StatusForbidden}, {adminID, http.StatusOK}} {
+	}{{testUserID, http.StatusForbidden}, {adminID, http.StatusForbidden}, {agentOwnerID, http.StatusOK}} {
 		req := withURLParam(newRequestAs(tc.actorID, http.MethodGet, "/api/agents/"+agentID+"/env", nil), "id", agentID)
 		w := httptest.NewRecorder()
 		testHandler.GetAgentEnv(w, req)

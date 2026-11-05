@@ -18,10 +18,12 @@ const FOCUS_FLASH_MS = 1600;
 
 export function InstructionsTab({
   agent,
+  canEdit = true,
   onSave,
   onDirtyChange,
 }: {
   agent: Agent;
+  canEdit?: boolean;
   onSave: (updates: {
     instructions: string;
     conversation_starters?: AgentConversationStarter[];
@@ -62,10 +64,11 @@ export function InstructionsTab({
     instructions: value,
     conversationStartersKey: JSON.stringify(conversationStarters),
   };
-  const isDirty =
+  const isDirty = canEdit && (
     value !== (agent.instructions ?? "") ||
     (conversationStartersSupported &&
-      JSON.stringify(conversationStarters) !== persistedConversationStartersKey);
+      JSON.stringify(conversationStarters) !== persistedConversationStartersKey)
+  );
   const conversationStartersValid =
     !conversationStartersSupported ||
     conversationStarters.every(
@@ -172,6 +175,7 @@ export function InstructionsTab({
   }, [isDirty, onDirtyChange]);
 
   const handleSave = async () => {
+    if (!canEdit || !isDirty || !conversationStartersValid || saving) return;
     setSaving(true);
     try {
       await onSave({
@@ -237,7 +241,8 @@ export function InstructionsTab({
           id={`agent-system-prompt-${agent.id}`}
           name="agent-system-prompt"
           autoComplete="off"
-          value={value}
+          value={canEdit ? value : agent.instructions ?? ""}
+          readOnly={!canEdit}
           onChange={(event) => setValue(event.target.value)}
           placeholder={
             hasSystemLayer
@@ -258,7 +263,8 @@ export function InstructionsTab({
           )}
         >
           <ConversationStartersEditor
-            value={conversationStarters}
+            value={canEdit ? conversationStarters : agent.conversation_starters ?? []}
+            disabled={!canEdit}
             onChange={setConversationStarters}
           />
         </div>

@@ -250,13 +250,8 @@ func (h *Handler) ListDingTalkGroups(w http.ResponseWriter, r *http.Request) {
 // they cannot infer its DingTalk group activity either.
 func (h *Handler) ListDingTalkGroupsForAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, agentID)
+	agent, ok := h.loadAgentForProfile(w, r, agentID, true)
 	if !ok {
-		return
-	}
-	workspaceID := uuidToString(agent.WorkspaceID)
-	if !h.canAccessAgentRequest(r, agent, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
 	if h.DingTalkInstall == nil {

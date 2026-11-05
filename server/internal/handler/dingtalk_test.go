@@ -151,46 +151,10 @@ func TestListDingTalkGroupsForAgent_FollowsAgentViewPermissionMatrix(t *testing.
 		{name: "non-member", userID: nonMemberID},
 		{name: "unauthenticated"},
 	}
-	accessModels := []struct {
-		name string
-		want map[string]int
-	}{
-		{
-			name: "private",
-			want: map[string]int{
-				"workspace owner, not agent owner": http.StatusForbidden, "workspace owner, agent owner": http.StatusOK,
-				"workspace admin, not agent owner": http.StatusForbidden, "workspace admin, agent owner": http.StatusOK,
-				"workspace member, agent owner": http.StatusOK, "targeted member": http.StatusForbidden,
-				"unrelated member": http.StatusForbidden, "non-member": http.StatusNotFound,
-				"unauthenticated": http.StatusUnauthorized,
-			},
-		},
-		{
-			name: "public_to_workspace",
-			want: map[string]int{
-				"workspace owner, not agent owner": http.StatusOK, "workspace owner, agent owner": http.StatusOK,
-				"workspace admin, not agent owner": http.StatusOK, "workspace admin, agent owner": http.StatusOK,
-				"workspace member, agent owner": http.StatusOK, "targeted member": http.StatusOK,
-				"unrelated member": http.StatusOK, "non-member": http.StatusNotFound,
-				"unauthenticated": http.StatusUnauthorized,
-			},
-		},
-		{
-			name: "public_to_member",
-			want: map[string]int{
-				"workspace owner, not agent owner": http.StatusForbidden, "workspace owner, agent owner": http.StatusOK,
-				"workspace admin, not agent owner": http.StatusForbidden, "workspace admin, agent owner": http.StatusOK,
-				"workspace member, agent owner": http.StatusOK, "targeted member": http.StatusOK,
-				"unrelated member": http.StatusForbidden, "non-member": http.StatusNotFound,
-				"unauthenticated": http.StatusUnauthorized,
-			},
-		},
-	}
-
-	for _, accessModel := range accessModels {
-		setDingTalkAgentViewFixture(t, agentID, accessModel.name, targetMemberID)
+	for _, accessModel := range []string{"private", "public_to_workspace", "public_to_member"} {
+		setDingTalkAgentViewFixture(t, agentID, accessModel, targetMemberID)
 		for _, actor := range actors {
-			t.Run(accessModel.name+"/"+actor.name, func(t *testing.T) {
+			t.Run(accessModel+"/"+actor.name, func(t *testing.T) {
 				targetOwnerID := ownerID
 				if actor.ownsAgent && actor.userID != "" {
 					targetOwnerID = actor.userID
@@ -202,7 +166,16 @@ func TestListDingTalkGroupsForAgent_FollowsAgentViewPermissionMatrix(t *testing.
 				req = withURLParams(req, "id", agentID)
 				w := httptest.NewRecorder()
 				testHandler.ListDingTalkGroupsForAgent(w, req)
-				if want := accessModel.want[actor.name]; w.Code != want {
+				want := http.StatusForbidden
+				switch {
+				case actor.ownsAgent || actor.userID == testUserID:
+					want = http.StatusOK
+				case actor.userID == nonMemberID:
+					want = http.StatusNotFound
+				case actor.userID == "":
+					want = http.StatusUnauthorized
+				}
+				if w.Code != want {
 					t.Fatalf("ListDingTalkGroupsForAgent: want %d, got %d: %s", want, w.Code, w.Body.String())
 				}
 			})
@@ -535,7 +508,7 @@ func TestListDingTalkInstallations_OrphanIsAdminOnlyAndMarkedUnavailable(t *test
 	}
 }
 
-func TestRegisterDingTalkBYO_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
+func TestRegisterDingTalkBYO_AuthorizesOnlyAgentOwner(t *testing.T) {
 	wireDingTalkInstallService(t)
 	agentID, ownerID, memberID := privateAgentTestFixture(t)
 	cases := dingTalkAgentPermissionCases(t, "dingtalk-register", ownerID, memberID)
@@ -558,7 +531,7 @@ func TestRegisterDingTalkBYO_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
 				}
 				setDingTalkAgentPermissionFixture(t, agentID, permissionMode, targetOwnerID)
 				want := tc.denyStatus
-				if permissionMode == "private" && !tc.ownsAgent && want == 0 {
+				if !tc.ownsAgent && want == 0 {
 					want = http.StatusForbidden
 				}
 				if want == 0 {
@@ -661,7 +634,7 @@ SELECT
 	}
 }
 
-func TestRevokeDingTalkInstallation_AuthorizesAgentOwnerAndAdmins(t *testing.T) {
+func TestRevokeDingTalkInstallation_AuthorizesOnlyAgentOwner(t *testing.T) {
 	wireDingTalkInstallService(t)
 	agentID, ownerID, memberID := privateAgentTestFixture(t)
 	cases := dingTalkAgentPermissionCases(t, "dingtalk-revoke", ownerID, memberID)
@@ -699,7 +672,7 @@ func TestRevokeDingTalkInstallation_AuthorizesAgentOwnerAndAdmins(t *testing.T) 
 				}
 				setDingTalkAgentPermissionFixture(t, agentID, permissionMode, targetOwnerID)
 				want := tc.denyStatus
-				if permissionMode == "private" && !tc.ownsAgent && want == 0 {
+				if !tc.ownsAgent && want == 0 {
 					want = http.StatusForbidden
 				}
 				if want == 0 {

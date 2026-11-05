@@ -49,10 +49,10 @@ const agent: Agent = {
   archived_by: null,
 };
 
-function renderTab() {
+function renderTab(canEdit = true) {
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <EnvTab agent={agent} />
+      <EnvTab agent={agent} canEdit={canEdit} />
     </I18nProvider>,
   );
 }
@@ -62,6 +62,12 @@ describe("EnvTab", () => {
     vi.clearAllMocks();
     getAgentEnv.mockResolvedValue({ custom_env: {} });
     updateAgentEnv.mockResolvedValue({ custom_env: {} });
+  });
+
+  it("keeps the reveal control disabled for a read-only viewer", () => {
+    renderTab(false);
+    expect(screen.getByRole("button", { name: /Reveal & edit/i })).toBeDisabled();
+    expect(getAgentEnv).not.toHaveBeenCalled();
   });
 
   it("turns pasted environment-file assignments into separate rows", async () => {

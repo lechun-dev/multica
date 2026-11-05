@@ -110,6 +110,49 @@ describe("OwnerAgentCatalogSchema", () => {
     expect(OwnerAgentCatalogSchema.safeParse([{ ...entry, id: undefined }]).success).toBe(false);
     expect(OwnerAgentCatalogSchema.safeParse([{ ...entry, access_scope: "unexpected" }]).success).toBe(false);
   });
+
+  it("parses the read-only profile without accepting raw credentials", () => {
+    const detail = {
+      ...entry,
+      updated_at: entry.created_at,
+      max_concurrent_tasks: 1,
+      runtime_bound: false,
+    };
+    const profile = {
+      ...detail,
+      workspace_id: "ws-1",
+      description: "",
+      instructions: "Generate reports",
+      avatar_url: null,
+      runtime_id: "",
+      runtime_mode: "local",
+      runtime_config: {},
+      custom_args: [],
+      custom_env: { API_KEY: "secret" },
+      mcp_config: { headers: { authorization: "secret" } },
+      mcp_config_redacted: true,
+      visibility: "private",
+      permission_mode: "private",
+      invocation_targets: [],
+      status: "future_status",
+      model: "",
+      skills: [],
+      archived_by: null,
+    };
+    const parsed = OwnerAgentDetailSchema.parse({ ...detail, profile }).profile;
+    expect(parsed).toMatchObject({
+      workspace_id: "ws-1",
+      instructions: "Generate reports",
+      status: "offline",
+      mcp_config_redacted: true,
+    });
+    expect(parsed).not.toHaveProperty("custom_env");
+    expect(parsed).not.toHaveProperty("mcp_config");
+    expect(OwnerAgentDetailSchema.safeParse({
+      ...detail,
+      profile: { ...profile, workspace_id: undefined },
+    }).success).toBe(false);
+  });
 });
 import { IssueViewSchema, IssueViewListSchema } from "./schemas";
 import {

@@ -42,7 +42,9 @@ vi.mock("./tabs/skills-tab", () => ({
   SkillsTab: () => <div>skills-tab</div>,
 }));
 vi.mock("./tabs/env-tab", () => ({
-  EnvTab: () => <div>env-tab</div>,
+  EnvTab: ({ canEdit }: { canEdit: boolean }) => (
+    <div data-testid="env-tab" data-can-edit={canEdit} />
+  ),
 }));
 vi.mock("./tabs/custom-args-tab", () => ({
   CustomArgsTab: () => <div>custom-args-tab</div>,
@@ -283,15 +285,11 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the Environment tab from users who cannot manage the agent", () => {
-    // The env endpoints admit the agent owner or a workspace owner/admin
-    // (MUL-5438) — the rule `canEdit` already encodes. Anyone else who opens
-    // the tab hits a guaranteed 403 on "Reveal & edit".
+  it("opens the Environment tab in read-only mode", () => {
     renderPane([makeRuntime("claude")], { canEdit: false });
     openSettings();
-    expect(
-      screen.queryByRole("tab", { name: /^Environment$/i }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^Environment$/i }));
+    expect(screen.getByTestId("env-tab")).toHaveAttribute("data-can-edit", "false");
   });
 });
 

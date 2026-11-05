@@ -824,6 +824,7 @@ export function DingTalkAgentBindButton({
   botName,
   botIdentityIssue,
   className,
+  readOnly = false,
   onShowConnectedDetails,
 }: {
   agentId: string;
@@ -833,6 +834,7 @@ export function DingTalkAgentBindButton({
   botName?: string;
   botIdentityIssue?: string;
   className?: string;
+  readOnly?: boolean;
   /**
    * When set, the connected state renders as a compact read-only status row
    * that invokes this callback on click instead of the full badge with inline
@@ -887,6 +889,7 @@ export function DingTalkAgentBindButton({
         botName={botName}
         botIdentityIssue={botIdentityIssue}
         className={className}
+        readOnly={readOnly}
       />
     );
   }
@@ -901,6 +904,7 @@ export function DingTalkAgentBindButton({
   }
 
   async function handleSubmit() {
+    if (readOnly) return;
     const client_id = clientId.trim();
     const client_secret = clientSecret.trim();
     if (submitting || !agentId || !client_id || !client_secret) return;
@@ -935,7 +939,7 @@ export function DingTalkAgentBindButton({
         variant="outline"
         size="sm"
         onClick={() => setDialogOpen(true)}
-        disabled={!agentId}
+        disabled={readOnly || !agentId}
         title={
           agentName
             ? t(($) => $.dingtalk.bind_button_title, { agent: agentName })
@@ -948,7 +952,7 @@ export function DingTalkAgentBindButton({
       </Button>
 
       <Dialog
-        open={dialogOpen}
+        open={!readOnly && dialogOpen}
         onOpenChange={(v) => (v ? setDialogOpen(true) : closeDialog())}
       >
         <DialogContent
@@ -1071,11 +1075,13 @@ function DingTalkAgentBotConnectedBadge({
   botName,
   botIdentityIssue,
   className,
+  readOnly = false,
 }: {
   installation: DingTalkInstallation;
   botName?: string;
   botIdentityIssue?: string;
   className?: string;
+  readOnly?: boolean;
 }) {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -1085,7 +1091,7 @@ function DingTalkAgentBotConnectedBadge({
   const [disconnecting, setDisconnecting] = useState(false);
 
   async function handleDisconnect() {
-    if (disconnecting) return;
+    if (readOnly || disconnecting) return;
     setDisconnecting(true);
     try {
       await api.deleteDingTalkInstallation(wsId, installation.id);
@@ -1116,7 +1122,7 @@ function DingTalkAgentBotConnectedBadge({
           variant="destructive"
           size="sm"
           onClick={() => setConfirmOpen(true)}
-          disabled={disconnecting}
+          disabled={readOnly || disconnecting}
           title={t(($) => $.dingtalk.agent_bot_disconnect_tooltip)}
           aria-label={t(($) => $.dingtalk.disconnect)}
           data-testid="dingtalk-agent-bot-disconnect"
@@ -1129,7 +1135,7 @@ function DingTalkAgentBotConnectedBadge({
       </div>
 
       <AlertDialog
-        open={confirmOpen}
+        open={!readOnly && confirmOpen}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setConfirmOpen(false);
         }}
@@ -1144,10 +1150,10 @@ function DingTalkAgentBotConnectedBadge({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
+            <AlertDialogCancel disabled={readOnly || disconnecting}>
               {t(($) => $.dingtalk.disconnect_confirm_cancel)}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
+            <AlertDialogAction onClick={handleDisconnect} disabled={readOnly || disconnecting}>
               {disconnecting
                 ? t(($) => $.dingtalk.disconnecting)
                 : t(($) => $.dingtalk.disconnect)}

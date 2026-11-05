@@ -83,6 +83,7 @@ export function SkillsTab({
   };
 
   const handleRemove = async (skillId: string) => {
+    if (!canEdit) return;
     setBusyId(skillId);
     try {
       await api.removeAgentSkill(agent.id, skillId);
@@ -99,6 +100,7 @@ export function SkillsTab({
   };
 
   const handleToggle = async (skillId: string, enabled: boolean) => {
+    if (!canEdit) return;
     setBusyId(skillId);
     try {
       await api.setAgentSkillEnabled(agent.id, skillId, enabled);
@@ -118,7 +120,7 @@ export function SkillsTab({
     skill: RuntimeLocalSkillSummary,
     enabled: boolean,
   ) => {
-    if (!runtime || !skill.root) return;
+    if (!canEdit || !runtime || !skill.root) return;
     const busyKey = runtimeSkillIdentity(skill);
     setBusyId(busyKey);
     try {
@@ -146,22 +148,19 @@ export function SkillsTab({
 
   return (
     <div className="space-y-8">
-
       <CapabilitySection
         title={t(($) => $.tab_body.skills.assigned_title)}
         description={t(($) => $.tab_body.skills.assigned_hint)}
         action={
-          canEdit ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAdd(true)}
-              disabled={workspaceSkills.length === 0}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {t(($) => $.tab_body.skills.add_action)}
-            </Button>
-          ) : null
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAdd(true)}
+            disabled={!canEdit || workspaceSkills.length === 0}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t(($) => $.tab_body.skills.add_action)}
+          </Button>
         }
       >
         {agent.skills.length === 0 ? (
@@ -198,33 +197,30 @@ export function SkillsTab({
                       </span>
                     </span>
                   </button>
-                  {canEdit && (
-                    <>
-                      {busy ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
-                      ) : (
-                        <Switch
-                          checked={enabled}
-                          onCheckedChange={(checked) => handleToggle(skill.id, checked)}
-                          aria-label={t(($) => $.tab_body.skills.toggle_aria, {
-                            name: skill.name,
-                          })}
-                        />
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleRemove(skill.id)}
-                        disabled={busyId !== null}
-                        aria-label={t(($) => $.tab_body.skills.remove_aria, {
-                          name: skill.name,
-                        })}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </>
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
+                  ) : (
+                    <Switch
+                      checked={enabled}
+                      disabled={!canEdit}
+                      onCheckedChange={(checked) => handleToggle(skill.id, checked)}
+                      aria-label={t(($) => $.tab_body.skills.toggle_aria, {
+                        name: skill.name,
+                      })}
+                    />
                   )}
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => handleRemove(skill.id)}
+                    disabled={!canEdit || busyId !== null}
+                    aria-label={t(($) => $.tab_body.skills.remove_aria, {
+                      name: skill.name,
+                    })}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                 </li>
               );
             })}
@@ -322,14 +318,14 @@ export function SkillsTab({
                       </span>
                     </span>
                   </button>
-                  {canEdit &&
-                    skill.can_disable === true &&
+                  {skill.can_disable === true &&
                     skill.root &&
                     (busy ? (
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
                     ) : (
                       <Switch
                         checked={!disabled}
+                        disabled={!canEdit}
                         onCheckedChange={(checked) =>
                           handleRuntimeToggle(skill, checked)
                         }
@@ -346,7 +342,7 @@ export function SkillsTab({
         )}
       </CapabilitySection>
 
-      <SkillAddDialog agent={agent} open={showAdd} onOpenChange={setShowAdd} />
+      <SkillAddDialog agent={agent} open={canEdit && showAdd} onOpenChange={setShowAdd} />
       <SkillDetailDialog
         selected={selected}
         onOpenChange={(open) => !open && setSelected(null)}

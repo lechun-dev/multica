@@ -239,11 +239,13 @@ export function WecomAgentBindButton({
   agentId,
   agentName,
   className,
+  readOnly = false,
   onShowConnectedDetails,
 }: {
   agentId: string;
   agentName?: string;
   className?: string;
+  readOnly?: boolean;
   onShowConnectedDetails?: () => void;
 }) {
   const { t } = useT("settings");
@@ -283,7 +285,7 @@ export function WecomAgentBindButton({
         className={className}
       />
     ) : (
-      <WecomAgentBotConnectedBadge installation={existing} className={className} />
+      <WecomAgentBotConnectedBadge installation={existing} className={className} readOnly={readOnly} />
     );
   }
 
@@ -298,6 +300,7 @@ export function WecomAgentBindButton({
   }
 
   async function handleSubmit() {
+    if (readOnly) return;
     const bot_id = botId.trim();
     const secretTrimmed = secret.trim();
     if (submitting || !agentId || !bot_id || !secretTrimmed) return;
@@ -367,7 +370,7 @@ export function WecomAgentBindButton({
         variant="outline"
         size="sm"
         onClick={() => setDialogOpen(true)}
-        disabled={!agentId}
+        disabled={readOnly || !agentId}
         title={
           agentName
             ? t(($) => $.wecom.bind_button_title, { agent: agentName })
@@ -380,7 +383,7 @@ export function WecomAgentBindButton({
       </Button>
 
       <Dialog
-        open={dialogOpen}
+        open={!readOnly && dialogOpen}
         onOpenChange={(v) => (v ? setDialogOpen(true) : closeDialog())}
       >
         <DialogContent className="sm:max-w-lg" data-testid="wecom-byo-dialog">
@@ -496,9 +499,11 @@ function WecomAgentBotStatusRow({
 function WecomAgentBotConnectedBadge({
   installation,
   className,
+  readOnly = false,
 }: {
   installation: WecomInstallation;
   className?: string;
+  readOnly?: boolean;
 }) {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -508,7 +513,7 @@ function WecomAgentBotConnectedBadge({
   const [disconnecting, setDisconnecting] = useState(false);
 
   async function handleDisconnect() {
-    if (disconnecting) return;
+    if (readOnly || disconnecting) return;
     setDisconnecting(true);
     try {
       await api.deleteWecomInstallation(wsId, installation.id);
@@ -542,7 +547,7 @@ function WecomAgentBotConnectedBadge({
           variant="destructive"
           size="sm"
           onClick={() => setConfirmOpen(true)}
-          disabled={disconnecting}
+          disabled={readOnly || disconnecting}
           title={t(($) => $.wecom.agent_bot_disconnect_tooltip)}
           aria-label={t(($) => $.wecom.disconnect)}
           data-testid="wecom-agent-bot-disconnect"
@@ -555,7 +560,7 @@ function WecomAgentBotConnectedBadge({
       </div>
 
       <AlertDialog
-        open={confirmOpen}
+        open={!readOnly && confirmOpen}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setConfirmOpen(false);
         }}
@@ -570,10 +575,10 @@ function WecomAgentBotConnectedBadge({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
+            <AlertDialogCancel disabled={readOnly || disconnecting}>
               {t(($) => $.wecom.disconnect_confirm_cancel)}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
+            <AlertDialogAction onClick={handleDisconnect} disabled={readOnly || disconnecting}>
               {disconnecting
                 ? t(($) => $.wecom.disconnecting)
                 : t(($) => $.wecom.disconnect)}

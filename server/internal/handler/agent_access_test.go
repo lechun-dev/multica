@@ -282,6 +282,8 @@ func TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability(t *testing.T) {
 		"visibility":      "workspace",
 		"permission_mode": "public_to",
 		"owner_id":        runtimeOwnerID,
+		"instructions":    "private instructions",
+		"custom_args":     []byte(`["private-arg"]`),
 	})
 	dbfx.Insert(t, "agent_invocation_target", testutil.Cols{
 		"agent_id":    agentID,
@@ -329,13 +331,12 @@ func TestListAgents_SharedAgentCarriesPrivateRuntimeAvailability(t *testing.T) {
 		}
 	}
 
-	var detail AgentResponse
+	if shared.Instructions != "" || len(shared.CustomArgs) != 0 {
+		t.Fatal("shared directory leaked profile settings")
+	}
 	testutil.Call(t, testHandler.GetAgent,
 		withURLParam(newRequestAs(memberID, "GET", "/api/agents/"+agentID, nil), "id", agentID)).
-		Want(http.StatusOK).JSON(&detail)
-	if detail.RuntimeAvailability != "online" {
-		t.Fatalf("GetAgent runtime_availability = %q, want online", detail.RuntimeAvailability)
-	}
+		Want(http.StatusForbidden)
 
 	// Archived agents short-circuit presence to "archived" and must not keep
 	// every client polling for a projection it will never consume. Keep an

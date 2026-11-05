@@ -43,7 +43,7 @@ import { useT } from "../../../i18n";
  * adds the explanatory chrome around it, so the two entry points can never
  * drift.
  */
-export function IntegrationsTab({ agent }: { agent: Agent }) {
+export function IntegrationsTab({ agent, readOnly = false }: { agent: Agent; readOnly?: boolean }) {
   const { t } = useT("agents");
   const { t: ts } = useT("settings");
   const wsId = useWorkspaceId();
@@ -255,6 +255,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
             // scan-to-bind CTA or the already-connected "Manage in Lark"
             // badge. It self-authorizes on agentOwnerId + role.
             <LarkAgentBindButton
+              readOnly={readOnly}
               agentId={agent.id}
               agentName={agent.name}
               agentOwnerId={agent.owner_id}
@@ -298,7 +299,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
               </p>
             </div>
           ) : (
-            <SlackAgentBindButton agentId={agent.id} agentName={agent.name} />
+            <SlackAgentBindButton readOnly={readOnly} agentId={agent.id} agentName={agent.name} />
           )}
         </div>
       </section>
@@ -339,6 +340,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
             </p>
           ) : (
             <DingTalkAgentBindButton
+              readOnly={readOnly}
               agentId={agent.id}
               agentName={agent.name}
               agentOwnerId={agent.owner_id}
@@ -400,7 +402,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
               </p>
             </div>
           ) : (
-            <WecomAgentBindButton agentId={agent.id} agentName={agent.name} />
+            <WecomAgentBindButton readOnly={readOnly} agentId={agent.id} agentName={agent.name} />
           )}
         </div>
       </section>
@@ -434,7 +436,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
               </p>
             </div>
           ) : (
-            <TelegramAgentBindButton agentId={agent.id} agentName={agent.name} />
+            <TelegramAgentBindButton readOnly={readOnly} agentId={agent.id} agentName={agent.name} />
           )}
         </div>
       </section>

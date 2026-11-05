@@ -164,11 +164,11 @@ describe("McpConfigTab", () => {
     mockRemoveServer.mockResolvedValue([]);
   });
 
-  it("renders redacted managed MCP without exposing add or edit controls", () => {
+  it("renders redacted managed MCP with add disabled and raw configuration hidden", () => {
     renderTab({ mcp_config: null, mcp_config_redacted: true });
 
     expect(screen.getByText(/hidden from your view/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /add mcp/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add mcp/i })).toBeDisabled();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
@@ -856,8 +856,8 @@ describe("McpConfigTab workspace servers", () => {
 
   // A member without edit rights can still read what the agent runs with —
   // the inventory carries no credential material — but every write affordance
-  // is hidden rather than left to 403 on click.
-  it("hides the assignment controls from a viewer who cannot edit", async () => {
+  // is disabled.
+  it("disables the assignment controls for a viewer who cannot edit", async () => {
     workspaceMcp.assigned = [wsServer({ enabled: true })];
     workspaceMcp.library = [wsServer({ id: "srv-9", name: "pickable" })];
     render(
@@ -879,13 +879,13 @@ describe("McpConfigTab workspace servers", () => {
 
     expect(await screen.findByText("shared-linear")).toBeInTheDocument();
     expect(screen.getByText("fetch")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Add MCP/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Rename server fetch/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Edit configuration fetch/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Delete MCP server fetch/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Add from workspace/ })).toBeNull();
-    expect(screen.queryByRole("switch")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Remove shared-linear/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Add MCP/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Rename server fetch/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Edit configuration fetch/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Delete MCP server fetch/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Add from workspace/ })).toBeDisabled();
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: /Remove shared-linear/i })).toBeDisabled();
   });
 
   it("points at workspace Settings when the library is empty", async () => {

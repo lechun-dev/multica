@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -45,18 +46,19 @@ func TestListOwnerAgentCatalog(t *testing.T) {
 	for _, tc := range []struct {
 		method, suffix string
 		handler        http.HandlerFunc
+		want           int
 	}{
-		{"GET", "", testHandler.GetAgent},
-		{"PUT", "", testHandler.UpdateAgent},
-		{"POST", "/restore", testHandler.RestoreAgent},
-		{"GET", "/env", testHandler.GetAgentEnv},
-		{"GET", "/tasks", testHandler.ListAgentTasks},
+		{"GET", "", testHandler.GetAgent, http.StatusForbidden},
+		{"PUT", "", testHandler.UpdateAgent, http.StatusForbidden},
+		{"POST", "/restore", testHandler.RestoreAgent, http.StatusForbidden},
+		{"GET", "/env", testHandler.GetAgentEnv, http.StatusForbidden},
+		{"GET", "/tasks", testHandler.ListAgentTasks, http.StatusOK},
 	} {
 		w := httptest.NewRecorder()
 		url := "/api/agents/" + agentID + tc.suffix
 		tc.handler(w, withURLParam(newRequest(tc.method, url, nil), "id", agentID))
-		if w.Code != http.StatusForbidden {
-			t.Errorf("workspace owner: %s %s: expected 403, got %d: %s", tc.method, url, w.Code, w.Body.String())
+		if w.Code != tc.want {
+			t.Errorf("workspace owner: %s %s: expected %d, got %d: %s", tc.method, url, tc.want, w.Code, w.Body.String())
 		}
 	}
 
@@ -87,7 +89,7 @@ func TestGetOwnerAgentDetail(t *testing.T) {
 	agentID, _, memberID := privateAgentTestFixture(t)
 	ctx := context.Background()
 	path := "/api/agents/catalog/" + agentID
-	if _, err := testPool.Exec(ctx, `UPDATE agent SET instructions = 'private prompt', model = 'test-model', thinking_level = 'high', max_concurrent_tasks = 6 WHERE id = $1`, agentID); err != nil {
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET instructions = 'private prompt', model = 'test-model', thinking_level = 'high', max_concurrent_tasks = 6, runtime_config = '{"gateway":{"token":"gateway-secret"}}', mcp_config = '{"token":"mcp-secret"}', custom_env = '{"TOKEN":"env-secret"}' WHERE id = $1`, agentID); err != nil {
 		t.Fatal(err)
 	}
 	request := func(req *http.Request, id string, want int) *httptest.ResponseRecorder {
@@ -107,9 +109,9 @@ func TestGetOwnerAgentDetail(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
 	}
-	allowed := []string{"id", "name", "owner_id", "created_at", "archived_at", "access_scope", "description", "updated_at", "model", "thinking_level", "max_concurrent_tasks", "runtime_bound"}
+	allowed := []string{"id", "name", "owner_id", "created_at", "archived_at", "access_scope", "description", "updated_at", "model", "thinking_level", "max_concurrent_tasks", "runtime_bound", "profile"}
 	if len(detail) != len(allowed) {
-		t.Fatalf("unexpected detail fields: %v", detail)
+		t.Fatalf("unexpected detail field count: got %d, want %d", len(detail), len(allowed))
 	}
 	for _, field := range allowed {
 		if _, ok := detail[field]; !ok {
@@ -123,6 +125,28 @@ func TestGetOwnerAgentDetail(t *testing.T) {
 		if got := string(detail[key]); got != want {
 			t.Errorf("%s: expected %s, got %s", key, want, got)
 		}
+	}
+	var profile AgentResponse
+	if err := json.Unmarshal(detail["profile"], &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.ID != agentID || profile.Instructions != "private prompt" || profile.Model != "test-model" {
+		t.Fatal("authorized profile is missing the agent's saved settings")
+	}
+	if !profile.McpConfigRedacted || len(profile.McpConfig) != 0 && string(profile.McpConfig) != "null" {
+		t.Fatal("raw MCP settings should be redacted")
+	}
+	if !profile.HasCustomEnv || profile.CustomEnvKeyCount != 1 {
+		t.Fatal("authorized profile should include environment variable count")
+	}
+	for _, secret := range []string{"gateway-secret", "mcp-secret", "env-secret", `"custom_env"`} {
+		if strings.Contains(w.Body.String(), secret) {
+			t.Errorf("profile leaked %q", secret)
+		}
+	}
+	gateway, _ := profile.RuntimeConfig.(map[string]any)["gateway"].(map[string]any)
+	if gateway["token"] != runtimeConfigGatewayTokenMask {
+		t.Fatal("gateway token is missing its mask")
 	}
 	if canMemberInvoke(t, agentID, testUserID) {
 		t.Error("catalog access must not grant invocation")
@@ -166,7 +190,8 @@ func TestWorkspaceOwnerCanInvokeSharedAgentButCannotEditIt(t *testing.T) {
 			t.Errorf("%s %s: expected %d, got %d: %s", req.Method, req.URL, want, w.Code, w.Body.String())
 		}
 	}
-	check(newRequest("GET", path, nil), testHandler.GetAgent, http.StatusOK)
+	check(newRequest("GET", path, nil), testHandler.GetAgent, http.StatusForbidden)
+	check(newRequest("GET", "/api/agents/catalog/"+agentID, nil), testHandler.GetOwnerAgentDetail, http.StatusOK)
 	check(newRequest("PUT", path, body), testHandler.UpdateAgent, http.StatusForbidden)
 	check(newRequest("DELETE", path, nil), testHandler.ArchiveAgent, http.StatusForbidden)
 	check(newRequest("GET", path+"/env", nil), testHandler.GetAgentEnv, http.StatusForbidden)

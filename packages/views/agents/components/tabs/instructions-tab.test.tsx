@@ -48,10 +48,10 @@ const baseAgent: Agent = {
   archived_by: null,
 };
 
-function tab(agent: Agent, onSave = vi.fn().mockResolvedValue(undefined)) {
+function tab(agent: Agent, onSave = vi.fn().mockResolvedValue(undefined), canEdit = true) {
   return (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <InstructionsTab agent={agent} onSave={onSave} />
+      <InstructionsTab agent={agent} onSave={onSave} canEdit={canEdit} />
     </I18nProvider>
   );
 }
@@ -65,6 +65,23 @@ describe("InstructionsTab persisted-state synchronization", () => {
     act(() => {
       configStore.getState().setAgentConversationStartersSupported(false);
     });
+  });
+
+  it("keeps the saved instructions and suggestions visible when editing is unavailable", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(tab(baseAgent, onSave, false));
+
+    const instructions = screen.getByLabelText("System prompt");
+    await user.type(instructions, "Do not save this.");
+    expect(instructions).toHaveValue(baseAgent.instructions);
+    const suggestion = screen.getByLabelText("Suggestion 1 label");
+    expect(suggestion).toHaveValue(persistedPrompt.label);
+    expect(suggestion).toBeDisabled();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    await user.click(save);
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("preserves an unsaved prompt across an equivalent agent-list refetch", async () => {

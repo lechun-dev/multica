@@ -106,6 +106,7 @@ export function AccessPicker({
 
   /** Wrapper that marks the picker as interacted and updates the draft scope. */
   const selectDraftScope = (scope: AccessScope) => {
+    if (!canEdit) return;
     setHasInteracted(true);
     setDraftScope(scope);
   };
@@ -188,6 +189,7 @@ export function AccessPicker({
   }, [readyChange, onReadyChange]);
 
   const toggleMember = (userId: string, checked: boolean) => {
+    if (!canEdit) return;
     setDraftMembers((current) => {
       const next = new Set(current);
       if (checked) next.add(userId);
@@ -197,7 +199,7 @@ export function AccessPicker({
   };
 
   const save = async () => {
-    if (!onChange || saving || !draftChange) return;
+    if (!canEdit || !onChange || saving || !draftChange) return;
     setSaving(true);
     try {
       // Capture the exact proposed grants before awaiting acknowledgement.
@@ -211,38 +213,8 @@ export function AccessPicker({
     }
   };
 
-  if (!canEdit) {
-    const summaryLabel = persistedPrivate
-      ? t(($) => $.access.trigger_private)
-      : persistedWorkspace
-        ? t(($) => $.access.trigger_workspace)
-        : persistedMembers.length > 0
-          ? t(($) => $.access.trigger_members_count, {
-              count: persistedMembers.length,
-            })
-          : t(($) => $.access.trigger_members_empty);
-
-    return (
-      <div
-        className="flex items-start gap-3 px-4 py-4"
-        aria-label={t(($) => $.access.owner_only_readonly)}
-        data-testid="access-readonly"
-      >
-        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <Lock className="size-4" aria-hidden="true" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-body font-medium">{summaryLabel}</p>
-          <p className="mt-0.5 text-caption leading-5 text-muted-foreground">
-            {t(($) => $.access.owner_only_readonly)}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <fieldset>
+    <fieldset disabled={!canEdit}>
       {sharingConfirmation}
       <legend className="sr-only">{t(($) => $.access.tooltip)}</legend>
 
@@ -294,6 +266,7 @@ export function AccessPicker({
                     >
                       <Checkbox
                         id={id}
+                        disabled={!canEdit}
                         checked={draftMembers.includes(member.user_id)}
                         onCheckedChange={(value) =>
                           toggleMember(member.user_id, value === true)
@@ -341,7 +314,7 @@ export function AccessPicker({
             type="button"
             onClick={() => void save()}
             disabled={
-              !onChange || !dirty || saving || (draftScope === "members" && !hasMemberTarget)
+              !canEdit || !onChange || !dirty || saving || (draftScope === "members" && !hasMemberTarget)
             }
           >
             {saving ? (

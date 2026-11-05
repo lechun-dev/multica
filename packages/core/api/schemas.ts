@@ -105,6 +105,52 @@ const OwnerAgentCatalogEntrySchema = z.object({
 export const OwnerAgentCatalogSchema = z.array(OwnerAgentCatalogEntrySchema);
 export type OwnerAgentCatalogEntry = z.infer<typeof OwnerAgentCatalogSchema>[number];
 
+export const AgentProfileSchema = z.object({
+  id: z.string().min(1),
+  workspace_id: z.string().min(1),
+  owner_id: z.string().nullable(),
+  name: z.string(),
+  description: z.string(),
+  instructions: z.string(),
+  system_key: z.string().optional(),
+  system_instructions: z.string().optional(),
+  avatar_url: z.string().nullable(),
+  runtime_id: z.string(),
+  runtime_bound: z.boolean().optional(),
+  runtime_availability: z.enum(["online", "unstable", "offline"]).optional().catch(undefined),
+  runtime_mode: z.enum(["local", "cloud"]).catch("local"),
+  runtime_config: z.record(z.string(), z.unknown()),
+  custom_args: z.array(z.string()),
+  has_custom_env: z.boolean().optional(),
+  custom_env_key_count: z.number().int().nonnegative().optional(),
+  mcp_config_redacted: z.boolean().optional(),
+  composio_toolkit_allowlist: z.array(z.string()).optional(),
+  composio_toolkit_allowlist_redacted: z.boolean().optional(),
+  conversation_starters: z.array(z.object({ label: z.string(), prompt: z.string() })).nullish().transform((items) => items ?? []),
+  visibility: z.enum(["private", "workspace"]).catch("private"),
+  permission_mode: z.enum(["private", "public_to"]).catch("private"),
+  invocation_targets: z.array(z.object({
+    target_type: z.enum(["workspace", "member", "team"]),
+    target_id: z.string().nullable(),
+  })),
+  status: z.enum(["idle", "working", "blocked", "error", "offline"]).catch("offline"),
+  max_concurrent_tasks: z.number().int().positive(),
+  model: z.string(),
+  thinking_level: z.string().optional(),
+  service_tier: z.string().optional(),
+  skills: z.array(z.object({
+    id: z.string(), name: z.string(), description: z.string(), enabled: z.boolean().optional(),
+  })),
+  disabled_runtime_skills: z.array(z.object({
+    runtime_id: z.string(), provider: z.string(), root: z.enum(["provider", "universal", "plugin"]),
+    key: z.string(), name: z.string().optional(), plugin: z.string().optional(),
+  })).nullish().transform((items) => items ?? []),
+  created_at: z.string(),
+  updated_at: z.string(),
+  archived_at: z.string().nullable(),
+  archived_by: z.string().nullable(),
+});
+
 export const OwnerAgentDetailSchema = OwnerAgentCatalogEntrySchema.extend({
   access_scope: z.enum(["owner-only", "specific-people", "workspace"]),
   description: z.string().default(""),
@@ -113,6 +159,7 @@ export const OwnerAgentDetailSchema = OwnerAgentCatalogEntrySchema.extend({
   thinking_level: z.string().default(""),
   max_concurrent_tasks: z.number().int().positive(),
   runtime_bound: z.boolean(),
+  profile: AgentProfileSchema.optional(),
 });
 export type OwnerAgentDetail = z.infer<typeof OwnerAgentDetailSchema>;
 

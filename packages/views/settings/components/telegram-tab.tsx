@@ -252,11 +252,13 @@ export function TelegramAgentBindButton({
   agentId,
   agentName,
   className,
+  readOnly = false,
   onShowConnectedDetails,
 }: {
   agentId: string;
   agentName?: string;
   className?: string;
+  readOnly?: boolean;
   /** Compact read-only connected row that invokes this instead of the full
    * badge — the agent inspector passes a "jump to the Integrations tab"
    * handler so management actions live in one place. */
@@ -297,7 +299,7 @@ export function TelegramAgentBindButton({
         className={className}
       />
     ) : (
-      <TelegramAgentBotConnectedBadge installation={existing} className={className} />
+      <TelegramAgentBotConnectedBadge installation={existing} className={className} readOnly={readOnly} />
     );
   }
 
@@ -310,6 +312,7 @@ export function TelegramAgentBindButton({
   }
 
   async function handleSubmit() {
+    if (readOnly) return;
     const bot_token = botToken.trim();
     if (submitting || !agentId || !bot_token) return;
     setSubmitting(true);
@@ -344,7 +347,7 @@ export function TelegramAgentBindButton({
         variant="outline"
         size="sm"
         onClick={() => setDialogOpen(true)}
-        disabled={!agentId}
+        disabled={readOnly || !agentId}
         title={
           agentName
             ? t(($) => $.telegram.bind_button_title, { agent: agentName })
@@ -357,7 +360,7 @@ export function TelegramAgentBindButton({
       </Button>
 
       <Dialog
-        open={dialogOpen}
+        open={!readOnly && dialogOpen}
         onOpenChange={(v) => (v ? setDialogOpen(true) : closeDialog())}
       >
         <DialogContent className="sm:max-w-lg" data-testid="telegram-connect-dialog">
@@ -456,9 +459,11 @@ function TelegramAgentBotStatusRow({
 function TelegramAgentBotConnectedBadge({
   installation,
   className,
+  readOnly = false,
 }: {
   installation: TelegramInstallation;
   className?: string;
+  readOnly?: boolean;
 }) {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
@@ -468,7 +473,7 @@ function TelegramAgentBotConnectedBadge({
   const [disconnecting, setDisconnecting] = useState(false);
 
   async function handleDisconnect() {
-    if (disconnecting) return;
+    if (readOnly || disconnecting) return;
     setDisconnecting(true);
     try {
       await api.deleteTelegramInstallation(wsId, installation.id);
@@ -501,7 +506,7 @@ function TelegramAgentBotConnectedBadge({
           variant="destructive"
           size="sm"
           onClick={() => setConfirmOpen(true)}
-          disabled={disconnecting}
+          disabled={readOnly || disconnecting}
           title={t(($) => $.telegram.agent_bot_disconnect_tooltip)}
           aria-label={t(($) => $.telegram.disconnect)}
           data-testid="telegram-agent-bot-disconnect"
@@ -516,6 +521,7 @@ function TelegramAgentBotConnectedBadge({
       {installation.bot_username && (
         <button
           type="button"
+          disabled={readOnly}
           onClick={() => openExternal(`https://t.me/${installation.bot_username}`)}
           className="inline-flex items-center gap-1 text-caption text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
           title={t(($) => $.telegram.agent_bot_manage_tooltip)}
@@ -526,7 +532,7 @@ function TelegramAgentBotConnectedBadge({
       )}
 
       <AlertDialog
-        open={confirmOpen}
+        open={!readOnly && confirmOpen}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setConfirmOpen(false);
         }}
@@ -541,10 +547,10 @@ function TelegramAgentBotConnectedBadge({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
+            <AlertDialogCancel disabled={readOnly || disconnecting}>
               {t(($) => $.telegram.disconnect_confirm_cancel)}
             </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
+            <AlertDialogAction onClick={handleDisconnect} disabled={readOnly || disconnecting}>
               {disconnecting
                 ? t(($) => $.telegram.disconnecting)
                 : t(($) => $.telegram.disconnect)}

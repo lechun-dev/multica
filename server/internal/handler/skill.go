@@ -2585,7 +2585,7 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ListAgentSkills(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, id)
+	agent, ok := h.loadAgentForProfile(w, r, id, true)
 	if !ok {
 		return
 	}
@@ -2807,6 +2807,6 @@ func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request
 		resp[i].Enabled = &s.Enabled
 	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
-	h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID), "skills": resp})
+	h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID)})
 	writeJSON(w, http.StatusOK, resp)
 }

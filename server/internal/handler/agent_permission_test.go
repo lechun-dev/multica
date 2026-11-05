@@ -631,11 +631,6 @@ func createPermissionTestAdmin(t *testing.T, email string) string {
 	return userID
 }
 
-// TestUpdateAgent_AccessChangeIsOwnerOnly locks the interaction-bug fix
-// (separate PR): a workspace ADMIN who is NOT the agent owner may edit other
-// agent fields but must NOT change access — a real permission change returns an
-// explicit 403 (no more silent "bounce back"), while a no-op resubmit and
-// edits to other fields still succeed. The agent owner can change access.
 func TestUpdateAgent_AccessChangeIsOwnerOnly(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -667,17 +662,15 @@ func TestUpdateAgent_AccessChangeIsOwnerOnly(t *testing.T) {
 		t.Errorf("access must be unchanged after rejected admin write, got %q", a.PermissionMode)
 	}
 
-	// Admin no-op resubmit of the CURRENT permission (PATCH-as-PUT) → tolerated.
+	// Even an unchanged permission or an unrelated field cannot be saved by a non-owner.
 	if code := put(adminID, map[string]any{
 		"permission_mode":    "public_to",
 		"invocation_targets": []map[string]any{{"target_type": "workspace"}},
-	}); code != http.StatusOK {
-		t.Errorf("admin no-op permission resubmit: expected 200, got %d", code)
+	}); code != http.StatusForbidden {
+		t.Errorf("admin no-op permission resubmit: expected 403, got %d", code)
 	}
-
-	// Admin editing a NON-permission field still works.
-	if code := put(adminID, map[string]any{"description": "renamed by admin"}); code != http.StatusOK {
-		t.Errorf("admin editing other fields: expected 200, got %d", code)
+	if code := put(adminID, map[string]any{"description": "renamed by admin"}); code != http.StatusForbidden {
+		t.Errorf("admin editing other fields: expected 403, got %d", code)
 	}
 
 	// The owner CAN change access.
@@ -686,53 +679,5 @@ func TestUpdateAgent_AccessChangeIsOwnerOnly(t *testing.T) {
 	}
 	if n := invocationTargetCount(t, agentID); n != 0 {
 		t.Errorf("owner set private: expected 0 targets, got %d", n)
-	}
-}
-
-// TestUpdateAgent_LegacyVisibilityNoOpForMemberOnlyPublicTo locks the PR #4853
-// compatibility fix: a member-only public_to agent DERIVES legacy visibility
-// "private", so an admin (non-owner) echoing visibility:"private" via an old
-// client / PATCH-as-PUT while editing another field must be treated as a NO-OP
-// (200, targets unchanged) — not misread as a public_to→private downgrade
-// (403). Submitting visibility:"workspace" is a real change and still 403.
-func TestUpdateAgent_LegacyVisibilityNoOpForMemberOnlyPublicTo(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-
-	memberX := createPermissionTestMember(t, "perm-legacyvis-x@multica.test")
-	agentID := createPublicToAgentWithTargets(t, "legacy-vis-member-only-agent", []map[string]any{
-		{"target_type": "member", "target_id": memberX},
-	})
-	adminID := createPermissionTestAdmin(t, "perm-legacyvis-admin@multica.test")
-	if _, err := testPool.Exec(ctx, `INSERT INTO agent_invocation_target (agent_id, target_type, target_id) VALUES ($1, 'member', $2)`, agentID, adminID); err != nil {
-		t.Fatalf("explicitly share with admin: %v", err)
-	}
-
-	put := func(actorID string, body map[string]any) int {
-		rec := httptest.NewRecorder()
-		r := newRequestAs(actorID, "PUT", "/api/agents/"+agentID, body)
-		r = withURLParam(r, "id", agentID)
-		testHandler.UpdateAgent(rec, r)
-		return rec.Code
-	}
-
-	// Derived legacy visibility of a member-only public_to agent is "private".
-	// Admin echoing that back while editing description → 200 no-op.
-	if code := put(adminID, map[string]any{"visibility": "private", "description": "admin note"}); code != http.StatusOK {
-		t.Fatalf("admin legacy visibility=private no-op: expected 200, got %d", code)
-	}
-	// Access must be untouched: still public_to with the one member target.
-	if a, _ := testHandler.Queries.GetAgent(ctx, util.MustParseUUID(agentID)); a.PermissionMode != "public_to" {
-		t.Errorf("permission_mode must stay public_to after legacy no-op, got %q", a.PermissionMode)
-	}
-	if n := invocationTargetCount(t, agentID); n != 2 {
-		t.Errorf("member targets must be intact after legacy no-op, got %d targets", n)
-	}
-
-	// Admin submitting a REAL legacy change (workspace) is still rejected.
-	if code := put(adminID, map[string]any{"visibility": "workspace"}); code != http.StatusForbidden {
-		t.Errorf("admin legacy visibility=workspace (real change): expected 403, got %d", code)
 	}
 }
