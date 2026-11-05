@@ -130,7 +130,7 @@
     "load_failed_title": "エージェントを読み込めませんでした",
     "load_failed_default": "エージェントの取得中に問題が発生しました。",
     "no_access_title": "このエージェントにアクセスできません",
-    "no_access_hint": "この非公開エージェントは、エージェントのオーナーまたはワークスペースの admin のみが閲覧できます。",
+    "no_access_hint": "このエージェントを利用するには、オーナーに共有を依頼してください。",
     "try_again": "再試行",
     "archived_banner": "このエージェントはアーカイブされています。割り当てやメンションはできません。",
     "runtime_required_banner": "このエージェントの設定と履歴は保持されていますが、実行するにはランタイムを設定する必要があります。",
@@ -282,7 +282,7 @@
     "access": {
       "label": "アクセス",
       "private_title": "プライベート",
-      "private_desc": "あなたとワークスペース管理者が表示・実行できます",
+      "private_desc": "このエージェントを実行できるのはあなただけです",
       "public_title": "公開",
       "public_desc": "このエージェントを表示できる人を選択",
       "public_workspace_option": "ワークスペース全員",
@@ -656,7 +656,7 @@
   "visibility": {
     "private": {
       "label": "個人",
-      "tooltip": "個人 · あなた、ワークスペース管理者、共有相手に表示"
+      "tooltip": "個人 · オーナーと共有相手のみ実行できます"
     },
     "workspace": {
       "label": "ワークスペース",
@@ -677,7 +677,7 @@
     "trigger_members_empty": "特定のメンバー",
     "trigger_team": "チーム",
     "private_title": "プライベート",
-    "private_desc": "あなたとワークスペース管理者が表示・実行できます",
+    "private_desc": "このエージェントを実行できるのはあなただけです",
     "shared_title": "共有",
     "shared_desc": "このエージェントを表示できる人を選択",
     "shared_target_required": "保存する前に、ワークスペースまたは1人以上のメンバーを選択してください。",

@@ -10,16 +10,15 @@ export const VISIBILITY_LABEL: Record<AgentVisibility, string> = {
   private: "Personal",
 };
 
-/** 2026-10-09 coder(lq): Visibility is also invocation authority; administrators keep visibility. */
 export const VISIBILITY_DESCRIPTION: Record<AgentVisibility, string> = {
   workspace: "All members can see and run",
-  private: "You and workspace administrators can see and run",
+  private: "Only you can run this agent",
 };
 
-/** 2026-10-09 coder(lq): Read-only badges describe the same scope used for invocation. */
+/** 2026-11-05 coder(lq): The legacy Personal badge also covers agents shared with specific people. */
 export const VISIBILITY_TOOLTIP: Record<AgentVisibility, string> = {
   workspace: "Workspace — all members can see and run",
-  private: "Personal — visible to the owner, workspace administrators and shared people",
+  private: "Personal — only the owner and people it’s shared with can run it",
 };
 
 export function visibilityLabel(v: AgentVisibility): string {

@@ -5,6 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
@@ -116,4 +120,85 @@ func TestAssignAgent_DenialReasonNamesPermissionNotMode(t *testing.T) {
 		).Want(http.StatusForbidden)
 		assertDenialReason(t, resp, "you do not have permission to assign work to this squad")
 	})
+}
+
+func TestCreateIssue_DelegationCannotBypassPrivateAgentAccess(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	targetID, targetOwnerID, sourceOwnerID := privateAgentTestFixture(t)
+	adminID := dbfx.User(t, "LC-3211 workspace administrator", "lc3211-admin@multica.test")
+	dbfx.Member(t, testWorkspaceID, adminID, "admin")
+	sourceRuntimeID := dbfx.Runtime(t, "LC-3211 source runtime", testutil.Cols{"owner_id": sourceOwnerID})
+	sourceAgentID := dbfx.Agent(t, "LC-3211 delegating agent", sourceRuntimeID, testutil.Cols{
+		"owner_id":        sourceOwnerID,
+		"visibility":      "workspace",
+		"permission_mode": "public_to",
+	})
+	dbfx.InsertNoID(t, "agent_invocation_target", testutil.Cols{
+		"agent_id":    sourceAgentID,
+		"target_type": "workspace",
+		"target_id":   testWorkspaceID,
+	}, "agent_id=$1", sourceAgentID)
+
+	// 2026-11-05 coder(lq): LC-3211: the task token identifies the source
+	// runtime owner, but delegation authority comes from the stored run originator.
+	createIssue := middleware.Auth(testHandler.Queries, nil, nil, nil)(http.HandlerFunc(testHandler.CreateIssue))
+	for _, tc := range []struct {
+		name, originatorID string
+		wantStatus         int
+	}{
+		{"admin cannot delegate to another member's private agent", adminID, http.StatusForbidden},
+		{"workspace owner cannot delegate to another member's private agent", testUserID, http.StatusForbidden},
+		{"agent owner can delegate to their own private agent", targetOwnerID, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sourceTaskID := dbfx.Task(t, sourceAgentID, testutil.Cols{
+				"runtime_id":          sourceRuntimeID,
+				"status":              "running",
+				"originator_user_id":  tc.originatorID,
+				"accountable_user_id": tc.originatorID,
+			})
+			token, err := auth.GenerateAgentTaskToken()
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbfx.Insert(t, "task_token", testutil.Cols{
+				"token_hash":   auth.HashToken(token),
+				"task_id":      sourceTaskID,
+				"agent_id":     sourceAgentID,
+				"workspace_id": testWorkspaceID,
+				"user_id":      sourceOwnerID,
+				"expires_at":   testutil.Raw("now() + interval '1 hour'"),
+			})
+
+			title := "LC-3211 delegated issue " + uuid.NewString()
+			dbfx.Cleanup(t, `DELETE FROM issue WHERE workspace_id=$1 AND title=$2`, testWorkspaceID, title)
+			dbfx.Cleanup(t, `DELETE FROM agent_task_queue WHERE agent_id=$1`, targetID)
+			req := newRequest(http.MethodPost, "/api/issues", map[string]any{
+				"title":         title,
+				"assignee_type": "agent",
+				"assignee_id":   targetID,
+			})
+			req.Header.Set("Authorization", "Bearer "+token)
+			resp := testutil.Call(t, createIssue.ServeHTTP, req).Want(tc.wantStatus)
+			if tc.wantStatus == http.StatusForbidden {
+				assertDenialReason(t, resp, "you do not have permission to assign work to this agent")
+				if n := dbfx.Count(t, `SELECT count(*) FROM issue WHERE workspace_id=$1 AND title=$2`, testWorkspaceID, title); n != 0 {
+					t.Fatalf("denied delegation created %d issues", n)
+				}
+				if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1`, targetID); n != 0 {
+					t.Fatalf("denied delegation created %d queue entries", n)
+				}
+				return
+			}
+
+			var issue IssueResponse
+			resp.JSON(&issue)
+			if n := dbfx.Count(t, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1 AND issue_id=$2 AND status='queued' AND originator_user_id=$3`, targetID, issue.ID, tc.originatorID); n != 1 {
+				t.Fatalf("authorized delegation queued %d tasks for the owner, want 1", n)
+			}
+		})
+	}
 }

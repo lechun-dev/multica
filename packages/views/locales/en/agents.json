@@ -147,7 +147,7 @@
     "load_failed_title": "Couldn't load this agent",
     "load_failed_default": "Something went wrong fetching this agent.",
     "no_access_title": "You don't have access to this agent",
-    "no_access_hint": "Only the agent owner or a workspace admin can view this private agent.",
+    "no_access_hint": "To use this agent, ask its owner to share it with you.",
     "try_again": "Try again",
     "archived_banner": "This agent is archived. It cannot be assigned or mentioned.",
     "runtime_required_banner": "This agent kept its configuration and history, but needs a runtime before it can run.",
@@ -394,7 +394,7 @@
     "access": {
       "label": "Access",
       "private_title": "Private",
-      "private_desc": "You and workspace administrators can see and run this agent",
+      "private_desc": "Only you can run this agent",
       "public_title": "Public",
       "public_desc": "Choose who can see this agent",
       "public_workspace_option": "Everyone in this workspace",
@@ -773,7 +773,7 @@
   "visibility": {
     "private": {
       "label": "Personal",
-      "tooltip": "Personal · visible to you, workspace administrators and people you share with"
+      "tooltip": "Personal · only the owner and people it’s shared with can run it"
     },
     "workspace": {
       "label": "Workspace",
@@ -794,7 +794,7 @@
     "trigger_members_empty": "Specific people",
     "trigger_team": "Team",
     "private_title": "Only me",
-    "private_desc": "You and workspace administrators can see and run this agent",
+    "private_desc": "Only you can run this agent",
     "shared_title": "Shared",
     "shared_desc": "Choose who can see this agent",
     "shared_target_required": "Select at least one person before saving.",

@@ -313,6 +313,9 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
 
     // Legacy copy is rendered — matches VISIBILITY_DESCRIPTION.
     expect(screen.getByText("Personal")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only you can run this agent"),
+    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
       target: { value: "Legacy Agent" },
@@ -335,6 +338,9 @@ describe("CreateAgentDialog access picker (MUL-4010, feature-flag gated)", () =>
 
     // New copy replaces the old one.
     expect(screen.getByRole("radio", { name: /^Only me/i })).toBeInTheDocument();
+    expect(
+      screen.getByText("Only you can run this agent"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Entire workspace")).toBeInTheDocument();
     expect(screen.getByText("Specific people")).toBeInTheDocument();
 

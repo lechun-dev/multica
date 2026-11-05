@@ -82,6 +82,9 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
       screen.getByRole("radio", { name: /^Only me/i }),
     ).toBeChecked();
     expect(
+      screen.getByText("Only you can run this agent"),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("radio", { name: /^Entire workspace/i }),
     ).not.toBeChecked();
     expect(

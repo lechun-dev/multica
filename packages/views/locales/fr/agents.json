@@ -147,7 +147,7 @@
     "load_failed_title": "Impossible de charger cet agent",
     "load_failed_default": "Une erreur est survenue lors de la récupération de cet agent.",
     "no_access_title": "Vous n'avez pas accès à cet agent",
-    "no_access_hint": "Seul le propriétaire de l'agent ou un administrateur de l'espace de travail peut consulter cet agent privé.",
+    "no_access_hint": "Pour utiliser cet agent, demandez à son propriétaire de le partager avec vous.",
     "try_again": "Réessayer",
     "archived_banner": "Cet agent est archivé. Il ne peut être ni assigné ni mentionné.",
     "runtime_required_banner": "Cet agent a conservé sa configuration et son historique, mais il lui faut un runtime pour pouvoir s'exécuter.",
@@ -396,7 +396,7 @@
     "access": {
       "label": "Accès",
       "private_title": "Privé",
-      "private_desc": "Vous et les administrateurs de l’espace pouvez voir et lancer cet agent",
+      "private_desc": "Vous seul pouvez lancer cet agent",
       "public_title": "Public",
       "public_desc": "Choisissez qui peut voir cet agent",
       "public_workspace_option": "Tout le monde dans cet espace de travail",
@@ -775,7 +775,7 @@
   "visibility": {
     "private": {
       "label": "Personnel",
-      "tooltip": "Personnel · visible par vous, les administrateurs et les personnes autorisées"
+      "tooltip": "Personnel · seuls le propriétaire et les personnes avec qui l’agent est partagé peuvent le lancer"
     },
     "workspace": {
       "label": "Espace de travail",
@@ -796,7 +796,7 @@
     "trigger_members_empty": "Personnes précises",
     "trigger_team": "Équipe",
     "private_title": "Moi uniquement",
-    "private_desc": "Vous et les administrateurs de l’espace pouvez voir et lancer cet agent",
+    "private_desc": "Vous seul pouvez lancer cet agent",
     "shared_title": "Partagé",
     "shared_desc": "Choisissez qui peut voir cet agent",
     "shared_target_required": "Sélectionnez au moins une personne avant d'enregistrer.",

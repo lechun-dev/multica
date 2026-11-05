@@ -344,6 +344,9 @@ describe("AgentDetailPage direct-detail fallback", () => {
     expect(
       await screen.findByText("You don't have access to this agent"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText("To use this agent, ask its owner to share it with you."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Agent not found")).not.toBeInTheDocument();
   });
 
@@ -456,9 +459,8 @@ describe("AgentDetailPage DM button", () => {
   });
 
   it("shows a toast instead of navigating when the user lacks chat access", async () => {
-    // Post-MUL-3963 a workspace admin can VIEW another member's private agent
-    // but can no longer invoke (chat with) it — the exact case where the DM
-    // button must explain itself rather than navigate.
+    // 2026-11-05 coder(lq): Simulate a stale cached agent after access is revoked.
+    // Even a workspace admin must not be able to start a chat from this state.
     agentsRef.current = [
       { ...baseAgent, permission_mode: "private", invocation_targets: [] },
     ];

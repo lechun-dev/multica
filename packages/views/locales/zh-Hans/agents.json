@@ -138,7 +138,7 @@
     "load_failed_title": "无法加载该智能体",
     "load_failed_default": "获取该智能体时出错。",
     "no_access_title": "你没有访问该智能体的权限",
-    "no_access_hint": "只有该私密智能体的拥有者或工作区管理员可以查看。",
+    "no_access_hint": "如需使用该智能体，请联系其所有者向你共享。",
     "try_again": "重试",
     "archived_banner": "该智能体已归档，无法被分配或提及。",
     "runtime_required_banner": "该智能体的配置和历史记录已保留，但需要绑定运行时后才能运行。",
@@ -384,7 +384,7 @@
     "access": {
       "label": "访问权限",
       "private_title": "私有",
-      "private_desc": "你和工作区管理员可见，可见即可调用",
+      "private_desc": "只有你可以运行该智能体",
       "public_title": "公开",
       "public_desc": "选择哪些人可以看到该智能体",
       "public_workspace_option": "工作区内所有人",
@@ -758,7 +758,7 @@
   "visibility": {
     "private": {
       "label": "个人",
-      "tooltip": "个人 · 你、工作区管理员及共享对象可见"
+      "tooltip": "个人 · 仅所有者及其明确共享的人可以运行"
     },
     "workspace": {
       "label": "工作区",
@@ -779,7 +779,7 @@
     "trigger_members_empty": "指定成员",
     "trigger_team": "团队",
     "private_title": "仅自己",
-    "private_desc": "你和工作区管理员可见，可见即可调用",
+    "private_desc": "只有你可以运行该智能体",
     "shared_title": "共享",
     "shared_desc": "选择哪些人可以看到该智能体",
     "shared_target_required": "保存前，请至少选择一名成员。",
