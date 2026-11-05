@@ -2734,6 +2734,7 @@ func TestClaimResponseAgentIdentityMatches(t *testing.T) {
 }
 
 type claimRuntimeGuardTask struct {
+	TriggerThreadID               string          `json:"trigger_thread_id"`
 	PriorSessionID                string          `json:"prior_session_id"`
 	PriorWorkDir                  string          `json:"prior_work_dir"`
 	PriorSessionResumeUnavailable bool            `json:"prior_session_resume_unavailable"`
@@ -3041,13 +3042,12 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	`, agentID, runtimeID, commentIssueID, triggerCommentID)
 
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	// Comment-triggered tasks now resume the prior session by default (same
-	// runtime), so the agent keeps the issue's conversation context across turns.
-	if task.PriorSessionID != "comment-prior-session" {
-		t.Fatalf("comment trigger: expected PriorSessionID='comment-prior-session' (resume default-on), got %q", task.PriorSessionID)
+	// An independent comment thread cannot inherit the issue's unscoped run.
+	if task.PriorSessionID != "" {
+		t.Fatalf("new comment thread inherited unscoped session: %q", task.PriorSessionID)
 	}
-	if task.PriorWorkDir != "/tmp/comment-prior-workdir" {
-		t.Fatalf("comment trigger: expected PriorWorkDir='/tmp/comment-prior-workdir', got %q", task.PriorWorkDir)
+	if task.PriorWorkDir != "" {
+		t.Fatalf("new comment thread inherited unscoped workdir: %q", task.PriorWorkDir)
 	}
 	dbfx.Exec(t, `
 		UPDATE agent_task_queue
@@ -4253,20 +4253,25 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment newcount runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment newcount agent")
 
+	threadRootID := dbfx.Comment(t, issueID, "same-thread context", testutil.Cols{
+		"created_at": testutil.Raw("now() - interval '2 hours'"),
+	})
+
 	// A prior run establishes the "since" anchor (its started_at, in the past).
 	// It must be RESUMABLE — the delta is measured from the run whose session
 	// the claim hands back, so a prior run with no session is a cold start and
 	// reports no delta at all (MUL-7344).
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
-		"runtime_id":   runtimeID,
-		"issue_id":     issueID,
-		"status":       "completed",
-		"session_id":   "newcount-prior-session",
-		"started_at":   testutil.Raw("now() - interval '1 hour'"),
-		"completed_at": testutil.Raw("now() - interval '50 minutes'"),
+		"trigger_comment_id": threadRootID,
+		"runtime_id":         runtimeID,
+		"issue_id":           issueID,
+		"status":             "completed",
+		"session_id":         "newcount-prior-session",
+		"started_at":         testutil.Raw("now() - interval '1 hour'"),
+		"completed_at":       testutil.Raw("now() - interval '50 minutes'"),
 	})
 
-	threadRootID := dbfx.Comment(t, issueID, "same-thread context")
+	dbfx.Comment(t, issueID, "new same-thread context", testutil.Cols{"parent_id": threadRootID})
 
 	dbfx.Comment(t, issueID, "unrelated thread context")
 
@@ -4315,20 +4320,25 @@ func TestClaimTaskByRuntime_CommentTaskMarksComputedZeroDelta(t *testing.T) {
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Zero delta runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Zero delta agent")
 
+	threadRootID := dbfx.Comment(t, issueID, "same-thread context", testutil.Cols{
+		"created_at": testutil.Raw("now() - interval '2 hours'"),
+	})
+
 	// A prior RESUMABLE run supplies the anchor, so the count query runs and
 	// returns 0. Without a session there would be nothing to resume, hence no
 	// delta to report (MUL-7344).
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
-		"runtime_id":   runtimeID,
-		"issue_id":     issueID,
-		"status":       "completed",
-		"session_id":   "zero-delta-prior-session",
-		"started_at":   testutil.Raw("now() - interval '1 hour'"),
-		"completed_at": testutil.Raw("now() - interval '50 minutes'"),
+		"trigger_comment_id": threadRootID,
+		"runtime_id":         runtimeID,
+		"issue_id":           issueID,
+		"status":             "completed",
+		"session_id":         "zero-delta-prior-session",
+		"started_at":         testutil.Raw("now() - interval '1 hour'"),
+		"completed_at":       testutil.Raw("now() - interval '50 minutes'"),
 	})
 
 	// Only the trigger, which is injected into the prompt and never counted.
-	_, triggerID := createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	_, triggerID := createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadRootID)
 
 	resp := claimCommentTask(t, runtimeID, "zero-delta-claim")
 	if resp.Task.TriggerCommentID != triggerID {
@@ -4432,17 +4442,22 @@ func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment resume runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment resume agent")
 
+	threadRootID := dbfx.Comment(t, issueID, "same-thread context", testutil.Cols{
+		"created_at": testutil.Raw("now() - interval '2 hours'"),
+	})
+
 	// A prior completed task on the same (agent, issue, runtime) with a session.
 	const priorSession = "sess-prior-123"
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
-		"runtime_id":   runtimeID,
-		"issue_id":     issueID,
-		"status":       "completed",
-		"session_id":   priorSession,
-		"completed_at": testutil.Raw("now()"),
+		"trigger_comment_id": threadRootID,
+		"runtime_id":         runtimeID,
+		"issue_id":           issueID,
+		"status":             "completed",
+		"session_id":         priorSession,
+		"completed_at":       testutil.Raw("now()"),
 	})
 
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadRootID)
 
 	resp := claimCommentTask(t, runtimeID, "comment-resume-default")
 	if resp.Task.PriorSessionID != priorSession {

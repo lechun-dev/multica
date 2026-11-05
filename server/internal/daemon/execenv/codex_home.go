@@ -58,7 +58,7 @@ type CodexHomeOptions struct {
 	// both macOS and Linux paths deterministically.
 	GOOS string
 	// ResumeSessionID is the Codex thread/session ID this run intends to
-	// resume, when any. It is consulted when populating the per-issue session
+	// resume, when any. It is consulted when populating the per-conversation session
 	// store (local_directory tasks) or migrating a legacy per-task home whose
 	// sessions/ still symlinks the shared ~/.codex/sessions: the single rollout
 	// for this ID is exposed so thread/resume can find it without pulling the
@@ -69,17 +69,17 @@ type CodexHomeOptions struct {
 	// IDs — every local_directory task, in_place or worktree. Worktree tasks
 	// get a fresh env root per task just like in-place ones do
 	// (shouldReusePriorWorkdir refuses any local assignment), so they need the
-	// same per-issue session store; keying this on "runs in the user's
+	// same per-conversation session store; keying this on "runs in the user's
 	// directory" instead would silently drop a Codex agent's conversation
 	// history between turns on the same issue.
 	//
 	// These tasks get a fresh codex-home per task ID (the
 	// daemon never reuses their workdir), so their sessions/ is pointed at the
-	// per-issue store (SessionStoreKey) that survives across task IDs and holds
-	// ONLY this issue's rollouts — never the machine's whole ~/.codex/sessions.
+	// per-conversation store (SessionStoreKey) that survives across task IDs and holds
+	// ONLY this conversation's rollouts — never the machine's whole ~/.codex/sessions.
 	// See prepareCodexSessionsDir (MUL-4424).
 	IsLocalDirectory bool
-	// SessionStoreKey is a stable, per-(agent, issue-or-chat) relative path that
+	// SessionStoreKey is a stable, per-(agent, conversation) relative path that
 	// identifies this task's persistent Codex sessions store. It survives across
 	// task IDs (unlike the task-scoped envRoot the GC reclaims) so a follow-up
 	// run resumes the same thread. Empty when no stable key is available (e.g. a
@@ -356,16 +356,16 @@ var codexSessionStateGlobs = []string{
 }
 
 // codexSessionStoreRoot is the directory under the shared Codex home that holds
-// the per-issue session stores. It sits beside the user's own `sessions/` so it
+// the per-conversation session stores. It sits beside the user's own `sessions/` so it
 // shares that volume (making resume-rollout hard links zero-copy) but is never
 // enumerated by a plain `codex` run, keeping Multica task history out of the
 // user's own thread list.
 const codexSessionStoreRoot = "multica-sessions"
 
-// codexSessionStoreDir returns the persistent, per-(agent, issue) Codex sessions
+// codexSessionStoreDir returns the persistent, per-(agent, conversation) Codex sessions
 // store for key, rooted on the shared Codex home's volume. It survives across
 // task IDs (unlike the task-scoped envRoot the GC reclaims) and holds only that
-// issue's rollouts. Empty key → "" (caller keeps sessions/ task-local).
+// conversation's rollouts. Empty key → "" (caller keeps sessions/ task-local).
 func codexSessionStoreDir(sharedHome, key string) string {
 	if key == "" {
 		return ""
@@ -399,17 +399,13 @@ func codexSessionStoreNamespace(profile string) string {
 }
 
 // codexSessionStoreKey builds a profile-and-task key for persistent Codex
-// sessions. Issue IDs retain their existing path;
+// sessions. Independent issue threads use separate conversation segments;
 // direct chats use a prefixed chat_session_id so the two namespaces cannot
 // collide. Returns "" when neither stable identifier is available.
 func codexSessionStoreKey(profile string, task TaskContextForEnv) string {
-	storeID := sanitizePathSegment(task.IssueID)
+	storeID := taskConversationSegment(task)
 	if storeID == "" {
-		chatID := sanitizePathSegment(task.ChatSessionID)
-		if chatID == "" {
-			return ""
-		}
-		storeID = "chat_" + chatID
+		return ""
 	}
 	agent := sanitizePathSegment(task.AgentID)
 	if agent == "" {
@@ -432,7 +428,7 @@ func sanitizePathSegment(s string) string {
 	return b.String()
 }
 
-// PruneCodexSessionStores reclaims per-issue Codex session stores under the
+// PruneCodexSessionStores reclaims per-conversation Codex session stores under the
 // shared home's multica-sessions root that have not been touched within
 // retention, bounding the lifetime of the conversation history each one holds.
 //
@@ -557,16 +553,16 @@ func dirStat(dir string) (newest time.Time, size int64) {
 // single task/issue:
 //
 //   - local_directory task: envRoot (and thus codex-home) is fresh per task ID
-//     and never reused, so sessions/ links to the per-issue store on the shared
+//     and never reused, so sessions/ links to the per-conversation store on the shared
 //     Codex volume — stable across task IDs, GC-safe, and holding only this
-//     issue's rollouts. See linkCodexSessionsToStore.
+//     conversation's rollouts. See linkCodexSessionsToStore.
 //   - Fresh managed task: sessions/ is absent — create an empty local dir so
 //     backfill is trivial; the reused envRoot carries it to the next run.
 //   - Reused managed task whose sessions/ is already a real dir: it is
 //     authoritative — the prior run's rollout already lives here — leave it.
 //   - Reused managed task still holding a legacy symlink into the shared
 //     sessions (older build): migrate. With a resume, route it through the
-//     per-issue store (cross-volume-safe); without one, replace the symlink
+//     per-conversation store (cross-volume-safe); without one, replace the symlink
 //     with an empty local dir. Either way drop the stale session-state DB so
 //     Codex rebuilds it from the scoped sessions.
 func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions, logger *slog.Logger) error {
@@ -575,12 +571,12 @@ func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions
 	storeDir := codexSessionStoreDir(sharedHome, opts.SessionStoreKey)
 
 	// local_directory tasks have no reusable envRoot, so their history can only
-	// persist across task IDs in the per-issue store. The daemon still verifies
+	// persist across task IDs in the per-conversation store. The daemon still verifies
 	// the specific rollout is present before claiming a resume (see
 	// CodexResumeRolloutPresent), so a missing one no longer masquerades as one.
 	if opts.IsLocalDirectory {
 		if storeDir == "" {
-			// No stable per-issue key (e.g. a non-issue task). Fall back to an
+			// No stable per-conversation key (e.g. a non-issue task). Fall back to an
 			// empty local dir rather than re-exposing the whole shared history.
 			return os.MkdirAll(dst, 0o755)
 		}
@@ -618,12 +614,12 @@ func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions
 	}
 	resetCodexSessionState(codexHome, logger)
 
-	// With a resume, route through the per-issue store so the rollout is exposed
+	// With a resume, route through the per-conversation store so the rollout is exposed
 	// cross-volume-safely (hard link within the shared volume + a directory link
 	// into the task home). Without a resume — or with no stable key — an empty
 	// local dir is all a fresh thread needs.
 	if opts.ResumeSessionID != "" && storeDir != "" {
-		logger.Info("execenv: migrated codex-home sessions from shared symlink to per-issue store",
+		logger.Info("execenv: migrated codex-home sessions from shared symlink to per-conversation store",
 			"codex_home", codexHome, "resume_session", true)
 		return linkCodexSessionsToStore(dst, storeDir, sharedSessions, opts.ResumeSessionID, logger)
 	}
@@ -632,7 +628,7 @@ func prepareCodexSessionsDir(codexHome, sharedHome string, opts CodexHomeOptions
 	return os.MkdirAll(dst, 0o755)
 }
 
-// linkCodexSessionsToStore points codex-home/sessions (dst) at the per-issue
+// linkCodexSessionsToStore points codex-home/sessions (dst) at the per-conversation
 // store (storeDir) via an idempotent directory link — a symlink on Unix, a
 // junction on Windows — both of which cross filesystem volumes without special
 // privilege. The store lives on the shared Codex home's volume, so linking the
@@ -694,7 +690,7 @@ func CodexSessionStorePath(profile string, task TaskContextForEnv) string {
 
 // sameCodexPath reports whether two filesystem paths refer to the same location,
 // tolerating separator/cleanliness differences. Used to detect a sessions link
-// that already points at the per-issue store so a reused home is not re-migrated.
+// that already points at the per-conversation store so a reused home is not re-migrated.
 func sameCodexPath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
@@ -717,7 +713,7 @@ func resetCodexSessionState(codexHome string, logger *slog.Logger) {
 	}
 }
 
-// ensureCodexSessionsLink points codex-home/sessions (dst) at the per-issue
+// ensureCodexSessionsLink points codex-home/sessions (dst) at the per-conversation
 // session store (src) via a directory link, creating the store if needed.
 // Idempotent: a link already pointing at src is left as-is; anything else at dst
 // (a real dir, a stale link, a legacy shared-sessions symlink) is replaced. The

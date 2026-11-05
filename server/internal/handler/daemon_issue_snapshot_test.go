@@ -21,21 +21,26 @@ import (
 // that session has to come from THIS run for the delta to describe the context
 // the agent will continue from (MUL-7344). A prior run with no resumable
 // session is a cold start, and a cold start has no delta to report.
-func seedPriorRunWithSnapshot(t *testing.T, agentID, runtimeID, issueID, snapshot string) {
+func seedPriorRunWithSnapshot(t *testing.T, agentID, runtimeID, issueID, snapshot string) string {
 	t.Helper()
+	threadID := dbfx.Comment(t, issueID, "original thread", testutil.Cols{
+		"created_at": testutil.Raw("now() - interval '3 hours'"),
+	})
 	cols := testutil.Cols{
-		"runtime_id":   runtimeID,
-		"issue_id":     issueID,
-		"status":       "completed",
-		"session_id":   "prior-run-session-" + issueID,
-		"work_dir":     "/tmp/prior-run-workdir",
-		"started_at":   testutil.Raw("now() - interval '1 hour'"),
-		"completed_at": testutil.Raw("now() - interval '50 minutes'"),
+		"trigger_comment_id": threadID,
+		"runtime_id":         runtimeID,
+		"issue_id":           issueID,
+		"status":             "completed",
+		"session_id":         "prior-run-session-" + issueID,
+		"work_dir":           "/tmp/prior-run-workdir",
+		"started_at":         testutil.Raw("now() - interval '1 hour'"),
+		"completed_at":       testutil.Raw("now() - interval '50 minutes'"),
 	}
 	if snapshot != "" {
 		cols["issue_snapshot"] = snapshot
 	}
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, cols)
+	return threadID
 }
 
 // issueSnapshotJSON renders a stored snapshot for the issue fixture, letting a
@@ -67,9 +72,9 @@ func TestClaimTaskByRuntime_IssueUnchangedReportsEmptyDelta(t *testing.T) {
 	const name = "Issue snapshot unchanged agent"
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, name)
 
-	seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
+	threadID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
 		issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""))
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadID)
 
 	resp := claimCommentTask(t, runtimeID, "issue-snapshot-unchanged")
 	if !resp.Task.IssueStateDeltaKnown {
@@ -97,9 +102,9 @@ func TestClaimTaskByRuntime_IssueChangedNamesFields(t *testing.T) {
 
 	// The previous run saw a different description. Title is unchanged and must
 	// NOT be reported alongside it.
-	seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
+	threadID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
 		issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", "an older description"))
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadID)
 
 	resp := claimCommentTask(t, runtimeID, "issue-snapshot-changed")
 	if !resp.Task.IssueStateDeltaKnown {
@@ -137,10 +142,12 @@ func TestClaimTaskByRuntime_NoPriorSnapshotIsNotUnchanged(t *testing.T) {
 			ctx := context.Background()
 			runtimeID := createClaimReclaimRuntime(t, ctx, "Issue snapshot unknown runtime "+tc.label)
 			agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Issue snapshot unknown agent "+tc.label)
+			var threadID *string
 			if tc.priorRun {
-				seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID, "")
+				rootID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID, "")
+				threadID = &rootID
 			}
-			createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+			createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, threadID)
 
 			resp := claimCommentTask(t, runtimeID, "issue-snapshot-unknown")
 			if resp.Task.IssueStateDeltaKnown {
@@ -169,9 +176,9 @@ func TestClaimTaskByRuntime_ForeignSnapshotVersionIsUnknown(t *testing.T) {
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, name)
 
 	// Byte-identical to the unchanged case apart from `v`.
-	seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
+	threadID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
 		issueSnapshotJSON(t, issueSnapshotVersion+1, name+" issue", ""))
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadID)
 
 	resp := claimCommentTask(t, runtimeID, "issue-snapshot-version")
 	if resp.Task.IssueStateDeltaKnown {
@@ -234,13 +241,13 @@ func TestClaimTaskByRuntime_BothDeltasShareOneAnchor(t *testing.T) {
 
 	// One prior run carries both halves of the anchor: its started_at dates the
 	// comment delta, its snapshot dates the issue-state delta.
-	seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
+	threadID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
 		issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""))
 
 	// A member comment after that anchor, so the comment delta is non-zero and
 	// the two deltas cannot both be trivially empty.
 	dbfx.Comment(t, issueID, "something happened while you were away")
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadID)
 
 	resp := claimCommentTask(t, runtimeID, "shared-anchor-claim")
 	if !resp.Task.DeltaKnown {
@@ -291,12 +298,16 @@ func TestClaimTaskByRuntime_DeltasDateFromTheResumedRun(t *testing.T) {
 			runtimeID := createClaimReclaimRuntime(t, ctx, "resumed anchor runtime "+label)
 			name := "resumed anchor agent " + label
 			agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, name)
+			threadID := dbfx.Comment(t, issueID, "original thread", testutil.Cols{
+				"created_at": testutil.Raw("now() - interval '3 hours'"),
+			})
 
 			// The run we will resume. Its snapshot says the description was
 			// "older instructions" — which is NOT what the issue says now.
 			olderID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
-				"runtime_id": runtimeID,
-				"issue_id":   issueID,
+				"runtime_id":         runtimeID,
+				"trigger_comment_id": threadID,
+				"issue_id":           issueID,
 				// Completed: it finished a turn, so it proved its prompt
 				// reached the session and may date a delta.
 				"status":         "completed",
@@ -309,15 +320,16 @@ func TestClaimTaskByRuntime_DeltasDateFromTheResumedRun(t *testing.T) {
 			// A NEWER run that saw the issue as it is now. Anchoring here is the
 			// bug: its session is not the one being resumed.
 			newer := testutil.Cols{
-				"runtime_id":     runtimeID,
-				"issue_id":       issueID,
-				"status":         "failed",
-				"failure_reason": "api_invalid_request", // poisons the session
-				"session_id":     "newer-unresumable-session",
-				"work_dir":       "/tmp/resumed-anchor-other-workdir",
-				"started_at":     testutil.Raw("now() - interval '1 hour'"),
-				"completed_at":   testutil.Raw("now() - interval '50 minutes'"),
-				"issue_snapshot": issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""),
+				"runtime_id":         runtimeID,
+				"trigger_comment_id": threadID,
+				"issue_id":           issueID,
+				"status":             "failed",
+				"failure_reason":     "api_invalid_request", // poisons the session
+				"session_id":         "newer-unresumable-session",
+				"work_dir":           "/tmp/resumed-anchor-other-workdir",
+				"started_at":         testutil.Raw("now() - interval '1 hour'"),
+				"completed_at":       testutil.Raw("now() - interval '50 minutes'"),
+				"issue_snapshot":     issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""),
 			}
 			if manualRerun {
 				// Nothing wrong with the newer run here; the operator simply
@@ -330,7 +342,7 @@ func TestClaimTaskByRuntime_DeltasDateFromTheResumedRun(t *testing.T) {
 			dbfx.Comment(t, issueID, "context between the two runs", testutil.Cols{
 				"created_at": testutil.Raw("now() - interval '90 minutes'"),
 			})
-			triggerID := dbfx.Comment(t, issueID, "continue")
+			triggerID := dbfx.Comment(t, issueID, "continue", testutil.Cols{"parent_id": threadID})
 			current := testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "trigger_comment_id": triggerID}
 			if manualRerun {
 				current["rerun_of_task_id"] = olderID
@@ -386,11 +398,15 @@ func TestClaimTaskByRuntime_NeverStartedAnchorRowReportsNoIssueDelta(t *testing.
 	runtimeID := createClaimReclaimRuntime(t, ctx, "never-started anchor runtime")
 	const name = "never-started anchor agent"
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, name)
+	threadID := dbfx.Comment(t, issueID, "original thread", testutil.Cols{
+		"created_at": testutil.Raw("now() - interval '3 hours'"),
+	})
 
 	// The run that really executed in session S. Its memory — and its
 	// snapshot — say the description was "older instructions".
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
-		"runtime_id": runtimeID, "issue_id": issueID, "status": "completed",
+		"runtime_id": runtimeID, "trigger_comment_id": threadID,
+		"issue_id": issueID, "status": "completed",
 		"session_id": "never-started-anchor-session", "work_dir": "/tmp/never-started-anchor",
 		"started_at":     testutil.Raw("now() - interval '2 hours'"),
 		"completed_at":   testutil.Raw("now() - interval '110 minutes'"),
@@ -400,14 +416,15 @@ func TestClaimTaskByRuntime_NeverStartedAnchorRowReportsNoIssueDelta(t *testing.
 	// was edited to what it is now (so its snapshot matches the current issue),
 	// then the runtime went offline before it started. started_at stays NULL.
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{
-		"runtime_id": runtimeID, "issue_id": issueID, "status": "failed",
+		"runtime_id": runtimeID, "trigger_comment_id": threadID,
+		"issue_id": issueID, "status": "failed",
 		"failure_reason": "runtime_offline", "error": "runtime went offline",
 		"session_id": "never-started-anchor-session", "work_dir": "/tmp/never-started-anchor",
 		"dispatched_at":  testutil.Raw("now() - interval '1 hour'"),
 		"completed_at":   testutil.Raw("now() - interval '50 minutes'"),
 		"issue_snapshot": issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""),
 	})
-	triggerID := dbfx.Comment(t, issueID, "continue")
+	triggerID := dbfx.Comment(t, issueID, "continue", testutil.Cols{"parent_id": threadID})
 	dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "trigger_comment_id": triggerID})
 
 	resp := claimCommentTask(t, runtimeID, "never-started-anchor-claim")
@@ -446,14 +463,18 @@ func TestClaimTaskByRuntime_NoAdoptedSessionHasNoDeltas(t *testing.T) {
 			runtimeID := createClaimReclaimRuntime(t, ctx, "no-adopted-session runtime "+mode)
 			name := "no-adopted-session agent " + mode
 			agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, name)
+			threadID := dbfx.Comment(t, issueID, "original thread", testutil.Cols{
+				"created_at": testutil.Raw("now() - interval '3 hours'"),
+			})
 			prior := testutil.Cols{
-				"runtime_id":     runtimeID,
-				"issue_id":       issueID,
-				"status":         "completed",
-				"session_id":     "no-adopted-session-prior",
-				"started_at":     testutil.Raw("now() - interval '1 hour'"),
-				"completed_at":   testutil.Raw("now() - interval '50 minutes'"),
-				"issue_snapshot": issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""),
+				"runtime_id":         runtimeID,
+				"trigger_comment_id": threadID,
+				"issue_id":           issueID,
+				"status":             "completed",
+				"session_id":         "no-adopted-session-prior",
+				"started_at":         testutil.Raw("now() - interval '1 hour'"),
+				"completed_at":       testutil.Raw("now() - interval '50 minutes'"),
+				"issue_snapshot":     issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""),
 			}
 			switch mode {
 			case "missing_session":
@@ -466,7 +487,7 @@ func TestClaimTaskByRuntime_NoAdoptedSessionHasNoDeltas(t *testing.T) {
 			}
 			priorID := dbfx.Task(t, agentID, testutil.Cols{"originator_user_id": testUserID, "accountable_user_id": testUserID}, prior)
 			dbfx.Comment(t, issueID, "an unseen comment")
-			triggerID := dbfx.Comment(t, issueID, "continue")
+			triggerID := dbfx.Comment(t, issueID, "continue", testutil.Cols{"parent_id": threadID})
 			current := testutil.Cols{"runtime_id": runtimeID, "issue_id": issueID, "trigger_comment_id": triggerID}
 			if mode == "force_fresh" || mode == "poisoned_rerun" {
 				current["force_fresh_session"] = true
@@ -506,13 +527,13 @@ func TestClaimTaskByRuntime_NonBodyFieldsAreOutOfScope(t *testing.T) {
 
 	// The prior run saw title and description exactly as they are now. The
 	// fixture creates the issue in_progress.
-	seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
+	threadID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID,
 		issueSnapshotJSON(t, issueSnapshotVersion, name+" issue", ""))
 	// Since that run the issue moved status, was reassigned, and was
 	// re-prioritised. None of the three is in the compared set.
 	dbfx.Exec(t, `UPDATE issue SET status = 'in_review', assignee_type = 'agent', assignee_id = $1, priority = 'urgent' WHERE id = $2`,
 		agentID, issueID)
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadID)
 
 	resp := claimCommentTask(t, runtimeID, "narrowed-scope-claim")
 	if !resp.Task.IssueStateDeltaKnown {
@@ -608,7 +629,7 @@ func TestClaimTaskByRuntime_StartedRetryWithoutProviderMustNotWaiveReads(t *test
 		t.Fatalf("fixture must preserve the inherited session with started_at: %+v", failed)
 	}
 
-	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &triggerID)
 	got := claimCommentTask(t, runtimeID, "after-provider-gap").Task
 	if got.PriorSessionID != "session-before-edit" {
 		t.Fatalf("fixture did not resume the inherited session: %+v", got)
@@ -663,8 +684,8 @@ func TestClaimTaskByRuntime_LegacySnapshotWithStatusStillCompares(t *testing.T) 
 			if err != nil {
 				t.Fatalf("marshal legacy snapshot: %v", err)
 			}
-			seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID, string(legacy))
-			createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+			threadID := seedPriorRunWithSnapshot(t, agentID, runtimeID, issueID, string(legacy))
+			createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, &threadID)
 
 			resp := claimCommentTask(t, runtimeID, "legacy-snapshot-claim")
 			if !resp.Task.IssueStateDeltaKnown {
