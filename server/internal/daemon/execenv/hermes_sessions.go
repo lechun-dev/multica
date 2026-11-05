@@ -32,14 +32,14 @@ import (
 //
 //	<multica profile dir>/hermes-sessions/<agent>/<hermes profile>/<conversation>/state.db
 //
-// Keying to the conversation — the issue, or `chat_<id>` for a chat session —
+// Keying to the conversation — an issue comment thread, an unthreaded issue, or `chat_<id>` for a chat session —
 // is what makes this safe to share where #6693 could not. Its stated reason
 // for leaving state.db task-local was concurrency: one agent's parallel tasks
 // would write one live SQLite database, which needs lock and consistency work
 // (plus Windows byte-range locks on `-shm`) that plain memory files do not.
 // Tasks of the SAME conversation are serial by construction — a follow-up is
 // dispatched after its predecessor reports — so the shard has one writer at a
-// time, while two different issues get two different databases and never meet.
+// time, while independent issue threads get different databases and never meet.
 //
 // The (agent, profile) prefix matches the memory store's scoping exactly, so
 // pointing an agent at another Hermes profile gives it a fresh conversation
@@ -87,20 +87,14 @@ func HermesSessionStorePath(daemonProfile, agentID, sourceHome string, task Task
 }
 
 // hermesConversationSegment maps a task to the conversation its transcript
-// belongs to: the issue it runs on, or the chat session when there is no
-// issue. Same derivation as the per-issue Codex session store
+// belongs to: its issue comment thread, unthreaded issue, or chat session.
+// Same derivation as the per-conversation Codex session store
 // (codexSessionStoreKey), so both providers agree on what "one conversation"
 // means. Returns "" for a task that belongs to neither, which keeps its
 // session database task-local rather than inventing a shard nothing will
 // resume.
 func hermesConversationSegment(task TaskContextForEnv) string {
-	if issue := sanitizePathSegment(task.IssueID); issue != "" {
-		return issue
-	}
-	if chat := sanitizePathSegment(task.ChatSessionID); chat != "" {
-		return "chat_" + chat
-	}
-	return ""
+	return taskConversationSegment(task)
 }
 
 // hermesSessionMount is what a mount attempt actually achieved.

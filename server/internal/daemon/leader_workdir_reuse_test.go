@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -218,6 +219,35 @@ func TestShouldReusePriorWorkdirSquadLeaderAcceptsManagedProvenance(t *testing.T
 	task.PriorWorkDir = workDir
 	if _, ok := shouldReusePriorWorkdir(task, nil, root); !ok {
 		t.Fatalf("leader did not reuse a fully-provenanced managed workdir %q", workDir)
+	}
+}
+
+func TestShouldReusePriorWorkdirRequiresMatchingIssueThread(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	workDir := filepath.Join(root, "ws-leader", "12345678", "workdir")
+	writeLeaderTaskMarker(t, workDir, "agent-leader", "issue-leader")
+	writeLeaderManagedEnvProvenance(t, workDir, "ws-leader", "issue-leader", "agent-leader")
+	markerPath := filepath.Join(workDir, execenv.TaskContextMarkerRelPath)
+	marker := map[string]string{"managed_by": execenv.TaskContextMarkerManagedBy, "agent_id": "agent-leader", "issue_id": "issue-leader", "trigger_thread_id": "thread-a"}
+	data, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := leaderReuseTestTask("followup")
+	task.PriorWorkDir = workDir
+	task.TriggerThreadID = "thread-a"
+	if _, ok := shouldReusePriorWorkdir(task, nil, root); !ok {
+		t.Fatal("same-thread follow-up lost its managed workdir")
+	}
+	for _, thread := range []string{"thread-b", ""} {
+		task.TriggerThreadID = thread
+		if _, ok := shouldReusePriorWorkdir(task, nil, root); ok {
+			t.Fatalf("thread %q inherited A's workdir", thread)
+		}
 	}
 }
 

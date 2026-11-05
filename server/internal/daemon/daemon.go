@@ -6551,10 +6551,11 @@ func shouldReusePriorWorkdir(task Task, localAssignment *localDirectoryAssignmen
 		return "", false
 	}
 	var marker struct {
-		ManagedBy     string `json:"managed_by"`
-		AgentID       string `json:"agent_id"`
-		IssueID       string `json:"issue_id"`
-		ChatSessionID string `json:"chat_session_id"`
+		ManagedBy       string `json:"managed_by"`
+		AgentID         string `json:"agent_id"`
+		IssueID         string `json:"issue_id"`
+		TriggerThreadID string `json:"trigger_thread_id"`
+		ChatSessionID   string `json:"chat_session_id"`
 	}
 	if json.Unmarshal(data, &marker) != nil {
 		return "", false
@@ -6563,7 +6564,7 @@ func shouldReusePriorWorkdir(task Task, localAssignment *localDirectoryAssignmen
 		return "", false
 	}
 	if task.IssueID != "" {
-		if prov.IssueID != task.IssueID || marker.IssueID != task.IssueID {
+		if prov.IssueID != task.IssueID || marker.IssueID != task.IssueID || marker.TriggerThreadID != task.TriggerThreadID {
 			return "", false
 		}
 		return workdir, true
@@ -7549,7 +7550,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	defer envClaim.Release()
 
-	// Try to reuse the workdir from a previous task on the same (agent, issue) pair.
+	// Try to reuse the workdir from a previous task in the same agent conversation.
 	var env *execenv.Environment
 	// For a built-in codex task, use the version paired with the resolved path
 	// so an in-place upgrade can't leave the sandbox policy on the old version

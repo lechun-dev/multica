@@ -840,10 +840,10 @@ WHERE atq.id = $1 AND a.workspace_id = $2;
 
 -- name: ClaimAgentTask :one
 -- Claims the next queued task for an agent on one healthy runtime, enforcing
--- per-(issue, agent) serialization:
--- a task is only claimable when no other task for the same issue AND same agent is
--- already dispatched or running. This allows different agents to work on the same
--- issue in parallel while preventing a single agent from running duplicate tasks.
+-- per-(issue, agent, comment thread) serialization. Independent threads share
+-- the agent's configured total capacity (enforced by TaskService's agent lock).
+-- Unscoped/legacy rows and wakeups retain the issue fence. Older runtimes also
+-- retain that fence until they advertise isolated thread sessions.
 -- Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
 -- Quick-create tasks have no issue / chat / autopilot link, so they serialize on
 -- "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
@@ -890,7 +890,20 @@ WHERE id = (
           WHERE active.agent_id = atq.agent_id
             AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
             AND (
-              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id
+                AND (
+                  atq.comment_thread_id IS NULL
+                  OR active.comment_thread_id IS NULL
+                  OR active.comment_thread_id = atq.comment_thread_id
+                  -- Wakeup scheduling IDs are not conversation thread IDs.
+                  OR atq.context->>'wakeup_id' IS NOT NULL
+                  OR active.context->>'wakeup_id' IS NOT NULL
+                  OR NOT EXISTS (
+                    SELECT 1 FROM agent_runtime r
+                    WHERE r.id = atq.runtime_id
+                      AND r.metadata->'capabilities' ? 'issue-thread-concurrency-v1'
+                  )
+                ))
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
                 atq.issue_id IS NULL
@@ -1172,7 +1185,7 @@ RETURNING *;
 
 -- name: GetLastTaskSession :one
 -- Returns the session_id and work_dir from the most recent task for a given
--- (agent_id, issue_id) pair, used for session resumption on the auto-retry
+-- (agent_id, issue_id, comment thread) scope, used for session resumption on the auto-retry
 -- path. We accept 'completed', 'failed' AND 'cancelled' tasks: a failed task
 -- may have established a real agent session before crashing (orphaned by a
 -- daemon restart, runtime offline, or sweeper timeout), and the daemon pins
@@ -1290,6 +1303,10 @@ WITH retired_sessions AS (
     SELECT MAX(COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at)) AS at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND (CASE WHEN t.context->>'wakeup_id' IS NOT NULL
+                THEN comment_thread_root_id(t.trigger_comment_id)
+                ELSE t.comment_thread_id END)
+          IS NOT DISTINCT FROM sqlc.narg('comment_thread_id')::uuid
       AND COALESCE(t.context->>'type', '') <> 'triage'
       AND t.status = 'failed'
       AND (
@@ -1303,6 +1320,10 @@ WITH retired_sessions AS (
         COALESCE(t.completed_at, t.started_at, t.dispatched_at, t.created_at) AS terminal_at
     FROM agent_task_queue t
     WHERE t.agent_id = $1 AND t.issue_id = $2
+      AND (CASE WHEN t.context->>'wakeup_id' IS NOT NULL
+                THEN comment_thread_root_id(t.trigger_comment_id)
+                ELSE t.comment_thread_id END)
+          IS NOT DISTINCT FROM sqlc.narg('comment_thread_id')::uuid
       AND COALESCE(t.context->>'type', '') <> 'triage'
       AND t.session_id IS NOT NULL
       AND t.status IN ('completed', 'failed', 'cancelled')
@@ -1359,7 +1380,7 @@ ORDER BY terminal_at DESC
 LIMIT 1;
 
 -- name: GetLatestTaskRolloutMissing :one
--- Reports whether the most recent terminal task for (agent_id, issue_id)
+-- Reports whether the most recent terminal task for (agent_id, issue_id, thread)
 -- withheld its Codex session because the rollout was missing (MUL-5305). When
 -- true, GetLastTaskSession fell back to an older session, so the next run must
 -- disclose that the most recent turn's context could not be carried over. Any
@@ -1373,6 +1394,10 @@ LIMIT 1;
 -- context could not be carried over — about a turn it was never entitled to.
 SELECT COALESCE(session_rollout_missing, FALSE) FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND (CASE WHEN context->>'wakeup_id' IS NOT NULL
+            THEN comment_thread_root_id(trigger_comment_id)
+            ELSE comment_thread_id END)
+      IS NOT DISTINCT FROM sqlc.narg('comment_thread_id')::uuid
   AND COALESCE(context->>'type', '') <> 'triage'
   AND status IN ('completed', 'failed')
   AND started_at IS NOT NULL

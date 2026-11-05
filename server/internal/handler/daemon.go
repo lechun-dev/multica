@@ -2230,6 +2230,24 @@ func chatSessionResumeFallbackNeeded(priorSessionID, priorWorkDir string) bool {
 	return priorSessionID == "" || priorWorkDir == ""
 }
 
+// Wakeups use a configuration ID as their pending scheduling lane, but their
+// transcript belongs to the actual delivery thread. Ordinary tasks use the
+// persisted thread, including NULL for legacy/unscoped runs.
+func claimSessionThreadID(task db.AgentTaskQueue, deliveryThread string) pgtype.UUID {
+	var context struct {
+		WakeupID *string `json:"wakeup_id"`
+	}
+	_ = json.Unmarshal(task.Context, &context)
+	if context.WakeupID != nil {
+		thread, err := util.ParseUUID(deliveryThread)
+		if err != nil {
+			return pgtype.UUID{}
+		}
+		return thread
+	}
+	return task.CommentThreadID
+}
+
 func rerunSourceMatchesTaskScope(task, source db.AgentTaskQueue) bool {
 	if task.AgentID != source.AgentID {
 		return false
@@ -2244,7 +2262,7 @@ func rerunSourceMatchesTaskScope(task, source db.AgentTaskQueue) bool {
 		return false
 	}
 	if task.IssueID.Valid {
-		return source.IssueID.Valid && task.IssueID == source.IssueID
+		return source.IssueID.Valid && task.IssueID == source.IssueID && task.CommentThreadID == source.CommentThreadID
 	}
 	if task.ChatSessionID.Valid {
 		return source.ChatSessionID.Valid && task.ChatSessionID == source.ChatSessionID
@@ -2956,6 +2974,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.TriggerCommentContent = "The newest triggering comment is no longer available. Address every earlier comment included below."
 		}
 
+		// Keep the daemon's storage scope aligned with the persisted execution
+		// lane even if the trigger was deleted or its body could not be read.
+		// Wakeups resolve their delivery thread above, never their scheduling ID.
+		resp.TriggerThreadID = uuidToString(claimSessionThreadID(*task, resp.TriggerThreadID))
+
 		// Resolve the prior agent session / workdir to resume.
 		if task.RerunOfTaskID.Valid {
 			// Manual retry: resume precisely from the source task the user
@@ -3011,14 +3034,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				resp.PriorSessionResumeUnavailable = true
 			}
 		} else if !task.ForceFreshSession {
-			// Non-rerun follow-up on the same issue: resume the most recent
-			// (agent, issue) session so the agent keeps the issue's conversation
+			// Non-rerun follow-up: resume only this comment thread's most recent
+			// session so independent threads cannot inherit each other's conversation
 			// context across turns. The "Focus on THIS comment" guard in
 			// prompt.go defends against inheriting the prior turn's "Done."
 			// marker, and GetLastTaskSession already excludes poisoned sessions.
 			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
-				AgentID: task.AgentID,
-				IssueID: task.IssueID,
+				AgentID:         task.AgentID,
+				IssueID:         task.IssueID,
+				CommentThreadID: claimSessionThreadID(*task, resp.TriggerThreadID),
 			}); err == nil && prior.SessionID.Valid {
 				if prior.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = prior.SessionID.String
@@ -3041,8 +3065,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// be carried over — even when that older session resumes cleanly,
 			// which the resume-presence gate would otherwise pass silently.
 			if missing, err := h.Queries.GetLatestTaskRolloutMissing(r.Context(), db.GetLatestTaskRolloutMissingParams{
-				AgentID: task.AgentID,
-				IssueID: task.IssueID,
+				AgentID:         task.AgentID,
+				IssueID:         task.IssueID,
+				CommentThreadID: claimSessionThreadID(*task, resp.TriggerThreadID),
 			}); err == nil && missing {
 				resp.PriorSessionResumeUnavailable = true
 			}

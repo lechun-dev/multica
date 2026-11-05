@@ -3,11 +3,14 @@ package protocol
 import "encoding/json"
 
 const (
-	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
-	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
-	DaemonCapabilityExecutionManifestV1 = "execution-manifest-v1"
-	DaemonCapabilityAgentSkillV1        = "agent-skill-v1"
-	DaemonCapabilityRemoteMCPV1         = "remote-mcp-v1"
+	// DaemonCapabilityIssueThreadConcurrencyV1 advertises per-thread provider
+	// session stores, so independent issue threads can execute concurrently.
+	DaemonCapabilityIssueThreadConcurrencyV1 = "issue-thread-concurrency-v1"
+	DaemonCapabilitySkillBundlesV1           = "skill-bundles-v1"
+	DaemonCapabilityCoalescedCommentsV1      = "coalesced-comments-v1"
+	DaemonCapabilityExecutionManifestV1      = "execution-manifest-v1"
+	DaemonCapabilityAgentSkillV1             = "agent-skill-v1"
+	DaemonCapabilityRemoteMCPV1              = "remote-mcp-v1"
 	// DaemonCapabilityLocalWorktreeV1 advertises that the daemon implements
 	// worktree mode for local_directory resources (execution_mode=worktree).
 	//
