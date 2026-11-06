@@ -61,12 +61,12 @@ jobs:
         include:
           - platform: mac
             arch: arm64
-            runner: macos-14
+            runner: macos-15
           - platform: mac
             arch: x64
             # electron-builder cross-builds Intel from the Apple Silicon
             # runner, avoiding the retired Intel-host runner pool.
-            runner: macos-14
+            runner: macos-15
           - platform: windows
             arch: x64
             runner: windows-latest
