@@ -111,6 +111,10 @@ export function ownerAgentCatalogOptions(wsId: string, ownerId: string | undefin
     queryFn: () => api.listOwnerAgentCatalog(wsId),
     enabled: !!wsId && !!ownerId,
     retry: false,
+    // Private task lifecycle events may not reach the workspace Owner.
+    // Refresh while this display query is in use, independently of the picker.
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 }
 

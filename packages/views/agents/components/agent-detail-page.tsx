@@ -32,6 +32,7 @@ import { useModalStore } from "@multica/core/modals";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentProfileOptions,
+  ownerAgentCatalogOptions,
   cacheAgentResponse,
   memberListOptions,
   workspaceKeys,
@@ -61,6 +62,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
+import { deriveOwnerAgentDisplay } from "./owner-agent-display";
 import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
@@ -92,7 +94,7 @@ function AgentDetailContent({
   const qc = useQueryClient();
 
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: members = [], error: membersError } = useQuery(memberListOptions(wsId));
   const profileOptions = agentProfileOptions(wsId, agentId, viewerId);
   const profileQuery = useQuery(profileOptions);
   const detailError = profileQuery.error;
@@ -101,8 +103,17 @@ function AgentDetailContent({
   // Cached profile data never bypasses the access check when opening a link.
   const agent = profileQuery.isFetchedAfterMount && !detailError ? profileQuery.data : null;
   const canEdit = !!agent && agent.owner_id === viewerId;
+  const isWorkspaceOwner = !membersError && members.some((m) => m.user_id === viewerId && m.role === "owner");
+  const catalogQuery = useQuery(ownerAgentCatalogOptions(wsId, agent && !canEdit && isWorkspaceOwner ? viewerId : undefined));
+  const runtime = agent && isAgentRuntimeBound(agent)
+    ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
+    : null;
+  const catalogEntry = agent && !catalogQuery.error
+    ? catalogQuery.data?.find((entry) => entry.id === agent.id)
+    : undefined;
+  const catalogDisplay = catalogEntry ? deriveOwnerAgentDisplay(catalogEntry, runtime, Date.now()) : null;
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
-  const presence = agent ? presenceMap.get(agent.id) ?? null : null;
+  const presence = agent ? catalogDisplay?.presence ?? presenceMap.get(agent.id) ?? null : null;
   const { canAssign, isLoading: permissionsLoading } = useAgentPermissions(canEdit ? agent : null, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -277,9 +288,6 @@ function AgentDetailContent({
 
   const isArchived = !!agent.archived_at;
   const runtimeBound = isAgentRuntimeBound(agent);
-  const runtime = runtimeBound
-    ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
-    : null;
   const owner = members.find((m) => m.user_id === agent.owner_id) ?? null;
 
   // Chat shares the invocation gate with assignment (MUL-3963): starting a
@@ -381,6 +389,7 @@ function AgentDetailContent({
           agent={agent}
           runtime={runtime}
           owner={owner}
+          activity={catalogDisplay?.activity}
           runtimes={runtimes}
           members={members}
           onUpdate={handleUpdate}

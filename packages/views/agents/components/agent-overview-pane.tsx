@@ -7,7 +7,7 @@ import type {
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
-import { providerSupportsMcpConfig } from "@multica/core/agents";
+import { providerSupportsMcpConfig, type AgentActivity } from "@multica/core/agents";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -124,6 +124,7 @@ interface AgentOverviewPaneProps {
   agent: Agent;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
+  activity?: AgentActivity;
   runtimes: AgentRuntime[];
   members: MemberWithUser[];
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
@@ -144,6 +145,7 @@ export function AgentOverviewPane({
   agent,
   runtime,
   owner,
+  activity,
   runtimes,
   members,
   onUpdate,
@@ -375,6 +377,7 @@ export function AgentOverviewPane({
                 agent={agent}
                 runtime={runtime}
                 owner={owner}
+                activity={activity}
                 viewerId={currentUserId ?? undefined}
               />
             </div>

@@ -1,7 +1,7 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
-import type { Agent } from "@multica/core/types";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import type { OwnerAgentCatalogEntry } from "@multica/core/api/schemas";
 import type { AgentActivity } from "@multica/core/agents";
 import { renderWithI18n } from "../../test/i18n";
@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   role: "member",
   catalog: [] as OwnerAgentCatalogEntry[],
   catalogError: null as Error | null,
+  runtimes: [] as AgentRuntime[],
   runCounts: [] as Array<{ agent_id: string; run_count: number }>,
   runCountsPending: false,
   activity: {
@@ -75,6 +76,9 @@ vi.mock("@tanstack/react-query", () => ({
     if (key === "owner-catalog") {
       return { data: mocks.catalog, error: mocks.catalogError };
     }
+    if (key === "runtimes") {
+      return { data: mocks.runtimes };
+    }
     return { data: [], isLoading: false, isPending: false };
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
@@ -99,7 +103,8 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@multica/core/agents", () => ({
+vi.mock("@multica/core/agents", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@multica/core/agents")>(),
   isAgentRuntimeBound: (agent: { runtime_id: string; runtime_bound?: boolean }) =>
     agent.runtime_bound !== false && agent.runtime_id.length > 0,
   agentRunCounts30dOptions: () => ({ queryKey: ["agent-run-counts"] }),
@@ -151,11 +156,15 @@ vi.mock("@multica/core/workspace/queries", () => ({
 
 vi.mock("@multica/core/runtimes", () => ({
   runtimeListOptions: () => ({ queryKey: ["runtimes"] }),
+  runtimeDisplayLabel: (runtime: AgentRuntime) => runtime.name,
 }));
 
 // View-layer children with heavy / portal deps — stub to keep the test focused
 // on the gate, not on avatars, row menus, the toolbar, or tooltip portals.
-vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
+vi.mock("../../common/actor-avatar", () => ({
+  ActorAvatar: ({ name, avatarUrl }: { name?: string; avatarUrl?: string }) =>
+    avatarUrl ? <img alt={`${name} avatar`} src={avatarUrl} /> : null,
+}));
 vi.mock("./agent-row-actions", () => ({ AgentRowActions: () => <button>Row actions</button> }));
 vi.mock("./agent-list-toolbar", () => ({
   AgentListToolbar: ({ scopeCounts }: { scopeCounts: Record<string, number> }) => (
@@ -163,7 +172,6 @@ vi.mock("./agent-list-toolbar", () => ({
   ),
   countActiveFilterDimensions: () => 0,
 }));
-vi.mock("../presence", () => ({ availabilityConfig: {} }));
 vi.mock("@multica/ui/components/ui/skeleton", () => ({
   Skeleton: (props: Record<string, unknown>) => (
     <div data-testid="skeleton" {...props} />
@@ -257,6 +265,7 @@ beforeEach(() => {
   mocks.role = "member";
   mocks.catalog = [];
   mocks.catalogError = null;
+  mocks.runtimes = [];
   mocks.runCounts = [];
   mocks.runCountsPending = false;
   mocks.activity = { byAgent: new Map(), loading: false };
@@ -284,16 +293,64 @@ describe("AgentsPage owner catalog", () => {
     access_scope: "owner-only",
   };
 
+  function withDisplay(): OwnerAgentCatalogEntry {
+    return {
+      ...entry,
+      display: {
+        description: "Builds test reports",
+        avatar_url: "https://example.com/agent.png",
+        runtime_id: "runtime-2",
+        model: "test-model",
+        max_concurrent_tasks: 6,
+        running_count: 1,
+        queued_count: 1,
+        run_count: 9,
+        activity: [{
+          agent_id: entry.id, bucket_at: new Date().toISOString(),
+          task_count: 8, failed_count: 1, completed_count: 7, cancelled_count: 0,
+        }],
+      },
+    };
+  }
+
+  function setOnlineRuntime() {
+    mocks.runtimes = [{
+      id: "runtime-2", name: "Test runtime", provider: "codex",
+      status: "online", last_seen_at: new Date().toISOString(),
+    } as AgentRuntime];
+  }
+
   it("adds read-only entries to All with the existing detail link and no actions or selection", () => {
     mocks.role = "owner";
-    mocks.catalog = [entry, { ...entry, id: "archived", archived_at: entry.created_at }];
+    mocks.viewState.hiddenColumns = [];
+    setOnlineRuntime();
+    mocks.catalog = [withDisplay(), { ...entry, id: "archived", archived_at: entry.created_at }];
     const { adapter } = renderPage();
     const row = screen.getByRole("row", { name: /Private agent/ });
+    expect(within(row).getByRole("img", { name: "Private agent avatar" })).toHaveAttribute("src", "https://example.com/agent.png");
+    expect(within(row).getByText("Builds test reports")).toBeInTheDocument();
+    expect(within(row).getByText(/2 tasks/)).toBeInTheDocument();
+    expect(within(row).getByText("Test runtime")).toBeInTheDocument();
+    expect(within(row).getByText("test-model")).toBeInTheDocument();
+    expect(within(row).getByText("Today")).toBeInTheDocument();
+    expect(within(row).getByText("9")).toBeInTheDocument();
     expect(within(row).queryByRole("button")).not.toBeInTheDocument();
     expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
     fireEvent.click(row);
     expect(adapter.push).toHaveBeenCalledWith("/test-workspace/agents/private-agent");
     expect(screen.getByTestId("agent-list-toolbar")).toHaveTextContent('{"mine":2,"all":3,"archived":1}');
+  });
+
+  it("uses read-only display values in availability, runtime, and model filters", () => {
+    mocks.role = "owner";
+    mocks.catalog = [withDisplay()];
+    setOnlineRuntime();
+    mocks.viewState.filters.availability = ["online"];
+    mocks.viewState.filters.runtimes = ["runtime-2"];
+    mocks.viewState.filters.models = ["test-model"];
+    renderPage();
+    expect(screen.getByRole("row", { name: /Private agent/ })).toBeInTheDocument();
+    expect(screen.queryByRole("row", { name: /Alpha Agent/ })).not.toBeInTheDocument();
   });
 
   it.each(["mine", "archived"])("honors the %s scope", (scope) => {

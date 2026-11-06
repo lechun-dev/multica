@@ -94,6 +94,15 @@ import type {
 import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 
+const AgentActivityBucketSchema = z.object({
+  agent_id: z.string(),
+  bucket_at: z.string(),
+  task_count: z.number().int().nonnegative(),
+  failed_count: z.number().int().nonnegative(),
+  completed_count: z.number().int().nonnegative(),
+  cancelled_count: z.number().int().nonnegative(),
+});
+
 const OwnerAgentCatalogEntrySchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -102,7 +111,20 @@ const OwnerAgentCatalogEntrySchema = z.object({
   created_at: z.string(),
   access_scope: z.enum(["owner-only", "specific-people"]),
 });
-export const OwnerAgentCatalogSchema = z.array(OwnerAgentCatalogEntrySchema);
+export const OwnerAgentCatalogSchema = z.array(OwnerAgentCatalogEntrySchema.extend({
+  // Older servers return identity only.
+  display: z.object({
+    description: z.string(),
+    avatar_url: z.string().nullable(),
+    runtime_id: z.string(),
+    model: z.string(),
+    max_concurrent_tasks: z.number().int().positive(),
+    running_count: z.number().int().nonnegative(),
+    queued_count: z.number().int().nonnegative(),
+    run_count: z.number().int().nonnegative(),
+    activity: z.array(AgentActivityBucketSchema),
+  }).optional(),
+}));
 export type OwnerAgentCatalogEntry = z.infer<typeof OwnerAgentCatalogSchema>[number];
 
 export const AgentProfileSchema = z.object({
@@ -1938,14 +1960,7 @@ export const AgentTaskSchema = z.object({
 // reports them, so a response missing them is a contract drift, not an
 // older peer. `parseWithFallback` then degrades the whole list to `[]`
 // rather than letting a partial window masquerade as measured outcomes.
-export const AgentActivityBucketListSchema = z.array(z.object({
-  agent_id: z.string(),
-  bucket_at: z.string(),
-  task_count: z.number().int().nonnegative(),
-  failed_count: z.number().int().nonnegative(),
-  completed_count: z.number().int().nonnegative(),
-  cancelled_count: z.number().int().nonnegative(),
-}).loose());
+export const AgentActivityBucketListSchema = z.array(AgentActivityBucketSchema.loose());
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 

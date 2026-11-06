@@ -64,6 +64,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { agentListModel, deriveOwnerAgentDisplay } from "./owner-agent-display";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import {
   CollectionPageHeader,
@@ -146,7 +147,7 @@ export interface AgentListRow {
   runtime: AgentRuntime | null;
   presence: AgentPresenceDetail | null;
   activity: AgentActivity | null;
-  runCount: number;
+  runCount: number | null;
   /** Days since the last bucket with runs; null = nothing in the window. */
   lastActiveDays: number | null;
   owner: MemberWithUser | null;
@@ -158,6 +159,12 @@ export type ActionableAgentListRow = AgentListRow & { agent: Agent };
 
 function isActionableRow(row: AgentListRow): row is ActionableAgentListRow {
   return !("access_scope" in row.agent);
+}
+
+function agentListRuntimeBound(agent: AgentListRow["agent"]): boolean | undefined {
+  return "access_scope" in agent
+    ? agent.display && !!agent.display.runtime_id
+    : isAgentRuntimeBound(agent);
 }
 
 // Most recent activity bucket with runs, as "days ago" (0 = today).
@@ -175,7 +182,7 @@ function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
 function matchesAgentSearch(row: AgentListRow, query: string): boolean {
   if (!query) return true;
   const { agent } = row;
-  const description = "description" in agent ? agent.description : "";
+  const description = "access_scope" in agent ? agent.display?.description : agent.description;
   return (
     agent.name.toLowerCase().includes(query) ||
     matchesPinyin(agent.name, query) ||
@@ -196,6 +203,8 @@ export function rowMatchesFilters(
   filters: AgentListFilters,
   query: string,
 ): boolean {
+  const { agent } = row;
+  const runtimeId = "access_scope" in agent ? agent.display?.runtime_id : agent.runtime_id;
   if (!matchesAgentSearch(row, query.trim().toLowerCase())) return false;
   if (
     filters.availability.length > 0 &&
@@ -205,7 +214,7 @@ export function rowMatchesFilters(
   }
   if (
     filters.runtimes.length > 0 &&
-    (!isActionableRow(row) || !filters.runtimes.includes(row.agent.runtime_id))
+    (!runtimeId || !filters.runtimes.includes(runtimeId))
   ) {
     return false;
   }
@@ -217,7 +226,7 @@ export function rowMatchesFilters(
   }
   if (
     filters.models.length > 0 &&
-    (!isActionableRow(row) || !filters.models.includes(row.agent.model))
+    !filters.models.includes(agentListModel(agent))
   ) {
     return false;
   }
@@ -376,21 +385,19 @@ function NameCell({ row }: { row: AgentListRow }) {
   const isArchived = !!agent.archived_at;
   const isCatalogEntry = "access_scope" in agent;
   const isPrivate = isCatalogEntry ? agent.access_scope === "owner-only" : agent.visibility === "private";
+  const description = isCatalogEntry ? agent.display?.description : agent.description;
   return (
     <ListGridCell className="gap-3">
-      {isCatalogEntry ? (
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <Bot className="size-4" aria-hidden="true" />
-        </span>
-      ) : (
-        <ActorAvatar
-          actorType="agent"
-          actorId={agent.id}
-          size="lg"
-          className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
-          showStatusDot
-        />
-      )}
+      <ActorAvatar
+        actorType="agent"
+        actorId={agent.id}
+        name={isCatalogEntry ? agent.name : undefined}
+        avatarUrl={isCatalogEntry ? agent.display?.avatar_url ?? null : undefined}
+        size="lg"
+        className={`shrink-0 ${isArchived ? "opacity-50 grayscale" : ""}`}
+        showStatusDot
+        statusAvailability={isCatalogEntry ? row.presence?.availability ?? null : undefined}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -416,9 +423,9 @@ function NameCell({ row }: { row: AgentListRow }) {
             </span>
           )}
         </div>
-        {!isCatalogEntry && agent.description ? (
+        {description ? (
           <div className="mt-0.5 truncate text-caption text-muted-foreground">
-            {agent.description}
+            {description}
           </div>
         ) : null}
       </div>
@@ -440,14 +447,7 @@ function StatusCell({ row }: { row: AgentListRow }) {
       </ListGridCell>
     );
   }
-  if ("access_scope" in agent) {
-    return (
-      <ListGridCell>
-        <span className="text-caption text-muted-foreground">{t(($) => $.row.active)}</span>
-      </ListGridCell>
-    );
-  }
-  if (!isAgentRuntimeBound(agent)) {
+  if (agentListRuntimeBound(agent) === false) {
     return (
       <ListGridCell className="gap-1.5">
         <AlertCircle className="size-3.5 shrink-0 text-amber-500" />
@@ -534,7 +534,7 @@ export function AccessCell({ row }: { row: AgentListRow }) {
 
 function RuntimeCell({ row }: { row: AgentListRow }) {
   const { t } = useT("agents");
-  if (isActionableRow(row) && !isAgentRuntimeBound(row.agent)) {
+  if (agentListRuntimeBound(row.agent) === false) {
     return (
       <ListGridCell className="hidden @2xl:flex">
         <span className="truncate text-caption text-amber-600 dark:text-amber-400">
@@ -572,7 +572,7 @@ function LastActiveCell({ row }: { row: AgentListRow }) {
     <ListGridCell className="hidden @2xl:flex">
       {days === null ? (
         <span className="truncate text-caption text-muted-foreground">
-          {row.agent.archived_at || !isActionableRow(row) ? "—" : t(($) => $.last_active.none)}
+          {row.agent.archived_at || ("access_scope" in row.agent && !row.activity) ? "—" : t(($) => $.last_active.none)}
         </span>
       ) : (
         <span className="whitespace-nowrap text-caption tabular-nums text-muted-foreground">
@@ -899,15 +899,18 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       }
       return true;
     });
+    const now = Date.now();
     return inScope.map((agent) => {
       if ("access_scope" in agent) {
+        const runtime = runtimesById.get(agent.display?.runtime_id ?? "") ?? null;
+        const display = deriveOwnerAgentDisplay(agent, runtime, now);
         return {
           agent,
-          runtime: null,
-          presence: null,
-          activity: null,
-          runCount: 0,
-          lastActiveDays: null,
+          runtime,
+          presence: display?.presence ?? null,
+          activity: display?.activity ?? null,
+          runCount: agent.display?.run_count ?? null,
+          lastActiveDays: lastActiveDaysAgo(display?.activity ?? null),
           owner: agent.owner_id ? membersById.get(agent.owner_id) ?? null : null,
           isOwnedByMe: false,
           canManage: false,
@@ -949,8 +952,12 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
         return a.agent.name.localeCompare(b.agent.name) * dir;
       }
       if (sortField === "runs") {
-        return (a.runCount - b.runCount) * dir ||
-          a.agent.name.localeCompare(b.agent.name);
+        if (a.runCount !== b.runCount) {
+          if (a.runCount === null) return 1;
+          if (b.runCount === null) return -1;
+          return (a.runCount - b.runCount) * dir;
+        }
+        return a.agent.name.localeCompare(b.agent.name);
       }
       if (sortField === "created") {
         return (
@@ -965,7 +972,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       const bv = b.lastActiveDays ?? Number.POSITIVE_INFINITY;
       const byDays = sortDirection === "desc" ? av - bv : bv - av;
       return (
-        byDays || b.runCount - a.runCount ||
+        byDays || (b.runCount ?? -1) - (a.runCount ?? -1) ||
         a.agent.name.localeCompare(b.agent.name)
       );
     });
@@ -1182,7 +1189,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       )}
                       {isColVisible("runs") ? (
                         <ListGridCell className="hidden justify-end font-mono text-caption tabular-nums text-muted-foreground @2xl:flex">
-                          {actionable ? row.runCount.toLocaleString(locale) : "—"}
+                          {row.runCount?.toLocaleString(locale) ?? "—"}
                         </ListGridCell>
                       ) : (
                         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -1190,7 +1197,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       {isColVisible("model") ? (
                         <ListGridCell className="hidden @2xl:flex">
                           <span className="min-w-0 truncate text-caption text-muted-foreground">
-                            {(actionable && row.agent.model) || "—"}
+                            {agentListModel(row.agent) || "—"}
                           </span>
                         </ListGridCell>
                       ) : (

@@ -79,9 +79,44 @@ describe("OwnerAgentCatalogSchema", () => {
     created_at: "2026-06-01T00:00:00Z",
     access_scope: "owner-only",
   };
+  const bucket = {
+    agent_id: entry.id,
+    bucket_at: entry.created_at,
+    task_count: 3,
+    failed_count: 1,
+    completed_count: 2,
+    cancelled_count: 0,
+  };
+  const display = {
+    description: "Writes reports",
+    avatar_url: "https://example.com/avatar.png",
+    runtime_id: "runtime-1",
+    model: "codex",
+    max_concurrent_tasks: 6,
+    running_count: 2,
+    queued_count: 1,
+    run_count: 4,
+    activity: [bucket],
+  };
 
   it("keeps only the display fields", () => {
     expect(OwnerAgentCatalogSchema.parse([{ ...entry, instructions: "secret" }])).toEqual([entry]);
+    expect(OwnerAgentCatalogSchema.parse([{
+      ...entry,
+      display: {
+        ...display,
+        runtime_config: { api_key: "secret" },
+        activity: [{ ...bucket, task_id: "not-allowed" }],
+      },
+    }])).toEqual([{ ...entry, display }]);
+  });
+
+  it.each([
+    { running_count: -1 },
+    { run_count: "4" },
+    { activity: [{ ...bucket, failed_count: undefined }] },
+  ])("rejects malformed display metrics (%j)", (patch) => {
+    expect(OwnerAgentCatalogSchema.safeParse([{ ...entry, display: { ...display, ...patch } }]).success).toBe(false);
   });
 
   it("parses the Owner detail allowlist and drops sensitive or runnable settings", () => {

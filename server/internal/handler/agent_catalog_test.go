@@ -7,15 +7,25 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
 func TestListOwnerAgentCatalog(t *testing.T) {
 	agentID, agentOwnerID, otherID := privateAgentTestFixture(t)
+	runtimeID := handlerTestRuntimeID(t)
 	ctx := context.Background()
 	const path = "/api/agents/catalog"
-	if _, err := testPool.Exec(ctx, `UPDATE agent SET instructions = 'private prompt', archived_at = now() WHERE id = $1`, agentID); err != nil {
+	if _, err := testPool.Exec(ctx, `UPDATE agent
+		SET instructions = 'private prompt', description = 'Writes reports',
+		    avatar_url = 'https://example.com/avatar.png', model = 'test-model', max_concurrent_tasks = 6
+		WHERE id = $1`, agentID); err != nil {
 		t.Fatal(err)
 	}
+	dbfx.Task(t, agentID, testutil.Cols{"status": "running"})
+	dbfx.Task(t, agentID, testutil.Cols{"status": "waiting_local_directory"})
+	dbfx.Task(t, agentID, testutil.Cols{"status": "completed", "completed_at": time.Now().UTC()})
 
 	w := httptest.NewRecorder()
 	testHandler.ListOwnerAgentCatalog(w, newRequest("GET", path, nil))
@@ -30,7 +40,7 @@ func TestListOwnerAgentCatalog(t *testing.T) {
 		t.Fatalf("expected only the inaccessible private agent, got %s", w.Body.String())
 	}
 	entry := entries[0]
-	allowed := []string{"id", "name", "owner_id", "created_at", "archived_at", "access_scope"}
+	allowed := []string{"id", "name", "owner_id", "created_at", "archived_at", "access_scope", "display"}
 	if len(entry) != len(allowed) {
 		t.Fatalf("unexpected catalog fields: %v", entry)
 	}
@@ -40,8 +50,35 @@ func TestListOwnerAgentCatalog(t *testing.T) {
 		}
 	}
 	if string(entry["id"]) != `"`+agentID+`"` || string(entry["owner_id"]) != `"`+agentOwnerID+`"` ||
-		string(entry["archived_at"]) == "null" || string(entry["access_scope"]) != `"owner-only"` {
+		string(entry["archived_at"]) != "null" || string(entry["access_scope"]) != `"owner-only"` {
 		t.Fatalf("unexpected catalog metadata: %s", w.Body.String())
+	}
+	var display map[string]json.RawMessage
+	if err := json.Unmarshal(entry["display"], &display); err != nil {
+		t.Fatal(err)
+	}
+	wantDisplay := map[string]string{
+		"description": `"Writes reports"`, "avatar_url": `"https://example.com/avatar.png"`,
+		"runtime_id": `"` + runtimeID + `"`, "model": `"test-model"`,
+		"max_concurrent_tasks": "6", "running_count": "1", "queued_count": "1", "run_count": "3",
+	}
+	if len(display) != len(wantDisplay)+1 {
+		t.Fatalf("unexpected catalog display fields: %v", display)
+	}
+	for field, want := range wantDisplay {
+		if got := string(display[field]); got != want {
+			t.Errorf("display %s = %s; want %s", field, got, want)
+		}
+	}
+	var activity []AgentActivityBucket
+	if err := json.Unmarshal(display["activity"], &activity); err != nil {
+		t.Fatal(err)
+	}
+	if len(activity) != 1 || activity[0].AgentID != agentID || activity[0].TaskCount != 1 || activity[0].CompletedCount != 1 {
+		t.Errorf("unexpected catalog activity: %+v", activity)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET archived_at = now() WHERE id = $1`, agentID); err != nil {
+		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		method, suffix string

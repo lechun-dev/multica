@@ -53,6 +53,7 @@ import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { availabilityConfig } from "../presence";
 import { useT } from "../../i18n";
 import type { AgentListRow } from "./agents-page";
+import { agentListModel } from "./owner-agent-display";
 import { PAGE_GUTTER } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -172,7 +173,7 @@ export function AgentListToolbar({
   for (const row of allRows) {
     const oid = row.agent.owner_id;
     if (oid) ownerCounts.set(oid, (ownerCounts.get(oid) ?? 0) + 1);
-    const model = "model" in row.agent ? row.agent.model : null;
+    const model = agentListModel(row.agent);
     if (model) modelCounts.set(model, (modelCounts.get(model) ?? 0) + 1);
   }
 

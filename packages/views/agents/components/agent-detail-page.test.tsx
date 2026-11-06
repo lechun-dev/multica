@@ -58,6 +58,7 @@ const mockToastError = vi.hoisted(() => vi.fn());
 const mockModalOpen = vi.hoisted(() => vi.fn());
 const mockGetAgent = vi.hoisted(() => vi.fn());
 const mockOwnerDetail = vi.hoisted(() => vi.fn());
+const mockOwnerCatalog = vi.hoisted(() => vi.fn());
 const mockUpdateAgent = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
@@ -114,7 +115,7 @@ vi.mock("@multica/core/api", () => {
     }
   }
   return {
-    api: { getAgent: mockGetAgent, getOwnerAgentDetail: mockOwnerDetail, updateAgent: mockUpdateAgent },
+    api: { getAgent: mockGetAgent, getOwnerAgentDetail: mockOwnerDetail, listOwnerAgentCatalog: mockOwnerCatalog, updateAgent: mockUpdateAgent },
     ApiError,
   };
 });
@@ -197,6 +198,7 @@ beforeEach(() => {
   membersPendingRef.current = false;
   mockGetAgent.mockRejectedValue(forbidden());
   mockOwnerDetail.mockRejectedValue(forbidden());
+  mockOwnerCatalog.mockResolvedValue([]);
   mockUpdateAgent.mockResolvedValue({ ...ownAgent, model: "new-model" });
 });
 

@@ -7,6 +7,7 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { runtimeDisplayLabel } from "@multica/core/runtimes";
+import type { AgentActivity } from "@multica/core/agents";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { VisibilityBadge } from "./visibility-badge";
@@ -16,6 +17,7 @@ interface AgentOverviewSummaryProps {
   agent: Agent;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
+  activity?: AgentActivity;
   viewerId?: string;
 }
 
@@ -28,6 +30,7 @@ export function AgentOverviewSummary({
   agent,
   runtime,
   owner,
+  activity,
   viewerId,
 }: AgentOverviewSummaryProps) {
   const { t } = useT("agents");
@@ -116,7 +119,7 @@ export function AgentOverviewSummary({
         )}
       </section>
 
-      <AgentPerformanceSummary agent={agent} viewerId={viewerId} />
+      <AgentPerformanceSummary agent={agent} activity={activity} viewerId={viewerId} />
     </aside>
   );
 }

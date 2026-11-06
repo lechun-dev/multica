@@ -210,7 +210,9 @@ export function ActivityTab({ agent, showPerformance = true, readOnly = false, v
 
 /** Compact performance context for the Overview sidebar. Kept separate from
  * the work list so metrics never outrank current tasks or failures. */
-export function AgentPerformanceSummary({ agent, viewerId }: { agent: Agent; viewerId?: string }) {
+export function AgentPerformanceSummary({
+  agent, activity, viewerId,
+}: { agent: Agent; activity?: AgentActivity; viewerId?: string }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const { includeWorkspaceOwned, ready: visibilityReady } =
@@ -220,8 +222,7 @@ export function AgentPerformanceSummary({ agent, viewerId }: { agent: Agent; vie
     enabled: visibilityReady,
   });
   const { byAgent: activityMap } = useWorkspaceActivityMap(wsId);
-  const activity = activityMap.get(agent.id);
-  const summary = summarizeActivityWindow(activity, 30);
+  const summary = summarizeActivityWindow(activity ?? activityMap.get(agent.id), 30);
   const avgDurationMs = useMemo(
     () => deriveAvgDurationLast30d(tasksQuery.error ? [] : tasksQuery.data ?? [], Date.now()),
     [tasksQuery.data, tasksQuery.error],

@@ -3,10 +3,12 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -20,6 +22,25 @@ type ownerAgentCatalogEntry struct {
 	ArchivedAt  *time.Time `json:"archived_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	AccessScope string     `json:"access_scope"`
+}
+
+type ownerAgentCatalogRow struct {
+	ownerAgentCatalogEntry
+	Display ownerAgentCatalogDisplay `json:"display"`
+}
+
+// Only fields needed for rendering. Runtime settings and task details stay in
+// their respective endpoints; catalog access does not grant invocation access.
+type ownerAgentCatalogDisplay struct {
+	Description        string                `json:"description"`
+	AvatarURL          *string               `json:"avatar_url"`
+	RuntimeID          string                `json:"runtime_id"`
+	Model              string                `json:"model"`
+	MaxConcurrentTasks int32                 `json:"max_concurrent_tasks"`
+	RunningCount       int                   `json:"running_count"`
+	QueuedCount        int                   `json:"queued_count"`
+	RunCount           int32                 `json:"run_count"`
+	Activity           []AgentActivityBucket `json:"activity"`
 }
 
 type ownerAgentDetail struct {
@@ -123,7 +144,8 @@ func (h *Handler) ListOwnerAgentCatalog(w http.ResponseWriter, r *http.Request) 
 	}
 	userID := requestUserID(r)
 	ctx := r.Context()
-	agents, err := h.Queries.ListAllAgents(ctx, parseUUID(workspaceID))
+	workspaceUUID := parseUUID(workspaceID)
+	agents, err := h.Queries.ListAllAgents(ctx, workspaceUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent catalog")
 		return
@@ -133,13 +155,87 @@ func (h *Handler) ListOwnerAgentCatalog(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")
 		return
 	}
-	entries := make([]ownerAgentCatalogEntry, 0, len(agents))
+	entries := make([]ownerAgentCatalogRow, 0, len(agents))
+	rowByAgentID := make(map[pgtype.UUID]int)
 	for _, agent := range agents {
 		id := uuidToString(agent.ID)
 		if memberAllowedToViewAgent(agent, targetsByAgent[id], userID, "owner") {
 			continue
 		}
-		entries = append(entries, agentCatalogEntry(agent, targetsByAgent[id]))
+		rowByAgentID[agent.ID] = len(entries)
+		entries = append(entries, ownerAgentCatalogRow{
+			ownerAgentCatalogEntry: agentCatalogEntry(agent, targetsByAgent[id]),
+			Display: ownerAgentCatalogDisplay{
+				Description:        agent.Description,
+				AvatarURL:          h.resolveAvatarURLPtr(textToPtr(agent.AvatarUrl)),
+				RuntimeID:          uuidToString(agent.RuntimeID),
+				Model:              agent.Model.String,
+				MaxConcurrentTasks: agent.MaxConcurrentTasks,
+				Activity:           []AgentActivityBucket{},
+			},
+		})
+	}
+	if len(entries) == 0 {
+		writeJSON(w, http.StatusOK, entries)
+		return
+	}
+
+	runCounts, err := h.getCachedWorkspaceAgentRunCounts(ctx, workspaceUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get catalog run counts")
+		return
+	}
+	for _, row := range runCounts {
+		if i, ok := rowByAgentID[row.AgentID]; ok {
+			entries[i].Display.RunCount = row.RunCount
+		}
+	}
+	activity, err := h.getCachedWorkspaceAgentActivity(ctx, workspaceUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get catalog activity")
+		return
+	}
+	for _, row := range activity {
+		if i, ok := rowByAgentID[row.AgentID]; ok {
+			display := &entries[i].Display
+			display.Activity = append(display.Activity, AgentActivityBucket{
+				AgentID: entries[i].ID, BucketAt: timestampToString(row.Bucket),
+				TaskCount: row.TaskCount, FailedCount: row.FailedCount,
+				CompletedCount: row.CompletedCount, CancelledCount: row.CancelledCount,
+			})
+		}
+	}
+
+	tasks, err := h.Queries.ListWorkspaceAgentTaskSnapshot(ctx, workspaceUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get catalog workload")
+		return
+	}
+	tasks = slices.DeleteFunc(tasks, func(task db.AgentTaskQueue) bool {
+		i, ok := rowByAgentID[task.AgentID]
+		return !ok || entries[i].ArchivedAt != nil || !agentCatalogActiveTask(task.Status)
+	})
+	tasks, err = h.filterTasksByProjectPermission(ctx, workspaceID, userID, tasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check project permissions")
+		return
+	}
+	for _, task := range tasks {
+		display := &entries[rowByAgentID[task.AgentID]].Display
+		if task.Status == "running" {
+			display.RunningCount++
+		} else {
+			display.QueuedCount++
+		}
 	}
 	writeJSON(w, http.StatusOK, entries)
+}
+
+func agentCatalogActiveTask(status string) bool {
+	switch status {
+	case "running", "queued", "dispatched", "waiting_local_directory":
+		return true
+	default:
+		return false
+	}
 }

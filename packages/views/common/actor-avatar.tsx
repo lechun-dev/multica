@@ -10,7 +10,7 @@ import {
 } from "@multica/ui/components/ui/hover-card";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { useAgentPresenceDetail } from "@multica/core/agents";
+import { useAgentPresenceDetail, type AgentPresenceDetail } from "@multica/core/agents";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { AgentProfileCard } from "../agents/components/agent-profile-card";
 import { AgentLivePeekCard } from "../agents/components/agent-live-peek-card";
@@ -62,6 +62,8 @@ interface ActorAvatarProps {
    * popover inside the dropdown.
    */
   showStatusDot?: boolean;
+  /** Explicit read-only status when the agent is absent from the live directory. */
+  statusAvailability?: AgentPresenceDetail["availability"] | null;
   /**
    * When `enableHoverCard` is on for an agent, choose which payload to
    * render. See {@link AgentHoverCardVariant}. Defaults to `"profile"` so
@@ -90,6 +92,7 @@ export function ActorAvatar({
   className,
   enableHoverCard,
   showStatusDot,
+  statusAvailability,
   hoverCardVariant = "profile",
   profileLink,
 }: ActorAvatarProps) {
@@ -121,7 +124,9 @@ export function ActorAvatar({
   const dotted = wrapDot ? (
     <span className="relative inline-flex">
       {avatar}
-      <AgentStatusDot agentId={actorId} size={size} />
+      {statusAvailability === undefined
+        ? <AgentStatusDot agentId={actorId} size={size} />
+        : statusAvailability && <AgentAvailabilityDot availability={statusAvailability} size={size} />}
     </span>
   ) : (
     avatar
@@ -235,10 +240,16 @@ function ActorAvatarProfileLink({
 export function AgentStatusDot({ agentId, size }: { agentId: string; size?: AvatarSize }) {
   const ws = useCurrentWorkspace();
   const detail = useAgentPresenceDetail(ws?.id, agentId);
-  const { t } = useT("agents");
   if (detail === "loading") return null;
+  return <AgentAvailabilityDot availability={detail.availability} size={size} />;
+}
 
-  const { dotClass } = availabilityConfig[detail.availability];
+function AgentAvailabilityDot({ availability, size }: {
+  availability: AgentPresenceDetail["availability"];
+  size?: AvatarSize;
+}) {
+  const { t } = useT("agents");
+  const { dotClass } = availabilityConfig[availability];
   const px = size ? AVATAR_SIZE_PX[size] : 24;
   const dotSize = px >= 24 ? "h-1.5 w-1.5" : "h-1 w-1";
 
@@ -249,7 +260,7 @@ export function AgentStatusDot({ agentId, size }: { agentId: string; size?: Avat
       // included. It used to read `Status: ${availabilityConfig[...].label}`,
       // which was English in every locale (#7411).
       aria-label={t(($) => $.presence_status_aria, {
-        status: t(($) => $.availability[detail.availability]),
+        status: t(($) => $.availability[availability]),
       })}
       className={`absolute bottom-0 right-0 rounded-full ring-1 ring-background ${dotClass} ${dotSize}`}
     />
