@@ -294,6 +294,23 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.15",
+        date: "2026-11-06",
+        title: "Agent privacy, task concurrency, and offboarding",
+        changes: [],
+        features: [
+          "New agents are private by default. Enabling sharing warns that people with access may be able to operate your computer through the agent.",
+          "The organization directory syncs direct managers. After a departure is verified, an eligible manager gains access to manage the departing employee's qualifying projects and tasks, and receives a checklist to assign the work. Assignees are not changed automatically.",
+        ],
+        improvements: [
+          "Workspace owners can view members' agent profiles and run history. Workspace ownership alone does not grant permission to edit or run someone else's private agent.",
+          "Runs for the same agent within one task are queued in order. Runs across different tasks can execute together up to that agent's configured concurrency limit.",
+          "When an agent is assigned a task, the member who owns the agent receives an inbox notification.",
+          "Task details can now be refreshed manually.",
+        ],
+        fixes: [],
+      },
+      {
         version: "0.5.14",
         date: "2026-10-30",
         title: "Realtime sync and assignment notifications",
