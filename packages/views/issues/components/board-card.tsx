@@ -116,7 +116,7 @@ export const BoardCardContent = memo(function BoardCardContent({
   const { getActorName } = useActorName();
   const assigneeName =
     showAssigneeName && issue.assignee_type && issue.assignee_id
-      ? getActorName(issue.assignee_type, issue.assignee_id)
+      ? issue.assignee_name || getActorName(issue.assignee_type, issue.assignee_id)
       : null;
 
   const priorityLabel = t(($) => $.priority[issue.priority]);

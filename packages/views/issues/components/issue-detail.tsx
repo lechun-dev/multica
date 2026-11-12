@@ -2435,10 +2435,12 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
                 <span className="truncate">{resolveStatusLabel(issue.status)}</span>
               </PropRow>
               <PropRow label={t(($) => $.detail.prop_assignee)} interactive={false}>
+                {/* The task projects its own actor name; the directory lookup is
+                    only a fallback for payloads from older backends. */}
                 {issue.assignee_type && issue.assignee_id ? (
                   <>
                     <ActorAvatar actorType={issue.assignee_type} actorId={issue.assignee_id} size="sm" />
-                    <span className="truncate">{getActorName(issue.assignee_type, issue.assignee_id)}</span>
+                    <span className="truncate">{issue.assignee_name || getActorName(issue.assignee_type, issue.assignee_id)}</span>
                   </>
                 ) : (
                   <span className="text-muted-foreground">{t(($) => $.actions.unassigned)}</span>
@@ -2767,7 +2769,7 @@ export function IssueDetail({ issueId, onDelete, onDone, doneActionLabel, doneAc
         {detailsOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
           <PropRow label={t(($) => $.detail.prop_created_by)}>
             <ActorAvatar actorType={issue.creator_type} actorId={issue.creator_id} size="sm" enableHoverCard />
-            <span className="cursor-pointer truncate">{getActorName(issue.creator_type, issue.creator_id)}</span>
+            <span className="cursor-pointer truncate">{issue.creator_name || getActorName(issue.creator_type, issue.creator_id)}</span>
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_created)}>
             <span className="text-muted-foreground">{shortDate(issue.created_at, locale)}</span>

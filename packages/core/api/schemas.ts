@@ -1375,8 +1375,10 @@ export const IssueSchema = z.object({
   priority: z.string(),
   assignee_type: z.string().nullable(),
   assignee_id: z.string().nullable(),
+  assignee_name: z.string().nullable().optional().catch(undefined),
   creator_type: z.string(),
   creator_id: z.string(),
+  creator_name: z.string().nullable().optional().catch(undefined),
   parent_issue_id: z.string().nullable(),
   project_id: z.string().nullable(),
   // Detail-only additive data. Keep it tolerant for mixed-version

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/projectauth"
@@ -184,42 +183,6 @@ func (h *Handler) ListAgentReadProjects(w http.ResponseWriter, r *http.Request) 
 	total := len(items)
 	start := min(offset, total)
 	writeJSON(w, http.StatusOK, map[string]any{"projects": items[start:min(start+limit, total)], "total": total})
-}
-
-// fillAgentAssigneeNames runs only after authorization by an internal agent read
-// handler. One workspace directory query serves the entire page; no per-task
-// lookups or changes to normal browser/API response projections are needed.
-func (h *Handler) fillAgentAssigneeNames(r *http.Request, workspaceID pgtype.UUID, issues []IssueResponse) error {
-	if enabled, _ := r.Context().Value(missionAgentReadContextKey{}).(bool); !enabled {
-		return nil
-	}
-	hasMember := false
-	for _, issue := range issues {
-		if issue.AssigneeType != nil && *issue.AssigneeType == "member" && issue.AssigneeID != nil {
-			hasMember = true
-			break
-		}
-	}
-	if !hasMember {
-		return nil
-	}
-	rows, err := h.Queries.ListMembersWithUser(r.Context(), workspaceID)
-	if err != nil {
-		return err
-	}
-	names := make(map[string]string, len(rows))
-	for _, row := range rows {
-		names[uuidToString(row.UserID)] = row.UserName
-	}
-	for i := range issues {
-		issue := &issues[i]
-		if issue.AssigneeType != nil && *issue.AssigneeType == "member" && issue.AssigneeID != nil {
-			if name, ok := names[*issue.AssigneeID]; ok {
-				issue.AssigneeName = &name
-			}
-		}
-	}
-	return nil
 }
 
 // ListAgentReadIssues is the only list route where a validated owner-scope

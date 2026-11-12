@@ -64,10 +64,14 @@ type IssueResponse struct {
 	Priority     string  `json:"priority"`
 	AssigneeType *string `json:"assignee_type"`
 	AssigneeID   *string `json:"assignee_id"`
-	// AssigneeName is a member display name projected only by internal agent reads.
+	// AssigneeName and CreatorName carry the actor's display name so a reader
+	// never has to resolve it from a workspace directory that may not contain the
+	// actor at all. The browser used to do exactly that and rendered "Unknown
+	// Agent" whenever the agent was not in the current workspace's list.
 	AssigneeName  *string `json:"assignee_name,omitempty"`
 	CreatorType   string  `json:"creator_type"`
 	CreatorID     string  `json:"creator_id"`
+	CreatorName   *string `json:"creator_name,omitempty"`
 	ParentIssueID *string `json:"parent_issue_id"`
 	ProjectID     *string `json:"project_id"`
 	// ProjectSummary is a minimal, read-only projection used by task detail
@@ -347,6 +351,72 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 // page full of custom ones costs one catalog read rather than one per row. The
 // Resolver includes ARCHIVED statuses, because an issue left on an archived
 // status still belongs in its category's column. (MUL-6243)
+// fillActorNames projects the display name of each issue's assignee and creator.
+// One directory query per actor kind serves the whole page, and it runs for
+// ordinary reads: the browser's own directory cache could not name an actor that
+// belongs to another workspace or no longer has a row, which surfaced as
+// "Unknown Agent" on the task detail.
+func (h *Handler) fillActorNames(ctx context.Context, workspaceID pgtype.UUID, issues []IssueResponse) error {
+	needMembers, needAgents := false, false
+	for _, issue := range issues {
+		if issue.AssigneeType != nil && issue.AssigneeID != nil {
+			switch *issue.AssigneeType {
+			case "member":
+				needMembers = true
+			case "agent":
+				needAgents = true
+			}
+		}
+		switch issue.CreatorType {
+		case "member":
+			needMembers = true
+		case "agent":
+			needAgents = true
+		}
+	}
+	memberNames := map[string]string{}
+	if needMembers {
+		rows, err := h.Queries.ListMembersWithUser(ctx, workspaceID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			memberNames[uuidToString(row.UserID)] = row.UserName
+		}
+	}
+	agentNames := map[string]string{}
+	if needAgents {
+		rows, err := h.Queries.ListAllAgents(ctx, workspaceID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			agentNames[uuidToString(row.ID)] = row.Name
+		}
+	}
+	nameFor := func(actorType, actorID string) *string {
+		var name string
+		switch actorType {
+		case "member":
+			name = memberNames[actorID]
+		case "agent":
+			name = agentNames[actorID]
+		}
+		if name == "" {
+			return nil
+		}
+		return &name
+	}
+	for i := range issues {
+		issue := &issues[i]
+		if issue.AssigneeType != nil && issue.AssigneeID != nil {
+			issue.AssigneeName = nameFor(*issue.AssigneeType, *issue.AssigneeID)
+		}
+		issue.CreatorName = nameFor(issue.CreatorType, issue.CreatorID)
+	}
+	return nil
+}
+
 func (h *Handler) fillStatusCategories(ctx context.Context, wsID pgtype.UUID, resps []IssueResponse) {
 	fill := h.newStatusCategoryFiller(ctx, wsID)
 	for i := range resps {
@@ -1887,7 +1957,7 @@ LIMIT %s OFFSET %s`, totalExpr, whereSql, orderBy, limitRef, offsetRef)
 		resp[i].Labels = &labels
 	}
 	h.fillStatusCategories(ctx, wsUUID, resp)
-	if err := h.fillAgentAssigneeNames(r, wsUUID, resp); err != nil {
+	if err := h.fillActorNames(ctx, wsUUID, resp); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read assignee names")
 		return
 	}
@@ -2565,7 +2635,7 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	assigneeResponses := []IssueResponse{resp}
-	if err := h.fillAgentAssigneeNames(r, issue.WorkspaceID, assigneeResponses); err != nil {
+	if err := h.fillActorNames(r.Context(), issue.WorkspaceID, assigneeResponses); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read assignee names")
 		return
 	}

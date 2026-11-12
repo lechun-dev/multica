@@ -132,8 +132,12 @@ func TestMissionAgentAssigneeNamesPreserveACL(t *testing.T) {
 		t.Fatalf("combined project and assignee filter = %+v", combinedOut)
 	}
 	plain := testutil.WithURLParams(newRequestAs(assignee, http.MethodGet, "/api/issues/"+visibleID, nil), "id", visibleID)
-	if _, present := testutil.Call(t, testHandler.GetIssue, plain).Want(http.StatusOK).Map()["assignee_name"]; present {
-		t.Fatal("ordinary Mission detail unexpectedly changed projection")
+	plainOut := testutil.Call(t, testHandler.GetIssue, plain).Want(http.StatusOK).Map()
+	// The display name is part of the ordinary projection now: a client cannot
+	// resolve an actor that its own directory does not contain, which used to
+	// render "Unknown Agent" on the task detail.
+	if plainOut["assignee_name"] != name {
+		t.Fatalf("ordinary detail assignee_name = %v, want %q", plainOut["assignee_name"], name)
 	}
 }
 

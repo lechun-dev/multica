@@ -185,8 +185,15 @@ export interface Issue {
   priority: IssuePriority;
   assignee_type: IssueAssigneeType | null;
   assignee_id: string | null;
+  /**
+   * Display name of the assignee / creator, projected by the server so the client
+   * never has to resolve an actor from a workspace directory that may not contain
+   * it. Absent on older backends.
+   */
+  assignee_name?: string | null;
   creator_type: IssueAssigneeType;
   creator_id: string;
+  creator_name?: string | null;
   parent_issue_id: string | null;
   project_id: string | null;
   /** Minimal project identity for task detail when project access is absent. */

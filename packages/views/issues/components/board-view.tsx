@@ -203,7 +203,7 @@ function buildGroups(
     if (issue.assignee_type && issue.assignee_id) {
       groups.set(id, {
         id,
-        title: getActorName(issue.assignee_type, issue.assignee_id),
+        title: issue.assignee_name || getActorName(issue.assignee_type, issue.assignee_id),
         assigneeType: issue.assignee_type,
         assigneeId: issue.assignee_id,
         createData: {
