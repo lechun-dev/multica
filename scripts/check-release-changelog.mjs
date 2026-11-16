@@ -134,10 +134,16 @@ if (isCli) {
       );
     }
 
-    const existingTags = execFileSync("git", ["tag", "--list"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    })
+    // 2026-11-16 coder(lq): Order previews against the stable releases on THIS
+    // branch's history only. A clone of a fork usually also holds the upstream
+    // mirror's tags (0.8.x), and counting those made every private preview look
+    // older than the latest upstream stable, so no preview could be cut at all.
+    // An updater only ever compares against what this line actually shipped.
+    const existingTags = execFileSync(
+      "git",
+      ["tag", "--list", "--merged", "HEAD"],
+      { cwd: repoRoot, encoding: "utf8" },
+    )
       .split("\n")
       .filter(Boolean);
     validateReleaseTagSequence({

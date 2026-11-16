@@ -47,11 +47,12 @@ MissionOS; they are not used as the complete GitHub Release audit trail.
 To distribute a build to selected testers without showing it on the public
 download page, use a semver prerelease tag such as `v0.4.70-beta.1`:
 
-1. Start from the version after the latest stable release. If `v0.4.85` is
-   already stable, the next preview line is `v0.4.86-beta.1`, followed by
-   `v0.4.86-beta.2`; never create another `v0.4.85-beta.*` tag. The release
-   checks reject a prerelease whose base version is not newer than the latest
-   stable tag.
+1. Start from the version after the latest stable release on the branch being
+   released. If `v0.4.85` is already stable, the next preview line is
+   `v0.4.86-beta.1`, followed by `v0.4.86-beta.2`; never create another
+   `v0.4.85-beta.*` tag. The release checks reject a prerelease whose base
+   version is not newer than the latest stable tag **on that branch's history**,
+   so tags from an upstream mirror that this line never shipped do not gate it.
 2. Create and push the tag from the reviewed commit. Beta and test tags may
    point to a non-`main` branch; the eventual stable tag must point to the
    reviewed commit on `main`.
