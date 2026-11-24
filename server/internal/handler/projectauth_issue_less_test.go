@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -51,6 +52,57 @@ func TestIssueLessRunAuthorizesProjectIssueOperations(t *testing.T) {
 		}), "id", issueID)
 		if w := callIssueAccessEndpoint(testHandler.UpdateIssue, req); w.Code != http.StatusOK {
 			t.Fatalf("agent update of a project issue = %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("read by identifier", func(t *testing.T) {
+		var number int64
+		if err := testPool.QueryRow(context.Background(), `SELECT number FROM issue WHERE id=$1`, issueID).Scan(&number); err != nil {
+			t.Fatal(err)
+		}
+		identifier := fmt.Sprintf("%s-%d", testHandler.getIssuePrefix(context.Background(), parseUUID(testWorkspaceID)), number)
+		req := withURLParam(agentRequest(http.MethodGet, "/api/issues/"+identifier, nil), "id", identifier)
+		if w := callIssueAccessEndpoint(testHandler.GetIssue, req); w.Code != http.StatusOK {
+			t.Fatalf("agent identifier read = %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("comment", func(t *testing.T) {
+		req := withURLParam(agentRequest(http.MethodPost, "/api/issues/"+issueID+"/comments", map[string]any{
+			"content": "Issue-less automation comment",
+		}), "id", issueID)
+		if w := callIssueAccessEndpoint(testHandler.CreateComment, req); w.Code != http.StatusCreated {
+			t.Fatalf("agent comment = %d: %s", w.Code, w.Body.String())
+		}
+		listReq := withURLParam(agentRequest(http.MethodGet, "/api/issues/"+issueID+"/comments", nil), "id", issueID)
+		if w := callIssueAccessEndpoint(testHandler.ListComments, listReq); w.Code != http.StatusOK {
+			t.Fatalf("agent comment list = %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// MUL-6691 keeps unattributed run_only runs from borrowing the accountable
+	// human to assign private workers, so assignment is exercised with a
+	// workspace-shared worker, which needs no per-run human authority.
+	sharedWorker := dbfx.Agent(t, "Issue-less shared worker", runtimeID, testutil.Cols{
+		"owner_id":        runtimeOwner,
+		"visibility":      "workspace",
+		"permission_mode": "public_to",
+	})
+	dbfx.Insert(t, "agent_invocation_target", testutil.Cols{
+		"agent_id":    sharedWorker,
+		"target_type": "workspace",
+		"target_id":   testWorkspaceID,
+		"created_by":  runtimeOwner,
+	})
+	t.Run("create in project with shared assignee", func(t *testing.T) {
+		req := agentRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+			"title":         "Issue-less automation assigned child",
+			"project_id":    projectID,
+			"assignee_type": "agent",
+			"assignee_id":   sharedWorker,
+		})
+		if w := callIssueAccessEndpoint(testHandler.CreateIssue, req); w.Code != http.StatusCreated {
+			t.Fatalf("agent create with shared assignee = %d: %s", w.Code, w.Body.String())
 		}
 	})
 

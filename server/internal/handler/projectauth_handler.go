@@ -2017,9 +2017,15 @@ func (h *Handler) requireRestrictedSourcePublishAccess(w http.ResponseWriter, r 
 	// 2026-10-12 coder(lq): Publishing must judge the same human as task
 	// reads and enqueue/claim, including scheduled runs without an originator.
 	authorizationUserID := service.AuthorizationSubject(task.OriginatorUserID, task.AccountableUserID)
-	if !ok || !task.IssueID.Valid || !authorizationUserID.Valid {
+	if !ok || !authorizationUserID.Valid {
 		writeErrorCode(w, http.StatusForbidden, "task_publish_forbidden", "agent task authorization is unavailable")
 		return false
+	}
+	// 2026-11-24 coder(lq): An issue-less run has no restricted source to
+	// publish from, so judge the target's own comment permission for the human
+	// it represents instead of refusing the write outright.
+	if !task.IssueID.Valid {
+		return h.requireIssueProjectPermission(w, r, target, projectauth.IssueComment)
 	}
 	if uuidToString(task.IssueID) == uuidToString(target.ID) {
 		return true
