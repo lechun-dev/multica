@@ -3,7 +3,6 @@ module github.com/multica-ai/multica/server
 go 1.26.6
 
 require (
-	github.com/lechun-dev/multica/extensions/dingtalk-notify v0.0.0
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.4
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.4
@@ -15,8 +14,9 @@ require (
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/lechun-dev/multica/extensions/dingtalk-notify v0.0.0
 	github.com/lmittmann/tint v1.2.0
 	github.com/mattn/go-shellwords v1.0.14
 	github.com/oklog/ulid/v2 v2.1.2
