@@ -1745,23 +1745,19 @@ func (h *Handler) requireProjectPermission(w http.ResponseWriter, r *http.Reques
 	if h.ProjectAuth == nil || !h.ProjectAuth.Enabled() {
 		return true
 	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
+	if _, ok := requireUserID(w, r); !ok {
 		return false
 	}
 	if workspaceID == "" {
 		writeError(w, http.StatusBadRequest, "workspace_id is required")
 		return false
 	}
-	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
-	if err != nil {
+	subject, reason := h.projectPermissionSubject(r, workspaceID)
+	if reason != "" {
+		// Same indistinguishability as an inaccessible project: an
+		// unresolvable delegation must not reveal project ids.
 		writeError(w, http.StatusNotFound, "project not found")
 		return false
-	}
-	subject := projectauth.Subject{
-		UserID:        userID,
-		WorkspaceID:   workspaceID,
-		WorkspaceRole: projectauth.WorkspaceRole(member.Role),
 	}
 	if err := h.ProjectAuth.RequireWithWorkspaceScope(r.Context(), subject, projectID, permission, includeWorkspaceOwnedFromRequest(r)); err != nil {
 		// Project membership is intentionally indistinguishable from a missing
@@ -1848,6 +1844,49 @@ func (h *Handler) issueProjectAllowedWithWorkspaceScope(r *http.Request, issue d
 	return allowed, reason
 }
 
+// projectPermissionSubject resolves the human a project permission check speaks
+// for. Members are themselves. For task-token traffic X-User-ID names the
+// runtime owner, so the durable task's originator (or its accountable human for
+// scheduled runs) is the subject instead — the same selection enqueue/claim and
+// issuePermissionSubject use.
+func (h *Handler) projectPermissionSubject(r *http.Request, workspaceID string) (projectauth.Subject, string) {
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	userID := requestUserID(r)
+	if actorType == "agent" {
+		authorizationUserID, _, reason := h.agentTaskAuthorizationUser(r, actorID)
+		if reason != "" {
+			return projectauth.Subject{}, reason
+		}
+		userID = uuidToString(authorizationUserID)
+	}
+	if userID == "" {
+		return projectauth.Subject{}, "denied"
+	}
+	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
+	if err != nil {
+		return projectauth.Subject{}, "denied"
+	}
+	return projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)}, ""
+}
+
+// agentTaskAuthorizationUser resolves the human an agent-process request speaks
+// for from its durable task: the originator, or the accountable human for
+// scheduled runs that carry no originator. It denies when the task is missing,
+// owned by another agent, outside the requested workspace, or has no human.
+func (h *Handler) agentTaskAuthorizationUser(r *http.Request, actorID string) (pgtype.UUID, db.AgentTaskQueue, string) {
+	task, ok := h.taskFromRequestHeader(r)
+	// resolveActor already bound the actor to this workspace (middleware-stamped
+	// task token, or the validated X-Agent-ID fallback).
+	if !ok || uuidToString(task.AgentID) != actorID {
+		return pgtype.UUID{}, db.AgentTaskQueue{}, "denied"
+	}
+	authorizationUserID := service.AuthorizationSubject(task.OriginatorUserID, task.AccountableUserID)
+	if !authorizationUserID.Valid {
+		return pgtype.UUID{}, db.AgentTaskQueue{}, "denied"
+	}
+	return authorizationUserID, task, ""
+}
+
 // issuePermissionSubject binds agent-process traffic to the human who
 // originated the durable task, or its accountable human for scheduled runs.
 // A task token never inherits the runtime owner/server credential's broader
@@ -1860,21 +1899,25 @@ func (h *Handler) issuePermissionSubject(r *http.Request, target db.Issue) (proj
 	actorType, actorID := h.resolveActor(r, requestUser, workspaceID)
 	userID := requestUser
 	if actorType == "agent" {
-		task, ok := h.taskFromRequestHeader(r)
 		// 2026-10-12 coder(lq): Reuse enqueue/claim's human selection without
 		// rewriting attribution or falling back to the authenticated runtime owner.
-		authorizationUserID := service.AuthorizationSubject(task.OriginatorUserID, task.AccountableUserID)
-		if !ok || uuidToString(task.AgentID) != actorID || !task.IssueID.Valid || !authorizationUserID.Valid {
-			return projectauth.Subject{}, "denied"
-		}
-		source, err := h.Queries.GetIssue(r.Context(), task.IssueID)
-		if err != nil || source.WorkspaceID != target.WorkspaceID {
-			return projectauth.Subject{}, "denied"
+		authorizationUserID, task, reason := h.agentTaskAuthorizationUser(r, actorID)
+		if reason != "" {
+			return projectauth.Subject{}, reason
 		}
 		userID = uuidToString(authorizationUserID)
-		sourceSubject := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}
-		if allowed, sourceReason := h.effectiveIssueAccessAllowed(r.Context(), sourceSubject, uuidToString(source.ID), projectauth.AgentUse, true); !allowed {
-			return projectauth.Subject{}, sourceReason
+		// 2026-11-24 coder(lq): A source-issue task rechecks AgentUse so a revoke
+		// takes effect mid-run. A run_only/scheduled task has no source issue; it
+		// was admitted at enqueue and is authorized as its accountable human.
+		if task.IssueID.Valid {
+			source, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+			if err != nil || source.WorkspaceID != target.WorkspaceID {
+				return projectauth.Subject{}, "denied"
+			}
+			sourceSubject := projectauth.Subject{UserID: userID, WorkspaceID: workspaceID}
+			if allowed, sourceReason := h.effectiveIssueAccessAllowed(r.Context(), sourceSubject, uuidToString(source.ID), projectauth.AgentUse, true); !allowed {
+				return projectauth.Subject{}, sourceReason
+			}
 		}
 	}
 	if userID == "" {

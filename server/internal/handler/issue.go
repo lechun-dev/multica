@@ -3441,12 +3441,15 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	var relationshipSubject projectauth.Subject
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		member, err := h.getWorkspaceMember(r.Context(), creatorID, workspaceID)
-		if err != nil {
+		// 2026-11-24 coder(lq): A task-token request names the runtime owner in
+		// X-User-ID; the relationship check must speak for the human the run
+		// represents (see projectPermissionSubject).
+		subject, reason := h.projectPermissionSubject(r, workspaceID)
+		if reason != "" {
 			writeError(w, http.StatusForbidden, "workspace membership is required")
 			return
 		}
-		relationshipSubject = projectauth.Subject{UserID: creatorID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)}
+		relationshipSubject = subject
 	}
 
 	status := req.Status
@@ -3998,12 +4001,14 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	workspaceID := uuidToString(prevIssue.WorkspaceID)
 	var relationshipSubjects []projectauth.Subject
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		member, memberErr := h.getWorkspaceMember(r.Context(), userID, workspaceID)
-		if memberErr != nil {
+		// 2026-11-24 coder(lq): Use the human the run represents, not the
+		// runtime owner the task token names in X-User-ID.
+		subject, reason := h.projectPermissionSubject(r, workspaceID)
+		if reason != "" {
 			writeError(w, http.StatusForbidden, "workspace membership is required")
 			return
 		}
-		relationshipSubjects = append(relationshipSubjects, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)})
+		relationshipSubjects = append(relationshipSubjects, subject)
 	}
 
 	// Read body as raw bytes so we can detect which fields were explicitly sent.
@@ -4778,12 +4783,13 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	var relationshipSubjects []projectauth.Subject
 	if h.ProjectAuth != nil && h.ProjectAuth.Enabled() {
-		member, memberErr := h.getWorkspaceMember(r.Context(), userID, workspaceID)
-		if memberErr != nil {
+		// 2026-11-24 coder(lq): Same delegated-human rule as single update.
+		subject, reason := h.projectPermissionSubject(r, workspaceID)
+		if reason != "" {
 			writeError(w, http.StatusForbidden, "workspace membership is required")
 			return
 		}
-		relationshipSubjects = append(relationshipSubjects, projectauth.Subject{UserID: userID, WorkspaceID: workspaceID, WorkspaceRole: projectauth.WorkspaceRole(member.Role)})
+		relationshipSubjects = append(relationshipSubjects, subject)
 	}
 	// Status is validated against this workspace's catalog, so it has to wait
 	// for wsUUID above. One check for the whole batch — every issue in it

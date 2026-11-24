@@ -30,6 +30,21 @@ func TestScheduledAgentIssueOperationsUseAccountableHuman(t *testing.T) {
 	if err := upsertIssueAccessGrant(context.Background(), testPool, issueID, projectID, accountable, projectauth.TaskManager); err != nil {
 		t.Fatal(err)
 	}
+	// The relationship gate needs the target project's IssueCreate for the same
+	// delegated human as authorization. Only the success subtest grants it: the
+	// denial subtests below must stay task-grant-only, or project AgentUse would
+	// mask the task-level revocation they exercise.
+	grantProjectMembership := func(t *testing.T) {
+		t.Helper()
+		if err := (&projectAuthRepository{db: testPool}).AddProjectMember(context.Background(), projectID, accountable, projectauth.ProjectMember); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := (&projectAuthRepository{db: testPool}).RemoveProjectMember(context.Background(), projectID, accountable); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 	taskID := dbfx.Task(t, agentID, testutil.Cols{
 		"runtime_id": runtimeID, "issue_id": issueID, "originator_user_id": nil,
 		"accountable_user_id": accountable, "originator_source": "trigger_owner",
@@ -57,6 +72,7 @@ func TestScheduledAgentIssueOperationsUseAccountableHuman(t *testing.T) {
 		testutil.Call(t, testHandler.UpdateIssue, request(http.MethodPut, "", map[string]any{"status": "done"})).Want(want)
 	}
 	t.Run("scheduled operations", func(t *testing.T) {
+		grantProjectMembership(t)
 		operations(t, http.StatusOK)
 		var originatorRemainsEmpty bool
 		dbfx.QueryRow(t, `SELECT originator_user_id IS NULL FROM agent_task_queue WHERE id=$1`, taskID).Scan(&originatorRemainsEmpty)
