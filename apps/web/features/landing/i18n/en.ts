@@ -294,6 +294,19 @@ export function createEnDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.16",
+        date: "2026-11-24",
+        title: "Scheduled automation fixes and WebSocket security",
+        changes: [],
+        features: [],
+        improvements: [
+          "Upgraded the WebSocket library to fix a weak random number generator used for client mask keys (GO-2026-6278).",
+        ],
+        fixes: [
+          "Scheduled automation (`run_only` autopilot) can now read, update and create tasks, and comment on project tasks, instead of failing with “project not found”. Authorization still follows the accountable member's project permissions.",
+        ],
+      },
+      {
         version: "0.5.15",
         date: "2026-11-06",
         title: "Agent privacy, task concurrency, and offboarding",

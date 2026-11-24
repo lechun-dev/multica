@@ -269,6 +269,19 @@ export function createKoDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.16",
+          date: "2026-11-24",
+          title: "예약 자동화 수정 및 WebSocket 보안 업데이트",
+          changes: [],
+          features: [],
+          improvements: [
+            "클라이언트 마스크 키에 약한 난수 생성기를 사용하던 문제(GO-2026-6278)를 수정하기 위해 WebSocket 라이브러리를 업그레이드했습니다.",
+          ],
+          fixes: [
+            "예약 자동화(`run_only` 모드)에서 태스크를 읽고, 수정하고, 프로젝트에 새로 만들고, 댓글을 작성할 수 있습니다. 더 이상 “프로젝트를 찾을 수 없음”으로 실패하지 않으며, 권한은 계속 해당 실행을 대표하는 멤버의 프로젝트 권한으로 판단합니다.",
+          ],
+        },
+        {
           version: "0.5.15",
           date: "2026-11-06",
           title: "에이전트 공개 범위, 병렬 실행 및 퇴사 인계",

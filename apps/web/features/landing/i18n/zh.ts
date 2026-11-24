@@ -294,6 +294,19 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.5.16",
+        date: "2026-11-24",
+        title: "定时自动化修复与 WebSocket 安全升级",
+        changes: [],
+        features: [],
+        improvements: [
+          "升级 WebSocket 依赖，修复客户端掩码密钥使用弱随机数生成器的问题（GO-2026-6278）。",
+        ],
+        fixes: [
+          "定时自动任务（`run_only` 模式）现在可以按任务编号读取、更新、在项目下新建任务，也可以写评论，不再返回「项目不存在」；权限仍按该运行代表的成员的项目权限判定。",
+        ],
+      },
+      {
         version: "0.5.15",
         date: "2026-11-06",
         title: "智能体隐私、任务并发与离职交接",

@@ -270,6 +270,19 @@ export function createJaDict(allowSignup: boolean): LandingDict {
       },
       entries: [
         {
+          version: "0.5.16",
+          date: "2026-11-24",
+          title: "定期自動化の修正と WebSocket のセキュリティ更新",
+          changes: [],
+          features: [],
+          improvements: [
+            "WebSocket ライブラリを更新し、クライアントのマスクキーに弱い乱数生成器が使われる問題（GO-2026-6278）を修正しました。",
+          ],
+          fixes: [
+            "定期実行の自動化（`run_only` モード）で、タスクの読み取り・更新・プロジェクト内での作成・コメント投稿が「プロジェクトが見つかりません」で失敗しなくなりました。権限は引き続き、その実行を代表するメンバーのプロジェクト権限で判定します。",
+          ],
+        },
+        {
           version: "0.5.15",
           date: "2026-11-06",
           title: "エージェントのプライバシー、並列実行、退職時の引き継ぎ",
